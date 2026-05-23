@@ -628,3 +628,20 @@ P0/P1/P2 tickets
 推荐提交节奏
 风险控制
 ```
+
+---
+
+## 15. API Contract
+
+v0.1.2 P0 API contract 草案见：
+
+```text
+docs/api/v0.1.2-api-contract.md
+```
+
+当前决策：
+
+```text
+P0 先使用 Markdown contract 固定 envelope、auth、错误码、endpoint 和请求/响应示例。
+OpenAPI/YAML 放 P1，等 P0 实现与字段稳定后再补。
+```

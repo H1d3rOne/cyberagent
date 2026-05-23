@@ -99,7 +99,8 @@ internal/runtime/jobs/
   cancel.go
 
 docs/api/
-  v0.1.2-openapi.yaml 或 v0.1.2-api-contract.md
+  v0.1.2-api-contract.md
+  v0.1.2-openapi.yaml（P1 可选）
 
 docs/
   CyberAgent-v0.1.2-Daemon-Smoke-Test.md
@@ -431,6 +432,13 @@ WF-0 到 WF-6 设计稳定
 ```text
 文档可指导 curl 级别 smoke test。
 API contract 和实现 endpoint 一致。
+```
+
+当前决策：
+
+```text
+P0 先使用 docs/api/v0.1.2-api-contract.md 作为 contract 草案。
+OpenAPI/YAML 放 P1，等实现与 contract 稳定后再补。
 ```
 
 ---
