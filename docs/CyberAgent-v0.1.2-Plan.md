@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：计划完成；Core Service API Slice 2 已完成；daemon/job manager 待实现
+状态：计划完成；Daemon Skeleton 已完成；read-only API/job manager 待实现
 
 ---
 
@@ -402,7 +402,11 @@ P0-12 daemon smoke test 文档与本地验证
 ```text
 [x] P0-01 Slice 1：ServiceError / VersionService / PluginService / RunService 只读能力
 [x] P0-01 Slice 2：ApprovalService / ResumeApproved / ScanService validation skeleton
-[ ] P0-02+ daemon / auth / HTTP API / job manager
+[x] P0-02：cyberagent daemon / local HTTP server skeleton
+[x] P0-03：Bearer token auth middleware
+[~] P0-04 Slice 1：healthz / version API
+[ ] P0-04 Slice 2：doctor / plugins API
+[ ] P0-05+ runs / approvals / scans / jobs HTTP API
 ```
 
 ### P1：应该完成
@@ -544,9 +548,9 @@ CORS 默认关闭；未来 Web Console 需要显式 allow origin。
 v0.1.2 完成时应满足：
 
 ```text
-[ ] cyberagent daemon 可启动并监听 127.0.0.1
-[ ] API 默认需要 token
-[ ] GET /healthz /version /doctor 可用
+[x] cyberagent daemon 可启动并监听 127.0.0.1
+[x] API 默认需要 token
+[~] GET /healthz /version /doctor 可用：healthz/version 已完成，doctor 待接入
 [ ] GET /plugins /plugins/doctor 可用
 [ ] GET /runs 可列出已有 run
 [ ] GET /runs/{run_id} 可返回 run summary

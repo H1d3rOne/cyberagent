@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：实施拆解完成；Core Service API Slice 2 已完成；daemon/job manager 待实现
+状态：实施拆解完成；Daemon Skeleton 已完成；read-only API/job manager 待实现
 
 ---
 
@@ -212,17 +212,17 @@ service 层测试可直接用 fixture run-dir 验证。
 任务：
 
 ```text
-DMN-01 新增 daemon config：listen / runs-dir / token-file / max-concurrent-jobs
-DMN-02 新增 cyberagent daemon 命令帮助信息
-DMN-03 daemon 默认 listen = 127.0.0.1:8787
-DMN-04 daemon 默认 runs-dir = ./runs 或现有默认 run root
-DMN-05 daemon 启动时加载或生成 token 文件
-DMN-06 token 文件权限建议 0600，权限异常给出明确 warning/error
-DMN-07 新增 HTTP router，统一 /api/v1 前缀
-DMN-08 新增统一 response envelope
-DMN-09 新增 error -> HTTP status 映射
-DMN-10 新增 access log，避免记录 Authorization token
-DMN-11 支持 graceful shutdown
+[x] DMN-01 新增 daemon config：listen / runs-dir / token-file / max-concurrent-jobs
+[x] DMN-02 新增 cyberagent daemon 命令帮助信息
+[x] DMN-03 daemon 默认 listen = 127.0.0.1:8787
+[x] DMN-04 daemon 默认 runs-dir = ./runs 或现有默认 run root
+[x] DMN-05 daemon 启动时加载或生成 token 文件
+[x] DMN-06 token 文件权限建议 0600，权限异常给出明确 warning/error
+[x] DMN-07 新增 HTTP router，统一 /api/v1 前缀
+[x] DMN-08 新增统一 response envelope
+[x] DMN-09 新增 error -> HTTP status 映射
+[~] DMN-10 access log 后置；当前未记录 request header，因此不会记录 Authorization token
+[x] DMN-11 支持 graceful shutdown
 ```
 
 依赖：
@@ -240,6 +240,15 @@ daemon 可启动和退出。
 响应统一 JSON envelope。
 ```
 
+当前实现记录：
+
+```text
+Daemon Skeleton 已完成：config.go / token.go / auth.go / response.go / router.go / server.go。
+CLI 已新增 daemon.go 并挂载 cyberagent daemon。
+当前 HTTP handler 只包含 /api/v1/healthz 与 /api/v1/version。
+doctor/plugins/runs/approvals/scans/jobs handler 后续按 WF-4/WF-5/WF-6 接入。
+```
+
 ---
 
 ### WF-3：认证与本地安全默认
@@ -253,16 +262,16 @@ daemon 可启动和退出。
 任务：
 
 ```text
-SEC-01 Bearer token auth middleware
-SEC-02 未携带 token 返回 unauthorized
-SEC-03 token 错误返回 unauthorized
-SEC-04 token 正确允许访问 API
-SEC-05 Authorization header 不进入日志
-SEC-06 默认 CORS disabled
-SEC-07 明确不提供 public mode
-SEC-08 禁止 run_id/path path traversal
-SEC-09 artifact/report 读取限制在 run workspace 内
-SEC-10 主动扫描仍强制 target + scope
+[x] SEC-01 Bearer token auth middleware
+[x] SEC-02 未携带 token 返回 unauthorized
+[x] SEC-03 token 错误返回 unauthorized
+[x] SEC-04 token 正确允许访问 API
+[x] SEC-05 Authorization header 不进入日志：当前不记录 headers
+[x] SEC-06 默认 CORS disabled
+[x] SEC-07 明确不提供 public mode
+[ ] SEC-08 禁止 run_id/path path traversal
+[ ] SEC-09 artifact/report 读取限制在 run workspace 内
+[ ] SEC-10 主动扫描仍强制 target + scope
 ```
 
 依赖：
@@ -671,8 +680,8 @@ approval smoke test 预期流程：
 
 ```text
 [x] Core Service API P0 抽象完成
-[ ] daemon command 可启动
-[ ] 默认 127.0.0.1 + token auth 生效
+[x] daemon command 可启动
+[x] 默认 127.0.0.1 + token auth 生效
 [ ] 只读 API 可读取已有 run/report/artifact/events
 [ ] approval API 与 CLI 状态互通
 [ ] scan web API 可异步启动 safe scan

@@ -2,7 +2,7 @@
 
 版本：v0.1.2 Implementation
 日期：2026-05-24
-状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Core Service API Slice 2 完成
+状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Daemon Skeleton 完成
 
 ---
 
@@ -16,8 +16,8 @@ MVP Stabilization：本地验证通过
 MVP Release：v0.1.0 本地 release 准备完成；远程发布未执行
 v0.1.1 RC：本地实现、文档、测试、release notes 已准备；tag/push/GitHub Release 未执行
 v0.1.2 Planning：计划、实施拆解、API Contract 与 daemon smoke test 草案已完成
-v0.1.2 Implementation：Core Service API Slice 2 已完成；daemon 尚未实现
-Next：进入 daemon skeleton：cyberagent daemon / local HTTP router / auth / response envelope
+v0.1.2 Implementation：Daemon Skeleton 已完成；只读业务 API / job manager 尚未实现
+Next：接入 daemon read-only API：doctor / plugins / runs / report / artifacts / events / approvals list
 ```
 
 ---
@@ -37,6 +37,7 @@ Next：进入 daemon skeleton：cyberagent daemon / local HTTP router / auth / r
 [x] cyberagent replay <run-dir>
 [x] scan web / replay skipped steps 摘要与 next actions
 [x] cyberagent tui <run-dir>（Plan / Events / Approvals / Evidence / Findings / Report）
+[x] cyberagent daemon（Local HTTP API skeleton）
 ```
 
 ### Core Runtime
@@ -68,6 +69,25 @@ Next：进入 daemon skeleton：cyberagent daemon / local HTTP router / auth / r
 [x] ApprovalService: resume-approved
 [x] ScanService: StartWebScan validation skeleton
 [ ] ScanService: async job manager execution
+```
+
+### Local Daemon / v0.1.2
+
+```text
+[x] Daemon config: listen / runs-dir / token-file / max-concurrent-jobs
+[x] cyberagent daemon --help
+[x] Default listen: 127.0.0.1:8787
+[x] Token file load/create with 0600 permission
+[x] Bearer token auth middleware
+[x] Unified /api/v1 response envelope
+[x] ServiceError -> HTTP status mapping
+[x] GET /api/v1/healthz
+[x] GET /api/v1/version
+[ ] GET /api/v1/doctor
+[ ] GET /api/v1/plugins / plugins/doctor
+[ ] GET /api/v1/runs / report / artifacts / events / approvals
+[ ] Approval write HTTP API
+[ ] Scan async job manager / job status / cancel
 ```
 
 ### Builtin Web/API Tools
@@ -237,6 +257,28 @@ ScanService 当前只提供 StartWebScan request/response DTO 与 target/scope �
 异步执行、job status/cancel、daemon command 和 HTTP handler 仍待实现。
 ```
 
+v0.1.2 Daemon Skeleton 验证已通过：
+
+```bash
+gofmt -w internal/interfaces/daemon internal/interfaces/cli
+go test ./internal/interfaces/daemon ./internal/interfaces/cli
+go test ./...
+test -z "$(gofmt -l cmd internal)"
+go vet ./...
+go build -ldflags "-X main.version=v0.1.2-daemon-skeleton-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
+```
+
+当前边界：
+
+```text
+已新增 internal/interfaces/daemon local HTTP adapter。
+cyberagent daemon 已接入 CLI。
+P0 默认监听 127.0.0.1:8787，默认使用 bearer token。
+token 文件不存在时自动生成，权限为 0600。
+HTTP API 已统一 envelope，并完成 /api/v1/healthz 与 /api/v1/version。
+doctor/plugins/runs/report/artifacts/events/approvals/scans/jobs HTTP handler 仍待后续 slice 接入。
+```
+
 ---
 
 ## 4. 里程碑状态
@@ -260,6 +302,7 @@ ScanService 当前只提供 StartWebScan request/response DTO 与 target/scope �
 | M14 v0.1.2 Daemon Smoke Test Draft | 完成 | daemon 启动、认证、scan/job/report/artifact/event/approval/cancel smoke 流程已形成草案；尚未实现 |
 | M15 v0.1.2 Core Service Slice 1 | 完成 | ServiceError、VersionService、PluginService、RunService 只读能力已实现并测试；daemon 尚未实现 |
 | M16 v0.1.2 Core Service Slice 2 | 完成 | ApprovalService、ResumeApproved 与 ScanService 校验骨架已实现并测试；daemon/job manager 尚未实现 |
+| M17 v0.1.2 Daemon Skeleton | 完成 | cyberagent daemon、token auth、response envelope、healthz/version API 已实现并测试；业务 read/write API 待接入 |
 
 ---
 
@@ -315,8 +358,9 @@ ScanService 当前只提供 StartWebScan request/response DTO 与 target/scope �
 [x] 生成 v0.1.2 daemon smoke test 草案：docs/CyberAgent-v0.1.2-Daemon-Smoke-Test.md
 [x] Core Service API Slice 1：ServiceError / VersionService / PluginService / RunService 只读能力
 [x] Core Service API Slice 2：ApprovalService / ResumeApproved / ScanService validation skeleton
-[ ] cyberagent daemon 命令
-[ ] 本地 token auth / 127.0.0.1 默认监听
+[x] cyberagent daemon 命令
+[x] 本地 token auth / 127.0.0.1 默认监听
+[x] /api/v1/healthz 与 /api/v1/version
 [ ] run/report/artifact/event 查询 API
 [ ] scan web async job API
 [ ] approval approve/deny/resume-approved API

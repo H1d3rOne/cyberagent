@@ -37,6 +37,18 @@ func TestDoctorCommand(t *testing.T) {
 	}
 }
 
+func TestDaemonCommandHelp(t *testing.T) {
+	out, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "daemon", "--help")
+	if err != nil {
+		t.Fatalf("daemon --help error = %v", err)
+	}
+	for _, want := range []string{"Start the local CyberAgent HTTP API daemon", "--listen", "127.0.0.1:8787", "--runs-dir", "--token-file"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("daemon help missing %q: %q", want, out)
+		}
+	}
+}
+
 func TestPluginsCommands(t *testing.T) {
 	withTempWorkingDir(t, func(root string) {
 		if err := os.MkdirAll(filepath.Join(root, "schemas", "plugins"), 0o755); err != nil {

@@ -58,6 +58,7 @@ Status: MVP safe-scan runtime ready`, name, build.Module),
 	cmd.AddCommand(newApprovalsCommand())
 	cmd.AddCommand(newPluginsCommand())
 	cmd.AddCommand(newTUICommand())
+	cmd.AddCommand(newDaemonCommand(build))
 	cmd.AddCommand(newDashboardCommand())
 
 	return cmd

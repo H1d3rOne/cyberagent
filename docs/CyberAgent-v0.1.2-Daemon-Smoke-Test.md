@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：smoke test 草案完成，待实现后验证
+状态：smoke test 草案完成；daemon skeleton 可执行基础 health/version/auth 子集；完整 P0 待实现后验证
 
 ---
 
