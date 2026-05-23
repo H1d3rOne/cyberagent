@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -11,8 +12,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	coreruntime "github.com/H1d3rOne/cyberagent/internal/core/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 )
 
 func TestNewServerCreatesTokenFileAndNormalizesDefaults(t *testing.T) {
@@ -208,6 +211,132 @@ func TestHTTPReadOnlyAPIs(t *testing.T) {
 	}
 }
 
+func TestHTTPApprovalWriteAPIs(t *testing.T) {
+	root := t.TempDir()
+	runsDir := filepath.Join(root, "runs")
+	writeDaemonApprovalRun(t, runsDir, "run_approval_write", []contracts.HITLRequest{
+		daemonTestApproval("approval_001", "job_001", "step_001"),
+		daemonTestApproval("approval_002", "job_001", "step_002"),
+	})
+
+	handler := newRouter(routerServices{
+		version:   services.NewVersionService(services.BuildInfo{Name: "CyberAgent", Version: "vapproval-api"}),
+		plugins:   services.NewPluginService(filepath.Join(root, "plugins")),
+		runs:      services.NewRunService(runsDir),
+		approvals: services.NewApprovalService(runsDir),
+	}, "test-token")
+	api := httptest.NewServer(handler)
+	defer api.Close()
+
+	approve := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/run_approval_write/approvals/approval_001/approve", "test-token", `{"operator":"local-user","comment":"approved from http"}`)
+	if approve.StatusCode != http.StatusOK || !approve.Body.OK || approve.Body.Data["status"] != string(contracts.HITLApproved) {
+		t.Fatalf("unexpected approve response: status=%d body=%#v", approve.StatusCode, approve.Body)
+	}
+	approveResolution := asMap(t, approve.Body.Data["resolution"])
+	if approveResolution["resolved_by"] != "local-user" || approveResolution["comment"] != "approved from http" {
+		t.Fatalf("unexpected approve resolution: %#v", approveResolution)
+	}
+
+	reapprove := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/run_approval_write/approvals/approval_001/approve", "test-token", `{"operator":"local-user"}`)
+	if reapprove.StatusCode != http.StatusConflict || reapprove.Body.OK || reapprove.Body.Error.Code != services.CodeConflict {
+		t.Fatalf("unexpected re-approve response: status=%d body=%#v", reapprove.StatusCode, reapprove.Body)
+	}
+
+	deny := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/run_approval_write/approvals/approval_002/deny", "test-token", `{"operator":"local-user","comment":"not needed"}`)
+	if deny.StatusCode != http.StatusOK || !deny.Body.OK || deny.Body.Data["status"] != string(contracts.HITLRejected) {
+		t.Fatalf("unexpected deny response: status=%d body=%#v", deny.StatusCode, deny.Body)
+	}
+	denyResolution := asMap(t, deny.Body.Data["resolution"])
+	if denyResolution["resolved_by"] != "local-user" || denyResolution["comment"] != "not needed" {
+		t.Fatalf("unexpected deny resolution: %#v", denyResolution)
+	}
+
+	list := doDaemonRequest(t, api.URL+"/api/v1/runs/run_approval_write/approvals", "test-token")
+	if list.StatusCode != http.StatusOK || !list.Body.OK {
+		t.Fatalf("unexpected approval list response: status=%d body=%#v", list.StatusCode, list.Body)
+	}
+	approvals := asList(t, list.Body.Data["approvals"])
+	if len(approvals) != 2 || asMap(t, approvals[0])["status"] != string(contracts.HITLApproved) || asMap(t, approvals[1])["status"] != string(contracts.HITLRejected) {
+		t.Fatalf("unexpected persisted approvals: %#v", approvals)
+	}
+
+	missing := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/run_approval_write/approvals/missing/approve", "test-token", `{}`)
+	if missing.StatusCode != http.StatusNotFound || missing.Body.OK || missing.Body.Error.Code != services.CodeNotFound {
+		t.Fatalf("unexpected missing approval response: status=%d body=%#v", missing.StatusCode, missing.Body)
+	}
+
+	badJSON := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/run_approval_write/approvals/missing/approve", "test-token", `{"operator":`)
+	if badJSON.StatusCode != http.StatusBadRequest || badJSON.Body.OK || badJSON.Body.Error.Code != services.CodeBadRequest {
+		t.Fatalf("unexpected bad JSON response: status=%d body=%#v", badJSON.StatusCode, badJSON.Body)
+	}
+
+	traversal := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/../secret/approvals/approval_001/approve", "test-token", `{}`)
+	if traversal.StatusCode != http.StatusNotFound && traversal.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unexpected traversal response: status=%d body=%#v", traversal.StatusCode, traversal.Body)
+	}
+
+	wrongMethod := doDaemonRequestWithBody(t, http.MethodDelete, api.URL+"/api/v1/runs/run_approval_write/approvals/approval_001/approve", "test-token", `{}`)
+	if wrongMethod.StatusCode != http.StatusBadRequest || wrongMethod.Body.Error.Code != services.CodeBadRequest {
+		t.Fatalf("unexpected wrong method response: status=%d body=%#v", wrongMethod.StatusCode, wrongMethod.Body)
+	}
+}
+
+func TestHTTPResumeApprovedAPI(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<!doctype html><html><body>ok</body></html>`))
+		case "/robots.txt":
+			_, _ = w.Write([]byte("User-agent: *\n"))
+		case "/sitemap.xml":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte("<urlset></urlset>"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer target.Close()
+
+	root := t.TempDir()
+	runsDir := filepath.Join(root, "runs")
+	runID := "run_resume_http"
+	runDir := filepath.Join(runsDir, runID)
+	if _, err := coreruntime.RunWebScan(context.Background(), coreruntime.WebScanRequest{
+		Target:          target.URL,
+		Scope:           target.URL,
+		Out:             runDir,
+		Profile:         "safe",
+		NoExternalTools: true,
+		BuildInfo:       coreruntime.BuildInfo{Version: "v0.1.2-test"},
+		CommandName:     "scan web",
+	}); err != nil {
+		t.Fatalf("RunWebScan() error = %v", err)
+	}
+
+	handler := newRouter(routerServices{
+		version:   services.NewVersionService(services.BuildInfo{Name: "CyberAgent", Version: "vresume-api"}),
+		plugins:   services.NewPluginService(filepath.Join(root, "plugins")),
+		runs:      services.NewRunService(runsDir),
+		approvals: services.NewApprovalService(runsDir),
+	}, "test-token")
+	api := httptest.NewServer(handler)
+	defer api.Close()
+
+	resume := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/"+runID+"/resume-approved", "test-token", `{"operator":"local-user"}`)
+	if resume.StatusCode != http.StatusOK || !resume.Body.OK || resume.Body.Data["run_id"] != runID || resume.Body.Data["run_dir"] != runDir {
+		t.Fatalf("unexpected resume response: status=%d body=%#v", resume.StatusCode, resume.Body)
+	}
+	if len(asList(t, resume.Body.Data["resumed"])) != 0 || len(asList(t, resume.Body.Data["skipped"])) != 0 {
+		t.Fatalf("unexpected resume result: %#v", resume.Body.Data)
+	}
+
+	missing := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/missing/resume-approved", "test-token", `{}`)
+	if missing.StatusCode != http.StatusNotFound || missing.Body.OK || missing.Body.Error.Code != services.CodeNotFound {
+		t.Fatalf("unexpected missing resume response: status=%d body=%#v", missing.StatusCode, missing.Body)
+	}
+}
+
 type daemonHTTPResponse struct {
 	StatusCode int
 	Body       daemonTestEnvelope
@@ -221,12 +350,20 @@ type daemonTestEnvelope struct {
 
 func doDaemonRequest(t *testing.T, url, token string) daemonHTTPResponse {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	return doDaemonRequestWithBody(t, http.MethodGet, url, token, "")
+}
+
+func doDaemonRequestWithBody(t *testing.T, method, url, token, body string) daemonHTTPResponse {
+	t.Helper()
+	req, err := http.NewRequest(method, url, bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -234,11 +371,40 @@ func doDaemonRequest(t *testing.T, url, token string) daemonHTTPResponse {
 	}
 	defer resp.Body.Close()
 
-	var body daemonTestEnvelope
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	var decoded daemonTestEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	return daemonHTTPResponse{StatusCode: resp.StatusCode, Body: body}
+	return daemonHTTPResponse{StatusCode: resp.StatusCode, Body: decoded}
+}
+
+func writeDaemonApprovalRun(t *testing.T, root, runID string, requests []contracts.HITLRequest) {
+	t.Helper()
+	layout, err := runs.NewManager(root).Create(runID)
+	if err != nil {
+		t.Fatalf("create approval run: %v", err)
+	}
+	encoded, err := json.MarshalIndent(requests, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal approvals: %v", err)
+	}
+	if err := os.WriteFile(layout.ApprovalsPath, append(encoded, '\n'), 0o644); err != nil {
+		t.Fatalf("write approvals: %v", err)
+	}
+}
+
+func daemonTestApproval(id, jobID, stepID string) contracts.HITLRequest {
+	return contracts.HITLRequest{
+		ID:               id,
+		JobID:            jobID,
+		StepID:           stepID,
+		PolicyDecisionID: "policy_" + stepID,
+		Status:           contracts.HITLPending,
+		Reason:           "requires approval",
+		RequestedAction:  "execute_step",
+		Options:          []string{"approve", "deny"},
+		CreatedAt:        contracts.Now(),
+	}
 }
 
 func writeDaemonTestPlugin(t *testing.T, root string) {

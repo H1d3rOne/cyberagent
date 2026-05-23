@@ -81,9 +81,17 @@ func (s ApprovalService) ResumeApproved(ctx context.Context, req ResumeApprovedR
 	if err != nil {
 		return ResumeApprovedResult{}, internalError("resume approved steps", err)
 	}
+	resumed := result.Resumed
+	if resumed == nil {
+		resumed = []string{}
+	}
+	skipped := result.Skipped
+	if skipped == nil {
+		skipped = []string{}
+	}
 	return ResumeApprovedResult{
-		Resumed: result.Resumed,
-		Skipped: result.Skipped,
+		Resumed: resumed,
+		Skipped: skipped,
 		RunID:   layout.JobID,
 		RunDir:  layout.Path,
 	}, nil

@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,9 +62,9 @@ func newRouter(svc routerServices, token string) http.Handler {
 		}
 		writeOK(w, http.StatusOK, page)
 	}))
-	mux.HandleFunc("/api/v1/runs/", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
-		handleRunRead(w, r, svc)
-	}))
+	mux.HandleFunc("/api/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
+		handleRunRoute(w, r, svc)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
 	})
@@ -84,6 +86,17 @@ func requireMethod(method string, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		next(w, r)
+	}
+}
+
+func handleRunRoute(w http.ResponseWriter, r *http.Request, svc routerServices) {
+	switch r.Method {
+	case http.MethodGet:
+		handleRunRead(w, r, svc)
+	case http.MethodPost:
+		handleRunWrite(w, r, svc)
+	default:
+		writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 	}
 }
 
@@ -139,6 +152,70 @@ func handleRunRead(w http.ResponseWriter, r *http.Request, svc routerServices) {
 	}
 }
 
+type approvalDecisionHTTPBody struct {
+	Operator string `json:"operator"`
+	Comment  string `json:"comment"`
+}
+
+type resumeApprovedHTTPBody struct {
+	Operator string `json:"operator"`
+}
+
+func handleRunWrite(w http.ResponseWriter, r *http.Request, svc routerServices) {
+	if runID, approvalID, action, ok := parseApprovalDecisionPath(r.URL.Path); ok {
+		var body approvalDecisionHTTPBody
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		req := services.ApprovalDecisionRequest{
+			RunIDOrPath:        runID,
+			ApprovalIDOrStepID: approvalID,
+			Operator:           body.Operator,
+			Comment:            body.Comment,
+		}
+		var (
+			resolved any
+			err      error
+		)
+		switch action {
+		case "approve":
+			resolved, err = svc.approvals.Approve(r.Context(), req)
+		case "deny":
+			resolved, err = svc.approvals.Deny(r.Context(), req)
+		default:
+			writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+			return
+		}
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, resolved)
+		return
+	}
+
+	if runID, ok := parseResumeApprovedPath(r.URL.Path); ok {
+		var body resumeApprovedHTTPBody
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		result, err := svc.approvals.ResumeApproved(r.Context(), services.ResumeApprovedRequest{
+			RunIDOrPath: runID,
+			Operator:    body.Operator,
+		})
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+		return
+	}
+
+	writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+}
+
 func parseRunReadPath(path string) (runID string, resource string, ok bool) {
 	rest := strings.TrimPrefix(path, "/api/v1/runs/")
 	if rest == "" || rest == path {
@@ -155,6 +232,56 @@ func parseRunReadPath(path string) (runID string, resource string, ok bool) {
 		return parts[0], parts[1], true
 	}
 	return "", "", false
+}
+
+func parseApprovalDecisionPath(path string) (runID string, approvalID string, action string, ok bool) {
+	rest := strings.TrimPrefix(path, "/api/v1/runs/")
+	if rest == "" || rest == path {
+		return "", "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 4 {
+		return "", "", "", false
+	}
+	if strings.TrimSpace(parts[0]) == "" ||
+		parts[1] != "approvals" ||
+		strings.TrimSpace(parts[2]) == "" ||
+		strings.TrimSpace(parts[3]) == "" {
+		return "", "", "", false
+	}
+	return parts[0], parts[2], parts[3], true
+}
+
+func parseResumeApprovedPath(path string) (runID string, ok bool) {
+	rest := strings.TrimPrefix(path, "/api/v1/runs/")
+	if rest == "" || rest == path {
+		return "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || parts[1] != "resume-approved" {
+		return "", false
+	}
+	return parts[0], true
+}
+
+func decodeJSONBody(r *http.Request, out any) error {
+	if r.Body == nil {
+		return nil
+	}
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(out); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return services.NewError(services.CodeBadRequest, "invalid JSON body", nil, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != nil && !errors.Is(err, io.EOF) {
+		return services.NewError(services.CodeBadRequest, "invalid JSON body", nil, err)
+	} else if err == nil {
+		return services.NewError(services.CodeBadRequest, "invalid JSON body", map[string]any{"reason": "multiple JSON values"}, nil)
+	}
+	return nil
 }
 
 func optionalInt(raw string) (int, error) {

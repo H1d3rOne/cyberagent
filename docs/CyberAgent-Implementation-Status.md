@@ -2,7 +2,7 @@
 
 版本：v0.1.2 Implementation
 日期：2026-05-24
-状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Daemon Read-only API 完成
+状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Daemon Approval Write API 完成
 
 ---
 
@@ -16,8 +16,8 @@ MVP Stabilization：本地验证通过
 MVP Release：v0.1.0 本地 release 准备完成；远程发布未执行
 v0.1.1 RC：本地实现、文档、测试、release notes 已准备；tag/push/GitHub Release 未执行
 v0.1.2 Planning：计划、实施拆解、API Contract 与 daemon smoke test 草案已完成
-v0.1.2 Implementation：Daemon Read-only API 已完成；Approval 写 API / scan job manager 尚未实现
-Next：接入 Approval write API：approve / deny / resume-approved
+v0.1.2 Implementation：Daemon Read-only API 与 Approval write/resume API 已完成；scan job manager 尚未实现
+Next：接入 scan web async job API / job status / cancel MVP
 ```
 
 ---
@@ -86,7 +86,10 @@ Next：接入 Approval write API：approve / deny / resume-approved
 [x] GET /api/v1/doctor
 [x] GET /api/v1/plugins / plugins/doctor
 [x] GET /api/v1/runs / report / artifacts / events / approvals
-[ ] Approval write HTTP API
+[x] Approval write HTTP API
+[x] POST /api/v1/runs/{run_id}/approvals/{approval_id}/approve
+[x] POST /api/v1/runs/{run_id}/approvals/{approval_id}/deny
+[x] POST /api/v1/runs/{run_id}/resume-approved
 [ ] Scan async job manager / job status / cancel
 ```
 
@@ -276,7 +279,7 @@ cyberagent daemon 已接入 CLI。
 P0 默认监听 127.0.0.1:8787，默认使用 bearer token。
 token 文件不存在时自动生成，权限为 0600。
 HTTP API 已统一 envelope，并完成 /api/v1/healthz 与 /api/v1/version。
-doctor/plugins/runs/report/artifacts/events/approvals/scans/jobs HTTP handler 在 skeleton 阶段仍待后续 slice 接入。
+doctor/plugins/runs/report/artifacts/events/approvals/approval write 已在后续 slice 接入；scans/jobs HTTP handler 仍待接入。
 ```
 
 v0.1.2 Daemon Read-only API 验证已通过：
@@ -300,8 +303,23 @@ go build -ldflags "-X main.version=v0.1.2-daemon-readonly-local -X main.commit=$
 已接入 /api/v1/runs/{run_id}/artifacts。
 已接入 /api/v1/runs/{run_id}/events?cursor=&limit=。
 已接入 /api/v1/runs/{run_id}/approvals 只读列表。
+已接入 /api/v1/runs/{run_id}/approvals/{approval_id}/approve。
+已接入 /api/v1/runs/{run_id}/approvals/{approval_id}/deny。
+已接入 /api/v1/runs/{run_id}/resume-approved。
 doctor report JSON 字段已补充稳定 json tag。
-Approval write API、resume-approved API、scan web async job API、job status/cancel 仍待实现。
+Approval write API 与 resume-approved API 已复用 ApprovalService，并覆盖 bad JSON / missing approval / conflict / traversal 负向测试。
+scan web async job API、job status/cancel 仍待实现。
+```
+
+v0.1.2 Daemon Approval Write API 验证已通过：
+
+```bash
+gofmt -w internal/core/services/approvals.go internal/interfaces/daemon/router.go internal/interfaces/daemon/server_test.go
+go test ./internal/interfaces/daemon ./internal/core/services
+go test ./...
+test -z "$(gofmt -l cmd internal)"
+go vet ./...
+go build -ldflags "-X main.version=v0.1.2-daemon-approval-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
 ```
 
 ---
@@ -328,7 +346,8 @@ Approval write API、resume-approved API、scan web async job API、job status/c
 | M15 v0.1.2 Core Service Slice 1 | 完成 | ServiceError、VersionService、PluginService、RunService 只读能力已实现并测试；daemon 尚未实现 |
 | M16 v0.1.2 Core Service Slice 2 | 完成 | ApprovalService、ResumeApproved 与 ScanService 校验骨架已实现并测试；daemon/job manager 尚未实现 |
 | M17 v0.1.2 Daemon Skeleton | 完成 | cyberagent daemon、token auth、response envelope、healthz/version API 已实现并测试；业务 read/write API 待接入 |
-| M18 v0.1.2 Daemon Read-only API | 完成 | doctor/plugins/runs/report/artifacts/events/approvals list 已接入并测试；write/job API 待接入 |
+| M18 v0.1.2 Daemon Read-only API | 完成 | doctor/plugins/runs/report/artifacts/events/approvals list 已接入并测试；approval write 已在 M19 完成，scan/job API 待接入 |
+| M19 v0.1.2 Daemon Approval Write API | 完成 | approval approve/deny/resume-approved 已接入并测试；scan/job API 待接入 |
 
 ---
 
@@ -389,8 +408,8 @@ Approval write API、resume-approved API、scan web async job API、job status/c
 [x] /api/v1/healthz 与 /api/v1/version
 [x] /api/v1/doctor 与 plugins API
 [x] run/report/artifact/event/approval list 查询 API
+[x] approval approve/deny/resume-approved API
 [ ] scan web async job API
-[ ] approval approve/deny/resume-approved API
 [ ] job status/cancel MVP
 [ ] daemon smoke test 本地验证通过
 ```

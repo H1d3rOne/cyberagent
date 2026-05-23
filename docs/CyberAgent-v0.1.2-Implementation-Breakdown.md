@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：实施拆解完成；Daemon Read-only API 已完成；write API/job manager 待实现
+状态：实施拆解完成；Daemon Read-only API 与 Approval write/resume API 已完成；job manager 待实现
 
 ---
 
@@ -339,7 +339,7 @@ Read-only handler 已接入 internal/interfaces/daemon/router.go。
 handler 复用 VersionService / PluginService / RunService / ApprovalService。
 report JSON 会解码为 report 对象，markdown 返回 content 字符串。
 events 使用 RunService cursor + limit 读取，不一次性加载超大 events.jsonl。
-approvals 当前只开放 list；approve/deny/resume-approved 归 WF-5。
+approvals list / approve / deny / resume-approved 已接入 daemon router。
 ```
 
 ---
@@ -378,6 +378,15 @@ API approve 后 CLI approvals list 能看到状态变化。
 CLI approve 后 API approvals list 能看到状态变化。
 resume-approved 行为与 CLI replay --resume-approved 一致。
 Scope Guard 仍在恢复执行前检查。
+```
+
+当前实现记录：
+
+```text
+Approval write handler 已接入 internal/interfaces/daemon/router.go。
+POST approve / deny 复用 ApprovalService.Approve / Deny。
+POST resume-approved 复用 ApprovalService.ResumeApproved，并同步返回 resumed/skipped/run_id/run_dir。
+approve/deny 已覆盖成功、重复审批 conflict、missing approval not_found、bad JSON、path traversal、wrong method 测试。
 ```
 
 ---
@@ -693,7 +702,7 @@ approval smoke test 预期流程：
 [x] daemon command 可启动
 [x] 默认 127.0.0.1 + token auth 生效
 [x] 只读 API 可读取已有 run/report/artifact/events
-[ ] approval API 与 CLI 状态互通
+[x] approval API 与 CLI 状态互通
 [ ] scan web API 可异步启动 safe scan
 [ ] job status/cancel MVP 可用
 [ ] API contract 文档完成

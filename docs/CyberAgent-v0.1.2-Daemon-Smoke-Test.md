@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：smoke test 草案完成；daemon read-only API 子集可测；完整 P0 待 write/job API 实现后验证
+状态：smoke test 草案完成；daemon read-only API 与 approval write/resume API 子集可测；完整 P0 待 scan/job API 实现后验证
 
 ---
 
@@ -568,7 +568,7 @@ python3 -m json.tool "$CYBERAGENT_SMOKE_ROOT/path-traversal-encoded-response.jso
 ```text
 HTTP status 不应为 200。
 response.ok = false。
-error.code 应为 bad_request / policy_denied / not_found 之一。
+error.code 应为 bad_request / not_found 之一。
 daemon 不应读取 runs-dir 外文件。
 ```
 
@@ -712,7 +712,7 @@ python3 -m json.tool "$CYBERAGENT_SMOKE_ROOT/resume-response.json"
 ```text
 API approvals list 能看到 pending approval。
 API approve 后 CLI approvals list 能看到 approved 状态。
-resume-approved 返回 job_id 或明确结构化结果。
+resume-approved 返回 resumed/skipped/run_id/run_dir 明确结构化结果。
 若 ffuf 依赖缺失，应记录 dependency_missing / skipped，不应破坏整个 run。
 Scope Guard 仍在 resume 前执行。
 ```
@@ -779,22 +779,22 @@ v0.1.2 daemon smoke test 通过需要满足：
 
 ```text
 [ ] gofmt/go test/go vet/go build 通过
-[ ] 本地 fixture 可访问
-[ ] daemon 可启动并监听 127.0.0.1
-[ ] token 文件生成且非空
-[ ] 无 token / 错误 token 被拒绝
-[ ] Authorization token 不写入 daemon log
-[ ] health/version/doctor/plugins API 返回 ok envelope
+[x] 本地 fixture 可访问
+[x] daemon 可启动并监听 127.0.0.1
+[x] token 文件生成且非空
+[x] 无 token / 错误 token 被拒绝
+[x] Authorization token 不写入 daemon log
+[x] health/version/doctor/plugins API 返回 ok envelope
 [ ] scan web API 可异步启动 safe scan
 [ ] job status 可从 running 进入 succeeded
-[ ] run detail 可读取
-[ ] report json/md 可读取
-[ ] artifacts index 可读取
-[ ] events cursor polling 可读取
+[x] run detail 可读取
+[x] report json/md 可读取
+[x] artifacts index 可读取
+[x] events cursor polling 可读取
 [ ] 缺少 scope 的 scan 被 scope_required 拒绝
-[ ] path traversal 请求被拒绝
-[ ] approvals list/approve 与 CLI 状态互通
-[ ] resume-approved 复用 CLI replay 语义
+[x] path traversal 请求被拒绝
+[x] approvals list/approve 与 CLI 状态互通
+[x] resume-approved 复用 CLI replay 语义
 [ ] cancel endpoint 对不存在/已完成/running job 给出结构化响应
 ```
 
