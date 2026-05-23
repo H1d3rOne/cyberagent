@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：计划完成；Daemon Read-only API、Approval write/resume API 与 scan/job API 已完成；curl smoke 待执行
+状态：计划完成；Daemon Read-only API、Approval write/resume API 与 scan/job API 已完成；curl smoke 已通过
 
 ---
 
@@ -566,7 +566,7 @@ v0.1.2 完成时应满足：
 [x] GET /jobs/{job_id} 可查询状态
 [x] POST /jobs/{job_id}/cancel 对 daemon-launched running job 生效或给出明确 unsupported/conflict
 [x] API contract 文档存在
-[ ] daemon smoke test 文档存在并通过
+[x] daemon smoke test 文档存在并通过
 [x] go test ./... / go vet ./... / go build 通过
 ```
 

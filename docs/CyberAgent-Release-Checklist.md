@@ -259,3 +259,18 @@ TUI 可只读打开 run-dir，并能查看 Approvals 页签。
 [x] v0.1.1 release notes 草案
 [x] v0.1.1 本地 tag 可准备；未创建、未 push、未发布 GitHub Release
 ```
+
+---
+
+## 11. 当前 v0.1.2 进度
+
+```text
+[x] Local Daemon / Web API Foundation
+[x] Daemon read-only API
+[x] Approval write/resume API
+[x] Async scan job API
+[x] Job status/cancel MVP
+[x] v0.1.2 daemon curl smoke test 通过
+[x] v0.1.2 release notes 草案：docs/release-notes/v0.1.2.md
+[x] v0.1.2 本地 RC 可准备；未创建 tag、未 push、未发布 GitHub Release
+```

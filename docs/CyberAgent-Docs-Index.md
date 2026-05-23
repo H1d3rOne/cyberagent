@@ -2,7 +2,7 @@
 
 版本：v0.1
 日期：2026-05-24
-状态：规划、实现状态与 v0.1.2 daemon smoke test 草案索引完成
+状态：规划、实现状态、v0.1.2 daemon smoke test 与 release notes 索引完成
 
 ---
 
@@ -36,6 +36,7 @@
 23. CyberAgent-v0.1.2-Implementation-Breakdown.md
 24. api/v0.1.2-api-contract.md
 25. CyberAgent-v0.1.2-Daemon-Smoke-Test.md
+26. release-notes/v0.1.2.md
 ```
 
 ---
@@ -70,6 +71,7 @@
 | `CyberAgent-v0.1.2-Implementation-Breakdown.md` | v0.1.2 实施拆解：工作流、tickets、依赖、验收、测试与提交节奏 |
 | `api/v0.1.2-api-contract.md` | v0.1.2 Local Daemon HTTP API contract 草案：认证、响应 envelope、错误码、endpoint、请求/响应示例 |
 | `CyberAgent-v0.1.2-Daemon-Smoke-Test.md` | v0.1.2 daemon smoke test 草案：启动、认证、scan/job/report/artifact/event/approval/cancel 验证 |
+| `release-notes/v0.1.2.md` | v0.1.2 release notes 草案；本地 RC 准备使用，远程发布需显式授权 |
 
 ---
 
@@ -86,8 +88,8 @@ Plugin: subprocess + JSON/JSONL
 LLM: 增强层，不作为 Core 依赖
 nuclei-safe: 默认不启用
 TUI v1: 只读 run viewer
-Current release: v0.1.1 本地 RC 准备完成，tag/push/GitHub Release 待显式授权
-Next plan: v0.1.2 选择 Web API / Local Daemon foundation；计划、实施拆解、API Contract 与 daemon smoke test 草案已完成，尚未实现
+Current release: v0.1.2 本地 RC 准备完成，tag/push/GitHub Release 待显式授权
+Next plan: v0.1.3 方向待确认；可基于 v0.1.2 Local Daemon API 推进 TUI Control / Web Console preview / Desktop preview
 ```
 
 ---

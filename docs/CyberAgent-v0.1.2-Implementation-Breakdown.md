@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：实施拆解完成；Daemon Read-only API、Approval write/resume API 与 scan/job API 已完成；curl smoke 待执行
+状态：实施拆解完成；Daemon Read-only API、Approval write/resume API 与 scan/job API 已完成；curl smoke 已通过
 
 ---
 
@@ -269,9 +269,9 @@ doctor/plugins/runs/approvals/scans/jobs handler 后续按 WF-4/WF-5/WF-6 接入
 [x] SEC-05 Authorization header 不进入日志：当前不记录 headers
 [x] SEC-06 默认 CORS disabled
 [x] SEC-07 明确不提供 public mode
-[ ] SEC-08 禁止 run_id/path path traversal
-[ ] SEC-09 artifact/report 读取限制在 run workspace 内
-[ ] SEC-10 主动扫描仍强制 target + scope
+[x] SEC-08 禁止 run_id/path path traversal
+[x] SEC-09 artifact/report 读取限制在 run workspace 内
+[x] SEC-10 主动扫描仍强制 target + scope
 ```
 
 依赖：
@@ -503,10 +503,10 @@ TST-02 service unit tests：approval approve/deny/resume
 [x] TST-06 daemon handler tests：path traversal rejection
 [x] TST-07 job manager tests：start/status/conflict/cancel
 [x] TST-08 scan API tests：scope required
-TST-09 smoke test：daemon -> scan -> poll -> report -> approvals
-TST-10 regression：go test ./...
-TST-11 regression：go vet ./...
-TST-12 regression：go build ./cmd/cyberagent
+[x] TST-09 smoke test：daemon -> scan -> poll -> report -> approvals
+[x] TST-10 regression：go test ./...
+[x] TST-11 regression：go vet ./...
+[x] TST-12 regression：go build ./cmd/cyberagent
 ```
 
 依赖：
@@ -706,9 +706,9 @@ approval smoke test 预期流程：
 [x] scan web API 可异步启动 safe scan
 [x] job status/cancel MVP 可用
 [x] API contract 文档完成
-[ ] daemon smoke test 文档完成并通过
+[x] daemon smoke test 文档完成并通过
 [x] gofmt/go test/go vet/go build 通过
-[ ] v0.1.2 release notes 草案准备
+[x] v0.1.2 release notes 草案准备
 ```
 
 ---

@@ -2,7 +2,7 @@
 
 版本：v0.1.2 Implementation
 日期：2026-05-24
-状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Async Scan Job API 完成
+状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 本地 RC 验证完成
 
 ---
 
@@ -17,7 +17,8 @@ MVP Release：v0.1.0 本地 release 准备完成；远程发布未执行
 v0.1.1 RC：本地实现、文档、测试、release notes 已准备；tag/push/GitHub Release 未执行
 v0.1.2 Planning：计划、实施拆解、API Contract 与 daemon smoke test 草案已完成
 v0.1.2 Implementation：Daemon Read-only API、Approval write/resume API、scan web async job API 与 job status/cancel MVP 已完成
-Next：执行 daemon smoke test 并准备 v0.1.2 release notes 草案
+v0.1.2 RC：本地 gofmt/test/vet/build 与 daemon curl smoke 已通过；release notes 草案已准备
+Next：如需远程发布，需用户显式授权创建 tag / push / GitHub Release
 ```
 
 ---
@@ -240,7 +241,7 @@ Slice 1 边界记录：
 RunService 支持读取已有 run 的 summary/detail/report/artifacts/events。
 PluginService 复用现有 plugins.Manager / plugins.Doctor。
 VersionService 复用 runtime doctor。
-ApprovalService / ScanService / JobManager 在 Slice 1 时仍待实现。
+ApprovalService / ScanService / JobManager 未纳入 Slice 1；后续 Slice 已完成。
 ```
 
 v0.1.2 Core Service API Slice 2 验证已通过：
@@ -254,13 +255,13 @@ go vet ./...
 go build -ldflags "-X main.version=v0.1.2-services-slice2-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
 ```
 
-当前边界：
+Slice 2 当时边界：
 
 ```text
 ApprovalService 已支持 list / approve / deny / resume-approved。
 approve/deny 复用现有 approvals runtime，并支持 service/API 传入 operator/comment。
 ScanService 当前只提供 StartWebScan request/response DTO 与 target/scope 校验骨架。
-异步执行、job status/cancel、daemon command 和 HTTP handler 仍待实现。
+异步执行、job status/cancel、daemon command 和 HTTP handler 已在后续 daemon milestones 完成。
 ```
 
 v0.1.2 Daemon Skeleton 验证已通过：
@@ -335,6 +336,17 @@ go vet ./...
 go build -ldflags "-X main.version=v0.1.2-daemon-jobs-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
 ```
 
+v0.1.2 Daemon curl smoke test 已通过：
+
+```text
+v0.1.2 daemon curl smoke passed
+commit=0b39198
+base_url=http://127.0.0.1:18787
+target=http://127.0.0.1:18080
+run_id=job_20260523_233011_f4ad61
+approval_run_id=job_20260523_233014_1e42ec
+```
+
 ---
 
 ## 4. 里程碑状态
@@ -352,11 +364,11 @@ go build -ldflags "-X main.version=v0.1.2-daemon-jobs-local -X main.commit=$(git
 | M8 MVP Release Candidate | 完成 | README/限制/示例/test/vet/build/smoke/GoReleaser snapshot 已完成 |
 | M9 MVP v0.1 Release | 本地准备完成 | 本地 git/origin/release notes/GoReleaser snapshot 完成；本地 tag 指向本提交，尚未 push/release 到 GitHub |
 | M10 v0.1.1 RC | 本地准备完成 | v0.1.1 P0/P1、release notes、test/vet/build 本地验证完成；尚未创建 tag、push 或 GitHub Release |
-| M11 v0.1.2 Planning | 完成 | 选择 Local Daemon / Web API foundation；计划文档已新增，尚未实现 |
-| M12 v0.1.2 Implementation Breakdown | 完成 | 工作流、tickets、依赖、验收、测试与提交节奏已拆解；尚未实现 |
+| M11 v0.1.2 Planning | 完成 | 选择 Local Daemon / Web API foundation；计划文档已新增，后续实现已推进至 M20 |
+| M12 v0.1.2 Implementation Breakdown | 完成 | 工作流、tickets、依赖、验收、测试与提交节奏已拆解，后续实现已推进至 M20 |
 | M13 v0.1.2 API Contract Draft | 完成 | HTTP API envelope、auth、错误码、endpoint 与请求/响应示例已形成草案；scan/job API 已实现 |
-| M14 v0.1.2 Daemon Smoke Test Draft | 完成 | daemon 启动、认证、scan/job/report/artifact/event/approval/cancel smoke 流程已形成草案；curl smoke 待本地执行 |
-| M15 v0.1.2 Core Service Slice 1 | 完成 | ServiceError、VersionService、PluginService、RunService 只读能力已实现并测试；daemon 尚未实现 |
+| M14 v0.1.2 Daemon Smoke Test Draft | 完成 | daemon 启动、认证、scan/job/report/artifact/event/approval/cancel smoke 流程已形成草案；curl smoke 已本地通过 |
+| M15 v0.1.2 Core Service Slice 1 | 完成 | ServiceError、VersionService、PluginService、RunService 只读能力已实现并测试；daemon 后续 milestones 已完成 |
 | M16 v0.1.2 Core Service Slice 2 | 完成 | ApprovalService、ResumeApproved 与 ScanService 校验骨架已实现并测试；daemon job manager 已在 M20 完成 |
 | M17 v0.1.2 Daemon Skeleton | 完成 | cyberagent daemon、token auth、response envelope、healthz/version API 已实现并测试；后续业务 API 已逐步接入 |
 | M18 v0.1.2 Daemon Read-only API | 完成 | doctor/plugins/runs/report/artifacts/events/approvals list 已接入并测试；approval write 已在 M19 完成，scan/job API 已在 M20 完成 |
@@ -425,7 +437,8 @@ go build -ldflags "-X main.version=v0.1.2-daemon-jobs-local -X main.commit=$(git
 [x] approval approve/deny/resume-approved API
 [x] scan web async job API
 [x] job status/cancel MVP
-[ ] daemon smoke test 本地验证通过
+[x] daemon smoke test 本地验证通过
+[x] v0.1.2 release notes：docs/release-notes/v0.1.2.md
 ```
 
 ### 后置能力

@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：smoke test 草案完成；daemon P0 API 已实现并由 Go 测试覆盖；完整 curl smoke 待执行
+状态：smoke test 完成；daemon P0 API 已实现并由 Go 测试与完整 curl smoke 覆盖
 
 ---
 
@@ -785,17 +785,17 @@ v0.1.2 daemon smoke test 通过需要满足：
 [x] 无 token / 错误 token 被拒绝
 [x] Authorization token 不写入 daemon log
 [x] health/version/doctor/plugins API 返回 ok envelope
-[x] scan web API 可异步启动 safe scan（Go 测试覆盖；curl smoke 待执行）
-[x] job status 可从 running 进入 succeeded（Go 测试覆盖；curl smoke 待执行）
+[x] scan web API 可异步启动 safe scan
+[x] job status 可从 running 进入 succeeded
 [x] run detail 可读取
 [x] report json/md 可读取
 [x] artifacts index 可读取
 [x] events cursor polling 可读取
-[x] 缺少 scope 的 scan 被 scope_required 拒绝（Go 测试覆盖；curl smoke 待执行）
+[x] 缺少 scope 的 scan 被 scope_required 拒绝
 [x] path traversal 请求被拒绝
 [x] approvals list/approve 与 CLI 状态互通
 [x] resume-approved 复用 CLI replay 语义
-[x] cancel endpoint 对不存在/已完成/running job 给出结构化响应（Go 测试覆盖；curl smoke 待执行）
+[x] cancel endpoint 对不存在/已完成/running job 给出结构化响应
 ```
 
 ---
