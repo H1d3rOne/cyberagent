@@ -1,8 +1,8 @@
 # CyberAgent Roadmap
 
 版本：v0.1  
-日期：2026-05-23  
-状态：路线图规划完成，未进入正式实现排期
+日期：2026-05-24  
+状态：v0.1.0 本地发布准备完成，v0.1.1 进入计划阶段
 
 ---
 
@@ -25,12 +25,13 @@
 ## 2. 阶段总览
 
 ```text
-Phase 0：需求与架构规划
-Phase 1：MVP Core Runtime
-Phase 2：内置 Web/API 分析闭环
-Phase 3：插件系统与可选工具
-Phase 4：TUI Run Viewer
-Phase 5：MVP Stabilization
+Phase 0：需求与架构规划（完成）
+Phase 1：MVP Core Runtime（完成）
+Phase 2：内置 Web/API 分析闭环（完成）
+Phase 3：插件系统与可选工具（MVP 完成）
+Phase 4：TUI Run Viewer（完成）
+Phase 5：MVP Stabilization（v0.1.0 本地完成）
+Phase 5.1：v0.1.1 Stabilization / HITL / Plugin Hardening（当前下一阶段）
 Phase 6：LLM 增强
 Phase 7：Desktop 本地工作台
 Phase 8：Local API / Daemon
@@ -267,6 +268,41 @@ go test ./... 通过。
 示例目标可完整跑通。
 报告可被人工复现。
 ```
+
+状态：v0.1.0 本地完成。
+
+---
+
+## 8.1 Phase 5.1：v0.1.1 Stabilization / HITL / Plugin Hardening
+
+目标：
+
+```text
+在不扩大默认扫描强度的前提下，增强工程稳定性、人工审批、插件边界和 run 复现能力。
+```
+
+范围：
+
+```text
+CI / release hygiene
+HITL Approval MVP
+Plugin timeout/output/schema/error taxonomy
+run metadata / effective config / plugin snapshot
+CLI/TUI/report UX polish
+smoke fixture expansion
+```
+
+非目标：
+
+```text
+Desktop/Wails
+Web 多用户平台
+Remote Runner
+默认启用外部扫描插件
+高风险自动利用链
+```
+
+详细计划：`docs/CyberAgent-v0.1.1-Plan.md`
 
 ---
 

@@ -2,7 +2,7 @@
 
 版本：v0.1.0  
 日期：2026-05-24  
-状态：MVP 实现进度快照
+状态：MVP 实现进度快照；v0.1.1 下一阶段计划已补充
 
 ---
 
@@ -14,6 +14,7 @@ MVP 主链路：已跑通
 插件系统 MVP：已接入三类声明插件，其中 ffuf-low-rate 在 safe profile 下默认审批跳过
 MVP Stabilization：本地验证通过
 MVP Release：本地 release 准备完成；远程发布未执行
+Next：v0.1.1 stabilization / HITL / plugin hardening / reproducibility
 ```
 
 ---
@@ -176,10 +177,22 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [ ] 发布 GitHub Release 二进制产物
 ```
 
+### v0.1.1 下一阶段
+
+```text
+[x] 生成 v0.1.1 计划文档：docs/CyberAgent-v0.1.1-Plan.md
+[ ] CI: test/vet/build
+[ ] HITL approval MVP
+[ ] resume approved step
+[ ] plugin timeout/output/schema hardening
+[ ] run metadata/effective config/plugin snapshot
+[ ] CLI/TUI/report UX polish
+[ ] v0.1.1 smoke test 文档
+```
+
 ### 后置能力
 
 ```text
-[ ] HITL 审批恢复执行 ffuf-low-rate
 [ ] Desktop/Wails
 [ ] Local API / Daemon 稳定版
 [ ] Web 多用户平台

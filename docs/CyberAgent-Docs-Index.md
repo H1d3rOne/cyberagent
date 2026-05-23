@@ -1,8 +1,8 @@
 # CyberAgent Documentation Index
 
 版本：v0.1  
-日期：2026-05-23  
-状态：规划与实现状态索引完成
+日期：2026-05-24  
+状态：规划、实现状态与 v0.1.1 计划索引完成
 
 ---
 
@@ -28,6 +28,7 @@
 15. CyberAgent-Planning-Audit.md
 16. CyberAgent-Implementation-Status.md
 17. CyberAgent-Smoke-Test.md
+18. CyberAgent-v0.1.1-Plan.md
 ```
 
 ---
@@ -54,6 +55,7 @@
 | `CyberAgent-Planning-Audit.md` | 规划完成审计与需求映射 |
 | `CyberAgent-Implementation-Status.md` | MVP 实现进度快照与剩余项 |
 | `CyberAgent-Smoke-Test.md` | MVP smoke test 命令与结果记录 |
+| `CyberAgent-v0.1.1-Plan.md` | v0.1.1 稳定性、HITL、插件加固和复现能力计划 |
 
 ---
 
@@ -70,6 +72,8 @@ Plugin: subprocess + JSON/JSONL
 LLM: 增强层，不作为 Core 依赖
 nuclei-safe: 默认不启用
 TUI v1: 只读 run viewer
+Current release: v0.1.0 本地 tag 已创建，远程发布待执行
+Next plan: v0.1.1 stabilization / HITL / plugin hardening / reproducibility
 ```
 
 ---
