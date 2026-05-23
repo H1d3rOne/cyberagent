@@ -209,7 +209,7 @@ P0-08 v0.1.1 smoke test 文档
 [x] P1-03 artifact index hash/size/mime
 [x] P1-04 TUI approvals 只读展示
 [x] P1-05 CLI skipped step 摘要优化
-[ ] P1-06 report 中展示 plugin failure reason
+[x] P1-06 report 中展示 plugin failure reason
 ```
 
 ### P2：可后置
@@ -300,6 +300,9 @@ go test ./internal/interfaces/tui
 
 # P1-05 additional verification
 go test ./internal/interfaces/cli
+
+# P1-06 additional verification
+go test ./internal/core/reporting ./internal/core/runtime ./internal/interfaces/cli
 ```
 
 P0-05 当前边界：
@@ -378,6 +381,17 @@ replay 输出 events 前会输出 skipped steps 摘要。
 该摘要只读，不改变 run 状态。
 ```
 
+P1-06 当前边界：
+
+```text
+report.md 在存在未解决的 plugin skipped/failed 状态时增加 Plugin Execution Notes。
+report.json 增加 plugin_failures 机器可读字段。
+plugin_failures 来源于 commands.log 中每个 plugin step 的最新 ToolCall 状态。
+展示 tool_call_id / step_id / tool_name / status / error_class / reason / policy_decision / approval_request_id / runtime / risk。
+replay --resume-approved 成功后会重新生成报告；若该 plugin step 最新状态为 succeeded，旧的 policy_skipped failure 不再展示。
+该能力只解释已记录的 plugin 执行/跳过原因，不重新执行插件、不改变审批状态。
+```
+
 ---
 
 ## 5. 建议里程碑
@@ -435,7 +449,7 @@ LLM 仍是增强层，不参与 P0 默认路径。
 [x] plugin timeout/output/schema 错误可审计
 [x] run metadata/effective config/plugin snapshot 可查看
 [x] smoke test 通过并写入文档
-[ ] report/replay 能解释 skipped/failed/approved 状态
+[x] report/replay 能解释 skipped/failed/approved 状态
 [ ] 本地 tag v0.1.1 可准备
 ```
 

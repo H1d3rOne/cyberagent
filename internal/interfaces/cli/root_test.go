@@ -288,8 +288,24 @@ func TestReplayResumeApprovedFFUFLowRate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read report.md: %v", err)
 	}
-	if !strings.Contains(string(reportMD), "plugin/ffuf-low-rate") || strings.Contains(string(reportMD), "step_optional_ffuf_low_rate_001,") {
-		t.Fatalf("report.md not regenerated as expected: %s", reportMD)
+	reportText := string(reportMD)
+	if !strings.Contains(reportText, "plugin/ffuf-low-rate") ||
+		strings.Contains(reportText, "step_optional_ffuf_low_rate_001,") ||
+		strings.Contains(reportText, "Plugin Execution Notes") ||
+		strings.Contains(reportText, "policy_skipped") ||
+		strings.Contains(reportText, "step_requires_approval") {
+		t.Fatalf("report.md not regenerated as expected: %s", reportText)
+	}
+	var reportJSON struct {
+		PluginFailures []struct {
+			ToolName   string `json:"tool_name"`
+			ErrorClass string `json:"error_class"`
+			Reason     string `json:"reason"`
+		} `json:"plugin_failures"`
+	}
+	readJSON(t, filepath.Join(runDir, "reports", "report.json"), &reportJSON)
+	if len(reportJSON.PluginFailures) != 0 {
+		t.Fatalf("report.json should not contain resolved plugin failures after resume: %#v", reportJSON.PluginFailures)
 	}
 }
 

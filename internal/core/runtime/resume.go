@@ -402,16 +402,21 @@ func updateJobSummaryAndReport(rc resumeContext, findingsTotal int) error {
 	if err := rc.artifactStore.WriteJSON("job.json", *rc.job); err != nil {
 		return fmt.Errorf("write job.json after resume: %w", err)
 	}
+	toolCalls, err := rc.commandRecorder.ReadAll()
+	if err != nil {
+		return fmt.Errorf("read commands for report after resume: %w", err)
+	}
 	if _, err := reporting.Generate(rc.layout.Path, reporting.Input{
-		Job:          *rc.job,
-		Target:       rc.target,
-		Scope:        rc.scope,
-		Plan:         rc.plan,
-		Artifacts:    rc.evidenceIndex.Artifacts,
-		Evidence:     rc.evidenceIndex.Evidence,
-		Findings:     *rc.findings,
-		SkippedSteps: skippedSteps,
-		Limitations:  []string{"Approved ffuf-low-rate step was resumed explicitly with replay --resume-approved."},
+		Job:            *rc.job,
+		Target:         rc.target,
+		Scope:          rc.scope,
+		Plan:           rc.plan,
+		Artifacts:      rc.evidenceIndex.Artifacts,
+		Evidence:       rc.evidenceIndex.Evidence,
+		Findings:       *rc.findings,
+		SkippedSteps:   skippedSteps,
+		PluginFailures: reporting.PluginFailuresFromToolCalls(toolCalls),
+		Limitations:    []string{"Approved ffuf-low-rate step was resumed explicitly with replay --resume-approved."},
 	}); err != nil {
 		return fmt.Errorf("regenerate report after resume: %w", err)
 	}

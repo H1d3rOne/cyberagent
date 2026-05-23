@@ -139,6 +139,7 @@ artifacts/index.json   artifacts 的 sha256 / size_bytes / mime_type / created_a
 默认 stdout 捕获上限 1MiB，stderr 捕获上限 256KiB。
 timeout / output_limit / invalid_output / dependency_missing / policy_skipped / execution_failed 会写入 commands.log 的 error_class。
 插件输出会先校验再记录最终 ToolCall，避免非法输出被误记为 succeeded。
+report.md 会在存在未解决的 plugin skipped/failed 状态时展示 Plugin Execution Notes；report.json 会输出 plugin_failures。
 ```
 
 ## 审批命令

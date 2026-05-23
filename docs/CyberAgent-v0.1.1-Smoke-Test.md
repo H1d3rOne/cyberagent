@@ -231,6 +231,14 @@ assert ffuf_calls
 assert ffuf_calls[-1]["status"] == "skipped"
 assert ffuf_calls[-1]["metadata"]["error_class"] == "policy_skipped"
 assert ffuf_calls[-1]["metadata"]["policy_decision"] == "require_approval"
+report = json.loads((run / "reports/report.json").read_text())
+plugin_failures = report.get("plugin_failures", [])
+assert len(plugin_failures) == 1
+assert plugin_failures[0]["step_id"] == "step_optional_ffuf_low_rate_001"
+assert plugin_failures[0]["tool_name"] == "plugin.ffuf-low-rate"
+assert plugin_failures[0]["error_class"] == "policy_skipped"
+assert plugin_failures[0]["approval_request_id"] == "approval_step_optional_ffuf_low_rate_001"
+assert "Plugin Execution Notes" in (run / "reports/report.md").read_text()
 print("approval smoke assertions passed")
 PY
 ```
@@ -295,6 +303,9 @@ findings = json.loads((run / "findings.json").read_text())
 assert any(c.get("tool_name") == "plugin.ffuf-low-rate" and c.get("status") == "succeeded" for c in commands)
 assert any(f.get("category") == "plugin/ffuf-low-rate" for f in findings)
 assert (run / "artifacts/tool-results/ffuf-low-rate.jsonl").exists()
+report = json.loads((run / "reports/report.json").read_text())
+assert not report.get("plugin_failures", [])
+assert "Plugin Execution Notes" not in (run / "reports/report.md").read_text()
 print("resume-approved smoke assertions passed")
 PY
 ```
@@ -348,6 +359,7 @@ rm -rf "$FAKE_BIN"
 [x] 可选 resume-approved 断言通过
 [x] report / replay 可读
 [x] TUI Approvals 只读展示由 `go test ./internal/interfaces/tui` 覆盖
+[x] report plugin failure reason / plugin_failures 由 `go test ./internal/core/reporting ./internal/core/runtime ./internal/interfaces/cli` 覆盖
 ```
 
 ---
@@ -387,6 +399,7 @@ report / replay readability
 report --format json readability
 TUI approvals read-only tab coverage
 CLI skipped step summary / next actions coverage
+report plugin failure reason / plugin_failures coverage
 plugin hardening unit coverage
 plugins doctor --json machine-readable health output
 ```

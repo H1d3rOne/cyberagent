@@ -236,6 +236,8 @@ cyberagent plugins doctor --json
 report.md 可读。
 report.json 可解析。
 report --format json 可输出已有 report.json。
+存在未解决 plugin skipped/failed 时，report.md 显示 Plugin Execution Notes，report.json 包含 plugin_failures。
+resume-approved 成功后，已解决 plugin step 的旧 failure 不再出现在 report.md/report.json。
 artifacts/index.json 可解析并包含 hash / size / mime / created_at。
 scan/replay 可显示 skipped steps 摘要和 next actions。
 replay 输出可解释每一步状态。

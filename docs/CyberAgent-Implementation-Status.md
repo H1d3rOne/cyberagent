@@ -109,6 +109,7 @@ commands.log audit trail
 state store step lifecycle
 report/evidence/finding output
 scan web / replay skipped steps summary
+report plugin failure reason / plugin_failures output
 TUI run viewer
 ```
 
@@ -148,6 +149,7 @@ ffuf-low-rate approval pending
 approvals approve audit trail
 fake ffuf resume-approved
 CLI skipped step summary 由 go test ./internal/interfaces/cli 覆盖
+report plugin failure reason 由 go test ./internal/core/reporting ./internal/core/runtime ./internal/interfaces/cli 覆盖
 ```
 
 GoReleaser 已通过：
@@ -213,7 +215,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] run metadata/effective config/plugin snapshot
 [x] v0.1.1 smoke test 文档
 [x] plugins doctor --json
-[ ] CLI/TUI/report UX polish（remaining: plugin failure reason）
+[x] CLI/TUI/report UX polish
 ```
 
 ### 后置能力

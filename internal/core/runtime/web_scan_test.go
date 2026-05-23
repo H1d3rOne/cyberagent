@@ -402,7 +402,39 @@ func TestRunWebScanWithFFUFLowRateRequiresApprovalSkipsPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read report.md: %v", err)
 	}
-	if !strings.Contains(string(report), "step_optional_ffuf_low_rate_001") {
+	reportText := string(report)
+	for _, want := range []string{"Plugin Execution Notes", "step_optional_ffuf_low_rate_001", "policy_skipped", "step_requires_approval", "approval_step_optional_ffuf_low_rate_001"} {
+		if !strings.Contains(reportText, want) {
+			t.Fatalf("report.md missing plugin failure detail %q: %s", want, reportText)
+		}
+	}
+
+	var reportJSON struct {
+		PluginFailures []struct {
+			StepID            string           `json:"step_id"`
+			ToolName          string           `json:"tool_name"`
+			Status            contracts.Status `json:"status"`
+			ErrorClass        string           `json:"error_class"`
+			Reason            string           `json:"reason"`
+			PolicyDecision    string           `json:"policy_decision"`
+			ApprovalRequestID string           `json:"approval_request_id"`
+		} `json:"plugin_failures"`
+	}
+	readJSON(t, filepath.Join(out, "reports", "report.json"), &reportJSON)
+	if len(reportJSON.PluginFailures) != 1 {
+		t.Fatalf("report.json plugin_failures len = %d, want 1: %#v", len(reportJSON.PluginFailures), reportJSON.PluginFailures)
+	}
+	failure := reportJSON.PluginFailures[0]
+	if failure.StepID != "step_optional_ffuf_low_rate_001" ||
+		failure.ToolName != "plugin.ffuf-low-rate" ||
+		failure.Status != contracts.StatusSkipped ||
+		failure.ErrorClass != "policy_skipped" ||
+		failure.PolicyDecision != string(contracts.PolicyRequireApproval) ||
+		failure.ApprovalRequestID != "approval_step_optional_ffuf_low_rate_001" ||
+		!strings.Contains(failure.Reason, "step_requires_approval") {
+		t.Fatalf("unexpected report.json plugin failure: %#v", failure)
+	}
+	if !strings.Contains(reportText, "step_optional_ffuf_low_rate_001") {
 		t.Fatalf("report.md missing skipped ffuf step: %s", report)
 	}
 }

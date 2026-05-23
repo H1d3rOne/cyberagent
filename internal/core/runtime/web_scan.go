@@ -611,7 +611,21 @@ func RunWebScan(ctx context.Context, req WebScanRequest) (WebScanResult, error) 
 	job.FinishedAt = &finished
 	job.Summary.FindingsTotal = len(findingsOut)
 
-	reportOutput, err := reporting.Generate(layout.Path, reporting.Input{Job: job, Target: target, Scope: scope, Plan: pln.Plan, Artifacts: artifactsOut, Evidence: evidenceOut, Findings: findingsOut, SkippedSteps: skipped})
+	toolCalls, err := commandRecorder.ReadAll()
+	if err != nil {
+		return WebScanResult{}, fmt.Errorf("read commands for report: %w", err)
+	}
+	reportOutput, err := reporting.Generate(layout.Path, reporting.Input{
+		Job:            job,
+		Target:         target,
+		Scope:          scope,
+		Plan:           pln.Plan,
+		Artifacts:      artifactsOut,
+		Evidence:       evidenceOut,
+		Findings:       findingsOut,
+		SkippedSteps:   skipped,
+		PluginFailures: reporting.PluginFailuresFromToolCalls(toolCalls),
+	})
 	if err != nil {
 		return WebScanResult{}, err
 	}

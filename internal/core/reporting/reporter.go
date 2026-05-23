@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,16 +16,31 @@ import (
 
 // Input contains all data needed to generate a report.
 type Input struct {
-	Job           contracts.Job
-	Target        contracts.Target
-	Scope         contracts.Scope
-	Plan          contracts.Plan
-	Artifacts     []contracts.Artifact
-	Evidence      []contracts.Evidence
-	Findings      []contracts.Finding
-	SkippedSteps  []string
-	Limitations   []string
-	GeneratedTime time.Time
+	Job            contracts.Job
+	Target         contracts.Target
+	Scope          contracts.Scope
+	Plan           contracts.Plan
+	Artifacts      []contracts.Artifact
+	Evidence       []contracts.Evidence
+	Findings       []contracts.Finding
+	SkippedSteps   []string
+	PluginFailures []PluginFailure
+	Limitations    []string
+	GeneratedTime  time.Time
+}
+
+// PluginFailure summarizes the latest non-successful state for one plugin step.
+type PluginFailure struct {
+	ToolCallID        string           `json:"tool_call_id"`
+	StepID            string           `json:"step_id"`
+	ToolName          string           `json:"tool_name"`
+	Status            contracts.Status `json:"status"`
+	ErrorClass        string           `json:"error_class,omitempty"`
+	Reason            string           `json:"reason,omitempty"`
+	PolicyDecision    string           `json:"policy_decision,omitempty"`
+	ApprovalRequestID string           `json:"approval_request_id,omitempty"`
+	Runtime           string           `json:"runtime,omitempty"`
+	Risk              string           `json:"risk,omitempty"`
 }
 
 // Output describes generated report files.
@@ -53,14 +69,15 @@ func Generate(workspace string, input Input) (Output, error) {
 
 	jsonPath := filepath.Join(reportDir, "report.json")
 	reportData := struct {
-		Job       contracts.Job        `json:"job"`
-		Target    contracts.Target     `json:"target"`
-		Scope     contracts.Scope      `json:"scope"`
-		Plan      contracts.Plan       `json:"plan"`
-		Evidence  []contracts.Evidence `json:"evidence"`
-		Findings  []contracts.Finding  `json:"findings"`
-		Artifacts []contracts.Artifact `json:"artifacts"`
-	}{input.Job, input.Target, input.Scope, input.Plan, input.Evidence, input.Findings, input.Artifacts}
+		Job            contracts.Job        `json:"job"`
+		Target         contracts.Target     `json:"target"`
+		Scope          contracts.Scope      `json:"scope"`
+		Plan           contracts.Plan       `json:"plan"`
+		Evidence       []contracts.Evidence `json:"evidence"`
+		Findings       []contracts.Finding  `json:"findings"`
+		Artifacts      []contracts.Artifact `json:"artifacts"`
+		PluginFailures []PluginFailure      `json:"plugin_failures,omitempty"`
+	}{input.Job, input.Target, input.Scope, input.Plan, input.Evidence, input.Findings, input.Artifacts, input.PluginFailures}
 	encoded, err := json.MarshalIndent(reportData, "", "  ")
 	if err != nil {
 		return Output{}, fmt.Errorf("marshal report.json: %w", err)
@@ -146,7 +163,28 @@ func renderMarkdown(input Input) string {
 		fmt.Fprintf(&b, "- `%s` → `%s` (%s, %d bytes)\n", artifact.ID, artifact.Path, artifact.Type, artifact.SizeBytes)
 	}
 
-	fmt.Fprintf(&b, "\n## 6. Limitations\n\n")
+	if len(input.PluginFailures) > 0 {
+		fmt.Fprintf(&b, "\n## 6. Plugin Execution Notes\n\n")
+		for _, failure := range input.PluginFailures {
+			fmt.Fprintf(&b, "- `%s` step `%s` status `%s`", failure.ToolName, failure.StepID, failure.Status)
+			if failure.ErrorClass != "" {
+				fmt.Fprintf(&b, " class `%s`", failure.ErrorClass)
+			}
+			if failure.Reason != "" {
+				fmt.Fprintf(&b, ": %s", failure.Reason)
+			}
+			fmt.Fprintf(&b, "\n")
+			if failure.PolicyDecision != "" || failure.ApprovalRequestID != "" {
+				fmt.Fprintf(&b, "  - policy: `%s`; approval: `%s`\n", emptyReportField(failure.PolicyDecision), emptyReportField(failure.ApprovalRequestID))
+			}
+		}
+	}
+
+	limitationsSection := 6
+	if len(input.PluginFailures) > 0 {
+		limitationsSection = 7
+	}
+	fmt.Fprintf(&b, "\n## %d. Limitations\n\n", limitationsSection)
 	limitations := input.Limitations
 	if len(limitations) == 0 {
 		limitations = []string{"Only low-risk built-in checks were executed unless optional plugins were explicitly enabled."}
@@ -160,4 +198,64 @@ func renderMarkdown(input Input) string {
 // BuildEvidenceIndex creates a findings.EvidenceIndex from slices.
 func BuildEvidenceIndex(artifacts []contracts.Artifact, evidence []contracts.Evidence) findings.EvidenceIndex {
 	return findings.EvidenceIndex{Artifacts: artifacts, Evidence: evidence}
+}
+
+// PluginFailuresFromToolCalls returns the latest non-successful plugin call per plugin step.
+func PluginFailuresFromToolCalls(calls []contracts.ToolCall) []PluginFailure {
+	type latestCall struct {
+		call  contracts.ToolCall
+		index int
+	}
+	latest := map[string]latestCall{}
+	for i, call := range calls {
+		if call.Kind != contracts.ToolCallKindPlugin && !strings.HasPrefix(call.ToolName, "plugin.") {
+			continue
+		}
+		key := call.StepID + "\x00" + call.ToolName
+		latest[key] = latestCall{call: call, index: i}
+	}
+
+	ordered := make([]latestCall, 0, len(latest))
+	for _, item := range latest {
+		if item.call.Status == contracts.StatusSucceeded {
+			continue
+		}
+		ordered = append(ordered, item)
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].index < ordered[j].index })
+
+	failures := make([]PluginFailure, 0, len(ordered))
+	for _, item := range ordered {
+		call := item.call
+		failures = append(failures, PluginFailure{
+			ToolCallID:        call.ID,
+			StepID:            call.StepID,
+			ToolName:          call.ToolName,
+			Status:            call.Status,
+			ErrorClass:        metadataString(call.Metadata, "error_class"),
+			Reason:            call.Error,
+			PolicyDecision:    metadataString(call.Metadata, "policy_decision"),
+			ApprovalRequestID: metadataString(call.Metadata, "approval_request_id"),
+			Runtime:           metadataString(call.Metadata, "runtime"),
+			Risk:              metadataString(call.Metadata, "risk"),
+		})
+	}
+	return failures
+}
+
+func metadataString(metadata contracts.Metadata, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	if value, ok := metadata[key]; ok && value != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	return ""
+}
+
+func emptyReportField(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }
