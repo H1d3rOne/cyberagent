@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：计划完成，待实现
+状态：计划完成；Core Service API Slice 2 已完成；daemon/job manager 待实现
 
 ---
 
@@ -401,7 +401,7 @@ P0-12 daemon smoke test 文档与本地验证
 
 ```text
 [x] P0-01 Slice 1：ServiceError / VersionService / PluginService / RunService 只读能力
-[ ] P0-01 Slice 2：ApprovalService / ResumeApproved / ScanService
+[x] P0-01 Slice 2：ApprovalService / ResumeApproved / ScanService validation skeleton
 [ ] P0-02+ daemon / auth / HTTP API / job manager
 ```
 

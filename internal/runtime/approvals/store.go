@@ -21,6 +21,12 @@ const (
 	DecisionDeny    Decision = "deny"
 )
 
+// ResolutionMetadata captures optional operator context for an approval decision.
+type ResolutionMetadata struct {
+	ResolvedBy string
+	Comment    string
+}
+
 // Store manages persisted approval requests for one run workspace.
 type Store struct {
 	RunDir string
@@ -54,6 +60,12 @@ func (s Store) List() ([]contracts.HITLRequest, error) {
 // Resolve marks one pending approval as approved or rejected.
 // idOrStepID may be either the HITL request ID or the Step ID.
 func (s Store) Resolve(idOrStepID string, decision Decision) (contracts.HITLRequest, error) {
+	return s.ResolveWithMetadata(idOrStepID, decision, ResolutionMetadata{ResolvedBy: "cli"})
+}
+
+// ResolveWithMetadata marks one pending approval as approved or rejected and records operator context.
+// idOrStepID may be either the HITL request ID or the Step ID.
+func (s Store) ResolveWithMetadata(idOrStepID string, decision Decision, metadata ResolutionMetadata) (contracts.HITLRequest, error) {
 	if strings.TrimSpace(idOrStepID) == "" {
 		return contracts.HITLRequest{}, fmt.Errorf("approval id or step id is required")
 	}
@@ -85,10 +97,17 @@ func (s Store) Resolve(idOrStepID string, decision Decision) (contracts.HITLRequ
 	} else {
 		requests[idx].Status = contracts.HITLRejected
 	}
+	resolvedBy := strings.TrimSpace(metadata.ResolvedBy)
+	if resolvedBy == "" {
+		resolvedBy = "cli"
+	}
 	requests[idx].ResolvedAt = &resolved
 	requests[idx].Resolution = map[string]any{
 		"decision":    string(decision),
-		"resolved_by": "cli",
+		"resolved_by": resolvedBy,
+	}
+	if strings.TrimSpace(metadata.Comment) != "" {
+		requests[idx].Resolution["comment"] = metadata.Comment
 	}
 
 	if err := s.writeAll(requests); err != nil {

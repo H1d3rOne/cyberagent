@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：实施拆解完成，待实现
+状态：实施拆解完成；Core Service API Slice 2 已完成；daemon/job manager 待实现
 
 ---
 
@@ -160,7 +160,7 @@ P0 endpoint 和安全边界清晰。
 ```text
 [x] SVC-01 定义 service 层通用错误类型与错误 code
 [x] SVC-02 定义 RunService request/response DTO
-[~] SVC-03 定义 VersionService / PluginService / ApprovalService / ScanService DTO
+[x] SVC-03 定义 VersionService / PluginService / ApprovalService / ScanService DTO
 [x] SVC-04 实现 VersionService：version / doctor 数据适配
 [x] SVC-05 实现 PluginService：plugins list / doctor 结构化返回
 [x] SVC-06 实现 RunService.ListRuns：基于 runs-dir 和 metadata 快照
@@ -168,9 +168,9 @@ P0 endpoint 和安全边界清晰。
 [x] SVC-08 实现 RunService.GetReport：读取 report.md/report.json
 [x] SVC-09 实现 RunService.GetArtifactIndex：读取 artifacts/index.json
 [x] SVC-10 实现 RunService.GetEvents：cursor + limit 读取 events.jsonl
-[ ] SVC-11 实现 ApprovalService：list/approve/deny 复用现有 approvals runtime
-[ ] SVC-12 实现 ApprovalService.ResumeApproved：复用 replay --resume-approved 业务路径
-[ ] SVC-13 实现 ScanService.StartWebScan：先只定义接口，执行接入放 WF-5
+[x] SVC-11 实现 ApprovalService：list/approve/deny 复用现有 approvals runtime
+[x] SVC-12 实现 ApprovalService.ResumeApproved：复用 replay --resume-approved 业务路径
+[x] SVC-13 实现 ScanService.StartWebScan：接口与 target/scope 校验骨架；异步执行接入放 WF-6
 ```
 
 当前实现记录：
@@ -178,7 +178,11 @@ P0 endpoint 和安全边界清晰。
 ```text
 Core Service Slice 1 已完成：errors.go / version.go / plugins.go / runs.go。
 对应测试：version_test.go / plugins_test.go / runs_test.go。
-本 slice 不包含 daemon、HTTP handler、ApprovalService、ScanService 或 JobManager。
+Slice 1 不包含 daemon、HTTP handler、ApprovalService、ScanService 或 JobManager。
+Core Service Slice 2 已完成：approvals.go / scan.go。
+对应测试：approvals_test.go / scan_test.go。
+ApprovalService 已覆盖 list / approve / deny / resume-approved；ScanService 当前只做请求 DTO 与 target/scope 校验，不执行异步扫描。
+daemon、HTTP handler 与 JobManager 仍待后续 slice 实现。
 ```
 
 依赖：
@@ -666,7 +670,7 @@ approval smoke test 预期流程：
 ## 12. v0.1.2 完成定义
 
 ```text
-[ ] Core Service API P0 完成
+[x] Core Service API P0 抽象完成
 [ ] daemon command 可启动
 [ ] 默认 127.0.0.1 + token auth 生效
 [ ] 只读 API 可读取已有 run/report/artifact/events

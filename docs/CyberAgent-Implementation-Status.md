@@ -2,7 +2,7 @@
 
 版本：v0.1.2 Implementation
 日期：2026-05-24
-状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Core Service API Slice 1 完成
+状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Core Service API Slice 2 完成
 
 ---
 
@@ -16,8 +16,8 @@ MVP Stabilization：本地验证通过
 MVP Release：v0.1.0 本地 release 准备完成；远程发布未执行
 v0.1.1 RC：本地实现、文档、测试、release notes 已准备；tag/push/GitHub Release 未执行
 v0.1.2 Planning：计划、实施拆解、API Contract 与 daemon smoke test 草案已完成
-v0.1.2 Implementation：Core Service API Slice 1 已完成；daemon 尚未实现
-Next：继续 Core Service API Slice 2（ApprovalService / ScanService）或进入 daemon skeleton
+v0.1.2 Implementation：Core Service API Slice 2 已完成；daemon 尚未实现
+Next：进入 daemon skeleton：cyberagent daemon / local HTTP router / auth / response envelope
 ```
 
 ---
@@ -64,9 +64,10 @@ Next：继续 Core Service API Slice 2（ApprovalService / ScanService）或进�
 [x] RunService: ListRuns / GetRun / GetRunSummary
 [x] RunService: GetReport / GetArtifactIndex / GetEvents cursor polling
 [x] RunService path traversal / missing run 错误映射测试
-[ ] ApprovalService: list / approve / deny
-[ ] ApprovalService: resume-approved
-[ ] ScanService: StartWebScan / job 接入
+[x] ApprovalService: list / approve / deny
+[x] ApprovalService: resume-approved
+[x] ScanService: StartWebScan validation skeleton
+[ ] ScanService: async job manager execution
 ```
 
 ### Builtin Web/API Tools
@@ -205,7 +206,7 @@ go vet ./...
 go build -ldflags "-X main.version=v0.1.2-services-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
 ```
 
-当前边界：
+Slice 1 边界记录：
 
 ```text
 已新增 internal/core/services，仅提供内部 service 层能力。
@@ -213,7 +214,27 @@ go build -ldflags "-X main.version=v0.1.2-services-local -X main.commit=$(git re
 RunService 支持读取已有 run 的 summary/detail/report/artifacts/events。
 PluginService 复用现有 plugins.Manager / plugins.Doctor。
 VersionService 复用 runtime doctor。
-ApprovalService / ScanService / JobManager 仍待实现。
+ApprovalService / ScanService / JobManager 在 Slice 1 时仍待实现。
+```
+
+v0.1.2 Core Service API Slice 2 验证已通过：
+
+```bash
+gofmt -w internal/core/services internal/runtime/approvals
+go test ./internal/core/services ./internal/runtime/approvals
+go test ./...
+test -z "$(gofmt -l cmd internal)"
+go vet ./...
+go build -ldflags "-X main.version=v0.1.2-services-slice2-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
+```
+
+当前边界：
+
+```text
+ApprovalService 已支持 list / approve / deny / resume-approved。
+approve/deny 复用现有 approvals runtime，并支持 service/API 传入 operator/comment。
+ScanService 当前只提供 StartWebScan request/response DTO 与 target/scope 校验骨架。
+异步执行、job status/cancel、daemon command 和 HTTP handler 仍待实现。
 ```
 
 ---
@@ -238,6 +259,7 @@ ApprovalService / ScanService / JobManager 仍待实现。
 | M13 v0.1.2 API Contract Draft | 完成 | HTTP API envelope、auth、错误码、endpoint 与请求/响应示例已形成草案；尚未实现 |
 | M14 v0.1.2 Daemon Smoke Test Draft | 完成 | daemon 启动、认证、scan/job/report/artifact/event/approval/cancel smoke 流程已形成草案；尚未实现 |
 | M15 v0.1.2 Core Service Slice 1 | 完成 | ServiceError、VersionService、PluginService、RunService 只读能力已实现并测试；daemon 尚未实现 |
+| M16 v0.1.2 Core Service Slice 2 | 完成 | ApprovalService、ResumeApproved 与 ScanService 校验骨架已实现并测试；daemon/job manager 尚未实现 |
 
 ---
 
@@ -292,7 +314,7 @@ ApprovalService / ScanService / JobManager 仍待实现。
 [x] 生成 v0.1.2 API Contract 草案：docs/api/v0.1.2-api-contract.md
 [x] 生成 v0.1.2 daemon smoke test 草案：docs/CyberAgent-v0.1.2-Daemon-Smoke-Test.md
 [x] Core Service API Slice 1：ServiceError / VersionService / PluginService / RunService 只读能力
-[ ] Core Service API Slice 2：ApprovalService / ResumeApproved / ScanService 接口
+[x] Core Service API Slice 2：ApprovalService / ResumeApproved / ScanService validation skeleton
 [ ] cyberagent daemon 命令
 [ ] 本地 token auth / 127.0.0.1 默认监听
 [ ] run/report/artifact/event 查询 API
