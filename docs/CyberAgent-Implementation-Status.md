@@ -32,6 +32,7 @@ Next：v0.1.1 stabilization / HITL / plugin hardening / reproducibility
 [x] cyberagent scan web
 [x] cyberagent report <run-dir> --format md|json
 [x] cyberagent replay <run-dir>
+[x] scan web / replay skipped steps 摘要与 next actions
 [x] cyberagent tui <run-dir>（Plan / Events / Approvals / Evidence / Findings / Report）
 ```
 
@@ -107,6 +108,7 @@ run metadata / effective config / plugin snapshot 可复现快照
 commands.log audit trail
 state store step lifecycle
 report/evidence/finding output
+scan web / replay skipped steps summary
 TUI run viewer
 ```
 
@@ -145,6 +147,7 @@ no-scope rejection
 ffuf-low-rate approval pending
 approvals approve audit trail
 fake ffuf resume-approved
+CLI skipped step summary 由 go test ./internal/interfaces/cli 覆盖
 ```
 
 GoReleaser 已通过：
@@ -210,7 +213,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] run metadata/effective config/plugin snapshot
 [x] v0.1.1 smoke test 文档
 [x] plugins doctor --json
-[ ] CLI/TUI/report UX polish（remaining: skipped summary / plugin failure reason）
+[ ] CLI/TUI/report UX polish（remaining: plugin failure reason）
 ```
 
 ### 后置能力

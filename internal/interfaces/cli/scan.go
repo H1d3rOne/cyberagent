@@ -89,6 +89,11 @@ func newScanCommand(build coreruntime.BuildInfo) *cobra.Command {
 			fmt.Fprintf(outWriter, "workspace: %s\n", result.Workspace)
 			fmt.Fprintf(outWriter, "findings: %d\n", len(result.Findings))
 			fmt.Fprintf(outWriter, "report: %s\n", result.ReportMD)
+			if written, err := writeSkippedStepSummary(outWriter, result.Workspace, result.Job.ID); err != nil {
+				return fmt.Errorf("write skipped summary: %w", err)
+			} else if written {
+				fmt.Fprintln(outWriter)
+			}
 			logger.Debug("scan web: evidence=%d artifacts=%d", len(result.Evidence), len(result.Artifacts))
 			return nil
 		},

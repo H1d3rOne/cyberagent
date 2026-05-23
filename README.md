@@ -161,6 +161,8 @@ approvals deny      将 pending 请求标记为 rejected，并写入 events.json
 replay --resume-approved  恢复执行已 approved 的可恢复 step，并继续 replay events.jsonl
 ```
 
+`scan web` / `replay` 会在存在 skipped steps 时输出摘要和 next actions，方便直接进入 `approvals list`、`approvals approve` 或 `replay --resume-approved`。
+
 当前 v0.1.1 P0-05 只支持恢复执行 approved 的 `ffuf-low-rate` step；其他 approved step 会明确标记为 skipped/unsupported，不会隐式执行。
 
 ## 内置 Web 分析能力

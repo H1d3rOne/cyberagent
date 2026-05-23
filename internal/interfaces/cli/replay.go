@@ -35,6 +35,12 @@ func newReplayCommand() *cobra.Command {
 				fmt.Fprintln(out)
 			}
 
+			if written, err := writeSkippedStepSummary(out, args[0], ""); err != nil {
+				return fmt.Errorf("write skipped summary: %w", err)
+			} else if written {
+				fmt.Fprintln(out)
+			}
+
 			eventsPath := filepath.Join(args[0], "events.jsonl")
 			file, err := os.Open(eventsPath)
 			if err != nil {

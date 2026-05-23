@@ -386,6 +386,7 @@ fake ffuf resume-approved
 report / replay readability
 report --format json readability
 TUI approvals read-only tab coverage
+CLI skipped step summary / next actions coverage
 plugin hardening unit coverage
 plugins doctor --json machine-readable health output
 ```

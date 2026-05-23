@@ -116,9 +116,14 @@ func TestApprovalsCommands(t *testing.T) {
 	defer server.Close()
 
 	runDir := filepath.Join(t.TempDir(), "run_approvals")
-	_, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "scan", "web", "--target", server.URL, "--scope", server.URL, "--out", runDir, "--profile", "safe", "--use-plugin", "ffuf-low-rate")
+	scanOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "scan", "web", "--target", server.URL, "--scope", server.URL, "--out", runDir, "--profile", "safe", "--use-plugin", "ffuf-low-rate")
 	if err != nil {
 		t.Fatalf("scan web with ffuf-low-rate error = %v", err)
+	}
+	for _, want := range []string{"skipped steps:", "step_optional_ffuf_low_rate_001", "approval_step_optional_ffuf_low_rate_001 (pending)", "cyberagent approvals approve", "cyberagent replay " + runDir + " --resume-approved"} {
+		if !strings.Contains(scanOut, want) {
+			t.Fatalf("scan skipped summary missing %q: %q", want, scanOut)
+		}
 	}
 
 	listOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "approvals", "list", runDir)
@@ -166,6 +171,11 @@ func TestApprovalsCommands(t *testing.T) {
 	}
 	if !strings.Contains(replayOut, "approval.resolved") {
 		t.Fatalf("replay output missing approval.resolved: %q", replayOut)
+	}
+	for _, want := range []string{"skipped steps:", "step_optional_ffuf_low_rate_001", "approval_step_optional_ffuf_low_rate_001 (approved)", "next actions:", "cyberagent replay " + runDir + " --resume-approved"} {
+		if !strings.Contains(replayOut, want) {
+			t.Fatalf("replay skipped summary missing %q: %q", want, replayOut)
+		}
 	}
 
 	calls, err := command.NewRecorder(filepath.Join(runDir, "commands.log")).ReadAll()

@@ -208,7 +208,7 @@ P0-08 v0.1.1 smoke test 文档
 [x] P1-02 report --format json|md
 [x] P1-03 artifact index hash/size/mime
 [x] P1-04 TUI approvals 只读展示
-[ ] P1-05 CLI skipped step 摘要优化
+[x] P1-05 CLI skipped step 摘要优化
 [ ] P1-06 report 中展示 plugin failure reason
 ```
 
@@ -297,6 +297,9 @@ python3 -m json.tool <run-dir>/artifacts/index.json >/dev/null
 
 # P1-04 additional verification
 go test ./internal/interfaces/tui
+
+# P1-05 additional verification
+go test ./internal/interfaces/cli
 ```
 
 P0-05 当前边界：
@@ -362,6 +365,17 @@ TUI 新增 Approvals 页签。
 LoadRun 读取 approvals.json 中的 HITLRequest 列表；缺失 approvals.json 时按空列表处理。
 Approvals 页签只读展示 status / id / step / action / policy / reason / options / resolution。
 TUI 不直接 approve/deny；审批仍通过 cyberagent approvals approve|deny CLI 完成。
+```
+
+P1-05 当前边界：
+
+```text
+scan web 完成后若存在 skipped steps，会输出 skipped steps 摘要。
+replay 输出 events 前会输出 skipped steps 摘要。
+摘要读取 bbolt step 状态和 approvals.json。
+摘要展示 step id / tool / reason / approval status。
+若存在 pending/approved approval，会给出 approvals list / approve / replay --resume-approved next actions。
+该摘要只读，不改变 run 状态。
 ```
 
 ---
