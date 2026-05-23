@@ -159,6 +159,93 @@ func TestApprovalsCommands(t *testing.T) {
 	}
 }
 
+func TestReplayResumeApprovedFFUFLowRate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<!doctype html><html><body>ok</body></html>`))
+		case "/admin":
+			_, _ = w.Write([]byte("admin"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	runDir := filepath.Join(t.TempDir(), "run_resume_ffuf")
+	_, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "scan", "web", "--target", server.URL, "--scope", server.URL, "--out", runDir, "--profile", "safe", "--use-plugin", "ffuf-low-rate")
+	if err != nil {
+		t.Fatalf("scan web with ffuf-low-rate error = %v", err)
+	}
+	if _, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "approvals", "approve", runDir, "step_optional_ffuf_low_rate_001"); err != nil {
+		t.Fatalf("approvals approve error = %v", err)
+	}
+
+	fakeBin := t.TempDir()
+	fakeFFUF := filepath.Join(fakeBin, "ffuf")
+	fakeOutput := `{"results":[{"url":"` + server.URL + `/admin","status":200,"length":5}]}`
+	if err := os.WriteFile(fakeFFUF, []byte("#!/bin/sh\nprintf '%s\\n' '"+fakeOutput+"'\n"), 0o755); err != nil {
+		t.Fatalf("write fake ffuf: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	replayOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "replay", runDir, "--resume-approved")
+	if err != nil {
+		t.Fatalf("replay --resume-approved error = %v\noutput=%s", err, replayOut)
+	}
+	for _, want := range []string{"resume-approved completed", "resumed: [step_optional_ffuf_low_rate_001]", "step.finished", "tool.finished"} {
+		if !strings.Contains(replayOut, want) {
+			t.Fatalf("replay --resume-approved output missing %q: %q", want, replayOut)
+		}
+	}
+
+	mustExist(t, filepath.Join(runDir, "artifacts", "tool-results", "ffuf-low-rate.jsonl"))
+	mustExist(t, filepath.Join(runDir, "artifacts", "tool-results", "ffuf-low-rate-wordlist.txt"))
+
+	var persistedFindings []contracts.Finding
+	readJSON(t, filepath.Join(runDir, "findings.json"), &persistedFindings)
+	var foundFFUFFinding bool
+	for _, finding := range persistedFindings {
+		if finding.Category == "plugin/ffuf-low-rate" && len(finding.AffectedTargets) == 1 && finding.AffectedTargets[0] == server.URL+"/admin" {
+			foundFFUFFinding = true
+			break
+		}
+	}
+	if !foundFFUFFinding {
+		t.Fatalf("findings.json missing ffuf-low-rate finding: %#v", persistedFindings)
+	}
+
+	calls, err := command.NewRecorder(filepath.Join(runDir, "commands.log")).ReadAll()
+	if err != nil {
+		t.Fatalf("read commands.log: %v", err)
+	}
+	if !hasToolCallStatus(calls, "plugin.ffuf-low-rate", contracts.StatusSucceeded) {
+		t.Fatalf("commands.log missing succeeded plugin.ffuf-low-rate call: %#v", calls)
+	}
+
+	stateStore, err := state.Open(filepath.Join(runDir, "state", "bolt.db"))
+	if err != nil {
+		t.Fatalf("open state store: %v", err)
+	}
+	step, err := stateStore.LoadStep("step_optional_ffuf_low_rate_001")
+	stateStore.Close()
+	if err != nil {
+		t.Fatalf("LoadStep(ffuf) error = %v", err)
+	}
+	if step.Status != contracts.StatusSucceeded || step.Error != "" {
+		t.Fatalf("unexpected resumed ffuf step state: %#v", step)
+	}
+
+	reportMD, err := os.ReadFile(filepath.Join(runDir, "reports", "report.md"))
+	if err != nil {
+		t.Fatalf("read report.md: %v", err)
+	}
+	if !strings.Contains(string(reportMD), "plugin/ffuf-low-rate") || strings.Contains(string(reportMD), "step_optional_ffuf_low_rate_001,") {
+		t.Fatalf("report.md not regenerated as expected: %s", reportMD)
+	}
+}
+
 func TestScanReportAndReplayCommands(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -309,6 +396,22 @@ func hasToolCall(calls []contracts.ToolCall, toolName string) bool {
 		}
 	}
 	return false
+}
+
+func hasToolCallStatus(calls []contracts.ToolCall, toolName string, status contracts.Status) bool {
+	for _, call := range calls {
+		if call.ToolName == toolName && call.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func mustExist(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected %s to exist: %v", path, err)
+	}
 }
 
 func readJSON(t *testing.T, path string, out any) {

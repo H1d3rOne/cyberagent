@@ -119,7 +119,7 @@ go build -o bin/cyberagent ./cmd/cyberagent
 |---|---:|---|---|
 | `nuclei-safe` | 否 | low | 显式启用后运行；缺少 `nuclei` 时跳过并写入 `commands.log` |
 | `python-js-route-analyzer` | 否 | low | 只分析已保存 JS artifact，不主动联网 |
-| `ffuf-low-rate` | 否 | medium + approval | 显式启用后进入 plan；safe profile 下生成 pending approval 并默认跳过；可用 `approvals approve/deny` 更新审批状态 |
+| `ffuf-low-rate` | 否 | medium + approval | 显式启用后进入 plan；safe profile 下生成 pending approval 并默认跳过；approved 后可用 `replay --resume-approved` 恢复执行 |
 
 ## 审批命令
 
@@ -129,6 +129,7 @@ go build -o bin/cyberagent ./cmd/cyberagent
 ./bin/cyberagent approvals list runs/with-ffuf
 ./bin/cyberagent approvals approve runs/with-ffuf step_optional_ffuf_low_rate_001
 ./bin/cyberagent approvals deny runs/with-ffuf step_optional_ffuf_low_rate_001
+./bin/cyberagent replay runs/with-ffuf --resume-approved
 ```
 
 说明：
@@ -137,9 +138,10 @@ go build -o bin/cyberagent ./cmd/cyberagent
 approvals list      查看 approvals.json 中的 pending/approved/rejected 请求
 approvals approve   将 pending 请求标记为 approved，并写入 events.jsonl / commands.log / bbolt
 approvals deny      将 pending 请求标记为 rejected，并写入 events.jsonl / commands.log / bbolt
+replay --resume-approved  恢复执行已 approved 的可恢复 step，并继续 replay events.jsonl
 ```
 
-审批命令只更新状态；恢复执行 approved step 是后续 v0.1.1 P0-05 范围。
+当前 v0.1.1 P0-05 只支持恢复执行 approved 的 `ffuf-low-rate` step；其他 approved step 会明确标记为 skipped/unsupported，不会隐式执行。
 
 ## 内置 Web 分析能力
 
@@ -216,7 +218,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 check
 - MVP 只聚焦授权 Web URL / Web API safe profile
 - Desktop、Web 多用户平台、Remote Runner 后置
 - LLM 能力存在实验性代码路径，但不是 MVP Core 依赖
-- `ffuf-low-rate` 暂不在 safe MVP 中自动执行，等待后续 HITL/审批链路完善
+- `ffuf-low-rate` 不会在 safe profile 中自动执行；必须显式启用、显式审批，并通过 `replay --resume-approved` 恢复
 - 不做自动 exploit、爆破、横向移动或破坏性 payload
 
 ## License

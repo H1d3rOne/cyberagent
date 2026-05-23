@@ -98,6 +98,7 @@ safe planner optional plugins disabled by default
 nuclei-safe explicit opt-in + missing dependency skip
 python-js-route-analyzer explicit opt-in + route evidence
 ffuf-low-rate explicit opt-in + approval skip
+ffuf-low-rate approved 后可通过 replay --resume-approved 恢复执行
 commands.log audit trail
 state store step lifecycle
 report/evidence/finding output
@@ -185,7 +186,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] release checklist 与 README 安装说明更新
 [x] PolicyDecision(require_approval) / approval request 持久化结构
 [x] approvals list/approve/deny CLI MVP
-[ ] resume approved step
+[x] resume approved step
 [ ] plugin timeout/output/schema hardening
 [ ] run metadata/effective config/plugin snapshot
 [ ] CLI/TUI/report UX polish

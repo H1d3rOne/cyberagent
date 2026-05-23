@@ -241,7 +241,7 @@ P3-05 默认启用外部扫描插件
 [x] P0-02 release checklist 与 README 安装说明更新
 [x] P0-03 PolicyDecision(require_approval) 持久化结构确认
 [x] P0-04 approval list/approve/deny CLI MVP
-[ ] P0-05 resume approved step MVP
+[x] P0-05 resume approved step MVP
 [ ] P0-06 plugin timeout/output limit/invalid output 处理
 [ ] P0-07 run metadata/effective config 快照
 [ ] P0-08 v0.1.1 smoke test 文档
@@ -268,6 +268,18 @@ go test ./...
 go vet ./...
 go build -ldflags "-X main.version=p0-04-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
 ./bin/cyberagent approvals --help
+
+# P0-05 additional verification
+go test ./internal/plugins ./internal/core/runtime ./internal/interfaces/cli
+go test ./internal/interfaces/cli -run TestReplayResumeApprovedFFUFLowRate -count=1
+```
+
+P0-05 当前边界：
+
+```text
+cyberagent replay <run-dir> --resume-approved 已支持恢复执行 approved 的 ffuf-low-rate step。
+恢复执行前会读取 run workspace、bbolt step / HITL / policy decision，并重新执行 Scope Guard。
+其他 approved step 暂返回 skipped/unsupported，不会隐式执行。
 ```
 
 ---

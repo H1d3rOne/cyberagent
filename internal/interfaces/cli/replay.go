@@ -8,15 +8,33 @@ import (
 	"path/filepath"
 
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
+	coreruntime "github.com/H1d3rOne/cyberagent/internal/core/runtime"
 	"github.com/spf13/cobra"
 )
 
 func newReplayCommand() *cobra.Command {
-	return &cobra.Command{
+	var resumeApproved bool
+	cmd := &cobra.Command{
 		Use:   "replay <run-dir>",
 		Short: "Replay a run from events.jsonl",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			if resumeApproved {
+				result, err := coreruntime.ResumeApproved(cmd.Context(), coreruntime.ResumeApprovedRequest{RunDir: args[0]})
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(out, "resume-approved completed")
+				if len(result.Resumed) > 0 {
+					fmt.Fprintf(out, "resumed: %v\n", result.Resumed)
+				}
+				if len(result.Skipped) > 0 {
+					fmt.Fprintf(out, "skipped: %v\n", result.Skipped)
+				}
+				fmt.Fprintln(out)
+			}
+
 			eventsPath := filepath.Join(args[0], "events.jsonl")
 			file, err := os.Open(eventsPath)
 			if err != nil {
@@ -24,7 +42,6 @@ func newReplayCommand() *cobra.Command {
 			}
 			defer file.Close()
 
-			out := cmd.OutOrStdout()
 			scanner := bufio.NewScanner(file)
 			line := 0
 			for scanner.Scan() {
@@ -48,4 +65,6 @@ func newReplayCommand() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&resumeApproved, "resume-approved", false, "resume approved steps before replaying events")
+	return cmd
 }

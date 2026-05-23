@@ -74,9 +74,17 @@ func (r Runner) Run(ctx context.Context, manifest contracts.PluginManifest, req 
 }
 
 func (r Runner) runExternalCommand(ctx context.Context, manifest contracts.PluginManifest, req RunRequest) (RunResult, error) {
-	if manifest.Name != "nuclei-safe" {
+	switch manifest.Name {
+	case "nuclei-safe":
+		return r.runNucleiSafe(ctx, manifest, req)
+	case "ffuf-low-rate":
+		return r.runFFUFLowRate(ctx, manifest, req)
+	default:
 		return RunResult{}, fmt.Errorf("unsupported plugin %q", manifest.Name)
 	}
+}
+
+func (r Runner) runNucleiSafe(ctx context.Context, manifest contracts.PluginManifest, req RunRequest) (RunResult, error) {
 	if _, err := exec.LookPath("nuclei"); err != nil {
 		call := skippedPluginCall(req, manifest, "dependency nuclei not found in PATH")
 		if req.Recorder != nil {
@@ -107,6 +115,44 @@ func (r Runner) runExternalCommand(ctx context.Context, manifest contracts.Plugi
 		Kind:        contracts.ToolCallKindPlugin,
 	})
 	findings := parseNucleiJSONL(result.Stdout)
+	return RunResult{Call: result.Call, Stdout: result.Stdout, Stderr: result.Stderr, Findings: findings}, err
+}
+
+func (r Runner) runFFUFLowRate(ctx context.Context, manifest contracts.PluginManifest, req RunRequest) (RunResult, error) {
+	if _, err := exec.LookPath("ffuf"); err != nil {
+		call := skippedPluginCall(req, manifest, "dependency ffuf not found in PATH")
+		if req.Recorder != nil {
+			if recordErr := req.Recorder.Append(call); recordErr != nil {
+				return RunResult{}, recordErr
+			}
+		}
+		return RunResult{Call: call, Skipped: true, Reason: call.Error}, nil
+	}
+	wordlistPath, err := ensureFFUFWordlist(req.WorkDir)
+	if err != nil {
+		return RunResult{}, err
+	}
+	fuzzURL := strings.TrimRight(req.Target, "/") + "/FUZZ"
+	args := []string{
+		"-u", fuzzURL,
+		"-w", wordlistPath,
+		"-rate", "2",
+		"-of", "json",
+		"-s",
+	}
+	result, err := r.Executor.Run(ctx, command.ExecRequest{
+		ID:          req.ID,
+		JobID:       req.JobID,
+		StepID:      req.StepID,
+		ToolName:    "plugin." + manifest.Name,
+		ToolVersion: manifest.Version,
+		Command:     "ffuf",
+		Args:        args,
+		CWD:         req.WorkDir,
+		Timeout:     req.Timeout,
+		Kind:        contracts.ToolCallKindPlugin,
+	})
+	findings := parseFFUFJSON(result.Stdout)
 	return RunResult{Call: result.Call, Stdout: result.Stdout, Stderr: result.Stderr, Findings: findings}, err
 }
 
@@ -228,6 +274,55 @@ func parseNucleiJSONL(stdout []byte) []PluginFinding {
 		findings = append(findings, finding)
 	}
 	return findings
+}
+
+func parseFFUFJSON(stdout []byte) []PluginFinding {
+	var raw struct {
+		Results []map[string]any `json:"results"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(stdout), &raw); err != nil {
+		return nil
+	}
+	findings := make([]PluginFinding, 0, len(raw.Results))
+	for _, result := range raw.Results {
+		matched, _ := result["url"].(string)
+		if matched == "" {
+			continue
+		}
+		status := ""
+		if v, ok := result["status"]; ok {
+			status = fmt.Sprintf("%v", v)
+		}
+		name := "ffuf discovered content"
+		if status != "" {
+			name += " (" + status + ")"
+		}
+		findings = append(findings, PluginFinding{
+			Name:     name,
+			Severity: "info",
+			Matched:  matched,
+			Data:     result,
+		})
+	}
+	return findings
+}
+
+func ensureFFUFWordlist(workDir string) (string, error) {
+	if strings.TrimSpace(workDir) == "" {
+		return "", fmt.Errorf("workdir is required for ffuf-low-rate")
+	}
+	path := filepath.Join(workDir, "artifacts", "tool-results", "ffuf-low-rate-wordlist.txt")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("create ffuf wordlist dir: %w", err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	}
+	words := []byte("robots.txt\nsitemap.xml\nadmin\nlogin\napi\n")
+	if err := os.WriteFile(path, words, 0o644); err != nil {
+		return "", fmt.Errorf("write ffuf wordlist: %w", err)
+	}
+	return path, nil
 }
 
 func hasBinaryDependency(manifest contracts.PluginManifest, name string) bool {

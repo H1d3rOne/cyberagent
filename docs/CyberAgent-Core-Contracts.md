@@ -867,6 +867,7 @@ key: HITLRequest.id
 状态: require_approval 默认生成 pending request，但 step 在 safe MVP 中仍为 skipped，不自动执行
 事件: events.jsonl 写入 approval.requested，data 包含 approval_request_id / policy_decision_id / status / requested_action
 命令审计: commands.log 的 ToolCall.metadata 包含 policy_decision_id 和 approval_request_id
+恢复执行: approved 的可恢复 step 可由 replay --resume-approved 显式恢复，恢复前必须重新检查 Scope Guard
 ```
 
 ---
@@ -877,13 +878,15 @@ key: HITLRequest.id
 cyberagent approvals list <run-dir>
 cyberagent approvals approve <run-dir> <approval-id-or-step-id>
 cyberagent approvals deny <run-dir> <approval-id-or-step-id>
+cyberagent replay <run-dir> --resume-approved
 ```
 
 ```text
 list: 读取 run-dir/approvals.json
 approve: pending -> approved，同时同步 bbolt hitl_requests，追加 approval.resolved 事件和 commands.log 审计记录
 deny: pending -> rejected，同时同步 bbolt hitl_requests，追加 approval.resolved 事件和 commands.log 审计记录
-resume: 不属于 P0-04，由 P0-05 实现
+resume-approved: 读取 approved HITL request，校验 bbolt step / policy decision 后恢复可恢复 step；当前 MVP 只支持 ffuf-low-rate
+unsupported: 其他 approved step 明确返回 skipped/unsupported，不做隐式执行
 ```
 
 ---
