@@ -1,0 +1,142 @@
+# CyberAgent
+
+CyberAgent 是一个 **CLI/TUI-first** 的授权 Web/API 安全分析 Agent。MVP 优先提供可复现、可审计、低风险的本地 safe profile 扫描闭环；Desktop、Web、Remote Runner 和复杂 LLM 增强后置。
+
+## 当前 MVP 能力
+
+- Deterministic Web safe scan：`cyberagent scan web`
+- 只读 TUI run viewer：`cyberagent tui <run-dir>`
+- Run workspace：`target.json`、`scope.json`、`job.json`、`plan.json`、`events.jsonl`、`commands.log`
+- State Store：bbolt
+- Event Store：JSONL
+- Scope Guard / Risk Policy
+- Evidence / Finding / Markdown + JSON Report
+- 插件系统：manifest discovery、doctor、external command、subprocess JSONL
+- 可选插件：`nuclei-safe`、`python-js-route-analyzer`、`ffuf-low-rate`
+
+## 快速开始
+
+```bash
+# 运行测试
+go test ./...
+
+# 构建
+go build -o bin/cyberagent ./cmd/cyberagent
+
+# 查看版本
+./bin/cyberagent version
+
+# 环境检查
+./bin/cyberagent doctor
+
+# 插件检查
+./bin/cyberagent plugins list
+./bin/cyberagent plugins doctor
+```
+
+执行一次 safe Web/API 扫描：
+
+```bash
+./bin/cyberagent scan web \
+  --target http://localhost:8080 \
+  --scope localhost \
+  --profile safe \
+  --out runs/demo
+```
+
+查看输出：
+
+```bash
+./bin/cyberagent report runs/demo
+./bin/cyberagent replay runs/demo
+./bin/cyberagent tui runs/demo
+```
+
+## 可选插件
+
+默认不会运行外部安全工具。必须显式启用：
+
+```bash
+./bin/cyberagent scan web \
+  --target http://localhost:8080 \
+  --scope localhost \
+  --use-plugin nuclei-safe \
+  --out runs/with-nuclei
+
+./bin/cyberagent scan web \
+  --target http://localhost:8080 \
+  --scope localhost \
+  --use-plugin python-js-route-analyzer \
+  --out runs/with-js-plugin
+```
+
+插件行为：
+
+| Plugin | 默认启用 | 风险 | MVP 行为 |
+|---|---:|---|---|
+| `nuclei-safe` | 否 | low | 显式启用后运行；缺少 `nuclei` 时跳过并写入 `commands.log` |
+| `python-js-route-analyzer` | 否 | low | 只分析已保存 JS artifact，不主动联网 |
+| `ffuf-low-rate` | 否 | medium + approval | 显式启用后进入 plan；MVP safe profile 下默认因需要审批而跳过并审计记录 |
+
+## 内置 Web 分析能力
+
+- HTTP probe / fetch
+- Security header checker
+- Cookie attribute checker
+- robots.txt / sitemap.xml fetch + parse
+- HTML link/form/script extractor
+- JavaScript asset collector
+- Light JS route extractor
+- API hint detector
+- Small low-rate content discovery
+- TLS inspector
+- TCP common web port check
+
+## 安全边界
+
+- 没有 `--scope` 时拒绝主动扫描
+- 所有主动 URL 请求经过 Scope Guard
+- 中高风险或 `requires_approval` 步骤由 Risk Policy 拦截
+- 外部工具默认不启用
+- 所有 tool/plugin 调用写入 `commands.log`
+- Evidence / Finding / Artifact 互相引用，方便复现和审计
+
+## 项目结构
+
+```text
+cmd/cyberagent/                 CLI entrypoint
+internal/core/                  contracts / planner / policy / runtime / reporting
+internal/runtime/               runs / state / artifacts / command recorder
+internal/interfaces/cli/        Cobra CLI
+internal/interfaces/tui/        Bubble Tea TUI viewer
+internal/plugins/               plugin manifest / doctor / runner
+internal/tools/builtin/         built-in Web/API tools
+plugins/                        optional plugin manifests and adapters
+schemas/                        plugin and contract schemas
+docs/                           planning, ADR, roadmap, test/release docs
+```
+
+## 开发命令
+
+```bash
+make fmt
+make test
+make build-quick
+
+# 或直接
+gofmt -w cmd internal
+go test ./...
+go build -o bin/cyberagent ./cmd/cyberagent
+```
+
+## 当前限制
+
+- MVP 只聚焦授权 Web URL / Web API safe profile
+- Desktop、Web 多用户平台、Remote Runner 后置
+- LLM 能力存在实验性代码路径，但不是 MVP Core 依赖
+- `ffuf-low-rate` 暂不在 safe MVP 中自动执行，等待后续 HITL/审批链路完善
+- 不做自动 exploit、爆破、横向移动或破坏性 payload
+
+## License
+
+MIT

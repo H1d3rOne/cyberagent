@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberagent.local/schemas/plugins/ffuf-low-rate.output.schema.json",
+  "title": "ffuf-low-rate output",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "url": { "type": "string" },
+          "status": { "type": "integer" },
+          "length": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

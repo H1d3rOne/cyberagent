@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberagent.local/schemas/plugins/nuclei-safe.output.schema.json",
+  "title": "nuclei-safe JSONL output line",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "template-id": { "type": "string" },
+    "template_id": { "type": "string" },
+    "matched-at": { "type": "string" },
+    "matched": { "type": "string" },
+    "info": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical", "unknown"] }
+      }
+    }
+  }
+}

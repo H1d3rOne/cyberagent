@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberagent.local/schemas/plugins/python-js-route-analyzer.input.schema.json",
+  "title": "python-js-route-analyzer subprocess request",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "job_id", "step_id"],
+  "properties": {
+    "id": { "type": "string" },
+    "job_id": { "type": "string" },
+    "step_id": { "type": "string" },
+    "target": { "type": "string" },
+    "artifacts": { "type": "array" },
+    "evidence": { "type": "array" },
+    "input": { "type": "object" }
+  }
+}

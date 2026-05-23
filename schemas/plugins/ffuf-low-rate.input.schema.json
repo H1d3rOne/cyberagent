@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberagent.local/schemas/plugins/ffuf-low-rate.input.schema.json",
+  "title": "ffuf-low-rate input",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "target": { "type": "string", "format": "uri" },
+    "wordlist": { "type": "string" },
+    "rate": { "type": "integer", "minimum": 1, "maximum": 50 },
+    "profile": { "type": "string", "enum": ["safe", "standard"] }
+  }
+}

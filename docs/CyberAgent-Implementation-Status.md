@@ -1,0 +1,181 @@
+# CyberAgent Implementation Status
+
+版本：v0.1-dev  
+日期：2026-05-23  
+状态：MVP 实现进度快照
+
+---
+
+## 1. 当前结论
+
+```text
+规划阶段：已完成
+MVP 主链路：已跑通
+插件系统 MVP：已接入三类声明插件，其中 ffuf-low-rate 在 safe profile 下默认审批跳过
+MVP Stabilization：本地验证通过，待发布前最终确认
+MVP Release：未发布
+```
+
+---
+
+## 2. 已完成能力
+
+### CLI / TUI
+
+```text
+[x] cyberagent version
+[x] cyberagent doctor
+[x] cyberagent plugins list
+[x] cyberagent plugins doctor
+[x] cyberagent scan web
+[x] cyberagent report <run-dir>
+[x] cyberagent replay <run-dir>
+[x] cyberagent tui <run-dir>
+```
+
+### Core Runtime
+
+```text
+[x] Core Contracts
+[x] Run Workspace
+[x] bbolt State Store
+[x] JSONL Event Store
+[x] Command Recorder: commands.log
+[x] Scope Guard
+[x] Risk Policy
+[x] Safe Profile Planner
+[x] Job / Step lifecycle
+[x] Evidence / Finding / Report 链路
+```
+
+### Builtin Web/API Tools
+
+```text
+[x] HTTP Probe
+[x] HTTP Fetcher
+[x] Header Checker
+[x] Cookie Checker
+[x] robots.txt Fetch + Parse
+[x] sitemap.xml Fetch + Parse
+[x] HTML Extractor
+[x] JavaScript Asset Collector
+[x] Light JS Route Extractor
+[x] API Hint Detector
+[x] Small Content Discovery
+[x] TLS Inspector
+[x] TCP common web port check
+```
+
+### Plugin MVP
+
+```text
+[x] Plugin Manifest discovery
+[x] Plugin Doctor dependency check
+[x] Plugin Doctor schema check
+[x] external_command runner boundary
+[x] subprocess_jsonl runner boundary
+[x] nuclei-safe: explicit opt-in, missing dependency skipped
+[x] python-js-route-analyzer: explicit opt-in, offline JS artifact analysis
+[x] ffuf-low-rate: explicit opt-in, safe profile 下 requires_approval 并跳过审计
+```
+
+---
+
+## 3. 当前验证
+
+已通过：
+
+```bash
+go test ./...
+```
+
+关键测试覆盖：
+
+```text
+scope required
+safe planner optional plugins disabled by default
+nuclei-safe explicit opt-in + missing dependency skip
+python-js-route-analyzer explicit opt-in + route evidence
+ffuf-low-rate explicit opt-in + approval skip
+commands.log audit trail
+state store step lifecycle
+report/evidence/finding output
+TUI run viewer
+```
+
+---
+
+## 3.1 最新本地验证记录
+
+已通过：
+
+```bash
+go test ./...
+go vet ./...
+go build -o bin/cyberagent ./cmd/cyberagent
+```
+
+Smoke test 已通过：
+
+```text
+testdata/simple-site
+runs/smoke-simple-site
+version / doctor / plugins list / plugins doctor / scan web / report / replay
+report.json job.status = succeeded
+report.md status = succeeded
+events.jsonl contains job.finished
+```
+
+---
+
+## 4. 里程碑状态
+
+| Milestone | 状态 | 说明 |
+|---|---|---|
+| M0 Planning Complete | 完成 | 规划文档已冻结 |
+| M1 Project Skeleton Ready | 完成 | CLI 可编译运行 |
+| M2 Core Runtime Ready | 完成 | State/Event/Policy/Scope/Workspace 已实现 |
+| M3 Safe Profile Plan Ready | 完成 | safe web plan 已实现 |
+| M4 Builtin Web Analysis Ready | 完成 | 内置 Web 分析闭环已实现 |
+| M5 CLI Safe Scan Ready | 完成 | `scan web` 可生成 run/report |
+| M6 Plugin MVP Ready | 基本完成 | 三个插件均进入 MVP 链路；ffuf 当前默认审批跳过 |
+| M7 TUI Run Viewer Ready | 完成 | 只读打开已有 run |
+| M8 MVP Release Candidate | 基本完成 | README/限制/示例/test/vet/build/smoke 已完成 |
+| M9 MVP v0.1 Release | 未完成 | 需要 git 仓库、tag、release notes、构建产物 |
+
+---
+
+## 5. 待完成项
+
+### MVP Stabilization
+
+```text
+[x] 生成或整理一个可提交的示例 run / testdata
+[x] 最终检查 README 与 docs 是否完全一致
+[x] 明确 LLM agent 代码路径是 experimental，不作为 MVP Core 默认路径
+[x] 清理重复 release 配置：.goreleaser.yaml / .goreleaser.yml 二选一
+[x] 最终 smoke test：build + scan + report + replay + plugin doctor；TUI 由测试覆盖 LoadRun/viewer
+```
+
+### Release
+
+```text
+[ ] 初始化或确认 git 仓库
+[ ] 配置远程 GitHub 仓库：github.com/H1d3rOne/cyberagent
+[x] 准备 v0.1.0 release notes
+[ ] 验证 goreleaser build
+[ ] 创建 tag v0.1.0
+[ ] 发布二进制产物
+```
+
+### 后置能力
+
+```text
+[ ] HITL 审批恢复执行 ffuf-low-rate
+[ ] Desktop/Wails
+[ ] Local API / Daemon 稳定版
+[ ] Web 多用户平台
+[ ] Remote Runner
+[ ] 长期 Target/User/Team Memory
+[ ] LLM Gateway 作为可选增强稳定化
+```

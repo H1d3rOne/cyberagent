@@ -1,0 +1,29 @@
+id: plugin_nuclei_safe
+name: nuclei-safe
+version: 0.1.0
+type: tool
+runtime: external_command
+description: Run selected low-risk nuclei templates. Disabled by default.
+capabilities:
+  - vulnerability_template_scan
+risk: low
+requires_approval: false
+dependencies:
+  - name: nuclei
+    kind: binary
+    version_constraint: ">=3.0.0"
+    required: true
+input_schema: schemas/plugins/nuclei-safe.input.schema.json
+output_schema: schemas/plugins/nuclei-safe.output.schema.json
+artifact_policy:
+  store_stdout: true
+  store_stderr: true
+  store_files:
+    - nuclei.jsonl
+  redact: true
+supported_profiles:
+  - safe
+  - standard
+entrypoint:
+  kind: command_builder
+  path: plugins/nuclei-safe/plugin.yaml

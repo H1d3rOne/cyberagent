@@ -1,0 +1,28 @@
+id: plugin_python_js_route_analyzer
+name: python-js-route-analyzer
+version: 0.1.0
+type: analyzer
+runtime: subprocess_jsonl
+description: Optional analyzer for extracting API routes from saved JavaScript artifacts.
+capabilities:
+  - js_route_analysis
+risk: low
+requires_approval: false
+dependencies:
+  - name: python3
+    kind: binary
+    version_constraint: ">=3.10"
+    required: true
+input_schema: schemas/plugins/python-js-route-analyzer.input.schema.json
+output_schema: schemas/plugins/python-js-route-analyzer.output.schema.json
+artifact_policy:
+  store_stdout: true
+  store_stderr: true
+  store_files: []
+  redact: true
+supported_profiles:
+  - safe
+  - standard
+entrypoint:
+  kind: subprocess
+  path: plugins/python-js-route-analyzer/analyzer.py

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberagent.local/schemas/plugins/nuclei-safe.input.schema.json",
+  "title": "nuclei-safe input",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "target": { "type": "string", "format": "uri" },
+    "severity": { "type": "string", "default": "info,low" },
+    "profile": { "type": "string", "enum": ["safe", "standard"] }
+  }
+}

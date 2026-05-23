@@ -1,0 +1,24 @@
+# CyberAgent project configuration
+# Place this file at the root of your project as .cyberagent.yaml
+
+profiles:
+  safe:
+    name: safe
+    risk_level: low
+    rate_limit:
+      global_rps: 20
+      per_host_rps: 10
+      concurrency: 10
+    timeouts:
+      step_default: 30
+      http_probe: 30
+      tls_inspect: 15
+      port_check: 30
+
+plugins:
+  dir: plugins
+  enabled: []
+
+defaults:
+  profile: safe
+  out_dir: runs

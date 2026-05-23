@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberagent.local/schemas/plugins/python-js-route-analyzer.output.schema.json",
+  "title": "python-js-route-analyzer JSONL output line",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "type": { "type": "string", "enum": ["routes", "finding", "error"] },
+    "request": { "type": "string" },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "raw": { "type": "string" },
+          "resolved": { "type": "string" },
+          "source": { "type": "string" },
+          "method": { "type": "string" },
+          "data": { "type": "object" }
+        }
+      }
+    },
+    "findings": { "type": "array" },
+    "data": { "type": "object" },
+    "error": { "type": "string" }
+  }
+}

@@ -1,0 +1,514 @@
+# CyberAgent 计划草案
+
+版本：v0.1  
+日期：2026-05-23  
+状态：需求对接 / 架构规划阶段，暂不实现代码
+
+---
+
+## 1. 项目定位
+
+CyberAgent 是一个面向**授权目标**的 Web/API 安全分析 Agent。
+
+核心目标：
+
+```text
+减少人工安全测试中的重复操作，
+让 Agent 自动完成信息收集、分析、证据整理、报告生成，
+同时保留人工确认和可控边界。
+```
+
+首期重点不是“全自动攻击”，而是：
+
+```text
+自动规划 → 调用工具 → 分析结果 → 形成证据链 → 输出报告
+```
+
+---
+
+## 2. 产品形态规划
+
+当前推荐路线：
+
+```text
+Go Core + CLI/TUI First + Python Plugin Layer + Desktop Later
+```
+
+阶段顺序：
+
+```text
+第一阶段：CLI / TUI
+第二阶段：Local API / Daemon
+第三阶段：Desktop
+第四阶段：Web / Remote Runner
+```
+
+### 形态分工
+
+| 形态 | 定位 | 优先级 |
+|---|---|---|
+| CLI | 自动化、脚本化、CI/CD、CTF、远程环境 | 高 |
+| TUI | Agent 主要交互界面，查看计划、日志、证据、确认操作 | 高 |
+| Desktop | 简化操作，面向非命令行用户，本地安全工作台 | 中 |
+| Web | 团队协作、多任务、远程 Runner、报告平台 | 后置 |
+
+---
+
+## 3. 技术路线初判
+
+### 核心语言
+
+推荐：
+
+```text
+Go 作为 Agent Core
+Python 作为插件和分析生态层
+```
+
+### Go 负责
+
+```text
+任务调度
+并发控制
+工具执行
+CLI/TUI
+本地 API
+事件流
+证据管理
+跨平台分发
+```
+
+### Python 负责
+
+```text
+安全工具适配
+数据分析
+JS/API 提取
+OpenAPI 分析
+报告增强
+LLM 辅助分析
+生态扩展
+```
+
+### 暂定技术栈
+
+```text
+Core: Go
+CLI: Cobra
+TUI: Bubble Tea / Lip Gloss
+Plugin: Python subprocess + JSON 协议
+Storage: SQLite + 文件系统
+Report: Markdown + JSON，后续 HTML/PDF
+Desktop: Wails 优先考虑
+Web/API: 后续 Local API / Remote API 复用 Core，具体方案待定
+```
+
+---
+
+## 4. 总体架构草案
+
+```text
+CLI / TUI / Desktop / Web
+          ↓
+   Interface Adapter
+          ↓
+      Agent Core
+          ↓
+  Job Orchestrator
+          ↓
+      Runner Layer
+          ↓
+ Tool Plugins / External Tools
+          ↓
+ Evidence Store / Report
+```
+
+核心模块：
+
+```text
+Agent Core
+  ├── Planner              任务规划
+  ├── Scheduler            步骤调度
+  ├── Scope Guard          范围控制
+  ├── Tool Executor        工具执行
+  ├── Plugin Runtime       插件运行
+  ├── Evidence Store       证据存储
+  ├── Finding Analyzer     结果分析
+  ├── Event Bus            实时事件
+  └── Reporter             报告生成
+```
+
+---
+
+## 5. 核心对象设计方向
+
+后续需要优先确定这些数据契约：
+
+```text
+Target      目标
+Scope       授权范围
+Job         任务
+Plan        执行计划
+Step        执行步骤
+ToolCall    工具调用
+Evidence    证据
+Finding     发现
+Report      报告
+Event       事件
+Plugin      插件
+Runner      执行器
+```
+
+这些对象一旦稳定，CLI、TUI、Desktop、Web 都可以复用。
+
+---
+
+## 6. MVP 范围建议
+
+第一版 MVP 聚焦：
+
+```text
+授权 Web/API 目标分析
+```
+
+### 最小输入
+
+```text
+target: http://localhost:8080
+scope: localhost,127.0.0.1
+mode: web
+```
+
+### 输出目录
+
+```text
+runs/{job_id}/
+  scope.json
+  plan.json
+  events.jsonl
+  commands.log
+  evidence/
+  findings.json
+  report.md
+```
+
+### 第一批能力
+
+```text
+目标可达性检查
+HTTP 指纹识别
+页面抓取
+链接提取
+JS/API 路由提取
+基础目录枚举
+nuclei 低风险模板扫描
+结果归一化
+Markdown 报告生成
+```
+
+---
+
+## 7. 工具集成规划
+
+### V1 可选工具
+
+```text
+curl
+httpx
+nmap
+ffuf
+nuclei
+jq
+playwright，可后置
+```
+
+### V2 增强工具
+
+```text
+semgrep
+gitleaks
+trufflehog
+zap
+katana
+subfinder，仅在授权域名场景
+```
+
+### 工具接入原则
+
+所有工具都通过插件接口接入：
+
+```text
+Tool Plugin
+  ├── 输入 schema
+  ├── 命令构造
+  ├── 风险等级
+  ├── 输出解析
+  ├── 证据保存
+  └── 结果归一化
+```
+
+---
+
+## 8. 性能与扩展性原则
+
+前期必须考虑性能和扩展性，但不提前重型化。
+
+### 设计原则
+
+```text
+轻实现，重边界
+单机优先，保留多 Runner 能力
+CLI/TUI 优先，Core 不依赖 UI
+插件进程隔离，避免污染主程序
+事件驱动，便于未来 WebSocket/SSE
+原始证据落盘，结构化摘要入库
+```
+
+### 关键性能设计
+
+```text
+异步任务执行
+可取消任务
+并发限制
+请求速率限制
+超时控制
+失败重试
+大输出分块处理
+LLM 只看摘要，不直接吞原始大日志
+```
+
+---
+
+## 9. 安全边界设计
+
+CyberAgent 必须内置 Scope Guard。
+
+默认规则：
+
+```text
+没有 scope 不执行主动扫描
+高风险动作需要确认
+所有命令记录到 commands.log
+所有发现必须有证据
+默认不进行破坏性操作
+默认不进行密码爆破
+默认不做持久化、横向移动、数据破坏
+```
+
+动作风险等级：
+
+```text
+Low: 页面抓取、指纹识别、低频请求
+Medium: 目录枚举、模板扫描、认证测试
+High: exploit 验证、爆破、写入型测试、破坏性 payload
+```
+
+---
+
+## 10. 阶段路线图
+
+### Phase 0：需求与架构确认
+
+当前阶段。
+
+产出：
+
+```text
+产品定位
+用户画像
+使用场景
+功能边界
+技术选型
+核心数据模型
+MVP 范围
+```
+
+### Phase 1：CLI/TUI MVP
+
+目标：
+
+```text
+能完成一次本地授权 Web 目标分析闭环
+```
+
+能力：
+
+```text
+创建任务
+执行计划
+调用工具
+实时日志
+保存证据
+生成报告
+```
+
+### Phase 2：插件体系
+
+目标：
+
+```text
+让工具和分析能力可扩展
+```
+
+能力：
+
+```text
+Python 插件协议
+工具插件 manifest
+输出归一化
+finding 去重
+风险评级
+```
+
+### Phase 3：Local API / Daemon
+
+目标：
+
+```text
+让 Desktop/Web 可以复用 Agent Core
+```
+
+能力：
+
+```text
+本地 HTTP API
+任务管理
+事件流
+报告查询
+证据查看
+```
+
+### Phase 4：Desktop
+
+目标：
+
+```text
+降低使用门槛
+```
+
+能力：
+
+```text
+创建扫描
+查看计划
+实时日志
+Finding 列表
+证据浏览
+报告导出
+配置管理
+```
+
+### Phase 5：Web / Remote Runner
+
+目标：
+
+```text
+团队化、多任务、远程执行
+```
+
+能力：
+
+```text
+多用户
+远程 Runner
+任务队列
+对象存储
+团队报告
+权限控制
+审计日志
+```
+
+---
+
+## 11. 当前需要继续对接的需求
+
+### A. 目标用户
+
+待确认主要面向：
+
+```text
+1. 个人安全研究员
+2. CTF 玩家
+3. 渗透测试人员
+4. 企业安全团队
+5. 开发团队
+6. 普通非安全用户
+```
+
+### B. 首期目标场景
+
+待确认首期聚焦：
+
+```text
+1. 本地靶场 Web 分析
+2. 真实授权 Web/API 安全测试
+3. CTF 自动辅助
+4. 源码 + 运行时联合分析
+5. 企业资产扫描
+```
+
+### C. 首期交互方式
+
+当前建议：
+
+```text
+CLI + TUI 同步规划
+CLI 用于自动化
+TUI 用于主要交互
+Desktop 后置
+```
+
+### D. 自动化程度
+
+待确认 Agent 自动化边界：
+
+```text
+只做信息收集和分析
+做低风险验证
+高风险操作前确认
+允许半自动 exploit 验证
+完全不做攻击性验证
+```
+
+### E. 报告标准
+
+待确认报告面向：
+
+```text
+技术人员
+管理层
+客户交付
+CTF writeup
+内部修复工单
+```
+
+---
+
+## 12. 当前初步结论
+
+暂定：
+
+```text
+项目名：CyberAgent
+定位：授权 Web/API 安全分析 Agent
+首期形态：CLI + TUI
+核心语言：Go
+插件语言：Python
+Desktop：后续包装，不重写核心
+Web：后续团队化能力
+MVP：本地/授权 Web 目标扫描、证据保存、报告生成
+```
+
+---
+
+## 13. 后续计划更新方式
+
+后续需求确认后，本文档按版本更新：
+
+```text
+v0.1：初始计划草案
+v0.2：明确目标用户、首期场景、MVP 边界
+v0.3：补充核心数据模型和插件协议
+v0.4：补充 CLI/TUI 交互设计
+v0.5：补充 Desktop/Web 演进方案
+```

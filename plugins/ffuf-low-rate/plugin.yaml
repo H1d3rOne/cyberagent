@@ -1,0 +1,29 @@
+id: plugin_ffuf_low_rate
+name: ffuf-low-rate
+version: 0.1.0
+type: tool
+runtime: external_command
+description: Low-rate content discovery wrapper for ffuf. Disabled by default.
+capabilities:
+  - content_discovery
+risk: medium
+requires_approval: true
+dependencies:
+  - name: ffuf
+    kind: binary
+    version_constraint: ">=2.0.0"
+    required: true
+input_schema: schemas/plugins/ffuf-low-rate.input.schema.json
+output_schema: schemas/plugins/ffuf-low-rate.output.schema.json
+artifact_policy:
+  store_stdout: true
+  store_stderr: true
+  store_files:
+    - ffuf.json
+  redact: true
+supported_profiles:
+  - safe
+  - standard
+entrypoint:
+  kind: command_builder
+  path: plugins/ffuf-low-rate/plugin.yaml
