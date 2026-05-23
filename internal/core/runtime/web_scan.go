@@ -38,6 +38,9 @@ type WebScanRequest struct {
 	EnabledPlugins  []string
 	NoExternalTools bool
 	Interactive     bool
+	BuildInfo       BuildInfo
+	CommandName     string
+	CommandArgs     []string
 	OnProgress      func(stepName, status string)
 }
 
@@ -92,6 +95,9 @@ func RunWebScan(ctx context.Context, req WebScanRequest) (WebScanResult, error) 
 		return WebScanResult{}, err
 	}
 	if err := artifactStore.WriteJSON("scope.json", scope); err != nil {
+		return WebScanResult{}, err
+	}
+	if err := writeRunSnapshots(artifactStore, layout, job, target, scope, req, profile); err != nil {
 		return WebScanResult{}, err
 	}
 
@@ -619,8 +625,7 @@ func RunWebScan(ctx context.Context, req WebScanRequest) (WebScanResult, error) 
 }
 
 func findPluginManifest(name string) (contracts.PluginManifest, bool, error) {
-	roots := []string{"plugins", filepath.Join("..", "..", "..", "plugins")}
-	for _, root := range roots {
+	for _, root := range pluginSearchRoots() {
 		manifests, err := pluginruntime.NewManager(root).Discover()
 		if err != nil {
 			return contracts.PluginManifest{}, false, err

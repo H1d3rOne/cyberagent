@@ -1017,6 +1017,9 @@ MVP 目录结构：
 
 ```text
 runs/{job_id}/
+  metadata.json
+  effective_config.json
+  plugins.snapshot.json
   target.json
   scope.json
   job.json
@@ -1046,8 +1049,102 @@ artifacts/ 存原始产物。
 evidence/ 存可引用证据索引。
 findings.json 存安全结论。
 reports/ 存最终报告。
+metadata.json 存 run provenance，包括 binary version/commit/build date、module、runtime 与 command args。
+effective_config.json 存本次 scan 的最终生效配置快照。
+plugins.snapshot.json 存 run 创建时发现的插件，以及 enabled / disabled 状态。
 events.jsonl 是运行事实流。
 commands.log 是外部命令审计日志。
+```
+
+### 22.1 Run Reproducibility Snapshot
+
+v0.1.1 起，每个 `scan web` run 在 workspace 创建后写入三个可复现快照：
+
+```text
+metadata.json
+effective_config.json
+plugins.snapshot.json
+```
+
+`metadata.json` 最小字段：
+
+```json
+{
+  "schema_version": "0.1.1",
+  "created_at": "2026-05-24T00:00:00Z",
+  "job_id": "job_20260524_000000_abcdef",
+  "workspace": "runs/demo",
+  "binary": {
+    "version": "v0.1.1",
+    "commit": "abcdef0",
+    "date": "2026-05-24T00:00:00Z",
+    "module": "github.com/H1d3rOne/cyberagent"
+  },
+  "module": "github.com/H1d3rOne/cyberagent",
+  "command": {
+    "name": "scan web",
+    "args": ["scan", "web", "--target", "http://localhost:8080", "--scope", "localhost"]
+  },
+  "runtime": {
+    "goos": "darwin",
+    "goarch": "arm64",
+    "go_version": "go1.26.2",
+    "num_cpu": 8
+  },
+  "target_id": "target_001",
+  "scope_id": "scope_001",
+  "profile": "safe"
+}
+```
+
+`effective_config.json` 最小字段：
+
+```json
+{
+  "schema_version": "0.1.1",
+  "profile": "safe",
+  "target": "http://localhost:8080",
+  "scope": "localhost",
+  "out": "runs/demo",
+  "enabled_plugins": ["nuclei-safe"],
+  "no_external_tools": false,
+  "interactive": true,
+  "target_id": "target_001",
+  "scope_id": "scope_001",
+  "job_id": "job_20260524_000000_abcdef"
+}
+```
+
+`plugins.snapshot.json` 最小字段：
+
+```json
+{
+  "schema_version": "0.1.1",
+  "enabled": ["nuclei-safe"],
+  "disabled": ["ffuf-low-rate", "python-js-route-analyzer"],
+  "discovered": [
+    {
+      "id": "plugin_nuclei_safe",
+      "name": "nuclei-safe",
+      "version": "0.1.0",
+      "type": "tool",
+      "runtime": "external_command",
+      "risk": "low",
+      "requires_approval": false,
+      "dependencies": [
+        {"name": "nuclei", "kind": "binary", "version_constraint": ">=3.0.0", "required": true}
+      ]
+    }
+  ]
+}
+```
+
+约束：
+
+```text
+这些快照描述 run 创建时的事实，不在 resume/replay 中覆盖。
+BuildInfo 从 CLI/app 层传入；缺失字段写为 unknown。
+plugins.snapshot.json 是发现状态快照，不代表依赖一定可用；依赖可用性仍由 plugins doctor 或 runner 审计记录判断。
 ```
 
 ---

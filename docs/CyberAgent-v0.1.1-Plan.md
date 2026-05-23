@@ -243,7 +243,7 @@ P3-05 默认启用外部扫描插件
 [x] P0-04 approval list/approve/deny CLI MVP
 [x] P0-05 resume approved step MVP
 [x] P0-06 plugin timeout/output limit/invalid output 处理
-[ ] P0-07 run metadata/effective config 快照
+[x] P0-07 run metadata/effective config 快照
 [ ] P0-08 v0.1.1 smoke test 文档
 ```
 
@@ -275,6 +275,9 @@ go test ./internal/interfaces/cli -run TestReplayResumeApprovedFFUFLowRate -coun
 
 # P0-06 additional verification
 go test ./internal/runtime/command ./internal/plugins ./internal/core/runtime ./internal/interfaces/cli
+
+# P0-07 additional verification
+go test ./internal/core/runtime ./internal/interfaces/cli
 ```
 
 P0-05 当前边界：
@@ -292,6 +295,16 @@ P0-06 当前边界：
 插件 runner 校验 stdout 后再写入最终 commands.log，避免 invalid output 被误记为 succeeded。
 commands.log 的 ToolCall.metadata.error_class 记录 dependency_missing / timeout / output_limit / invalid_output / policy_skipped / execution_failed。
 插件执行失败会作为 skipped plugin result 返回给 scan runtime，不中断整个 safe scan。
+```
+
+P0-07 当前边界：
+
+```text
+每个 scan web run 在 workspace 创建后写入 metadata.json / effective_config.json / plugins.snapshot.json。
+metadata.json 记录 binary version / commit / build date / module、runtime、command name/args、target/scope/profile。
+effective_config.json 记录 target / scope / profile / out / enabled_plugins / no_external_tools / interactive 的最终生效值。
+plugins.snapshot.json 记录 run 创建时的 discovered plugins，以及 enabled / disabled 状态；依赖可用性仍以 plugins doctor 或 runner 审计为准。
+这些快照描述 run 创建时事实，不在 replay/resume 中覆盖。
 ```
 
 ---

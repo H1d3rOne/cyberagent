@@ -34,7 +34,16 @@ func TestRunWebScanProducesMVPArtifacts(t *testing.T) {
 	defer server.Close()
 
 	out := filepath.Join(t.TempDir(), "run_001")
-	result, err := RunWebScan(context.Background(), WebScanRequest{Target: server.URL, Scope: server.URL, Out: out, Profile: "safe", NoExternalTools: true})
+	result, err := RunWebScan(context.Background(), WebScanRequest{
+		Target:          server.URL,
+		Scope:           server.URL,
+		Out:             out,
+		Profile:         "safe",
+		NoExternalTools: true,
+		BuildInfo:       BuildInfo{Version: "vtest", Commit: "abc123", Date: "2026-05-24T00:00:00Z", Module: "github.com/H1d3rOne/cyberagent"},
+		CommandName:     "scan web",
+		CommandArgs:     []string{"scan", "web", "--target", server.URL, "--scope", server.URL, "--out", out, "--no-external-tools"},
+	})
 	if err != nil {
 		t.Fatalf("RunWebScan() error = %v", err)
 	}
@@ -55,6 +64,9 @@ func TestRunWebScanProducesMVPArtifacts(t *testing.T) {
 	mustExist(t, filepath.Join(out, "scope.json"))
 	mustExist(t, filepath.Join(out, "job.json"))
 	mustExist(t, filepath.Join(out, "plan.json"))
+	mustExist(t, filepath.Join(out, "metadata.json"))
+	mustExist(t, filepath.Join(out, "effective_config.json"))
+	mustExist(t, filepath.Join(out, "plugins.snapshot.json"))
 	mustExist(t, filepath.Join(out, "events.jsonl"))
 	mustExist(t, filepath.Join(out, "commands.log"))
 	mustExist(t, filepath.Join(out, "artifacts", "http", "probe.json"))
@@ -85,6 +97,42 @@ func TestRunWebScanProducesMVPArtifacts(t *testing.T) {
 	}
 	if !seenProbe {
 		t.Fatalf("commands.log missing builtin.http_probe call: %#v", calls)
+	}
+
+	var metadata RunMetadataSnapshot
+	readJSON(t, filepath.Join(out, "metadata.json"), &metadata)
+	if metadata.SchemaVersion != "0.1.1" || metadata.JobID != result.Job.ID || metadata.Workspace != out {
+		t.Fatalf("unexpected metadata snapshot: %#v", metadata)
+	}
+	if metadata.Binary.Version != "vtest" || metadata.Binary.Commit != "abc123" || metadata.Binary.Date != "2026-05-24T00:00:00Z" {
+		t.Fatalf("unexpected metadata binary info: %#v", metadata.Binary)
+	}
+	if metadata.Command.Name != "scan web" || !containsString(metadata.Command.Args, "--no-external-tools") {
+		t.Fatalf("unexpected metadata command snapshot: %#v", metadata.Command)
+	}
+	if metadata.Runtime.GOOS == "" || metadata.Runtime.GOARCH == "" || metadata.Runtime.GoVersion == "" {
+		t.Fatalf("metadata runtime snapshot incomplete: %#v", metadata.Runtime)
+	}
+
+	var effective EffectiveConfigSnapshot
+	readJSON(t, filepath.Join(out, "effective_config.json"), &effective)
+	if effective.Profile != "safe" || effective.Target != server.URL || effective.Scope != server.URL || effective.Out != out {
+		t.Fatalf("unexpected effective config snapshot: %#v", effective)
+	}
+	if !effective.NoExternalTools || effective.Interactive {
+		t.Fatalf("unexpected effective config flags: %#v", effective)
+	}
+
+	var pluginSnapshot PluginSnapshot
+	readJSON(t, filepath.Join(out, "plugins.snapshot.json"), &pluginSnapshot)
+	if pluginSnapshot.SchemaVersion != "0.1.1" {
+		t.Fatalf("unexpected plugin snapshot schema: %#v", pluginSnapshot)
+	}
+	if len(pluginSnapshot.Enabled) != 0 {
+		t.Fatalf("plugin snapshot enabled = %#v, want empty with no-external-tools", pluginSnapshot.Enabled)
+	}
+	if !pluginSnapshotHas(pluginSnapshot, "ffuf-low-rate") || !containsString(pluginSnapshot.Disabled, "ffuf-low-rate") {
+		t.Fatalf("plugin snapshot missing disabled ffuf-low-rate: %#v", pluginSnapshot)
 	}
 
 	stateStore, err := state.Open(filepath.Join(out, "state", "bolt.db"))
@@ -427,6 +475,24 @@ func TestRunWebScanWithPythonJSRouteAnalyzerPlugin(t *testing.T) {
 func planHasStep(plan contracts.Plan, stepID string) bool {
 	for _, id := range plan.Steps {
 		if id == stepID {
+			return true
+		}
+	}
+	return false
+}
+
+func pluginSnapshotHas(snapshot PluginSnapshot, name string) bool {
+	for _, plugin := range snapshot.Discovered {
+		if plugin.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
 			return true
 		}
 	}

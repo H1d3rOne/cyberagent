@@ -18,7 +18,11 @@ func main() {
 		fmt.Printf("cyberagent %s (commit: %s, built: %s)\n", version, commit, date)
 		return
 	}
-	if err := app.RunWithVersion(os.Args[1:], version); err != nil {
+	if err := app.RunWithBuildInfo(os.Args[1:], app.BuildInfo{
+		Version: version,
+		Commit:  commit,
+		Date:    date,
+	}); err != nil {
 		fmt.Fprintf(os.Stderr, "cyberagent: %v\n", err)
 		os.Exit(1)
 	}

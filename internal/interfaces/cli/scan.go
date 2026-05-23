@@ -20,7 +20,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newScanCommand() *cobra.Command {
+func newScanCommand(build coreruntime.BuildInfo) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Create and run scan jobs",
@@ -72,6 +72,9 @@ func newScanCommand() *cobra.Command {
 				EnabledPlugins:  plugins,
 				NoExternalTools: noExternalTools,
 				Interactive:     interactive,
+				BuildInfo:       build,
+				CommandName:     "scan web",
+				CommandArgs:     scanWebEffectiveArgs(target, scope, profile, out, plugins, noExternalTools, interactive, configFile),
 				OnProgress: func(stepName, status string) {
 					logger.Info("  [%s] %s", status, stepName)
 				},
@@ -102,6 +105,37 @@ func newScanCommand() *cobra.Command {
 	cmd.AddCommand(web)
 	cmd.AddCommand(newScanAgentCommand())
 	return cmd
+}
+
+func scanWebEffectiveArgs(target, scope, profile, out string, plugins []string, noExternalTools, interactive bool, configFile string) []string {
+	args := []string{"scan", "web"}
+	if target != "" {
+		args = append(args, "--target", target)
+	}
+	if scope != "" {
+		args = append(args, "--scope", scope)
+	}
+	if profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	if out != "" {
+		args = append(args, "--out", out)
+	}
+	if configFile != "" {
+		args = append(args, "--config", configFile)
+	}
+	for _, plugin := range plugins {
+		if strings.TrimSpace(plugin) != "" {
+			args = append(args, "--use-plugin", plugin)
+		}
+	}
+	if noExternalTools {
+		args = append(args, "--no-external-tools")
+	}
+	if !interactive {
+		args = append(args, "--interactive=false")
+	}
+	return args
 }
 
 func loadConfig(path string) (config.Config, error) {

@@ -100,6 +100,7 @@ python-js-route-analyzer explicit opt-in + route evidence
 ffuf-low-rate explicit opt-in + approval skip
 ffuf-low-rate approved 后可通过 replay --resume-approved 恢复执行
 plugin timeout / output_limit / invalid_output 可审计并不会破坏 safe scan
+run metadata / effective config / plugin snapshot 可复现快照
 commands.log audit trail
 state store step lifecycle
 report/evidence/finding output
@@ -189,7 +190,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] approvals list/approve/deny CLI MVP
 [x] resume approved step
 [x] plugin timeout/output/schema hardening
-[ ] run metadata/effective config/plugin snapshot
+[x] run metadata/effective config/plugin snapshot
 [ ] CLI/TUI/report UX polish
 [ ] v0.1.1 smoke test 文档
 ```

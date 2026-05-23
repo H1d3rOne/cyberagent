@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
+	coreruntime "github.com/H1d3rOne/cyberagent/internal/core/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/command"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/state"
 	"github.com/spf13/cobra"
@@ -287,6 +288,46 @@ func TestScanReportAndReplayCommands(t *testing.T) {
 	}
 }
 
+func TestScanWebWritesBuildMetadataFromCLI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><body>ok</body></html>`))
+	}))
+	defer server.Close()
+
+	runDir := filepath.Join(t.TempDir(), "run_cli_metadata")
+	cmd := NewRootCommandWithBuildInfo("CyberAgent", coreruntime.BuildInfo{
+		Version: "vcli-test",
+		Commit:  "deadbeef",
+		Date:    "2026-05-24T01:02:03Z",
+		Module:  "github.com/H1d3rOne/cyberagent",
+	})
+	if _, err := executeCLI(cmd, "scan", "web", "--target", server.URL, "--scope", server.URL, "--out", runDir, "--profile", "safe", "--use-plugin", "nuclei-safe"); err != nil {
+		t.Fatalf("scan web error = %v", err)
+	}
+
+	var metadata coreruntime.RunMetadataSnapshot
+	readJSON(t, filepath.Join(runDir, "metadata.json"), &metadata)
+	if metadata.Binary.Version != "vcli-test" || metadata.Binary.Commit != "deadbeef" || metadata.Binary.Date != "2026-05-24T01:02:03Z" {
+		t.Fatalf("unexpected metadata binary info: %#v", metadata.Binary)
+	}
+	if metadata.Command.Name != "scan web" || !containsString(metadata.Command.Args, "--use-plugin") || !containsString(metadata.Command.Args, "nuclei-safe") {
+		t.Fatalf("unexpected metadata command args: %#v", metadata.Command)
+	}
+
+	var effective coreruntime.EffectiveConfigSnapshot
+	readJSON(t, filepath.Join(runDir, "effective_config.json"), &effective)
+	if effective.Profile != "safe" || len(effective.EnabledPlugins) != 1 || effective.EnabledPlugins[0] != "nuclei-safe" {
+		t.Fatalf("unexpected effective config: %#v", effective)
+	}
+
+	var plugins coreruntime.PluginSnapshot
+	readJSON(t, filepath.Join(runDir, "plugins.snapshot.json"), &plugins)
+	if !containsString(plugins.Enabled, "nuclei-safe") || !containsString(plugins.Disabled, "ffuf-low-rate") {
+		t.Fatalf("unexpected plugin snapshot: %#v", plugins)
+	}
+}
+
 func TestScanWebRequiresScope(t *testing.T) {
 	_, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "scan", "web", "--target", "http://127.0.0.1:1")
 	if err == nil {
@@ -401,6 +442,15 @@ func hasToolCall(calls []contracts.ToolCall, toolName string) bool {
 func hasToolCallStatus(calls []contracts.ToolCall, toolName string, status contracts.Status) bool {
 	for _, call := range calls {
 		if call.ToolName == toolName && call.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
 			return true
 		}
 	}
