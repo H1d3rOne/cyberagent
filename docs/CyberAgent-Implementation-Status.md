@@ -1,8 +1,8 @@
 # CyberAgent Implementation Status
 
-版本：v0.1.0  
+版本：v0.1.1 RC  
 日期：2026-05-24  
-状态：MVP 实现进度快照；v0.1.1 下一阶段计划已补充
+状态：v0.1.1 本地 RC 准备完成；远程发布未执行
 
 ---
 
@@ -13,8 +13,9 @@
 MVP 主链路：已跑通
 插件系统 MVP：已接入三类声明插件，其中 ffuf-low-rate 在 safe profile 下默认审批跳过
 MVP Stabilization：本地验证通过
-MVP Release：本地 release 准备完成；远程发布未执行
-Next：v0.1.1 stabilization / HITL / plugin hardening / reproducibility
+MVP Release：v0.1.0 本地 release 准备完成；远程发布未执行
+v0.1.1 RC：本地实现、文档、测试、release notes 已准备；tag/push/GitHub Release 未执行
+Next：等待用户授权 v0.1.1 tag / push / GitHub Release，或进入 v0.1.2+ 方向
 ```
 
 ---
@@ -159,6 +160,24 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 check
 go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --skip=publish
 ```
 
+v0.1.1 RC 本地发布前验证已通过：
+
+```bash
+test -z "$(gofmt -l cmd internal)"
+go test -count=1 ./...
+go vet ./...
+go build -ldflags "-X main.version=v0.1.1-rc -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
+go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check -f .goreleaser.yml
+```
+
+备注：
+
+```text
+一次在线 go run github.com/goreleaser/goreleaser/v2@v2.15.4 check 因 Go proxy/sumdb 网络超时失败；
+随后使用本地 module cache 中的 GoReleaser v2.15.4 对 .goreleaser.yml 执行 check，通过。
+未创建 v0.1.1 tag，未 push，未发布 GitHub Release。
+```
+
 ---
 
 ## 4. 里程碑状态
@@ -175,6 +194,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 | M7 TUI Run Viewer Ready | 完成 | 只读打开已有 run |
 | M8 MVP Release Candidate | 完成 | README/限制/示例/test/vet/build/smoke/GoReleaser snapshot 已完成 |
 | M9 MVP v0.1 Release | 本地准备完成 | 本地 git/origin/release notes/GoReleaser snapshot 完成；本地 tag 指向本提交，尚未 push/release 到 GitHub |
+| M10 v0.1.1 RC | 本地准备完成 | v0.1.1 P0/P1、release notes、test/vet/build 本地验证完成；尚未创建 tag、push 或 GitHub Release |
 
 ---
 
@@ -216,6 +236,8 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] v0.1.1 smoke test 文档
 [x] plugins doctor --json
 [x] CLI/TUI/report UX polish
+[x] v0.1.1 release notes：docs/release-notes/v0.1.1.md
+[x] v0.1.1 本地 tag 可准备（未创建；需用户显式授权）
 ```
 
 ### 后置能力

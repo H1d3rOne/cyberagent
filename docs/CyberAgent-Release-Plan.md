@@ -155,6 +155,7 @@ cyberagent_v0.1.0_linux_arm64.tar.gz
 
 ```text
 docs/release-notes/v0.1.0.md
+docs/release-notes/v0.1.1.md
 ```
 
 ## 6.1 Release Notes 模板

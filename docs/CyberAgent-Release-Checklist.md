@@ -256,4 +256,6 @@ TUI 可只读打开 run-dir，并能查看 Approvals 页签。
 [x] Plugin Hardening
 [x] Run Reproducibility
 [x] v0.1.1 smoke test 文档
+[x] v0.1.1 release notes 草案
+[x] v0.1.1 本地 tag 可准备；未创建、未 push、未发布 GitHub Release
 ```

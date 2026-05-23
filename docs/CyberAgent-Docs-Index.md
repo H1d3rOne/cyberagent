@@ -31,6 +31,7 @@
 18. CyberAgent-v0.1.1-Plan.md
 19. CyberAgent-v0.1.1-Smoke-Test.md
 20. CyberAgent-Release-Checklist.md
+21. release-notes/v0.1.1.md
 ```
 
 ---
@@ -60,6 +61,7 @@
 | `CyberAgent-v0.1.1-Plan.md` | v0.1.1 稳定性、HITL、插件加固和复现能力计划 |
 | `CyberAgent-v0.1.1-Smoke-Test.md` | v0.1.1 P0 smoke test 命令、断言和验收 |
 | `CyberAgent-Release-Checklist.md` | 可复用发布前检查清单 |
+| `release-notes/v0.1.1.md` | v0.1.1 release notes 草案；本地 RC 准备使用，远程发布需显式授权 |
 
 ---
 
@@ -76,8 +78,8 @@ Plugin: subprocess + JSON/JSONL
 LLM: 增强层，不作为 Core 依赖
 nuclei-safe: 默认不启用
 TUI v1: 只读 run viewer
-Current release: v0.1.0 本地 tag 已创建，远程发布待执行
-Next plan: v0.1.1 stabilization / HITL / plugin hardening / reproducibility
+Current release: v0.1.1 本地 RC 准备完成，tag/push/GitHub Release 待显式授权
+Next plan: v0.1.2+ 方向择一推进
 ```
 
 ---

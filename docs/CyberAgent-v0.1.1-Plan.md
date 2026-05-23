@@ -303,6 +303,13 @@ go test ./internal/interfaces/cli
 
 # P1-06 additional verification
 go test ./internal/core/reporting ./internal/core/runtime ./internal/interfaces/cli
+
+# v0.1.1 RC local release-prep verification
+test -z "$(gofmt -l cmd internal)"
+go test -count=1 ./...
+go vet ./...
+go build -ldflags "-X main.version=v0.1.1-rc -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
+go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check -f .goreleaser.yml
 ```
 
 P0-05 当前边界：
@@ -450,7 +457,7 @@ LLM 仍是增强层，不参与 P0 默认路径。
 [x] run metadata/effective config/plugin snapshot 可查看
 [x] smoke test 通过并写入文档
 [x] report/replay 能解释 skipped/failed/approved 状态
-[ ] 本地 tag v0.1.1 可准备
+[x] 本地 tag v0.1.1 可准备（未创建；需用户显式授权）
 ```
 
 ---
