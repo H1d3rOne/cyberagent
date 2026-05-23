@@ -238,7 +238,7 @@ P3-05 默认启用外部扫描插件
 
 ```text
 [x] P0-01 GitHub Actions: test/vet/build
-[ ] P0-02 release checklist 与 README 安装说明更新
+[x] P0-02 release checklist 与 README 安装说明更新
 [ ] P0-03 PolicyDecision(require_approval) 持久化结构确认
 [ ] P0-04 approval list/approve/deny CLI MVP
 [ ] P0-05 resume approved step MVP
@@ -306,8 +306,8 @@ LLM 仍是增强层，不参与 P0 默认路径。
 ## 8. v0.1.1 完成定义
 
 ```text
-[ ] CI: test/vet/build 通过
-[ ] release checklist 更新
+[x] CI: test/vet/build 通过
+[x] release checklist 更新
 [ ] approval request 可持久化
 [ ] approval CLI 可用
 [ ] approved step 可恢复执行或明确进入可恢复状态

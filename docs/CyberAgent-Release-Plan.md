@@ -2,7 +2,7 @@
 
 版本：v0.1  
 日期：2026-05-24  
-状态：本地发布准备完成，远程发布待执行
+状态：本地发布准备完成，远程发布待执行；发布检查清单已固化
 
 ---
 
@@ -71,17 +71,24 @@ LLM 默认启用
 
 ## 4. 发布前检查清单
 
+可复用清单见：`docs/CyberAgent-Release-Checklist.md`。
+
+最小检查项：
+
 ```text
-go test ./... 通过
-go vet ./... 通过，可后置但建议执行
 gofmt 已执行
+go test ./... 通过
+go vet ./... 通过
+CLI build/version/doctor 通过
 README 快速开始可用
 docs 索引完整
 示例 target 测试通过
-默认不运行 nuclei-safe
+默认不运行 nuclei-safe / ffuf-low-rate
 无 scope 拒绝扫描
+requires_approval step 不自动执行
 report.md 可读
 release notes 完成
+GoReleaser check/snapshot 通过
 ```
 
 ---

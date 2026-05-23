@@ -14,13 +14,56 @@ CyberAgent 是一个 **CLI/TUI-first** 的授权 Web/API 安全分析 Agent。MV
 - 插件系统：manifest discovery、doctor、external command、subprocess JSONL
 - 可选插件：`nuclei-safe`、`python-js-route-analyzer`、`ffuf-low-rate`
 
+## 安装
+
+### 方式一：从源码构建（当前推荐）
+
+```bash
+git clone https://github.com/H1d3rOne/cyberagent.git
+cd cyberagent
+
+go test ./...
+go build -o bin/cyberagent ./cmd/cyberagent
+./bin/cyberagent version
+```
+
+### 方式二：使用 Go 安装
+
+适合已经安装 Go 工具链的用户：
+
+```bash
+go install github.com/H1d3rOne/cyberagent/cmd/cyberagent@latest
+cyberagent version
+```
+
+说明：在远程 GitHub Release 正式发布前，`@latest` 取决于远程仓库是否已经推送对应 tag。
+
+### 方式三：下载 Release 二进制
+
+v0.1.0 本地 release 产物已验证；远程 GitHub Release 发布后可下载对应平台压缩包：
+
+```text
+cyberagent_v0.1.0_darwin_arm64.tar.gz
+cyberagent_v0.1.0_darwin_amd64.tar.gz
+cyberagent_v0.1.0_linux_amd64.tar.gz
+cyberagent_v0.1.0_linux_arm64.tar.gz
+```
+
+解压后执行：
+
+```bash
+./cyberagent version
+./cyberagent doctor
+```
+
 ## 快速开始
 
 ```bash
-# 运行测试
+# 本地开发验证
 go test ./...
+go vet ./...
 
-# 构建
+# 构建 CLI
 go build -o bin/cyberagent ./cmd/cyberagent
 
 # 查看版本
@@ -126,8 +169,27 @@ make build-quick
 # 或直接
 gofmt -w cmd internal
 go test ./...
+go vet ./...
 go build -o bin/cyberagent ./cmd/cyberagent
 ```
+
+## 发布前检查
+
+详细清单见：`docs/CyberAgent-Release-Checklist.md`。
+
+最小本地检查：
+
+```bash
+test -z "$(gofmt -l cmd internal)"
+go test -count=1 ./...
+go vet ./...
+go build -ldflags "-X main.version=local -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o bin/cyberagent ./cmd/cyberagent
+./bin/cyberagent version
+./bin/cyberagent --version
+go run github.com/goreleaser/goreleaser/v2@v2.15.4 check
+```
+
+真实远程发布需要显式推送 tag 并运行 GoReleaser；本项目默认不会自动 push 或创建 GitHub Release。
 
 ## 当前限制
 

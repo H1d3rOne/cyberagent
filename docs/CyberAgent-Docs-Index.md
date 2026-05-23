@@ -29,6 +29,7 @@
 16. CyberAgent-Implementation-Status.md
 17. CyberAgent-Smoke-Test.md
 18. CyberAgent-v0.1.1-Plan.md
+19. CyberAgent-Release-Checklist.md
 ```
 
 ---
@@ -56,6 +57,7 @@
 | `CyberAgent-Implementation-Status.md` | MVP 实现进度快照与剩余项 |
 | `CyberAgent-Smoke-Test.md` | MVP smoke test 命令与结果记录 |
 | `CyberAgent-v0.1.1-Plan.md` | v0.1.1 稳定性、HITL、插件加固和复现能力计划 |
+| `CyberAgent-Release-Checklist.md` | 可复用发布前检查清单 |
 
 ---
 
