@@ -1,7 +1,7 @@
 # CyberAgent Implementation Status
 
-版本：v0.1-dev  
-日期：2026-05-23  
+版本：v0.1.0  
+日期：2026-05-24  
 状态：MVP 实现进度快照
 
 ---
@@ -12,8 +12,8 @@
 规划阶段：已完成
 MVP 主链路：已跑通
 插件系统 MVP：已接入三类声明插件，其中 ffuf-low-rate 在 safe profile 下默认审批跳过
-MVP Stabilization：本地验证通过，待发布前最终确认
-MVP Release：未发布
+MVP Stabilization：本地验证通过
+MVP Release：本地 release 准备完成；远程发布未执行
 ```
 
 ---
@@ -112,7 +112,7 @@ TUI run viewer
 ```bash
 go test ./...
 go vet ./...
-go build -o bin/cyberagent ./cmd/cyberagent
+go build -ldflags "-X main.version=v0.1.0-test -X main.commit=local -X main.date=2026-05-24" -o bin/cyberagent ./cmd/cyberagent
 ```
 
 Smoke test 已通过：
@@ -124,6 +124,13 @@ version / doctor / plugins list / plugins doctor / scan web / report / replay
 report.json job.status = succeeded
 report.md status = succeeded
 events.jsonl contains job.finished
+```
+
+GoReleaser 已通过：
+
+```bash
+go run github.com/goreleaser/goreleaser/v2@v2.15.4 check
+go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --skip=publish
 ```
 
 ---
@@ -140,8 +147,8 @@ events.jsonl contains job.finished
 | M5 CLI Safe Scan Ready | 完成 | `scan web` 可生成 run/report |
 | M6 Plugin MVP Ready | 基本完成 | 三个插件均进入 MVP 链路；ffuf 当前默认审批跳过 |
 | M7 TUI Run Viewer Ready | 完成 | 只读打开已有 run |
-| M8 MVP Release Candidate | 基本完成 | README/限制/示例/test/vet/build/smoke 已完成 |
-| M9 MVP v0.1 Release | 未完成 | 需要 git 仓库、tag、release notes、构建产物 |
+| M8 MVP Release Candidate | 完成 | README/限制/示例/test/vet/build/smoke/GoReleaser snapshot 已完成 |
+| M9 MVP v0.1 Release | 本地准备完成 | 本地 git/origin/release notes/GoReleaser snapshot 完成；本地 tag 指向本提交，尚未 push/release 到 GitHub |
 
 ---
 
@@ -160,12 +167,13 @@ events.jsonl contains job.finished
 ### Release
 
 ```text
-[ ] 初始化或确认 git 仓库
-[ ] 配置远程 GitHub 仓库：github.com/H1d3rOne/cyberagent
+[x] 初始化或确认 git 仓库
+[x] 配置远程 GitHub 仓库：github.com/H1d3rOne/cyberagent
 [x] 准备 v0.1.0 release notes
-[ ] 验证 goreleaser build
-[ ] 创建 tag v0.1.0
-[ ] 发布二进制产物
+[x] 验证 goreleaser build
+[x] 创建本地 tag v0.1.0
+[ ] 推送 tag v0.1.0
+[ ] 发布 GitHub Release 二进制产物
 ```
 
 ### 后置能力

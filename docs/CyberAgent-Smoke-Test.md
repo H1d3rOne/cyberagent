@@ -1,7 +1,7 @@
 # CyberAgent MVP Smoke Test
 
-版本：v0.1-dev  
-日期：2026-05-23  
+版本：v0.1.0  
+日期：2026-05-24  
 状态：MVP smoke test 记录
 
 ---

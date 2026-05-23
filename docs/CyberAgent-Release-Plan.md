@@ -1,8 +1,8 @@
 # CyberAgent Release Plan
 
 版本：v0.1  
-日期：2026-05-23  
-状态：发布计划完成
+日期：2026-05-24  
+状态：本地发布准备完成，远程发布待执行
 
 ---
 
@@ -88,12 +88,25 @@ release notes 完成
 
 ## 4.1 当前本地检查结果
 
-截至 2026-05-23，本地已通过：
+截至 2026-05-24，本地已通过：
 
 ```bash
 go test ./...
 go vet ./...
-go build -o bin/cyberagent ./cmd/cyberagent
+go build -ldflags "-X main.version=v0.1.0-test -X main.commit=local -X main.date=2026-05-24" -o bin/cyberagent ./cmd/cyberagent
+```
+
+GoReleaser 本地验证已通过：
+
+```bash
+go run github.com/goreleaser/goreleaser/v2@v2.15.4 check
+go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --skip=publish
+```
+
+本地 tag 计划：
+
+```text
+v0.1.0 指向 release-prep 提交；远程 tag 待推送。
 ```
 
 Smoke test 已通过：
