@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
+	"github.com/H1d3rOne/cyberagent/internal/runtime/command"
+	"github.com/H1d3rOne/cyberagent/internal/runtime/state"
 	"github.com/spf13/cobra"
 )
 
@@ -79,6 +83,80 @@ entrypoint:
 			}
 		}
 	})
+}
+
+func TestApprovalsCommands(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><body>ok</body></html>`))
+	}))
+	defer server.Close()
+
+	runDir := filepath.Join(t.TempDir(), "run_approvals")
+	_, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "scan", "web", "--target", server.URL, "--scope", server.URL, "--out", runDir, "--profile", "safe", "--use-plugin", "ffuf-low-rate")
+	if err != nil {
+		t.Fatalf("scan web with ffuf-low-rate error = %v", err)
+	}
+
+	listOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "approvals", "list", runDir)
+	if err != nil {
+		t.Fatalf("approvals list error = %v", err)
+	}
+	for _, want := range []string{"ID", "approval_step_optional_ffuf_low_rate_001", "pending", "step_optional_ffuf_low_rate_001"} {
+		if !strings.Contains(listOut, want) {
+			t.Fatalf("approvals list output missing %q: %q", want, listOut)
+		}
+	}
+
+	approveOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "approvals", "approve", runDir, "step_optional_ffuf_low_rate_001")
+	if err != nil {
+		t.Fatalf("approvals approve error = %v", err)
+	}
+	for _, want := range []string{"approval approve", "approval_step_optional_ffuf_low_rate_001", "status: approved"} {
+		if !strings.Contains(approveOut, want) {
+			t.Fatalf("approvals approve output missing %q: %q", want, approveOut)
+		}
+	}
+
+	var approvals []contracts.HITLRequest
+	readJSON(t, filepath.Join(runDir, "approvals.json"), &approvals)
+	if len(approvals) != 1 || approvals[0].Status != contracts.HITLApproved || approvals[0].ResolvedAt == nil {
+		t.Fatalf("unexpected approvals.json after approve: %#v", approvals)
+	}
+
+	stateStore, err := state.Open(filepath.Join(runDir, "state", "bolt.db"))
+	if err != nil {
+		t.Fatalf("open state store: %v", err)
+	}
+	persisted, err := stateStore.LoadHITLRequest("approval_step_optional_ffuf_low_rate_001")
+	stateStore.Close()
+	if err != nil {
+		t.Fatalf("LoadHITLRequest() error = %v", err)
+	}
+	if persisted.Status != contracts.HITLApproved {
+		t.Fatalf("unexpected persisted approval: %#v", persisted)
+	}
+
+	replayOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "replay", runDir)
+	if err != nil {
+		t.Fatalf("replay after approval error = %v", err)
+	}
+	if !strings.Contains(replayOut, "approval.resolved") {
+		t.Fatalf("replay output missing approval.resolved: %q", replayOut)
+	}
+
+	calls, err := command.NewRecorder(filepath.Join(runDir, "commands.log")).ReadAll()
+	if err != nil {
+		t.Fatalf("read commands.log: %v", err)
+	}
+	if !hasToolCall(calls, "cyberagent.approvals") {
+		t.Fatalf("commands.log missing approval audit call: %#v", calls)
+	}
+
+	_, err = executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "approvals", "deny", runDir, "step_optional_ffuf_low_rate_001")
+	if err == nil || !strings.Contains(err.Error(), "not pending") {
+		t.Fatalf("expected deny approved request to fail with not pending, got err=%v", err)
+	}
 }
 
 func TestScanReportAndReplayCommands(t *testing.T) {
@@ -221,5 +299,25 @@ func writeTestPlugin(t *testing.T, root, name, manifest string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "plugin.yaml"), []byte(manifest), 0o644); err != nil {
 		t.Fatalf("write plugin manifest: %v", err)
+	}
+}
+
+func hasToolCall(calls []contracts.ToolCall, toolName string) bool {
+	for _, call := range calls {
+		if call.ToolName == toolName {
+			return true
+		}
+	}
+	return false
+}
+
+func readJSON(t *testing.T, path string, out any) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
 	}
 }

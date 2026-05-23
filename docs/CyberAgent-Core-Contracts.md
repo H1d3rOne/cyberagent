@@ -871,6 +871,23 @@ key: HITLRequest.id
 
 ---
 
+## 19.4 v0.1.1 CLI 操作约定
+
+```bash
+cyberagent approvals list <run-dir>
+cyberagent approvals approve <run-dir> <approval-id-or-step-id>
+cyberagent approvals deny <run-dir> <approval-id-or-step-id>
+```
+
+```text
+list: 读取 run-dir/approvals.json
+approve: pending -> approved，同时同步 bbolt hitl_requests，追加 approval.resolved 事件和 commands.log 审计记录
+deny: pending -> rejected，同时同步 bbolt hitl_requests，追加 approval.resolved 事件和 commands.log 审计记录
+resume: 不属于 P0-04，由 P0-05 实现
+```
+
+---
+
 ## 20. ReflectionResult Contract
 
 ReflectionResult 是质量门输出。

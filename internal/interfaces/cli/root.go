@@ -43,6 +43,7 @@ Status: MVP safe-scan runtime ready`, name, module),
 	cmd.AddCommand(newScanCommand())
 	cmd.AddCommand(newReportCommand())
 	cmd.AddCommand(newReplayCommand())
+	cmd.AddCommand(newApprovalsCommand())
 	cmd.AddCommand(newPluginsCommand())
 	cmd.AddCommand(newTUICommand())
 	cmd.AddCommand(newDashboardCommand())

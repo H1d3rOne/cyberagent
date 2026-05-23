@@ -240,7 +240,7 @@ P3-05 默认启用外部扫描插件
 [x] P0-01 GitHub Actions: test/vet/build
 [x] P0-02 release checklist 与 README 安装说明更新
 [x] P0-03 PolicyDecision(require_approval) 持久化结构确认
-[ ] P0-04 approval list/approve/deny CLI MVP
+[x] P0-04 approval list/approve/deny CLI MVP
 [ ] P0-05 resume approved step MVP
 [ ] P0-06 plugin timeout/output limit/invalid output 处理
 [ ] P0-07 run metadata/effective config 快照
@@ -261,6 +261,13 @@ go test ./internal/runtime/state ./internal/runtime/runs ./internal/core/runtime
 go test ./...
 go vet ./...
 go build -ldflags "-X main.version=p0-03-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
+
+# P0-04 additional verification
+go test ./internal/runtime/approvals ./internal/interfaces/cli
+go test ./...
+go vet ./...
+go build -ldflags "-X main.version=p0-04-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
+./bin/cyberagent approvals --help
 ```
 
 ---
@@ -315,7 +322,7 @@ LLM 仍是增强层，不参与 P0 默认路径。
 [x] CI: test/vet/build 通过
 [x] release checklist 更新
 [x] approval request 可持久化
-[ ] approval CLI 可用
+[x] approval CLI 可用
 [ ] approved step 可恢复执行或明确进入可恢复状态
 [ ] plugin timeout/output/schema 错误可审计
 [ ] run metadata/effective config/plugin snapshot 可查看

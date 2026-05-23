@@ -119,7 +119,27 @@ go build -o bin/cyberagent ./cmd/cyberagent
 |---|---:|---|---|
 | `nuclei-safe` | 否 | low | 显式启用后运行；缺少 `nuclei` 时跳过并写入 `commands.log` |
 | `python-js-route-analyzer` | 否 | low | 只分析已保存 JS artifact，不主动联网 |
-| `ffuf-low-rate` | 否 | medium + approval | 显式启用后进入 plan；MVP safe profile 下默认因需要审批而跳过并审计记录 |
+| `ffuf-low-rate` | 否 | medium + approval | 显式启用后进入 plan；safe profile 下生成 pending approval 并默认跳过；可用 `approvals approve/deny` 更新审批状态 |
+
+## 审批命令
+
+`requires_approval` 的步骤默认不会自动执行。当前 v0.1.1 支持审批状态管理：
+
+```bash
+./bin/cyberagent approvals list runs/with-ffuf
+./bin/cyberagent approvals approve runs/with-ffuf step_optional_ffuf_low_rate_001
+./bin/cyberagent approvals deny runs/with-ffuf step_optional_ffuf_low_rate_001
+```
+
+说明：
+
+```text
+approvals list      查看 approvals.json 中的 pending/approved/rejected 请求
+approvals approve   将 pending 请求标记为 approved，并写入 events.jsonl / commands.log / bbolt
+approvals deny      将 pending 请求标记为 rejected，并写入 events.jsonl / commands.log / bbolt
+```
+
+审批命令只更新状态；恢复执行 approved step 是后续 v0.1.1 P0-05 范围。
 
 ## 内置 Web 分析能力
 

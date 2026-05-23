@@ -184,7 +184,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] CI: test/vet/build
 [x] release checklist 与 README 安装说明更新
 [x] PolicyDecision(require_approval) / approval request 持久化结构
-[ ] HITL approval MVP
+[x] approvals list/approve/deny CLI MVP
 [ ] resume approved step
 [ ] plugin timeout/output/schema hardening
 [ ] run metadata/effective config/plugin snapshot
