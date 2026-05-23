@@ -606,3 +606,25 @@ v0.1.2 的成功标准不是“界面好看”，而是：
 ```text
 同一个 Core 能被 CLI、TUI、daemon、未来 Desktop/Web 稳定复用。
 ```
+
+---
+
+## 14. 实施拆解
+
+实施级任务拆解见：
+
+```text
+docs/CyberAgent-v0.1.2-Implementation-Breakdown.md
+```
+
+该文档包含：
+
+```text
+工作流分组
+P0/P1/P2 tickets
+依赖顺序
+拟新增模块边界
+验收测试
+推荐提交节奏
+风险控制
+```
