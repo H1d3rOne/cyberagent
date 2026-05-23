@@ -118,8 +118,16 @@ go build -o bin/cyberagent ./cmd/cyberagent
 | Plugin | 默认启用 | 风险 | MVP 行为 |
 |---|---:|---|---|
 | `nuclei-safe` | 否 | low | 显式启用后运行；缺少 `nuclei` 时跳过并写入 `commands.log` |
-| `python-js-route-analyzer` | 否 | low | 只分析已保存 JS artifact，不主动联网 |
+| `python-js-route-analyzer` | 否 | low | 只分析已保存 JS artifact，不主动联网；输出必须是合法 JSON/JSONL |
 | `ffuf-low-rate` | 否 | medium + approval | 显式启用后进入 plan；safe profile 下生成 pending approval 并默认跳过；approved 后可用 `replay --resume-approved` 恢复执行 |
+
+插件执行边界：
+
+```text
+默认 stdout 捕获上限 1MiB，stderr 捕获上限 256KiB。
+timeout / output_limit / invalid_output / dependency_missing / policy_skipped / execution_failed 会写入 commands.log 的 error_class。
+插件输出会先校验再记录最终 ToolCall，避免非法输出被误记为 succeeded。
+```
 
 ## 审批命令
 

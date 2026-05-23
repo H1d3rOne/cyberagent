@@ -169,6 +169,130 @@ func TestRunnerRunFFUFLowRate(t *testing.T) {
 	}
 }
 
+func TestRunnerRunFFUFLowRateInvalidOutputSkipsAndRecordsFailure(t *testing.T) {
+	fakeBin := t.TempDir()
+	fakeFFUF := filepath.Join(fakeBin, "ffuf")
+	if err := os.WriteFile(fakeFFUF, []byte("#!/bin/sh\nprintf '%s\n' 'not-json'\n"), 0o755); err != nil {
+		t.Fatalf("write fake ffuf: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	manifest := ffufLowRateManifest()
+	workspace := t.TempDir()
+	recorder := command.NewRecorder(filepath.Join(workspace, "commands.log"))
+
+	result, err := NewRunner(recorder).Run(context.Background(), manifest, RunRequest{
+		ID:       "request_invalid_001",
+		JobID:    "job_001",
+		StepID:   "step_optional_ffuf_low_rate_001",
+		Target:   "http://localhost:8080",
+		WorkDir:  workspace,
+		Timeout:  10 * time.Second,
+		Recorder: recorder,
+	})
+	if err != nil {
+		t.Fatalf("Run() returned hard error = %v", err)
+	}
+	if !result.Skipped || result.Call.Status != contracts.StatusFailed || !strings.Contains(result.Reason, "invalid_output") {
+		t.Fatalf("unexpected invalid-output result: %#v", result)
+	}
+	if got := result.Call.Metadata["error_class"]; got != "invalid_output" {
+		t.Fatalf("error_class = %#v, want invalid_output; call=%#v", got, result.Call)
+	}
+	calls, err := recorder.ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if len(calls) != 1 || calls[0].Status != contracts.StatusFailed || calls[0].Metadata["error_class"] != "invalid_output" {
+		t.Fatalf("unexpected recorded invalid-output call: %#v", calls)
+	}
+}
+
+func TestRunnerRunFFUFLowRateOutputLimitSkipsAndRecordsFailure(t *testing.T) {
+	fakeBin := t.TempDir()
+	fakeFFUF := filepath.Join(fakeBin, "ffuf")
+	if err := os.WriteFile(fakeFFUF, []byte("#!/bin/sh\nprintf '%s' '12345678901234567890'\n"), 0o755); err != nil {
+		t.Fatalf("write fake ffuf: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	manifest := ffufLowRateManifest()
+	workspace := t.TempDir()
+	recorder := command.NewRecorder(filepath.Join(workspace, "commands.log"))
+
+	result, err := NewRunner(recorder).Run(context.Background(), manifest, RunRequest{
+		ID:             "request_limit_001",
+		JobID:          "job_001",
+		StepID:         "step_optional_ffuf_low_rate_001",
+		Target:         "http://localhost:8080",
+		WorkDir:        workspace,
+		Timeout:        10 * time.Second,
+		Recorder:       recorder,
+		MaxStdoutBytes: 8,
+	})
+	if err != nil {
+		t.Fatalf("Run() returned hard error = %v", err)
+	}
+	if !result.Skipped || result.Call.Status != contracts.StatusFailed || result.Call.Metadata["error_class"] != "output_limit" {
+		t.Fatalf("unexpected output-limit result: %#v", result)
+	}
+	if len(result.Stdout) != 8 || string(result.Stdout) != "12345678" {
+		t.Fatalf("stdout capture = %q len=%d, want first 8 bytes", result.Stdout, len(result.Stdout))
+	}
+	calls, err := recorder.ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if len(calls) != 1 || calls[0].Metadata["error_class"] != "output_limit" || calls[0].Metadata["stdout_truncated"] != true {
+		t.Fatalf("unexpected recorded output-limit call: %#v", calls)
+	}
+}
+
+func TestRunnerRunSubprocessJSONLTimeoutSkipsAndRecordsFailure(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "sleep.py")
+	if err := os.WriteFile(script, []byte("import time\ntime.sleep(2)\nprint('{\"type\":\"ok\"}')\n"), 0o644); err != nil {
+		t.Fatalf("write sleep plugin: %v", err)
+	}
+	manifest := contracts.PluginManifest{
+		ID:      "plugin_sleep",
+		Name:    "sleep-plugin",
+		Version: "0.1.0",
+		Type:    contracts.PluginTypeAnalyzer,
+		Runtime: "subprocess_jsonl",
+		Risk:    contracts.RiskLow,
+		Dependencies: []contracts.PluginDependency{
+			{Name: "python3", Kind: "binary", Required: true},
+		},
+		Entrypoint: contracts.PluginEntrypoint{Kind: "subprocess", Path: script},
+	}
+	workspace := t.TempDir()
+	recorder := command.NewRecorder(filepath.Join(workspace, "commands.log"))
+
+	result, err := NewRunner(recorder).Run(context.Background(), manifest, RunRequest{
+		ID:       "request_timeout_001",
+		JobID:    "job_001",
+		StepID:   "step_sleep_001",
+		Target:   "http://localhost:8080",
+		WorkDir:  workspace,
+		Timeout:  50 * time.Millisecond,
+		Recorder: recorder,
+	})
+	if err != nil {
+		t.Fatalf("Run() returned hard error = %v", err)
+	}
+	if !result.Skipped || result.Call.Status != contracts.StatusFailed || result.Call.Metadata["error_class"] != "timeout" {
+		t.Fatalf("unexpected timeout result: %#v", result)
+	}
+	calls, err := recorder.ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if len(calls) != 1 || calls[0].Metadata["error_class"] != "timeout" || calls[0].Status != contracts.StatusFailed {
+		t.Fatalf("unexpected recorded timeout call: %#v", calls)
+	}
+}
+
 func TestResolveEntrypointPath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plugin.py")
@@ -197,6 +321,22 @@ func TestResolveEntrypointPath(t *testing.T) {
 	}
 	if resolved != filepath.Join(workDir, rel) {
 		t.Fatalf("resolved = %s, want %s", resolved, filepath.Join(workDir, rel))
+	}
+}
+
+func ffufLowRateManifest() contracts.PluginManifest {
+	return contracts.PluginManifest{
+		ID:               "plugin_ffuf_low_rate",
+		Name:             "ffuf-low-rate",
+		Version:          "0.1.0",
+		Type:             contracts.PluginTypeTool,
+		Runtime:          "external_command",
+		Risk:             contracts.RiskMedium,
+		RequiresApproval: true,
+		Dependencies: []contracts.PluginDependency{
+			{Name: "ffuf", Kind: "binary", Required: true},
+		},
+		Entrypoint: contracts.PluginEntrypoint{Kind: "command_builder", Path: filepath.Join("plugins", "ffuf-low-rate", "plugin.yaml")},
 	}
 }
 

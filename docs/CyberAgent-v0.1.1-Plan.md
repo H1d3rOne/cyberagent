@@ -242,7 +242,7 @@ P3-05 默认启用外部扫描插件
 [x] P0-03 PolicyDecision(require_approval) 持久化结构确认
 [x] P0-04 approval list/approve/deny CLI MVP
 [x] P0-05 resume approved step MVP
-[ ] P0-06 plugin timeout/output limit/invalid output 处理
+[x] P0-06 plugin timeout/output limit/invalid output 处理
 [ ] P0-07 run metadata/effective config 快照
 [ ] P0-08 v0.1.1 smoke test 文档
 ```
@@ -272,6 +272,9 @@ go build -ldflags "-X main.version=p0-04-local -X main.commit=$(git rev-parse --
 # P0-05 additional verification
 go test ./internal/plugins ./internal/core/runtime ./internal/interfaces/cli
 go test ./internal/interfaces/cli -run TestReplayResumeApprovedFFUFLowRate -count=1
+
+# P0-06 additional verification
+go test ./internal/runtime/command ./internal/plugins ./internal/core/runtime ./internal/interfaces/cli
 ```
 
 P0-05 当前边界：
@@ -280,6 +283,15 @@ P0-05 当前边界：
 cyberagent replay <run-dir> --resume-approved 已支持恢复执行 approved 的 ffuf-low-rate step。
 恢复执行前会读取 run workspace、bbolt step / HITL / policy decision，并重新执行 Scope Guard。
 其他 approved step 暂返回 skipped/unsupported，不会隐式执行。
+```
+
+P0-06 当前边界：
+
+```text
+插件执行使用 Command Executor timeout，默认捕获 stdout<=1MiB、stderr<=256KiB。
+插件 runner 校验 stdout 后再写入最终 commands.log，避免 invalid output 被误记为 succeeded。
+commands.log 的 ToolCall.metadata.error_class 记录 dependency_missing / timeout / output_limit / invalid_output / policy_skipped / execution_failed。
+插件执行失败会作为 skipped plugin result 返回给 scan runtime，不中断整个 safe scan。
 ```
 
 ---
@@ -335,8 +347,8 @@ LLM 仍是增强层，不参与 P0 默认路径。
 [x] release checklist 更新
 [x] approval request 可持久化
 [x] approval CLI 可用
-[ ] approved step 可恢复执行或明确进入可恢复状态
-[ ] plugin timeout/output/schema 错误可审计
+[x] approved step 可恢复执行或明确进入可恢复状态
+[x] plugin timeout/output/schema 错误可审计
 [ ] run metadata/effective config/plugin snapshot 可查看
 [ ] report/replay 能解释 skipped/failed/approved 状态
 [ ] smoke test 通过并写入文档

@@ -427,6 +427,29 @@ stderr artifact
 commands.log
 ```
 
+### 10.3 v0.1.1 插件失败分类约定
+
+插件 ToolCall 必须在 `metadata.error_class` 中记录可审计失败类别：
+
+```text
+dependency_missing  依赖二进制不存在或不可用
+timeout             Command Executor 超时
+output_limit        stdout/stderr 捕获超过上限
+invalid_output      插件 stdout 不符合预期 JSON/JSONL 输出
+execution_failed    进程非零退出或其他执行错误
+policy_skipped      Risk Policy / Scope Guard 阻止执行
+```
+
+插件输出限制：
+
+```text
+stdout 默认最多捕获 1MiB
+stderr 默认最多捕获 256KiB
+stdout_truncated / stderr_truncated 写入 ToolCall.metadata
+```
+
+插件 runner 必须先校验输出，再写入最终 ToolCall，避免非法输出被误记为 `succeeded`。
+
 ---
 
 ## 11. Event Contract

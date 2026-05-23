@@ -3,6 +3,7 @@ package command
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"time"
@@ -23,6 +24,11 @@ type ExecRequest struct {
 	Timeout     time.Duration
 	Kind        contracts.ToolCallKind
 	Stdin       []byte
+	// MaxStdoutBytes and MaxStderrBytes cap captured output. Zero means unlimited.
+	MaxStdoutBytes int64
+	MaxStderrBytes int64
+	// NoRecord lets higher-level runners validate and record the final call themselves.
+	NoRecord bool
 }
 
 // ExecResult contains the completed tool call and captured process output.
@@ -85,11 +91,18 @@ func (e Executor) Run(ctx context.Context, req ExecRequest) (ExecResult, error) 
 	if len(req.Stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(req.Stdin)
 	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := newLimitedBuffer(req.MaxStdoutBytes)
+	stderr := newLimitedBuffer(req.MaxStderrBytes)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	err := cmd.Run()
+	stdoutExceeded := stdout.Exceeded()
+	stderrExceeded := stderr.Exceeded()
+	outputLimitExceeded := stdoutExceeded || stderrExceeded
+	if outputLimitExceeded && err == nil {
+		err = errors.New("command output limit exceeded")
+	}
 	status := contracts.StatusSucceeded
 	exitCode := 0
 	if err != nil {
@@ -109,10 +122,75 @@ func (e Executor) Run(ctx context.Context, req ExecRequest) (ExecResult, error) 
 	if err != nil {
 		call.Error = err.Error()
 	}
-	if e.Recorder != nil {
+	if req.MaxStdoutBytes > 0 {
+		call.Metadata["stdout_limit_bytes"] = req.MaxStdoutBytes
+		call.Metadata["stdout_bytes_captured"] = int64(len(stdout.Bytes()))
+		call.Metadata["stdout_truncated"] = stdoutExceeded
+	}
+	if req.MaxStderrBytes > 0 {
+		call.Metadata["stderr_limit_bytes"] = req.MaxStderrBytes
+		call.Metadata["stderr_bytes_captured"] = int64(len(stderr.Bytes()))
+		call.Metadata["stderr_truncated"] = stderrExceeded
+	}
+	if err != nil {
+		call.Metadata["error_class"] = classifyExecutionError(err, outputLimitExceeded)
+		if outputLimitExceeded {
+			call.Metadata["output_limit_exceeded"] = true
+		}
+	}
+	if e.Recorder != nil && !req.NoRecord {
 		if recordErr := e.Recorder.Append(call); recordErr != nil && err == nil {
 			err = recordErr
 		}
 	}
 	return ExecResult{Call: call, Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, err
+}
+
+func classifyExecutionError(err error, outputLimitExceeded bool) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if outputLimitExceeded {
+		return "output_limit"
+	}
+	return "execution_failed"
+}
+
+type limitedBuffer struct {
+	buf       bytes.Buffer
+	limit     int64
+	total     int64
+	truncated bool
+}
+
+func newLimitedBuffer(limit int64) *limitedBuffer {
+	return &limitedBuffer{limit: limit}
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	b.total += int64(len(p))
+	if b.limit <= 0 {
+		_, _ = b.buf.Write(p)
+		return len(p), nil
+	}
+	remaining := b.limit - int64(b.buf.Len())
+	if remaining > 0 {
+		toWrite := int64(len(p))
+		if toWrite > remaining {
+			toWrite = remaining
+		}
+		_, _ = b.buf.Write(p[:toWrite])
+	}
+	if b.total > b.limit {
+		b.truncated = true
+	}
+	return len(p), nil
+}
+
+func (b *limitedBuffer) Bytes() []byte {
+	return b.buf.Bytes()
+}
+
+func (b *limitedBuffer) Exceeded() bool {
+	return b.truncated
 }

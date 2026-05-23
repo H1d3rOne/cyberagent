@@ -194,10 +194,11 @@ func RunWebScan(ctx context.Context, req WebScanRequest) (WebScanResult, error) 
 			}
 			skipped = append(skipped, step.ID)
 			_ = stateStore.SaveStep(step)
+			toolCall.Metadata["error_class"] = "policy_skipped"
+			toolCall.Metadata["policy_decision"] = string(riskDecision.Decision)
+			toolCall.Metadata["policy_decision_id"] = riskDecision.ID
+			toolCall.Metadata["policy_reasons"] = append([]string(nil), riskDecision.Reasons...)
 			if riskDecision.Decision == contracts.PolicyRequireApproval {
-				toolCall.Metadata["policy_decision"] = string(riskDecision.Decision)
-				toolCall.Metadata["policy_decision_id"] = riskDecision.ID
-				toolCall.Metadata["policy_reasons"] = append([]string(nil), riskDecision.Reasons...)
 				approval := newApprovalRequest(job.ID, step, riskDecision, reason)
 				if err := stateStore.SaveHITLRequest(approval); err != nil {
 					return WebScanResult{}, err

@@ -262,6 +262,9 @@ func TestRunWebScanWithFFUFLowRateRequiresApprovalSkipsPlugin(t *testing.T) {
 	if got := pluginCall.Metadata["policy_decision"]; got != string(contracts.PolicyRequireApproval) {
 		t.Fatalf("plugin call policy_decision = %#v, want require_approval", got)
 	}
+	if got := pluginCall.Metadata["error_class"]; got != "policy_skipped" {
+		t.Fatalf("plugin call error_class = %#v, want policy_skipped", got)
+	}
 	if got := pluginCall.Metadata["policy_decision_id"]; got != "policy_step_optional_ffuf_low_rate_001" {
 		t.Fatalf("plugin call policy_decision_id = %#v", got)
 	}
