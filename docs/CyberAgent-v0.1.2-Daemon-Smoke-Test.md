@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：smoke test 草案完成；daemon read-only API 与 approval write/resume API 子集可测；完整 P0 待 scan/job API 实现后验证
+状态：smoke test 草案完成；daemon P0 API 已实现并由 Go 测试覆盖；完整 curl smoke 待执行
 
 ---
 
@@ -778,24 +778,24 @@ curl -sS "$CYBERAGENT_BASE_URL/api/v1/healthz" || true
 v0.1.2 daemon smoke test 通过需要满足：
 
 ```text
-[ ] gofmt/go test/go vet/go build 通过
+[x] gofmt/go test/go vet/go build 通过
 [x] 本地 fixture 可访问
 [x] daemon 可启动并监听 127.0.0.1
 [x] token 文件生成且非空
 [x] 无 token / 错误 token 被拒绝
 [x] Authorization token 不写入 daemon log
 [x] health/version/doctor/plugins API 返回 ok envelope
-[ ] scan web API 可异步启动 safe scan
-[ ] job status 可从 running 进入 succeeded
+[x] scan web API 可异步启动 safe scan（Go 测试覆盖；curl smoke 待执行）
+[x] job status 可从 running 进入 succeeded（Go 测试覆盖；curl smoke 待执行）
 [x] run detail 可读取
 [x] report json/md 可读取
 [x] artifacts index 可读取
 [x] events cursor polling 可读取
-[ ] 缺少 scope 的 scan 被 scope_required 拒绝
+[x] 缺少 scope 的 scan 被 scope_required 拒绝（Go 测试覆盖；curl smoke 待执行）
 [x] path traversal 请求被拒绝
 [x] approvals list/approve 与 CLI 状态互通
 [x] resume-approved 复用 CLI replay 语义
-[ ] cancel endpoint 对不存在/已完成/running job 给出结构化响应
+[x] cancel endpoint 对不存在/已完成/running job 给出结构化响应（Go 测试覆盖；curl smoke 待执行）
 ```
 
 ---

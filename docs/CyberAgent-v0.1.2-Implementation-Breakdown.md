@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：实施拆解完成；Daemon Read-only API 与 Approval write/resume API 已完成；job manager 待实现
+状态：实施拆解完成；Daemon Read-only API、Approval write/resume API 与 scan/job API 已完成；curl smoke 待执行
 
 ---
 
@@ -501,8 +501,8 @@ TST-02 service unit tests：approval approve/deny/resume
 [x] TST-04 daemon handler tests：health/version/doctor/plugins
 [x] TST-05 daemon handler tests：runs/report/artifacts/events
 [x] TST-06 daemon handler tests：path traversal rejection
-TST-07 job manager tests：start/status/conflict/cancel
-TST-08 scan API tests：scope required
+[x] TST-07 job manager tests：start/status/conflict/cancel
+[x] TST-08 scan API tests：scope required
 TST-09 smoke test：daemon -> scan -> poll -> report -> approvals
 TST-10 regression：go test ./...
 TST-11 regression：go vet ./...
@@ -703,11 +703,11 @@ approval smoke test 预期流程：
 [x] 默认 127.0.0.1 + token auth 生效
 [x] 只读 API 可读取已有 run/report/artifact/events
 [x] approval API 与 CLI 状态互通
-[ ] scan web API 可异步启动 safe scan
-[ ] job status/cancel MVP 可用
-[ ] API contract 文档完成
+[x] scan web API 可异步启动 safe scan
+[x] job status/cancel MVP 可用
+[x] API contract 文档完成
 [ ] daemon smoke test 文档完成并通过
-[ ] gofmt/go test/go vet/go build 通过
+[x] gofmt/go test/go vet/go build 通过
 [ ] v0.1.2 release notes 草案准备
 ```
 

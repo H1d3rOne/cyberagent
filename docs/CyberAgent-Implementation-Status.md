@@ -2,7 +2,7 @@
 
 版本：v0.1.2 Implementation
 日期：2026-05-24
-状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Daemon Approval Write API 完成
+状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Async Scan Job API 完成
 
 ---
 
@@ -16,8 +16,8 @@ MVP Stabilization：本地验证通过
 MVP Release：v0.1.0 本地 release 准备完成；远程发布未执行
 v0.1.1 RC：本地实现、文档、测试、release notes 已准备；tag/push/GitHub Release 未执行
 v0.1.2 Planning：计划、实施拆解、API Contract 与 daemon smoke test 草案已完成
-v0.1.2 Implementation：Daemon Read-only API 与 Approval write/resume API 已完成；scan job manager 尚未实现
-Next：接入 scan web async job API / job status / cancel MVP
+v0.1.2 Implementation：Daemon Read-only API、Approval write/resume API、scan web async job API 与 job status/cancel MVP 已完成
+Next：执行 daemon smoke test 并准备 v0.1.2 release notes 草案
 ```
 
 ---
@@ -68,7 +68,7 @@ Next：接入 scan web async job API / job status / cancel MVP
 [x] ApprovalService: list / approve / deny
 [x] ApprovalService: resume-approved
 [x] ScanService: StartWebScan validation skeleton
-[ ] ScanService: async job manager execution
+[x] Daemon JobManager: async scan execution / status / cancel MVP
 ```
 
 ### Local Daemon / v0.1.2
@@ -90,7 +90,10 @@ Next：接入 scan web async job API / job status / cancel MVP
 [x] POST /api/v1/runs/{run_id}/approvals/{approval_id}/approve
 [x] POST /api/v1/runs/{run_id}/approvals/{approval_id}/deny
 [x] POST /api/v1/runs/{run_id}/resume-approved
-[ ] Scan async job manager / job status / cancel
+[x] POST /api/v1/scans/web
+[x] GET /api/v1/jobs/{job_id}
+[x] POST /api/v1/jobs/{job_id}/cancel
+[x] Scan async job manager / job status / cancel
 ```
 
 ### Builtin Web/API Tools
@@ -308,7 +311,7 @@ go build -ldflags "-X main.version=v0.1.2-daemon-readonly-local -X main.commit=$
 已接入 /api/v1/runs/{run_id}/resume-approved。
 doctor report JSON 字段已补充稳定 json tag。
 Approval write API 与 resume-approved API 已复用 ApprovalService，并覆盖 bad JSON / missing approval / conflict / traversal 负向测试。
-scan web async job API、job status/cancel 仍待实现。
+scan web async job API、job status/cancel 已接入 daemon router，默认 safe/no_external_tools，并覆盖 validation/concurrency/cancel 测试。
 ```
 
 v0.1.2 Daemon Approval Write API 验证已通过：
@@ -320,6 +323,16 @@ go test ./...
 test -z "$(gofmt -l cmd internal)"
 go vet ./...
 go build -ldflags "-X main.version=v0.1.2-daemon-approval-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
+```
+
+v0.1.2 Daemon Async Scan Job API 验证已通过：
+
+```bash
+gofmt -w internal/interfaces/daemon/jobs.go internal/interfaces/daemon/router.go internal/interfaces/daemon/server.go internal/interfaces/daemon/server_test.go
+test -z "$(gofmt -l cmd internal)"
+go test ./...
+go vet ./...
+go build -ldflags "-X main.version=v0.1.2-daemon-jobs-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
 ```
 
 ---
@@ -341,13 +354,14 @@ go build -ldflags "-X main.version=v0.1.2-daemon-approval-local -X main.commit=$
 | M10 v0.1.1 RC | 本地准备完成 | v0.1.1 P0/P1、release notes、test/vet/build 本地验证完成；尚未创建 tag、push 或 GitHub Release |
 | M11 v0.1.2 Planning | 完成 | 选择 Local Daemon / Web API foundation；计划文档已新增，尚未实现 |
 | M12 v0.1.2 Implementation Breakdown | 完成 | 工作流、tickets、依赖、验收、测试与提交节奏已拆解；尚未实现 |
-| M13 v0.1.2 API Contract Draft | 完成 | HTTP API envelope、auth、错误码、endpoint 与请求/响应示例已形成草案；尚未实现 |
-| M14 v0.1.2 Daemon Smoke Test Draft | 完成 | daemon 启动、认证、scan/job/report/artifact/event/approval/cancel smoke 流程已形成草案；尚未实现 |
+| M13 v0.1.2 API Contract Draft | 完成 | HTTP API envelope、auth、错误码、endpoint 与请求/响应示例已形成草案；scan/job API 已实现 |
+| M14 v0.1.2 Daemon Smoke Test Draft | 完成 | daemon 启动、认证、scan/job/report/artifact/event/approval/cancel smoke 流程已形成草案；curl smoke 待本地执行 |
 | M15 v0.1.2 Core Service Slice 1 | 完成 | ServiceError、VersionService、PluginService、RunService 只读能力已实现并测试；daemon 尚未实现 |
-| M16 v0.1.2 Core Service Slice 2 | 完成 | ApprovalService、ResumeApproved 与 ScanService 校验骨架已实现并测试；daemon/job manager 尚未实现 |
-| M17 v0.1.2 Daemon Skeleton | 完成 | cyberagent daemon、token auth、response envelope、healthz/version API 已实现并测试；业务 read/write API 待接入 |
-| M18 v0.1.2 Daemon Read-only API | 完成 | doctor/plugins/runs/report/artifacts/events/approvals list 已接入并测试；approval write 已在 M19 完成，scan/job API 待接入 |
-| M19 v0.1.2 Daemon Approval Write API | 完成 | approval approve/deny/resume-approved 已接入并测试；scan/job API 待接入 |
+| M16 v0.1.2 Core Service Slice 2 | 完成 | ApprovalService、ResumeApproved 与 ScanService 校验骨架已实现并测试；daemon job manager 已在 M20 完成 |
+| M17 v0.1.2 Daemon Skeleton | 完成 | cyberagent daemon、token auth、response envelope、healthz/version API 已实现并测试；后续业务 API 已逐步接入 |
+| M18 v0.1.2 Daemon Read-only API | 完成 | doctor/plugins/runs/report/artifacts/events/approvals list 已接入并测试；approval write 已在 M19 完成，scan/job API 已在 M20 完成 |
+| M19 v0.1.2 Daemon Approval Write API | 完成 | approval approve/deny/resume-approved 已接入并测试；scan/job API 已在 M20 完成 |
+| M20 v0.1.2 Daemon Async Scan Job API | 完成 | POST /scans/web、GET /jobs/{job_id}、POST /jobs/{job_id}/cancel 已接入并测试 |
 
 ---
 
@@ -409,8 +423,8 @@ go build -ldflags "-X main.version=v0.1.2-daemon-approval-local -X main.commit=$
 [x] /api/v1/doctor 与 plugins API
 [x] run/report/artifact/event/approval list 查询 API
 [x] approval approve/deny/resume-approved API
-[ ] scan web async job API
-[ ] job status/cancel MVP
+[x] scan web async job API
+[x] job status/cancel MVP
 [ ] daemon smoke test 本地验证通过
 ```
 

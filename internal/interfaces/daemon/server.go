@@ -25,6 +25,11 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	version := services.NewVersionService(cfg.Build)
 	runs := services.NewRunService(cfg.RunsDir)
+	jobs := newJobManager(jobManagerConfig{
+		RunsDir:           cfg.RunsDir,
+		Build:             cfg.Build,
+		MaxConcurrentJobs: cfg.MaxConcurrentJobs,
+	})
 	return &Server{
 		cfg:   cfg,
 		token: token,
@@ -33,6 +38,7 @@ func NewServer(cfg Config) (*Server, error) {
 			plugins:   services.NewPluginService(),
 			runs:      runs,
 			approvals: services.NewApprovalService(cfg.RunsDir),
+			jobs:      jobs,
 		}, token),
 	}, nil
 }

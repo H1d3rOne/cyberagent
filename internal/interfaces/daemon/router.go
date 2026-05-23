@@ -18,9 +18,13 @@ type routerServices struct {
 	plugins   services.PluginService
 	runs      services.RunService
 	approvals services.ApprovalService
+	jobs      *jobManager
 }
 
 func newRouter(svc routerServices, token string) http.Handler {
+	if svc.jobs == nil {
+		svc.jobs = newJobManager(jobManagerConfig{})
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/healthz", requireMethod(http.MethodGet, handleHealthz))
 	mux.HandleFunc("/api/v1/version", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +68,12 @@ func newRouter(svc routerServices, token string) http.Handler {
 	}))
 	mux.HandleFunc("/api/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
 		handleRunRoute(w, r, svc)
+	})
+	mux.HandleFunc("/api/v1/scans/web", func(w http.ResponseWriter, r *http.Request) {
+		handleScanWebRoute(w, r, svc)
+	})
+	mux.HandleFunc("/api/v1/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		handleJobRoute(w, r, svc)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
@@ -216,6 +226,80 @@ func handleRunWrite(w http.ResponseWriter, r *http.Request, svc routerServices) 
 	writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
 }
 
+type startWebScanHTTPBody struct {
+	Target          string   `json:"target"`
+	Scope           string   `json:"scope"`
+	Profile         string   `json:"profile,omitempty"`
+	EnabledPlugins  []string `json:"enabled_plugins,omitempty"`
+	NoExternalTools *bool    `json:"no_external_tools,omitempty"`
+}
+
+func handleScanWebRoute(w http.ResponseWriter, r *http.Request, svc routerServices) {
+	if r.Method != http.MethodPost {
+		writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+		return
+	}
+	if r.URL.Path != "/api/v1/scans/web" {
+		writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+		return
+	}
+	var body startWebScanHTTPBody
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	noExternalTools := true
+	if body.NoExternalTools != nil {
+		noExternalTools = *body.NoExternalTools
+	}
+	result, err := svc.jobs.StartWebScan(r.Context(), startWebScanJobRequest{
+		Target:          body.Target,
+		Scope:           body.Scope,
+		Profile:         body.Profile,
+		EnabledPlugins:  body.EnabledPlugins,
+		NoExternalTools: noExternalTools,
+	})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeOK(w, http.StatusOK, result)
+}
+
+func handleJobRoute(w http.ResponseWriter, r *http.Request, svc routerServices) {
+	jobID, action, ok := parseJobPath(r.URL.Path)
+	if !ok {
+		writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		if action != "" {
+			writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+			return
+		}
+		job, err := svc.jobs.GetJob(r.Context(), jobID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, job)
+	case http.MethodPost:
+		if action != "cancel" {
+			writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+			return
+		}
+		job, err := svc.jobs.CancelJob(r.Context(), jobID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{"job_id": job.JobID, "status": job.Status})
+	default:
+		writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+	}
+}
+
 func parseRunReadPath(path string) (runID string, resource string, ok bool) {
 	rest := strings.TrimPrefix(path, "/api/v1/runs/")
 	if rest == "" || rest == path {
@@ -262,6 +346,24 @@ func parseResumeApprovedPath(path string) (runID string, ok bool) {
 		return "", false
 	}
 	return parts[0], true
+}
+
+func parseJobPath(path string) (jobID string, action string, ok bool) {
+	rest := strings.TrimPrefix(path, "/api/v1/jobs/")
+	if rest == "" || rest == path {
+		return "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return "", "", false
+	}
+	if len(parts) == 1 {
+		return parts[0], "", true
+	}
+	if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+		return parts[0], parts[1], true
+	}
+	return "", "", false
 }
 
 func decodeJSONBody(r *http.Request, out any) error {

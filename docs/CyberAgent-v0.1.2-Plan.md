@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：计划完成；Daemon Read-only API 与 Approval write/resume API 已完成；job manager 待实现
+状态：计划完成；Daemon Read-only API、Approval write/resume API 与 scan/job API 已完成；curl smoke 待执行
 
 ---
 
@@ -409,7 +409,7 @@ P0-12 daemon smoke test 文档与本地验证
 [x] P0-06：events cursor polling API
 [x] P0-07：approvals list / approve / deny API
 [x] P0-08：resume-approved API
-[ ] P0-09+：scans / jobs HTTP API
+[x] P0-09+：scans / jobs HTTP API
 ```
 
 ### P1：应该完成
@@ -562,12 +562,12 @@ v0.1.2 完成时应满足：
 [x] GET /runs/{run_id}/approvals 可读取 approval 状态
 [x] POST approve/deny 可改变 approval 状态并记录审计
 [x] POST resume-approved 复用现有恢复执行逻辑
-[ ] POST /scans/web 可启动 safe profile scan
-[ ] GET /jobs/{job_id} 可查询状态
-[ ] POST /jobs/{job_id}/cancel 对 daemon-launched running job 生效或给出明确 unsupported/conflict
-[ ] API contract 文档存在
+[x] POST /scans/web 可启动 safe profile scan
+[x] GET /jobs/{job_id} 可查询状态
+[x] POST /jobs/{job_id}/cancel 对 daemon-launched running job 生效或给出明确 unsupported/conflict
+[x] API contract 文档存在
 [ ] daemon smoke test 文档存在并通过
-[ ] go test ./... / go vet ./... / go build 通过
+[x] go test ./... / go vet ./... / go build 通过
 ```
 
 ---

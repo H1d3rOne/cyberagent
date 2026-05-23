@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	coreruntime "github.com/H1d3rOne/cyberagent/internal/core/runtime"
@@ -337,6 +339,200 @@ func TestHTTPResumeApprovedAPI(t *testing.T) {
 	}
 }
 
+func TestHTTPScanWebAsyncJobAPIValidationAndCompletion(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<!doctype html><html><head><script src="/app.js"></script></head><body><a href="/admin">Admin</a></body></html>`))
+		case "/app.js":
+			w.Header().Set("Content-Type", "application/javascript")
+			_, _ = w.Write([]byte(`fetch("/api/status")`))
+		case "/robots.txt":
+			_, _ = w.Write([]byte("User-agent: *\nDisallow: /admin\n"))
+		case "/sitemap.xml":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte("<urlset></urlset>"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer target.Close()
+
+	root := t.TempDir()
+	runsDir := filepath.Join(root, "runs")
+	handler := newRouter(routerServices{
+		version:   services.NewVersionService(services.BuildInfo{Name: "CyberAgent", Version: "vscan-api"}),
+		plugins:   services.NewPluginService(filepath.Join(root, "plugins")),
+		runs:      services.NewRunService(runsDir),
+		approvals: services.NewApprovalService(runsDir),
+		jobs: newJobManager(jobManagerConfig{
+			RunsDir:           runsDir,
+			Build:             services.BuildInfo{Name: "CyberAgent", Version: "vscan-api"},
+			MaxConcurrentJobs: 1,
+		}),
+	}, "test-token")
+	api := httptest.NewServer(handler)
+	defer api.Close()
+
+	missingTarget := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/scans/web", "test-token", `{"scope":"127.0.0.1"}`)
+	if missingTarget.StatusCode != http.StatusBadRequest || missingTarget.Body.OK || missingTarget.Body.Error.Code != services.CodeBadRequest {
+		t.Fatalf("unexpected missing target response: status=%d body=%#v", missingTarget.StatusCode, missingTarget.Body)
+	}
+
+	missingScope := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/scans/web", "test-token", `{"target":"`+target.URL+`"}`)
+	if missingScope.StatusCode != http.StatusUnprocessableEntity || missingScope.Body.OK || missingScope.Body.Error.Code != services.CodeScopeRequired {
+		t.Fatalf("unexpected missing scope response: status=%d body=%#v", missingScope.StatusCode, missingScope.Body)
+	}
+
+	badJSON := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/scans/web", "test-token", `{"target":`)
+	if badJSON.StatusCode != http.StatusBadRequest || badJSON.Body.OK || badJSON.Body.Error.Code != services.CodeBadRequest {
+		t.Fatalf("unexpected bad JSON response: status=%d body=%#v", badJSON.StatusCode, badJSON.Body)
+	}
+
+	unsupportedProfile := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/scans/web", "test-token", `{"target":"`+target.URL+`","scope":"`+target.URL+`","profile":"aggressive"}`)
+	if unsupportedProfile.StatusCode != http.StatusBadRequest || unsupportedProfile.Body.OK || unsupportedProfile.Body.Error.Code != services.CodeBadRequest {
+		t.Fatalf("unexpected unsupported profile response: status=%d body=%#v", unsupportedProfile.StatusCode, unsupportedProfile.Body)
+	}
+
+	start := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/scans/web", "test-token", `{"target":"`+target.URL+`","scope":"`+target.URL+`"}`)
+	if start.StatusCode != http.StatusOK || !start.Body.OK {
+		t.Fatalf("unexpected scan start response: status=%d body=%#v", start.StatusCode, start.Body)
+	}
+	jobID := stringValue(t, start.Body.Data["job_id"])
+	runID := stringValue(t, start.Body.Data["run_id"])
+	runDir := stringValue(t, start.Body.Data["run_dir"])
+	if jobID == "" || runID == "" || runDir == "" || start.Body.Data["kind"] != scanWebJobKind || start.Body.Data["status"] != string(contracts.StatusRunning) {
+		t.Fatalf("unexpected scan start data: %#v", start.Body.Data)
+	}
+	if start.Body.Data["status_url"] != "/api/v1/jobs/"+jobID || start.Body.Data["run_url"] != "/api/v1/runs/"+runID {
+		t.Fatalf("unexpected scan URLs: %#v", start.Body.Data)
+	}
+
+	job := waitDaemonJobStatus(t, api.URL, "test-token", jobID, 8*time.Second, contracts.StatusSucceeded)
+	if job["run_id"] != runID || job["run_dir"] != runDir || job["status"] != string(contracts.StatusSucceeded) || job["error"] != nil {
+		t.Fatalf("unexpected terminal job: %#v", job)
+	}
+	if _, err := os.Stat(runDir); err != nil {
+		t.Fatalf("run dir was not created: %v", err)
+	}
+	detail := doDaemonRequest(t, api.URL+"/api/v1/runs/"+runID, "test-token")
+	if detail.StatusCode != http.StatusOK || !detail.Body.OK || detail.Body.Data["run_id"] != runID {
+		t.Fatalf("unexpected run detail after scan: status=%d body=%#v", detail.StatusCode, detail.Body)
+	}
+	report := doDaemonRequest(t, api.URL+"/api/v1/runs/"+runID+"/report?format=json", "test-token")
+	if report.StatusCode != http.StatusOK || !report.Body.OK || report.Body.Data["format"] != "json" || report.Body.Data["report"] == nil {
+		t.Fatalf("unexpected run report after scan: status=%d body=%#v", report.StatusCode, report.Body)
+	}
+
+	finishedCancel := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/jobs/"+jobID+"/cancel", "test-token", `{}`)
+	if finishedCancel.StatusCode != http.StatusConflict || finishedCancel.Body.OK || finishedCancel.Body.Error.Code != services.CodeConflict {
+		t.Fatalf("unexpected finished cancel response: status=%d body=%#v", finishedCancel.StatusCode, finishedCancel.Body)
+	}
+}
+
+func TestHTTPScanJobConcurrencyAndCancel(t *testing.T) {
+	root := t.TempDir()
+	runsDir := filepath.Join(root, "runs")
+	started := make(chan struct{}, 2)
+	runner := func(ctx context.Context, req coreruntime.WebScanRequest) (coreruntime.WebScanResult, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		return coreruntime.WebScanResult{}, ctx.Err()
+	}
+
+	handler := newRouter(routerServices{
+		version:   services.NewVersionService(services.BuildInfo{Name: "CyberAgent", Version: "vcancel-api"}),
+		plugins:   services.NewPluginService(filepath.Join(root, "plugins")),
+		runs:      services.NewRunService(runsDir),
+		approvals: services.NewApprovalService(runsDir),
+		jobs: newJobManager(jobManagerConfig{
+			RunsDir:           runsDir,
+			Build:             services.BuildInfo{Name: "CyberAgent", Version: "vcancel-api"},
+			MaxConcurrentJobs: 1,
+			Runner:            runner,
+		}),
+	}, "test-token")
+	api := httptest.NewServer(handler)
+	defer api.Close()
+
+	start := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/scans/web", "test-token", `{"target":"http://127.0.0.1:8080","scope":"127.0.0.1"}`)
+	if start.StatusCode != http.StatusOK || !start.Body.OK {
+		t.Fatalf("unexpected scan start response: status=%d body=%#v", start.StatusCode, start.Body)
+	}
+	jobID := stringValue(t, start.Body.Data["job_id"])
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not start")
+	}
+
+	conflict := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/scans/web", "test-token", `{"target":"http://127.0.0.1:8081","scope":"127.0.0.1"}`)
+	if conflict.StatusCode != http.StatusConflict || conflict.Body.OK || conflict.Body.Error.Code != services.CodeConflict {
+		t.Fatalf("unexpected concurrent scan response: status=%d body=%#v", conflict.StatusCode, conflict.Body)
+	}
+
+	cancel := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/jobs/"+jobID+"/cancel", "test-token", `{}`)
+	if cancel.StatusCode != http.StatusOK || !cancel.Body.OK || cancel.Body.Data["job_id"] != jobID || cancel.Body.Data["status"] != string(contracts.StatusCancelled) {
+		t.Fatalf("unexpected cancel response: status=%d body=%#v", cancel.StatusCode, cancel.Body)
+	}
+	job := waitDaemonJobStatus(t, api.URL, "test-token", jobID, 2*time.Second, contracts.StatusCancelled)
+	if job["status"] != string(contracts.StatusCancelled) || asMap(t, job["error"])["code"] != string(services.CodeJobCancelled) {
+		t.Fatalf("unexpected cancelled job: %#v", job)
+	}
+
+	missing := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/jobs/missing/cancel", "test-token", `{}`)
+	if missing.StatusCode != http.StatusNotFound || missing.Body.OK || missing.Body.Error.Code != services.CodeNotFound {
+		t.Fatalf("unexpected missing cancel response: status=%d body=%#v", missing.StatusCode, missing.Body)
+	}
+
+	traversal := doDaemonRequest(t, api.URL+"/api/v1/jobs/../secret", "test-token")
+	if traversal.StatusCode != http.StatusNotFound && traversal.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unexpected job traversal response: status=%d body=%#v", traversal.StatusCode, traversal.Body)
+	}
+
+	wrongMethod := doDaemonRequestWithBody(t, http.MethodDelete, api.URL+"/api/v1/jobs/"+jobID, "test-token", `{}`)
+	if wrongMethod.StatusCode != http.StatusBadRequest || wrongMethod.Body.OK || wrongMethod.Body.Error.Code != services.CodeBadRequest {
+		t.Fatalf("unexpected wrong method response: status=%d body=%#v", wrongMethod.StatusCode, wrongMethod.Body)
+	}
+}
+
+func TestJobManagerMarksFailedRunnerErrors(t *testing.T) {
+	wantErr := errors.New("runner failed")
+	manager := newJobManager(jobManagerConfig{
+		RunsDir:           t.TempDir(),
+		MaxConcurrentJobs: 1,
+		Runner: func(context.Context, coreruntime.WebScanRequest) (coreruntime.WebScanResult, error) {
+			return coreruntime.WebScanResult{}, wantErr
+		},
+	})
+	start, err := manager.StartWebScan(context.Background(), startWebScanJobRequest{
+		Target:          "http://127.0.0.1:8080",
+		Scope:           "127.0.0.1",
+		NoExternalTools: true,
+	})
+	if err != nil {
+		t.Fatalf("StartWebScan() error = %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		job, err := manager.GetJob(context.Background(), start.JobID)
+		if err != nil {
+			t.Fatalf("GetJob() error = %v", err)
+		}
+		if job.Status == contracts.StatusFailed {
+			if job.Error == nil || job.Error.Code != services.CodeInternal || !strings.Contains(job.Error.Message, wantErr.Error()) {
+				t.Fatalf("unexpected failed job error: %#v", job.Error)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job did not fail before deadline: %#v", job)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 type daemonHTTPResponse struct {
 	StatusCode int
 	Body       daemonTestEnvelope
@@ -453,4 +649,36 @@ func asMap(t *testing.T, value any) map[string]any {
 		t.Fatalf("value is %T, want map[string]any: %#v", value, value)
 	}
 	return item
+}
+
+func stringValue(t *testing.T, value any) string {
+	t.Helper()
+	s, ok := value.(string)
+	if !ok {
+		t.Fatalf("value is %T, want string: %#v", value, value)
+	}
+	return s
+}
+
+func waitDaemonJobStatus(t *testing.T, baseURL, token, jobID string, timeout time.Duration, want ...contracts.Status) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	wanted := map[string]struct{}{}
+	for _, status := range want {
+		wanted[string(status)] = struct{}{}
+	}
+	for {
+		resp := doDaemonRequest(t, baseURL+"/api/v1/jobs/"+jobID, token)
+		if resp.StatusCode != http.StatusOK || !resp.Body.OK {
+			t.Fatalf("unexpected job status response: status=%d body=%#v", resp.StatusCode, resp.Body)
+		}
+		status := stringValue(t, resp.Body.Data["status"])
+		if _, ok := wanted[status]; ok {
+			return resp.Body.Data
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job %s did not reach %v before deadline, last=%#v", jobID, want, resp.Body.Data)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
