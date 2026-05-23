@@ -244,7 +244,7 @@ P3-05 默认启用外部扫描插件
 [x] P0-05 resume approved step MVP
 [x] P0-06 plugin timeout/output limit/invalid output 处理
 [x] P0-07 run metadata/effective config 快照
-[ ] P0-08 v0.1.1 smoke test 文档
+[x] P0-08 v0.1.1 smoke test 文档
 ```
 
 本地验证记录：
@@ -278,6 +278,9 @@ go test ./internal/runtime/command ./internal/plugins ./internal/core/runtime ./
 
 # P0-07 additional verification
 go test ./internal/core/runtime ./internal/interfaces/cli
+
+# P0-08 additional verification
+docs/CyberAgent-v0.1.1-Smoke-Test.md 中的 baseline / no-scope / approval / resume-approved smoke 流程通过
 ```
 
 P0-05 当前边界：
@@ -362,9 +365,9 @@ LLM 仍是增强层，不参与 P0 默认路径。
 [x] approval CLI 可用
 [x] approved step 可恢复执行或明确进入可恢复状态
 [x] plugin timeout/output/schema 错误可审计
-[ ] run metadata/effective config/plugin snapshot 可查看
+[x] run metadata/effective config/plugin snapshot 可查看
+[x] smoke test 通过并写入文档
 [ ] report/replay 能解释 skipped/failed/approved 状态
-[ ] smoke test 通过并写入文档
 [ ] 本地 tag v0.1.1 可准备
 ```
 

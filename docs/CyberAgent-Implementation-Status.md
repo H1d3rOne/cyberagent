@@ -130,6 +130,20 @@ report.md status = succeeded
 events.jsonl contains job.finished
 ```
 
+v0.1.1 P0 smoke test 已通过：
+
+```text
+docs/CyberAgent-v0.1.1-Smoke-Test.md
+runs/smoke-v011-simple-site
+runs/smoke-v011-ffuf-approval
+baseline safe scan
+metadata/effective_config/plugins.snapshot JSON assertions
+no-scope rejection
+ffuf-low-rate approval pending
+approvals approve audit trail
+fake ffuf resume-approved
+```
+
 GoReleaser 已通过：
 
 ```bash
@@ -191,8 +205,8 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] resume approved step
 [x] plugin timeout/output/schema hardening
 [x] run metadata/effective config/plugin snapshot
+[x] v0.1.1 smoke test 文档
 [ ] CLI/TUI/report UX polish
-[ ] v0.1.1 smoke test 文档
 ```
 
 ### 后置能力

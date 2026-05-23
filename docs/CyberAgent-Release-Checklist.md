@@ -91,6 +91,8 @@ doctor 可运行。
 
 推荐使用 `testdata/simple-site` 作为本地授权目标。
 
+v0.1.1 P0 专用 smoke 流程见：`docs/CyberAgent-v0.1.1-Smoke-Test.md`。
+
 ```bash
 rm -rf runs/smoke-simple-site
 
@@ -109,6 +111,9 @@ rm -rf runs/smoke-simple-site
 验收：
 
 ```text
+runs/smoke-simple-site/metadata.json 存在。
+runs/smoke-simple-site/effective_config.json 存在。
+runs/smoke-simple-site/plugins.snapshot.json 存在。
 runs/smoke-simple-site/events.jsonl 存在。
 runs/smoke-simple-site/commands.log 存在。
 runs/smoke-simple-site/reports/report.md 存在。
@@ -237,8 +242,8 @@ TUI 可只读打开 run-dir。
 [x] CI: test/vet/build/goreleaser check workflow
 [x] README 安装方式补齐
 [x] release checklist 固化
-[ ] HITL Approval MVP
-[ ] Plugin Hardening
-[ ] Run Reproducibility
-[ ] v0.1.1 smoke test 文档
+[x] HITL Approval MVP
+[x] Plugin Hardening
+[x] Run Reproducibility
+[x] v0.1.1 smoke test 文档
 ```
