@@ -234,6 +234,31 @@ P3-05 默认启用外部扫描插件
 
 ---
 
+## 4.1 当前进度
+
+```text
+[x] P0-01 GitHub Actions: test/vet/build
+[ ] P0-02 release checklist 与 README 安装说明更新
+[ ] P0-03 PolicyDecision(require_approval) 持久化结构确认
+[ ] P0-04 approval list/approve/deny CLI MVP
+[ ] P0-05 resume approved step MVP
+[ ] P0-06 plugin timeout/output limit/invalid output 处理
+[ ] P0-07 run metadata/effective config 快照
+[ ] P0-08 v0.1.1 smoke test 文档
+```
+
+本地验证记录：
+
+```bash
+test -z "$(gofmt -l cmd internal)"
+go test -count=1 ./...
+go vet ./...
+go build -ldflags "-X main.version=ci-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
+go run github.com/goreleaser/goreleaser/v2@v2.15.4 check
+```
+
+---
+
 ## 5. 建议里程碑
 
 | Milestone | 目标 | 验收 |
