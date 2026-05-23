@@ -58,6 +58,61 @@ func TestStoreSaveLoadJobPlanStep(t *testing.T) {
 	if len(steps) != 1 || steps[0].ID != step.ID {
 		t.Fatalf("unexpected steps: %#v", steps)
 	}
+
+	decision := contracts.PolicyDecision{
+		ID:        "policy_step_001",
+		JobID:     job.ID,
+		StepID:    step.ID,
+		Decision:  contracts.PolicyRequireApproval,
+		Reasons:   []string{"step_requires_approval"},
+		CreatedAt: contracts.Now(),
+	}
+	if err := store.SavePolicyDecision(decision); err != nil {
+		t.Fatalf("SavePolicyDecision() error = %v", err)
+	}
+	loadedDecision, err := store.LoadPolicyDecision(decision.ID)
+	if err != nil {
+		t.Fatalf("LoadPolicyDecision() error = %v", err)
+	}
+	if loadedDecision.ID != decision.ID || loadedDecision.Decision != contracts.PolicyRequireApproval {
+		t.Fatalf("unexpected loaded policy decision: %#v", loadedDecision)
+	}
+	decisions, err := store.ListPolicyDecisions(job.ID)
+	if err != nil {
+		t.Fatalf("ListPolicyDecisions() error = %v", err)
+	}
+	if len(decisions) != 1 || decisions[0].ID != decision.ID {
+		t.Fatalf("unexpected policy decisions: %#v", decisions)
+	}
+
+	request := contracts.HITLRequest{
+		ID:               "approval_step_001",
+		JobID:            job.ID,
+		StepID:           step.ID,
+		PolicyDecisionID: decision.ID,
+		Status:           contracts.HITLPending,
+		Reason:           "step_requires_approval",
+		RequestedAction:  "execute_step",
+		Options:          []string{"approve", "deny"},
+		CreatedAt:        contracts.Now(),
+	}
+	if err := store.SaveHITLRequest(request); err != nil {
+		t.Fatalf("SaveHITLRequest() error = %v", err)
+	}
+	loadedRequest, err := store.LoadHITLRequest(request.ID)
+	if err != nil {
+		t.Fatalf("LoadHITLRequest() error = %v", err)
+	}
+	if loadedRequest.ID != request.ID || loadedRequest.Status != contracts.HITLPending || loadedRequest.PolicyDecisionID != decision.ID {
+		t.Fatalf("unexpected loaded HITL request: %#v", loadedRequest)
+	}
+	requests, err := store.ListHITLRequests(job.ID)
+	if err != nil {
+		t.Fatalf("ListHITLRequests() error = %v", err)
+	}
+	if len(requests) != 1 || requests[0].ID != request.ID {
+		t.Fatalf("unexpected HITL requests: %#v", requests)
+	}
 }
 
 func TestStoreLoadMissing(t *testing.T) {

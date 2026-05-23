@@ -24,7 +24,7 @@ func TestManagerCreateWorkspace(t *testing.T) {
 		}
 	}
 
-	for _, file := range []string{layout.EventsPath, layout.CommandsPath, layout.EvidenceJSONL} {
+	for _, file := range []string{layout.EventsPath, layout.CommandsPath, layout.EvidenceJSONL, layout.ApprovalsPath} {
 		info, err := os.Stat(file)
 		if err != nil {
 			t.Fatalf("expected file %s: %v", file, err)

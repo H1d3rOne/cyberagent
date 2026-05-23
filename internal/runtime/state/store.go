@@ -13,9 +13,11 @@ import (
 )
 
 var (
-	bucketJobs  = []byte("jobs")
-	bucketPlans = []byte("plans")
-	bucketSteps = []byte("steps")
+	bucketJobs            = []byte("jobs")
+	bucketPlans           = []byte("plans")
+	bucketSteps           = []byte("steps")
+	bucketPolicyDecisions = []byte("policy_decisions")
+	bucketHITLRequests    = []byte("hitl_requests")
 )
 
 // ErrNotFound is returned when a state object does not exist.
@@ -45,7 +47,7 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) init() error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range [][]byte{bucketJobs, bucketPlans, bucketSteps} {
+		for _, bucket := range [][]byte{bucketJobs, bucketPlans, bucketSteps, bucketPolicyDecisions, bucketHITLRequests} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return fmt.Errorf("create bucket %s: %w", bucket, err)
 			}
@@ -118,6 +120,74 @@ func (s *Store) ListSteps(jobID string) ([]contracts.Step, error) {
 		})
 	})
 	return steps, err
+}
+
+// SavePolicyDecision saves one policy decision snapshot.
+func (s *Store) SavePolicyDecision(decision contracts.PolicyDecision) error {
+	return putJSON(s.db, bucketPolicyDecisions, decision.ID, decision)
+}
+
+// LoadPolicyDecision loads one policy decision snapshot.
+func (s *Store) LoadPolicyDecision(id string) (contracts.PolicyDecision, error) {
+	var decision contracts.PolicyDecision
+	err := getJSON(s.db, bucketPolicyDecisions, id, &decision)
+	return decision, err
+}
+
+// ListPolicyDecisions returns all policy decisions for a job ID.
+func (s *Store) ListPolicyDecisions(jobID string) ([]contracts.PolicyDecision, error) {
+	decisions := []contracts.PolicyDecision{}
+	err := s.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(bucketPolicyDecisions)
+		if bucket == nil {
+			return fmt.Errorf("bucket %s missing", bucketPolicyDecisions)
+		}
+		return bucket.ForEach(func(_, value []byte) error {
+			var decision contracts.PolicyDecision
+			if err := json.Unmarshal(value, &decision); err != nil {
+				return fmt.Errorf("decode policy decision: %w", err)
+			}
+			if decision.JobID == jobID {
+				decisions = append(decisions, decision)
+			}
+			return nil
+		})
+	})
+	return decisions, err
+}
+
+// SaveHITLRequest saves one human approval request snapshot.
+func (s *Store) SaveHITLRequest(request contracts.HITLRequest) error {
+	return putJSON(s.db, bucketHITLRequests, request.ID, request)
+}
+
+// LoadHITLRequest loads one human approval request snapshot.
+func (s *Store) LoadHITLRequest(id string) (contracts.HITLRequest, error) {
+	var request contracts.HITLRequest
+	err := getJSON(s.db, bucketHITLRequests, id, &request)
+	return request, err
+}
+
+// ListHITLRequests returns all human approval requests for a job ID.
+func (s *Store) ListHITLRequests(jobID string) ([]contracts.HITLRequest, error) {
+	requests := []contracts.HITLRequest{}
+	err := s.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(bucketHITLRequests)
+		if bucket == nil {
+			return fmt.Errorf("bucket %s missing", bucketHITLRequests)
+		}
+		return bucket.ForEach(func(_, value []byte) error {
+			var request contracts.HITLRequest
+			if err := json.Unmarshal(value, &request); err != nil {
+				return fmt.Errorf("decode HITL request: %w", err)
+			}
+			if request.JobID == jobID {
+				requests = append(requests, request)
+			}
+			return nil
+		})
+	})
+	return requests, err
 }
 
 func putJSON(db *bolt.DB, bucketName []byte, key string, value any) error {

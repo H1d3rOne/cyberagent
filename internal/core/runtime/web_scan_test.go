@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
+	"github.com/H1d3rOne/cyberagent/internal/core/events"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/command"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/state"
 )
@@ -261,6 +262,28 @@ func TestRunWebScanWithFFUFLowRateRequiresApprovalSkipsPlugin(t *testing.T) {
 	if got := pluginCall.Metadata["policy_decision"]; got != string(contracts.PolicyRequireApproval) {
 		t.Fatalf("plugin call policy_decision = %#v, want require_approval", got)
 	}
+	if got := pluginCall.Metadata["policy_decision_id"]; got != "policy_step_optional_ffuf_low_rate_001" {
+		t.Fatalf("plugin call policy_decision_id = %#v", got)
+	}
+	if got := pluginCall.Metadata["approval_request_id"]; got != "approval_step_optional_ffuf_low_rate_001" {
+		t.Fatalf("plugin call approval_request_id = %#v", got)
+	}
+
+	var approvals []contracts.HITLRequest
+	readJSON(t, filepath.Join(out, "approvals.json"), &approvals)
+	if len(approvals) != 1 {
+		t.Fatalf("approvals.json len = %d, want 1: %#v", len(approvals), approvals)
+	}
+	approval := approvals[0]
+	if approval.ID != "approval_step_optional_ffuf_low_rate_001" ||
+		approval.Status != contracts.HITLPending ||
+		approval.PolicyDecisionID != "policy_step_optional_ffuf_low_rate_001" ||
+		approval.RequestedAction != "execute_step" {
+		t.Fatalf("unexpected approval request: %#v", approval)
+	}
+	if approval.RiskSummary["tool"] != "plugin.ffuf-low-rate" {
+		t.Fatalf("approval risk summary missing tool: %#v", approval.RiskSummary)
+	}
 
 	stateStore, err := state.Open(filepath.Join(out, "state", "bolt.db"))
 	if err != nil {
@@ -283,6 +306,29 @@ func TestRunWebScanWithFFUFLowRateRequiresApprovalSkipsPlugin(t *testing.T) {
 	}
 	if ffufStep.Status != contracts.StatusSkipped || !ffufStep.RequiresApproval || ffufStep.Risk != contracts.RiskMedium {
 		t.Fatalf("unexpected persisted ffuf step: %#v", *ffufStep)
+	}
+	decision, err := stateStore.LoadPolicyDecision("policy_step_optional_ffuf_low_rate_001")
+	if err != nil {
+		t.Fatalf("LoadPolicyDecision() error = %v", err)
+	}
+	if decision.Decision != contracts.PolicyRequireApproval || decision.StepID != "step_optional_ffuf_low_rate_001" {
+		t.Fatalf("unexpected persisted policy decision: %#v", decision)
+	}
+	persistedApproval, err := stateStore.LoadHITLRequest("approval_step_optional_ffuf_low_rate_001")
+	if err != nil {
+		t.Fatalf("LoadHITLRequest() error = %v", err)
+	}
+	if persistedApproval.Status != contracts.HITLPending || persistedApproval.PolicyDecisionID != decision.ID {
+		t.Fatalf("unexpected persisted HITL request: %#v", persistedApproval)
+	}
+
+	eventStore := events.NewStore(filepath.Join(out, "events.jsonl"))
+	allEvents, err := eventStore.ReadAll()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if !hasEvent(allEvents, contracts.EventApprovalRequested, "step_optional_ffuf_low_rate_001") {
+		t.Fatalf("events missing approval.requested: %#v", allEvents)
 	}
 
 	report, err := os.ReadFile(filepath.Join(out, "reports", "report.md"))
@@ -396,6 +442,15 @@ func findToolCall(calls []contracts.ToolCall, toolName string) *contracts.ToolCa
 func hasArtifact(artifacts []contracts.Artifact, id string) bool {
 	for _, artifact := range artifacts {
 		if artifact.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEvent(all []contracts.Event, typ contracts.EventType, stepID string) bool {
+	for _, event := range all {
+		if event.Type == typ && event.StepID == stepID {
 			return true
 		}
 	}

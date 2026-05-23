@@ -183,6 +183,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] 生成 v0.1.1 计划文档：docs/CyberAgent-v0.1.1-Plan.md
 [x] CI: test/vet/build
 [x] release checklist 与 README 安装说明更新
+[x] PolicyDecision(require_approval) / approval request 持久化结构
 [ ] HITL approval MVP
 [ ] resume approved step
 [ ] plugin timeout/output/schema hardening

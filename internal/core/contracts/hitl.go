@@ -16,15 +16,16 @@ const (
 
 // HITLRequest records a human-in-the-loop request.
 type HITLRequest struct {
-	ID              string         `json:"id"`
-	JobID           string         `json:"job_id"`
-	StepID          string         `json:"step_id,omitempty"`
-	Status          HITLStatus     `json:"status"`
-	Reason          string         `json:"reason"`
-	RequestedAction string         `json:"requested_action"`
-	Options         []string       `json:"options,omitempty"`
-	RiskSummary     map[string]any `json:"risk_summary,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	ResolvedAt      *time.Time     `json:"resolved_at,omitempty"`
-	Resolution      map[string]any `json:"resolution,omitempty"`
+	ID               string         `json:"id"`
+	JobID            string         `json:"job_id"`
+	StepID           string         `json:"step_id,omitempty"`
+	PolicyDecisionID string         `json:"policy_decision_id,omitempty"`
+	Status           HITLStatus     `json:"status"`
+	Reason           string         `json:"reason"`
+	RequestedAction  string         `json:"requested_action"`
+	Options          []string       `json:"options,omitempty"`
+	RiskSummary      map[string]any `json:"risk_summary,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	ResolvedAt       *time.Time     `json:"resolved_at,omitempty"`
+	Resolution       map[string]any `json:"resolution,omitempty"`
 }

@@ -807,6 +807,18 @@ deny
 
 ---
 
+## 18.3 v0.1.1 持久化约定
+
+```text
+bbolt bucket: policy_decisions
+key: PolicyDecision.id
+scope: 至少保存每个 Step 执行前的 Risk Policy 决策
+require_approval: 必须保存，并与 HITLRequest.policy_decision_id 关联
+事件: events.jsonl 写入 policy.checked，data 包含 policy_decision_id / decision / reasons
+```
+
+---
+
 ## 19. HITLRequest Contract
 
 HITLRequest 记录人工确认请求。
@@ -829,10 +841,11 @@ cancelled
   "id": "hitl_001",
   "job_id": "job_20260523_032000_a1b2c3",
   "step_id": "step_sqlmap_001",
+  "policy_decision_id": "policy_step_sqlmap_001",
   "status": "pending",
   "reason": "High-risk SQL injection verification may change target state.",
   "requested_action": "execute_step",
-  "options": ["approve", "reject", "modify", "skip"],
+  "options": ["approve", "deny"],
   "risk_summary": {
     "risk": "high",
     "possible_impact": ["state_change", "high_request_volume"]
@@ -841,6 +854,19 @@ cancelled
   "resolved_at": null,
   "resolution": null
 }
+```
+
+---
+
+## 19.3 v0.1.1 持久化约定
+
+```text
+run workspace: approvals.json
+bbolt bucket: hitl_requests
+key: HITLRequest.id
+状态: require_approval 默认生成 pending request，但 step 在 safe MVP 中仍为 skipped，不自动执行
+事件: events.jsonl 写入 approval.requested，data 包含 approval_request_id / policy_decision_id / status / requested_action
+命令审计: commands.log 的 ToolCall.metadata 包含 policy_decision_id 和 approval_request_id
 ```
 
 ---

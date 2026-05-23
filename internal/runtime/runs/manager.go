@@ -42,6 +42,9 @@ func (m Manager) Create(jobID string) (Layout, error) {
 			return Layout{}, err
 		}
 	}
+	if err := os.WriteFile(layout.ApprovalsPath, []byte("[]\n"), 0o644); err != nil {
+		return Layout{}, fmt.Errorf("initialize approvals file %s: %w", layout.ApprovalsPath, err)
+	}
 	return layout, nil
 }
 

@@ -106,6 +106,11 @@ func RunWebScan(ctx context.Context, req WebScanRequest) (WebScanResult, error) 
 	emit := func(stepID string, typ contracts.EventType, level contracts.EventLevel, message string) {
 		_ = bus.Publish(contracts.NewEvent(nextEventID(), job.ID, stepID, typ, level, message))
 	}
+	emitData := func(stepID string, typ contracts.EventType, level contracts.EventLevel, message string, data map[string]any) {
+		event := contracts.NewEvent(nextEventID(), job.ID, stepID, typ, level, message)
+		event.Data = data
+		_ = bus.Publish(event)
+	}
 
 	emit("", contracts.EventJobCreated, contracts.EventLevelInfo, "job created")
 	job.Status = contracts.StatusPlanning
@@ -145,6 +150,7 @@ func RunWebScan(ctx context.Context, req WebScanRequest) (WebScanResult, error) 
 	evidenceOut := []contracts.Evidence{}
 	findingsOut := []contracts.Finding{}
 	skipped := []string{}
+	approvalsOut := []contracts.HITLRequest{}
 
 	start := contracts.Now()
 	job.StartedAt = &start
@@ -172,7 +178,14 @@ func RunWebScan(ctx context.Context, req WebScanRequest) (WebScanResult, error) 
 		emit(step.ID, contracts.EventToolStarted, contracts.EventLevelInfo, step.Tool.Name+" started")
 
 		riskDecision := guard.CheckStep("policy_"+step.ID, step, profile)
-		emit(step.ID, contracts.EventPolicyChecked, contracts.EventLevelInfo, string(riskDecision.Decision))
+		if err := stateStore.SavePolicyDecision(riskDecision); err != nil {
+			return WebScanResult{}, err
+		}
+		emitData(step.ID, contracts.EventPolicyChecked, contracts.EventLevelInfo, string(riskDecision.Decision), map[string]any{
+			"policy_decision_id": riskDecision.ID,
+			"decision":           string(riskDecision.Decision),
+			"reasons":            riskDecision.Reasons,
+		})
 		if riskDecision.Decision == contracts.PolicyDeny || riskDecision.Decision == contracts.PolicyRequireApproval {
 			reason := strings.Join(riskDecision.Reasons, ",")
 			step, err = stepMachine.Skip(step, reason)
@@ -183,7 +196,23 @@ func RunWebScan(ctx context.Context, req WebScanRequest) (WebScanResult, error) 
 			_ = stateStore.SaveStep(step)
 			if riskDecision.Decision == contracts.PolicyRequireApproval {
 				toolCall.Metadata["policy_decision"] = string(riskDecision.Decision)
+				toolCall.Metadata["policy_decision_id"] = riskDecision.ID
 				toolCall.Metadata["policy_reasons"] = append([]string(nil), riskDecision.Reasons...)
+				approval := newApprovalRequest(job.ID, step, riskDecision, reason)
+				if err := stateStore.SaveHITLRequest(approval); err != nil {
+					return WebScanResult{}, err
+				}
+				approvalsOut = append(approvalsOut, approval)
+				if err := artifactStore.WriteJSON("approvals.json", approvalsOut); err != nil {
+					return WebScanResult{}, err
+				}
+				toolCall.Metadata["approval_request_id"] = approval.ID
+				emitData(step.ID, contracts.EventApprovalRequested, contracts.EventLevelWarn, "approval requested", map[string]any{
+					"approval_request_id": approval.ID,
+					"policy_decision_id":  riskDecision.ID,
+					"status":              string(approval.Status),
+					"requested_action":    approval.RequestedAction,
+				})
 			}
 			if err := commandRecorder.Append(command.Finish(toolCall, contracts.StatusSkipped, fmt.Errorf("%s", step.Error))); err != nil {
 				return WebScanResult{}, err
@@ -826,6 +855,27 @@ func timeout(step contracts.Step) time.Duration {
 		return 10 * time.Second
 	}
 	return time.Duration(step.TimeoutSeconds) * time.Second
+}
+
+func newApprovalRequest(jobID string, step contracts.Step, decision contracts.PolicyDecision, reason string) contracts.HITLRequest {
+	return contracts.HITLRequest{
+		ID:               "approval_" + step.ID,
+		JobID:            jobID,
+		StepID:           step.ID,
+		PolicyDecisionID: decision.ID,
+		Status:           contracts.HITLPending,
+		Reason:           reason,
+		RequestedAction:  "execute_step",
+		Options:          []string{"approve", "deny"},
+		RiskSummary: map[string]any{
+			"risk":              step.Risk,
+			"requires_approval": step.RequiresApproval,
+			"tool":              step.Tool.Name,
+			"policy_decision":   decision.Decision,
+			"policy_reasons":    append([]string(nil), decision.Reasons...),
+		},
+		CreatedAt: contracts.Now(),
+	}
 }
 
 var eventCounter atomic.Int64

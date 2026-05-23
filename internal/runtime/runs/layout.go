@@ -12,11 +12,12 @@ type Layout struct {
 	EventsPath   string
 	CommandsPath string
 
-	TargetPath   string
-	ScopePath    string
-	JobPath      string
-	PlanPath     string
-	FindingsPath string
+	TargetPath    string
+	ScopePath     string
+	JobPath       string
+	PlanPath      string
+	ApprovalsPath string
+	FindingsPath  string
 
 	ArtifactsDir   string
 	StdoutDir      string
@@ -50,11 +51,12 @@ func NewLayout(root, jobID string) Layout {
 		EventsPath:   filepath.Join(base, "events.jsonl"),
 		CommandsPath: filepath.Join(base, "commands.log"),
 
-		TargetPath:   filepath.Join(base, "target.json"),
-		ScopePath:    filepath.Join(base, "scope.json"),
-		JobPath:      filepath.Join(base, "job.json"),
-		PlanPath:     filepath.Join(base, "plan.json"),
-		FindingsPath: filepath.Join(base, "findings.json"),
+		TargetPath:    filepath.Join(base, "target.json"),
+		ScopePath:     filepath.Join(base, "scope.json"),
+		JobPath:       filepath.Join(base, "job.json"),
+		PlanPath:      filepath.Join(base, "plan.json"),
+		ApprovalsPath: filepath.Join(base, "approvals.json"),
+		FindingsPath:  filepath.Join(base, "findings.json"),
 
 		ArtifactsDir:   artifacts,
 		StdoutDir:      filepath.Join(artifacts, "stdout"),
