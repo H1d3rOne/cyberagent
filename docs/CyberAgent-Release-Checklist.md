@@ -118,9 +118,11 @@ runs/smoke-simple-site/effective_config.json 存在。
 runs/smoke-simple-site/plugins.snapshot.json 存在。
 runs/smoke-simple-site/events.jsonl 存在。
 runs/smoke-simple-site/commands.log 存在。
+runs/smoke-simple-site/artifacts/index.json 存在。
 runs/smoke-simple-site/reports/report.md 存在。
 runs/smoke-simple-site/reports/report.json 存在。
 report job.status = succeeded。
+artifacts/index.json 中 artifact metadata 包含 sha256 / size_bytes / mime_type / created_at。
 events.jsonl 包含 job.finished。
 ```
 
@@ -234,6 +236,7 @@ cyberagent plugins doctor --json
 report.md 可读。
 report.json 可解析。
 report --format json 可输出已有 report.json。
+artifacts/index.json 可解析并包含 hash / size / mime / created_at。
 replay 输出可解释每一步状态。
 TUI 可只读打开 run-dir。
 ```

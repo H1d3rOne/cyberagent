@@ -6,7 +6,7 @@ CyberAgent 是一个 **CLI/TUI-first** 的授权 Web/API 安全分析 Agent。MV
 
 - Deterministic Web safe scan：`cyberagent scan web`
 - 只读 TUI run viewer：`cyberagent tui <run-dir>`
-- Run workspace：`metadata.json`、`effective_config.json`、`plugins.snapshot.json`、`target.json`、`scope.json`、`job.json`、`plan.json`、`events.jsonl`、`commands.log`
+- Run workspace：`metadata.json`、`effective_config.json`、`plugins.snapshot.json`、`artifacts/index.json`、`target.json`、`scope.json`、`job.json`、`plan.json`、`events.jsonl`、`commands.log`
 - State Store：bbolt
 - Event Store：JSONL
 - Scope Guard / Risk Policy
@@ -104,6 +104,7 @@ go build -o bin/cyberagent ./cmd/cyberagent
 metadata.json          binary version / commit / build date、module、runtime、command args
 effective_config.json  target / scope / profile / out / enabled_plugins / flags 的最终生效值
 plugins.snapshot.json  本次 run 创建时发现的插件，以及 enabled / disabled 状态
+artifacts/index.json   artifacts 的 sha256 / size_bytes / mime_type / created_at 索引
 ```
 
 ## 可选插件

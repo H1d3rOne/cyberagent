@@ -334,6 +334,12 @@ func resumeFFUFLowRate(ctx context.Context, rc resumeContext) (bool, string, err
 
 	hasher := evidence.NewHasher()
 	rc.evidenceIndex.Evidence, _ = hasher.Dedup(rc.evidenceIndex.Evidence)
+	completedArtifacts, err := rc.artifactStore.WriteIndex(rc.evidenceIndex.Artifacts)
+	if err != nil {
+		return false, "", err
+	}
+	rc.evidenceIndex.Artifacts = completedArtifacts
+
 	findingStore := findings.NewStore(rc.layout.Path)
 	if err := findingStore.WriteEvidence(*rc.evidenceIndex); err != nil {
 		return false, "", err

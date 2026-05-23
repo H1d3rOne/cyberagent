@@ -13,6 +13,9 @@ func TestManagerCreateWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	if layout.ArtifactsIndex != filepath.Join(root, "job_test_001", "artifacts", "index.json") {
+		t.Fatalf("unexpected artifact index path: %s", layout.ArtifactsIndex)
+	}
 
 	for _, dir := range layout.Dirs() {
 		info, err := os.Stat(dir)

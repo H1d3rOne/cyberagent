@@ -594,6 +594,10 @@ func RunWebScan(ctx context.Context, req WebScanRequest) (WebScanResult, error) 
 
 	hasher := evidence.NewHasher()
 	evidenceOut, _ = hasher.Dedup(evidenceOut)
+	artifactsOut, err = artifactStore.WriteIndex(artifactsOut)
+	if err != nil {
+		return WebScanResult{}, err
+	}
 
 	findingStore := findings.NewStore(layout.Path)
 	if err := findingStore.WriteEvidence(findings.EvidenceIndex{Artifacts: artifactsOut, Evidence: evidenceOut}); err != nil {

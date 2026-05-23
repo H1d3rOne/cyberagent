@@ -121,6 +121,7 @@ runs/smoke-v011-simple-site/job.json
 runs/smoke-v011-simple-site/plan.json
 runs/smoke-v011-simple-site/events.jsonl
 runs/smoke-v011-simple-site/commands.log
+runs/smoke-v011-simple-site/artifacts/index.json
 runs/smoke-v011-simple-site/evidence/index.json
 runs/smoke-v011-simple-site/findings.json
 runs/smoke-v011-simple-site/reports/report.md
@@ -138,6 +139,7 @@ run = Path("runs/smoke-v011-simple-site")
 metadata = json.loads((run / "metadata.json").read_text())
 effective = json.loads((run / "effective_config.json").read_text())
 plugins = json.loads((run / "plugins.snapshot.json").read_text())
+artifact_index = json.loads((run / "artifacts/index.json").read_text())
 report = json.loads((run / "reports/report.json").read_text())
 events = (run / "events.jsonl").read_text()
 
@@ -150,6 +152,14 @@ assert effective["target"] == "http://127.0.0.1:18080"
 assert effective["scope"] == "127.0.0.1"
 assert effective["no_external_tools"] is True
 assert "ffuf-low-rate" in plugins.get("disabled", [])
+assert artifact_index["schema_version"] == "0.1.1"
+assert artifact_index["count"] == len(artifact_index["artifacts"])
+assert artifact_index["count"] > 0
+for artifact in artifact_index["artifacts"]:
+    assert artifact["sha256"]
+    assert artifact["size_bytes"] > 0
+    assert artifact["mime_type"]
+    assert artifact["created_at"]
 assert report["job"]["status"] == "succeeded"
 assert "job.finished" in events
 print("baseline smoke assertions passed")
@@ -331,6 +341,7 @@ rm -rf "$FAKE_BIN"
 [x] gofmt / go test / go vet / go build 通过
 [x] baseline safe scan 成功
 [x] metadata.json / effective_config.json / plugins.snapshot.json 断言通过
+[x] artifacts/index.json hash / size / mime / created_at 断言通过
 [x] no-scope 安全边界断言通过
 [x] ffuf-low-rate approval pending 断言通过
 [x] approvals approve 审计断言通过
@@ -366,6 +377,7 @@ go build -ldflags "-X main.version=v0.1.1-smoke -X main.commit=$(git rev-parse -
 ```text
 baseline safe scan: runs/smoke-v011-simple-site
 metadata/effective_config/plugins.snapshot JSON assertions
+artifact index metadata assertions
 no-scope rejection
 ffuf-low-rate approval pending
 approvals approve audit trail

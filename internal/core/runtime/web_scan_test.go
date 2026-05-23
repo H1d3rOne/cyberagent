@@ -71,10 +71,26 @@ func TestRunWebScanProducesMVPArtifacts(t *testing.T) {
 	mustExist(t, filepath.Join(out, "commands.log"))
 	mustExist(t, filepath.Join(out, "artifacts", "http", "probe.json"))
 	mustExist(t, filepath.Join(out, "artifacts", "http", "homepage.html"))
+	mustExist(t, filepath.Join(out, "artifacts", "index.json"))
 	mustExist(t, filepath.Join(out, "evidence", "index.json"))
 	mustExist(t, filepath.Join(out, "findings.json"))
 	mustExist(t, filepath.Join(out, "reports", "report.md"))
 	mustExist(t, filepath.Join(out, "reports", "report.json"))
+
+	var artifactIndex struct {
+		SchemaVersion string               `json:"schema_version"`
+		Count         int                  `json:"count"`
+		Artifacts     []contracts.Artifact `json:"artifacts"`
+	}
+	readJSON(t, filepath.Join(out, "artifacts", "index.json"), &artifactIndex)
+	if artifactIndex.SchemaVersion != "0.1.1" || artifactIndex.Count != len(result.Artifacts) || len(artifactIndex.Artifacts) != len(result.Artifacts) {
+		t.Fatalf("unexpected artifact index summary: %#v", artifactIndex)
+	}
+	for _, artifact := range artifactIndex.Artifacts {
+		if artifact.ID == "" || artifact.Path == "" || artifact.SHA256 == "" || artifact.SizeBytes <= 0 || artifact.MIMEType == "" || artifact.CreatedAt.IsZero() {
+			t.Fatalf("artifact index item missing reproducibility metadata: %#v", artifact)
+		}
+	}
 
 	calls, err := command.NewRecorder(filepath.Join(out, "commands.log")).ReadAll()
 	if err != nil {

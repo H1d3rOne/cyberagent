@@ -20,6 +20,7 @@ type Layout struct {
 	FindingsPath  string
 
 	ArtifactsDir   string
+	ArtifactsIndex string
 	StdoutDir      string
 	StderrDir      string
 	HTTPDir        string
@@ -59,6 +60,7 @@ func NewLayout(root, jobID string) Layout {
 		FindingsPath:  filepath.Join(base, "findings.json"),
 
 		ArtifactsDir:   artifacts,
+		ArtifactsIndex: filepath.Join(artifacts, "index.json"),
 		StdoutDir:      filepath.Join(artifacts, "stdout"),
 		StderrDir:      filepath.Join(artifacts, "stderr"),
 		HTTPDir:        filepath.Join(artifacts, "http"),

@@ -43,6 +43,7 @@ Next：v0.1.1 stabilization / HITL / plugin hardening / reproducibility
 [x] bbolt State Store
 [x] JSONL Event Store
 [x] Command Recorder: commands.log
+[x] Artifact Index: artifacts/index.json
 [x] Scope Guard
 [x] Risk Policy
 [x] Safe Profile Planner
@@ -209,7 +210,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] run metadata/effective config/plugin snapshot
 [x] v0.1.1 smoke test 文档
 [x] plugins doctor --json
-[ ] CLI/TUI/report UX polish（remaining: artifact index / TUI approvals / skipped summary / plugin failure reason）
+[ ] CLI/TUI/report UX polish（remaining: TUI approvals / skipped summary / plugin failure reason）
 ```
 
 ### 后置能力

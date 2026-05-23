@@ -225,6 +225,20 @@ func TestReplayResumeApprovedFFUFLowRate(t *testing.T) {
 
 	mustExist(t, filepath.Join(runDir, "artifacts", "tool-results", "ffuf-low-rate.jsonl"))
 	mustExist(t, filepath.Join(runDir, "artifacts", "tool-results", "ffuf-low-rate-wordlist.txt"))
+	var artifactIndex struct {
+		Artifacts []contracts.Artifact `json:"artifacts"`
+	}
+	readJSON(t, filepath.Join(runDir, "artifacts", "index.json"), &artifactIndex)
+	var foundFFUFArtifact bool
+	for _, artifact := range artifactIndex.Artifacts {
+		if artifact.ID == "artifact_ffuf_low_rate_stdout_001" && artifact.SHA256 != "" && artifact.SizeBytes > 0 && artifact.MIMEType != "" {
+			foundFFUFArtifact = true
+			break
+		}
+	}
+	if !foundFFUFArtifact {
+		t.Fatalf("artifacts/index.json missing completed ffuf stdout artifact metadata: %#v", artifactIndex.Artifacts)
+	}
 
 	var persistedFindings []contracts.Finding
 	readJSON(t, filepath.Join(runDir, "findings.json"), &persistedFindings)

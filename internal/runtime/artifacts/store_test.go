@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 )
@@ -64,6 +65,41 @@ func TestStoreSaveJSONAndWriteJSON(t *testing.T) {
 	readJSONFile(t, filepath.Join(workspace, "job.json"), &job)
 	if job["id"] != "job_001" {
 		t.Fatalf("unexpected job json: %#v", job)
+	}
+}
+
+func TestStoreWriteIndexCompletesMetadata(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewStore(workspace)
+	data := []byte("<!doctype html><title>ok</title>")
+	artifact, err := store.SaveBytes("artifact_html_001", "job_001", "step_001", contracts.ArtifactHTML, "artifacts/http/homepage.html", data, "")
+	if err != nil {
+		t.Fatalf("SaveBytes() error = %v", err)
+	}
+	artifact.SHA256 = ""
+	artifact.SizeBytes = 0
+	artifact.MIMEType = ""
+	artifact.CreatedAt = time.Time{}
+
+	completed, err := store.WriteIndex([]contracts.Artifact{artifact})
+	if err != nil {
+		t.Fatalf("WriteIndex() error = %v", err)
+	}
+	if len(completed) != 1 {
+		t.Fatalf("completed artifacts = %d, want 1", len(completed))
+	}
+	sum := sha256.Sum256(data)
+	if completed[0].SHA256 != hex.EncodeToString(sum[:]) || completed[0].SizeBytes != int64(len(data)) || completed[0].MIMEType == "" || completed[0].CreatedAt.IsZero() {
+		t.Fatalf("metadata not completed: %#v", completed[0])
+	}
+
+	var index Index
+	readJSONFile(t, filepath.Join(workspace, "artifacts", "index.json"), &index)
+	if index.SchemaVersion != "0.1.1" || index.Count != 1 || len(index.Artifacts) != 1 {
+		t.Fatalf("unexpected artifact index: %#v", index)
+	}
+	if index.Artifacts[0].ID != "artifact_html_001" || index.Artifacts[0].SHA256 != completed[0].SHA256 {
+		t.Fatalf("unexpected indexed artifact: %#v", index.Artifacts[0])
 	}
 }
 
