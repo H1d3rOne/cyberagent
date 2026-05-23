@@ -439,6 +439,7 @@ API contract 和实现 endpoint 一致。
 ```text
 P0 先使用 docs/api/v0.1.2-api-contract.md 作为 contract 草案。
 OpenAPI/YAML 放 P1，等实现与 contract 稳定后再补。
+Daemon smoke test 使用 docs/CyberAgent-v0.1.2-Daemon-Smoke-Test.md 固化 curl 级别验收流程。
 ```
 
 ---
@@ -623,18 +624,7 @@ go build -ldflags "-X main.version=v0.1.2-rc -X main.commit=$(git rev-parse --sh
 daemon smoke test 预期流程：
 
 ```text
-1. build cyberagent
-2. start daemon on 127.0.0.1 random/free port
-3. read token
-4. GET /api/v1/healthz
-5. GET /api/v1/version
-6. GET /api/v1/plugins/doctor
-7. POST /api/v1/scans/web with target + scope + profile=safe
-8. poll GET /api/v1/jobs/{job_id}
-9. GET /api/v1/runs/{run_id}/report?format=json
-10. GET /api/v1/runs/{run_id}/artifacts
-11. GET /api/v1/runs/{run_id}/events
-12. stop daemon
+详见 docs/CyberAgent-v0.1.2-Daemon-Smoke-Test.md。
 ```
 
 approval smoke test 预期流程：

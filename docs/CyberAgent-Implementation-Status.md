@@ -2,7 +2,7 @@
 
 版本：v0.1.2 Planning
 日期：2026-05-24
-状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 计划、实施拆解与 API Contract 草案完成；远程发布未执行
+状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 计划、实施拆解、API Contract 与 daemon smoke test 草案完成；远程发布未执行
 
 ---
 
@@ -15,7 +15,7 @@ MVP 主链路：已跑通
 MVP Stabilization：本地验证通过
 MVP Release：v0.1.0 本地 release 准备完成；远程发布未执行
 v0.1.1 RC：本地实现、文档、测试、release notes 已准备；tag/push/GitHub Release 未执行
-v0.1.2 Planning：已选择 Web API / Local Daemon foundation 方向；计划、实施拆解与 API Contract 草案已完成，尚未实现
+v0.1.2 Planning：已选择 Web API / Local Daemon foundation 方向；计划、实施拆解、API Contract 与 daemon smoke test 草案已完成，尚未实现
 Next：按用户授权进入 v0.1.2 实现，或先处理 v0.1.1 tag / push / GitHub Release
 ```
 
@@ -199,6 +199,7 @@ go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check 
 | M11 v0.1.2 Planning | 完成 | 选择 Local Daemon / Web API foundation；计划文档已新增，尚未实现 |
 | M12 v0.1.2 Implementation Breakdown | 完成 | 工作流、tickets、依赖、验收、测试与提交节奏已拆解；尚未实现 |
 | M13 v0.1.2 API Contract Draft | 完成 | HTTP API envelope、auth、错误码、endpoint 与请求/响应示例已形成草案；尚未实现 |
+| M14 v0.1.2 Daemon Smoke Test Draft | 完成 | daemon 启动、认证、scan/job/report/artifact/event/approval/cancel smoke 流程已形成草案；尚未实现 |
 
 ---
 
@@ -251,6 +252,7 @@ go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check 
 [x] 生成 v0.1.2 计划文档：docs/CyberAgent-v0.1.2-Plan.md
 [x] 生成 v0.1.2 实施拆解文档：docs/CyberAgent-v0.1.2-Implementation-Breakdown.md
 [x] 生成 v0.1.2 API Contract 草案：docs/api/v0.1.2-api-contract.md
+[x] 生成 v0.1.2 daemon smoke test 草案：docs/CyberAgent-v0.1.2-Daemon-Smoke-Test.md
 [ ] Core Service API 最小抽象
 [ ] cyberagent daemon 命令
 [ ] 本地 token auth / 127.0.0.1 默认监听
@@ -258,7 +260,7 @@ go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check 
 [ ] scan web async job API
 [ ] approval approve/deny/resume-approved API
 [ ] job status/cancel MVP
-[ ] daemon smoke test 文档
+[ ] daemon smoke test 本地验证通过
 ```
 
 ### 后置能力

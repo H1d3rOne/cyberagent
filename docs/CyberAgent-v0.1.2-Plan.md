@@ -645,3 +645,25 @@ docs/api/v0.1.2-api-contract.md
 P0 先使用 Markdown contract 固定 envelope、auth、错误码、endpoint 和请求/响应示例。
 OpenAPI/YAML 放 P1，等 P0 实现与字段稳定后再补。
 ```
+
+---
+
+## 16. Daemon Smoke Test
+
+v0.1.2 daemon smoke test 草案见：
+
+```text
+docs/CyberAgent-v0.1.2-Daemon-Smoke-Test.md
+```
+
+该 smoke test 覆盖：
+
+```text
+daemon 启动与 token auth
+health/version/doctor/plugins API
+scan web async job
+job status/cancel
+run/report/artifacts/events API
+scope required 与 path traversal 负向测试
+approval approve/deny/resume-approved API
+```
