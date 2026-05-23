@@ -1,8 +1,8 @@
 # CyberAgent Documentation Index
 
-版本：v0.1  
-日期：2026-05-24  
-状态：规划、实现状态与 v0.1.1 计划索引完成
+版本：v0.1
+日期：2026-05-24
+状态：规划、实现状态与 v0.1.2 计划索引完成
 
 ---
 
@@ -32,6 +32,7 @@
 19. CyberAgent-v0.1.1-Smoke-Test.md
 20. CyberAgent-Release-Checklist.md
 21. release-notes/v0.1.1.md
+22. CyberAgent-v0.1.2-Plan.md
 ```
 
 ---
@@ -62,6 +63,7 @@
 | `CyberAgent-v0.1.1-Smoke-Test.md` | v0.1.1 P0 smoke test 命令、断言和验收 |
 | `CyberAgent-Release-Checklist.md` | 可复用发布前检查清单 |
 | `release-notes/v0.1.1.md` | v0.1.1 release notes 草案；本地 RC 准备使用，远程发布需显式授权 |
+| `CyberAgent-v0.1.2-Plan.md` | v0.1.2 Local Daemon / Web API foundation 计划；为 Desktop/Web 复用 Core 做准备 |
 
 ---
 
@@ -79,7 +81,7 @@ LLM: 增强层，不作为 Core 依赖
 nuclei-safe: 默认不启用
 TUI v1: 只读 run viewer
 Current release: v0.1.1 本地 RC 准备完成，tag/push/GitHub Release 待显式授权
-Next plan: v0.1.2+ 方向择一推进
+Next plan: v0.1.2 选择 Web API / Local Daemon foundation；当前只完成计划，尚未实现
 ```
 
 ---

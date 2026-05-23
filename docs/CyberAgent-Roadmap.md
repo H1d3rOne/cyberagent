@@ -1,8 +1,8 @@
 # CyberAgent Roadmap
 
-版本：v0.1  
-日期：2026-05-24  
-状态：v0.1.0 本地发布准备完成，v0.1.1 进入计划阶段
+版本：v0.1
+日期：2026-05-24
+状态：v0.1.1 本地 RC 准备完成，v0.1.2 Local Daemon / Web API 进入计划完成状态
 
 ---
 
@@ -31,10 +31,11 @@ Phase 2：内置 Web/API 分析闭环（完成）
 Phase 3：插件系统与可选工具（MVP 完成）
 Phase 4：TUI Run Viewer（完成）
 Phase 5：MVP Stabilization（v0.1.0 本地完成）
-Phase 5.1：v0.1.1 Stabilization / HITL / Plugin Hardening（当前下一阶段）
+Phase 5.1：v0.1.1 Stabilization / HITL / Plugin Hardening（本地 RC 完成）
+Phase 5.2：v0.1.2 Local Daemon / Web API Foundation（当前计划完成，待实现）
 Phase 6：LLM 增强
 Phase 7：Desktop 本地工作台
-Phase 8：Local API / Daemon
+Phase 8：Local API / Daemon 稳定版
 Phase 9：Web / Remote Runner
 Phase 10：平台化与生态扩展
 ```
@@ -306,6 +307,44 @@ Remote Runner
 
 ---
 
+## 8.2 Phase 5.2：v0.1.2 Local Daemon / Web API Foundation
+
+目标：
+
+```text
+把 CLI/TUI-first 的 Agent Core 抽象成可复用的本地服务层，并提供 Local HTTP Daemon。
+```
+
+范围：
+
+```text
+Core Service API
+cyberagent daemon
+local HTTP JSON API
+run list / run detail / report / artifacts / events
+scan web async job start/status/cancel
+approvals list / approve / deny / resume-approved
+plugins doctor / version / health / readiness
+local token auth
+API contract / smoke test
+```
+
+非目标：
+
+```text
+Desktop/Wails
+完整 Web UI
+多用户 SaaS
+Remote Runner
+公网监听 daemon
+SQLite 强制迁移
+默认启用外部扫描插件
+```
+
+详细计划：`docs/CyberAgent-v0.1.2-Plan.md`
+
+---
+
 ## 9. Phase 6：LLM 增强
 
 目标：
@@ -363,12 +402,12 @@ Evidence 浏览
 
 ---
 
-## 11. Phase 8：Local API / Daemon
+## 11. Phase 8：Local API / Daemon 稳定版
 
 目标：
 
 ```text
-为 Desktop/Web/外部集成提供统一本地 API。
+在 v0.1.2 foundation 基础上，稳定本地 API、客户端 SDK、事件流和 UI 集成能力。
 ```
 
 范围：
@@ -380,6 +419,9 @@ Report API
 Evidence API
 Plugin API
 Local auth token
+API client
+OpenAPI/generated client
+Desktop/Web integration hardening
 ```
 
 ---

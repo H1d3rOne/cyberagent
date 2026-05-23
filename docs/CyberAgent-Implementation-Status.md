@@ -1,8 +1,8 @@
 # CyberAgent Implementation Status
 
-版本：v0.1.1 RC  
-日期：2026-05-24  
-状态：v0.1.1 本地 RC 准备完成；远程发布未执行
+版本：v0.1.2 Planning
+日期：2026-05-24
+状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 计划完成；远程发布未执行
 
 ---
 
@@ -15,7 +15,8 @@ MVP 主链路：已跑通
 MVP Stabilization：本地验证通过
 MVP Release：v0.1.0 本地 release 准备完成；远程发布未执行
 v0.1.1 RC：本地实现、文档、测试、release notes 已准备；tag/push/GitHub Release 未执行
-Next：等待用户授权 v0.1.1 tag / push / GitHub Release，或进入 v0.1.2+ 方向
+v0.1.2 Planning：已选择 Web API / Local Daemon foundation 方向；当前只完成计划，尚未实现
+Next：按用户授权进入 v0.1.2 实现，或先处理 v0.1.1 tag / push / GitHub Release
 ```
 
 ---
@@ -195,6 +196,7 @@ go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check 
 | M8 MVP Release Candidate | 完成 | README/限制/示例/test/vet/build/smoke/GoReleaser snapshot 已完成 |
 | M9 MVP v0.1 Release | 本地准备完成 | 本地 git/origin/release notes/GoReleaser snapshot 完成；本地 tag 指向本提交，尚未 push/release 到 GitHub |
 | M10 v0.1.1 RC | 本地准备完成 | v0.1.1 P0/P1、release notes、test/vet/build 本地验证完成；尚未创建 tag、push 或 GitHub Release |
+| M11 v0.1.2 Planning | 完成 | 选择 Local Daemon / Web API foundation；计划文档已新增，尚未实现 |
 
 ---
 
@@ -238,6 +240,21 @@ go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check 
 [x] CLI/TUI/report UX polish
 [x] v0.1.1 release notes：docs/release-notes/v0.1.1.md
 [x] v0.1.1 本地 tag 可准备（未创建；需用户显式授权）
+```
+
+### v0.1.2 Local Daemon / Web API Foundation
+
+```text
+[x] 选择 v0.1.2 方向：Web API / Local Daemon foundation
+[x] 生成 v0.1.2 计划文档：docs/CyberAgent-v0.1.2-Plan.md
+[ ] Core Service API 最小抽象
+[ ] cyberagent daemon 命令
+[ ] 本地 token auth / 127.0.0.1 默认监听
+[ ] run/report/artifact/event 查询 API
+[ ] scan web async job API
+[ ] approval approve/deny/resume-approved API
+[ ] job status/cancel MVP
+[ ] API contract / smoke test 文档
 ```
 
 ### 后置能力
