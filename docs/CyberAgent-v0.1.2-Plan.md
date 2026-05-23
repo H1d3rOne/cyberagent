@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：计划完成；Daemon Skeleton 已完成；read-only API/job manager 待实现
+状态：计划完成；Daemon Read-only API 已完成；write API/job manager 待实现
 
 ---
 
@@ -404,9 +404,12 @@ P0-12 daemon smoke test 文档与本地验证
 [x] P0-01 Slice 2：ApprovalService / ResumeApproved / ScanService validation skeleton
 [x] P0-02：cyberagent daemon / local HTTP server skeleton
 [x] P0-03：Bearer token auth middleware
-[~] P0-04 Slice 1：healthz / version API
-[ ] P0-04 Slice 2：doctor / plugins API
-[ ] P0-05+ runs / approvals / scans / jobs HTTP API
+[x] P0-04：healthz / version / doctor / plugins API
+[x] P0-05：run list / detail / report / artifacts API
+[x] P0-06：events cursor polling API
+[~] P0-07 Slice 1：approvals list API
+[ ] P0-07 Slice 2：approvals approve / deny API
+[ ] P0-08+ resume-approved / scans / jobs HTTP API
 ```
 
 ### P1：应该完成
@@ -550,13 +553,13 @@ v0.1.2 完成时应满足：
 ```text
 [x] cyberagent daemon 可启动并监听 127.0.0.1
 [x] API 默认需要 token
-[~] GET /healthz /version /doctor 可用：healthz/version 已完成，doctor 待接入
-[ ] GET /plugins /plugins/doctor 可用
-[ ] GET /runs 可列出已有 run
-[ ] GET /runs/{run_id} 可返回 run summary
-[ ] GET /runs/{run_id}/report?format=json|md 可读取报告
-[ ] GET /runs/{run_id}/artifacts 可读取 artifact index
-[ ] GET /runs/{run_id}/approvals 可读取 approval 状态
+[x] GET /healthz /version /doctor 可用
+[x] GET /plugins /plugins/doctor 可用
+[x] GET /runs 可列出已有 run
+[x] GET /runs/{run_id} 可返回 run summary
+[x] GET /runs/{run_id}/report?format=json|md 可读取报告
+[x] GET /runs/{run_id}/artifacts 可读取 artifact index
+[x] GET /runs/{run_id}/approvals 可读取 approval 状态
 [ ] POST approve/deny 可改变 approval 状态并记录审计
 [ ] POST resume-approved 复用现有恢复执行逻辑
 [ ] POST /scans/web 可启动 safe profile scan

@@ -24,11 +24,15 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	version := services.NewVersionService(cfg.Build)
+	runs := services.NewRunService(cfg.RunsDir)
 	return &Server{
 		cfg:   cfg,
 		token: token,
 		handler: newRouter(routerServices{
-			version: version,
+			version:   version,
+			plugins:   services.NewPluginService(),
+			runs:      runs,
+			approvals: services.NewApprovalService(cfg.RunsDir),
 		}, token),
 	}, nil
 }

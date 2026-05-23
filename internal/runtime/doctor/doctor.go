@@ -19,18 +19,18 @@ const (
 
 // CheckResult is a single environment/dependency check result.
 type CheckResult struct {
-	Name     string
-	Status   Status
-	Required bool
-	Detail   string
+	Name     string `json:"name"`
+	Status   Status `json:"status"`
+	Required bool   `json:"required"`
+	Detail   string `json:"detail"`
 }
 
 // Report is the complete doctor report.
 type Report struct {
-	OS      string
-	Arch    string
-	Checks  []CheckResult
-	Healthy bool
+	OS      string        `json:"os"`
+	Arch    string        `json:"arch"`
+	Checks  []CheckResult `json:"checks"`
+	Healthy bool          `json:"healthy"`
 }
 
 // Run executes MVP environment checks.

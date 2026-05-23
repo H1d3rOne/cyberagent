@@ -2,7 +2,7 @@
 
 版本：v0.1.2
 日期：2026-05-24
-状态：实施拆解完成；Daemon Skeleton 已完成；read-only API/job manager 待实现
+状态：实施拆解完成；Daemon Read-only API 已完成；write API/job manager 待实现
 
 ---
 
@@ -302,17 +302,17 @@ token 不在日志输出中泄露。
 任务：
 
 ```text
-API-R-01 GET /api/v1/healthz
-API-R-02 GET /api/v1/version
-API-R-03 GET /api/v1/doctor
-API-R-04 GET /api/v1/plugins
-API-R-05 GET /api/v1/plugins/doctor
-API-R-06 GET /api/v1/runs
-API-R-07 GET /api/v1/runs/{run_id}
-API-R-08 GET /api/v1/runs/{run_id}/report?format=md|json
-API-R-09 GET /api/v1/runs/{run_id}/artifacts
-API-R-10 GET /api/v1/runs/{run_id}/events?cursor=&limit=
-API-R-11 GET /api/v1/runs/{run_id}/approvals
+[x] API-R-01 GET /api/v1/healthz
+[x] API-R-02 GET /api/v1/version
+[x] API-R-03 GET /api/v1/doctor
+[x] API-R-04 GET /api/v1/plugins
+[x] API-R-05 GET /api/v1/plugins/doctor
+[x] API-R-06 GET /api/v1/runs
+[x] API-R-07 GET /api/v1/runs/{run_id}
+[x] API-R-08 GET /api/v1/runs/{run_id}/report?format=md|json
+[x] API-R-09 GET /api/v1/runs/{run_id}/artifacts
+[x] API-R-10 GET /api/v1/runs/{run_id}/events?cursor=&limit=
+[x] API-R-11 GET /api/v1/runs/{run_id}/approvals
 ```
 
 依赖：
@@ -330,6 +330,16 @@ WF-3
 report/artifacts/events 读取与 CLI 生成结果一致。
 events 支持 limit 和 next_cursor。
 缺失 run/report/artifacts 时返回结构化 not_found，而不是 panic。
+```
+
+当前实现记录：
+
+```text
+Read-only handler 已接入 internal/interfaces/daemon/router.go。
+handler 复用 VersionService / PluginService / RunService / ApprovalService。
+report JSON 会解码为 report 对象，markdown 返回 content 字符串。
+events 使用 RunService cursor + limit 读取，不一次性加载超大 events.jsonl。
+approvals 当前只开放 list；approve/deny/resume-approved 归 WF-5。
 ```
 
 ---
@@ -478,10 +488,10 @@ Daemon smoke test 使用 docs/CyberAgent-v0.1.2-Daemon-Smoke-Test.md 固化 curl
 ```text
 TST-01 service unit tests：version/plugin/run/report/artifact/events
 TST-02 service unit tests：approval approve/deny/resume
-TST-03 daemon handler tests：auth success/failure
-TST-04 daemon handler tests：health/version/doctor/plugins
-TST-05 daemon handler tests：runs/report/artifacts/events
-TST-06 daemon handler tests：path traversal rejection
+[x] TST-03 daemon handler tests：auth success/failure
+[x] TST-04 daemon handler tests：health/version/doctor/plugins
+[x] TST-05 daemon handler tests：runs/report/artifacts/events
+[x] TST-06 daemon handler tests：path traversal rejection
 TST-07 job manager tests：start/status/conflict/cancel
 TST-08 scan API tests：scope required
 TST-09 smoke test：daemon -> scan -> poll -> report -> approvals
@@ -682,7 +692,7 @@ approval smoke test 预期流程：
 [x] Core Service API P0 抽象完成
 [x] daemon command 可启动
 [x] 默认 127.0.0.1 + token auth 生效
-[ ] 只读 API 可读取已有 run/report/artifact/events
+[x] 只读 API 可读取已有 run/report/artifact/events
 [ ] approval API 与 CLI 状态互通
 [ ] scan web API 可异步启动 safe scan
 [ ] job status/cancel MVP 可用
