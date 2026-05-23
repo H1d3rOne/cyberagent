@@ -158,19 +158,27 @@ P0 endpoint 和安全边界清晰。
 任务：
 
 ```text
-SVC-01 定义 service 层通用错误类型与错误 code
-SVC-02 定义 RunService request/response DTO
-SVC-03 定义 VersionService / PluginService / ApprovalService / ScanService DTO
-SVC-04 实现 VersionService：version / doctor 数据适配
-SVC-05 实现 PluginService：plugins list / doctor 结构化返回
-SVC-06 实现 RunService.ListRuns：基于 runs-dir 和 metadata 快照
-SVC-07 实现 RunService.GetRunSummary：读取 metadata/effective_config/report summary
-SVC-08 实现 RunService.GetReport：读取 report.md/report.json
-SVC-09 实现 RunService.GetArtifactIndex：读取 artifacts/index.json
-SVC-10 实现 RunService.GetEvents：cursor + limit 读取 events.jsonl
-SVC-11 实现 ApprovalService：list/approve/deny 复用现有 approvals runtime
-SVC-12 实现 ApprovalService.ResumeApproved：复用 replay --resume-approved 业务路径
-SVC-13 实现 ScanService.StartWebScan：先只定义接口，执行接入放 WF-5
+[x] SVC-01 定义 service 层通用错误类型与错误 code
+[x] SVC-02 定义 RunService request/response DTO
+[~] SVC-03 定义 VersionService / PluginService / ApprovalService / ScanService DTO
+[x] SVC-04 实现 VersionService：version / doctor 数据适配
+[x] SVC-05 实现 PluginService：plugins list / doctor 结构化返回
+[x] SVC-06 实现 RunService.ListRuns：基于 runs-dir 和 metadata 快照
+[x] SVC-07 实现 RunService.GetRunSummary：读取 metadata/effective_config/report summary
+[x] SVC-08 实现 RunService.GetReport：读取 report.md/report.json
+[x] SVC-09 实现 RunService.GetArtifactIndex：读取 artifacts/index.json
+[x] SVC-10 实现 RunService.GetEvents：cursor + limit 读取 events.jsonl
+[ ] SVC-11 实现 ApprovalService：list/approve/deny 复用现有 approvals runtime
+[ ] SVC-12 实现 ApprovalService.ResumeApproved：复用 replay --resume-approved 业务路径
+[ ] SVC-13 实现 ScanService.StartWebScan：先只定义接口，执行接入放 WF-5
+```
+
+当前实现记录：
+
+```text
+Core Service Slice 1 已完成：errors.go / version.go / plugins.go / runs.go。
+对应测试：version_test.go / plugins_test.go / runs_test.go。
+本 slice 不包含 daemon、HTTP handler、ApprovalService、ScanService 或 JobManager。
 ```
 
 依赖：

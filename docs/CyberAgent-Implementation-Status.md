@@ -1,8 +1,8 @@
 # CyberAgent Implementation Status
 
-版本：v0.1.2 Planning
+版本：v0.1.2 Implementation
 日期：2026-05-24
-状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 计划、实施拆解、API Contract 与 daemon smoke test 草案完成；远程发布未执行
+状态：v0.1.1 本地 RC 准备完成；v0.1.2 Local Daemon / Web API 已开始实现；Core Service API Slice 1 完成
 
 ---
 
@@ -15,8 +15,9 @@ MVP 主链路：已跑通
 MVP Stabilization：本地验证通过
 MVP Release：v0.1.0 本地 release 准备完成；远程发布未执行
 v0.1.1 RC：本地实现、文档、测试、release notes 已准备；tag/push/GitHub Release 未执行
-v0.1.2 Planning：已选择 Web API / Local Daemon foundation 方向；计划、实施拆解、API Contract 与 daemon smoke test 草案已完成，尚未实现
-Next：按用户授权进入 v0.1.2 实现，或先处理 v0.1.1 tag / push / GitHub Release
+v0.1.2 Planning：计划、实施拆解、API Contract 与 daemon smoke test 草案已完成
+v0.1.2 Implementation：Core Service API Slice 1 已完成；daemon 尚未实现
+Next：继续 Core Service API Slice 2（ApprovalService / ScanService）或进入 daemon skeleton
 ```
 
 ---
@@ -52,6 +53,20 @@ Next：按用户授权进入 v0.1.2 实现，或先处理 v0.1.1 tag / push / Gi
 [x] Safe Profile Planner
 [x] Job / Step lifecycle
 [x] Evidence / Finding / Report 链路
+```
+
+### Core Services / v0.1.2
+
+```text
+[x] ServiceError / ErrorCode 边界模型
+[x] VersionService: GetVersion / Doctor
+[x] PluginService: ListPlugins / Doctor
+[x] RunService: ListRuns / GetRun / GetRunSummary
+[x] RunService: GetReport / GetArtifactIndex / GetEvents cursor polling
+[x] RunService path traversal / missing run 错误映射测试
+[ ] ApprovalService: list / approve / deny
+[ ] ApprovalService: resume-approved
+[ ] ScanService: StartWebScan / job 接入
 ```
 
 ### Builtin Web/API Tools
@@ -179,6 +194,28 @@ go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check 
 未创建 v0.1.1 tag，未 push，未发布 GitHub Release。
 ```
 
+v0.1.2 Core Service API Slice 1 验证已通过：
+
+```bash
+gofmt -w internal/core/services
+go test ./internal/core/services
+go test ./...
+test -z "$(gofmt -l cmd internal)"
+go vet ./...
+go build -ldflags "-X main.version=v0.1.2-services-local -X main.commit=$(git rev-parse --short HEAD) -X main.date=2026-05-24T00:00:00Z" -o bin/cyberagent ./cmd/cyberagent
+```
+
+当前边界：
+
+```text
+已新增 internal/core/services，仅提供内部 service 层能力。
+本批未新增 daemon command，未新增 HTTP handler，未改变 CLI 行为。
+RunService 支持读取已有 run 的 summary/detail/report/artifacts/events。
+PluginService 复用现有 plugins.Manager / plugins.Doctor。
+VersionService 复用 runtime doctor。
+ApprovalService / ScanService / JobManager 仍待实现。
+```
+
 ---
 
 ## 4. 里程碑状态
@@ -200,6 +237,7 @@ go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check 
 | M12 v0.1.2 Implementation Breakdown | 完成 | 工作流、tickets、依赖、验收、测试与提交节奏已拆解；尚未实现 |
 | M13 v0.1.2 API Contract Draft | 完成 | HTTP API envelope、auth、错误码、endpoint 与请求/响应示例已形成草案；尚未实现 |
 | M14 v0.1.2 Daemon Smoke Test Draft | 完成 | daemon 启动、认证、scan/job/report/artifact/event/approval/cancel smoke 流程已形成草案；尚未实现 |
+| M15 v0.1.2 Core Service Slice 1 | 完成 | ServiceError、VersionService、PluginService、RunService 只读能力已实现并测试；daemon 尚未实现 |
 
 ---
 
@@ -253,7 +291,8 @@ go run "$(go env GOMODCACHE)/github.com/goreleaser/goreleaser/v2@v2.15.4" check 
 [x] 生成 v0.1.2 实施拆解文档：docs/CyberAgent-v0.1.2-Implementation-Breakdown.md
 [x] 生成 v0.1.2 API Contract 草案：docs/api/v0.1.2-api-contract.md
 [x] 生成 v0.1.2 daemon smoke test 草案：docs/CyberAgent-v0.1.2-Daemon-Smoke-Test.md
-[ ] Core Service API 最小抽象
+[x] Core Service API Slice 1：ServiceError / VersionService / PluginService / RunService 只读能力
+[ ] Core Service API Slice 2：ApprovalService / ResumeApproved / ScanService 接口
 [ ] cyberagent daemon 命令
 [ ] 本地 token auth / 127.0.0.1 默认监听
 [ ] run/report/artifact/event 查询 API

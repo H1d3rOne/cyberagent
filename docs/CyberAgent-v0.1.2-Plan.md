@@ -397,6 +397,14 @@ P0-11 API error envelope 与基础 contract 文档
 P0-12 daemon smoke test 文档与本地验证
 ```
 
+当前实现进度：
+
+```text
+[x] P0-01 Slice 1：ServiceError / VersionService / PluginService / RunService 只读能力
+[ ] P0-01 Slice 2：ApprovalService / ResumeApproved / ScanService
+[ ] P0-02+ daemon / auth / HTTP API / job manager
+```
+
 ### P1：应该完成
 
 ```text
