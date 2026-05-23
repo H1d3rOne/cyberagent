@@ -207,7 +207,7 @@ P0-08 v0.1.1 smoke test 文档
 [x] P1-01 plugins doctor --json
 [x] P1-02 report --format json|md
 [x] P1-03 artifact index hash/size/mime
-[ ] P1-04 TUI approvals 只读展示
+[x] P1-04 TUI approvals 只读展示
 [ ] P1-05 CLI skipped step 摘要优化
 [ ] P1-06 report 中展示 plugin failure reason
 ```
@@ -294,6 +294,9 @@ go test ./internal/interfaces/cli
 go test ./internal/runtime/artifacts ./internal/runtime/runs ./internal/core/runtime ./internal/interfaces/cli
 ./bin/cyberagent scan web --target <target> --scope <scope> --out <run-dir> --profile safe --no-external-tools
 python3 -m json.tool <run-dir>/artifacts/index.json >/dev/null
+
+# P1-04 additional verification
+go test ./internal/interfaces/tui
 ```
 
 P0-05 当前边界：
@@ -350,6 +353,15 @@ artifacts/index.json 包含 schema_version / generated_at / count / artifacts[]�
 artifacts[] 使用 Artifact contract，并确保 sha256 / size_bytes / mime_type / created_at 可用于复现和审计。
 evidence/index.json 与 reports/report.json 使用补全后的 artifact metadata。
 artifact index 描述当前 run-dir 内已登记 artifacts，不扫描未登记的额外文件。
+```
+
+P1-04 当前边界：
+
+```text
+TUI 新增 Approvals 页签。
+LoadRun 读取 approvals.json 中的 HITLRequest 列表；缺失 approvals.json 时按空列表处理。
+Approvals 页签只读展示 status / id / step / action / policy / reason / options / resolution。
+TUI 不直接 approve/deny；审批仍通过 cyberagent approvals approve|deny CLI 完成。
 ```
 
 ---

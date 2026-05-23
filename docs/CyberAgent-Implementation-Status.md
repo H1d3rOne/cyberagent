@@ -32,7 +32,7 @@ Next：v0.1.1 stabilization / HITL / plugin hardening / reproducibility
 [x] cyberagent scan web
 [x] cyberagent report <run-dir> --format md|json
 [x] cyberagent replay <run-dir>
-[x] cyberagent tui <run-dir>
+[x] cyberagent tui <run-dir>（Plan / Events / Approvals / Evidence / Findings / Report）
 ```
 
 ### Core Runtime
@@ -210,7 +210,7 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] run metadata/effective config/plugin snapshot
 [x] v0.1.1 smoke test 文档
 [x] plugins doctor --json
-[ ] CLI/TUI/report UX polish（remaining: TUI approvals / skipped summary / plugin failure reason）
+[ ] CLI/TUI/report UX polish（remaining: skipped summary / plugin failure reason）
 ```
 
 ### 后置能力

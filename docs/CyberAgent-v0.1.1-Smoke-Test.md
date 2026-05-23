@@ -347,6 +347,7 @@ rm -rf "$FAKE_BIN"
 [x] approvals approve 审计断言通过
 [x] 可选 resume-approved 断言通过
 [x] report / replay 可读
+[x] TUI Approvals 只读展示由 `go test ./internal/interfaces/tui` 覆盖
 ```
 
 ---
@@ -384,6 +385,7 @@ approvals approve audit trail
 fake ffuf resume-approved
 report / replay readability
 report --format json readability
+TUI approvals read-only tab coverage
 plugin hardening unit coverage
 plugins doctor --json machine-readable health output
 ```

@@ -238,7 +238,7 @@ report.json 可解析。
 report --format json 可输出已有 report.json。
 artifacts/index.json 可解析并包含 hash / size / mime / created_at。
 replay 输出可解释每一步状态。
-TUI 可只读打开 run-dir。
+TUI 可只读打开 run-dir，并能查看 Approvals 页签。
 ```
 
 ---

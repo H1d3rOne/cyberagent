@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,13 +28,14 @@ func RunViewer(runDir string) error {
 
 // RunData is the read-only run snapshot consumed by the TUI.
 type RunData struct {
-	RunDir   string
-	Job      contracts.Job
-	Plan     contracts.Plan
-	Events   []contracts.Event
-	Evidence []contracts.Evidence
-	Findings []contracts.Finding
-	Report   string
+	RunDir    string
+	Job       contracts.Job
+	Plan      contracts.Plan
+	Events    []contracts.Event
+	Approvals []contracts.HITLRequest
+	Evidence  []contracts.Evidence
+	Findings  []contracts.Finding
+	Report    string
 }
 
 // LoadRun loads known run files for display.
@@ -47,6 +49,9 @@ func LoadRun(runDir string) (RunData, error) {
 		return RunData{}, err
 	}
 	if err := readJSON(filepath.Join(runDir, "findings.json"), &data.Findings); err != nil {
+		return RunData{}, err
+	}
+	if err := readOptionalJSON(filepath.Join(runDir, "approvals.json"), &data.Approvals); err != nil {
 		return RunData{}, err
 	}
 	var evidenceIndex struct {
@@ -80,6 +85,16 @@ func readJSON(path string, out any) error {
 	return nil
 }
 
+func readOptionalJSON(path string, out any) error {
+	if err := readJSON(path, out); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 type model struct {
 	data     RunData
 	tab      int
@@ -90,7 +105,7 @@ type model struct {
 }
 
 func newModel(data RunData) model {
-	return model{data: data, sections: []string{"Plan", "Events", "Evidence", "Findings", "Report"}}
+	return model{data: data, sections: []string{"Plan", "Events", "Approvals", "Evidence", "Findings", "Report"}}
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -113,7 +128,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tab = len(m.sections) - 1
 			}
 			m.scroll = 0
-		case "1", "2", "3", "4", "5":
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			idx := int(msg.String()[0] - '1')
 			if idx >= 0 && idx < len(m.sections) {
 				m.tab = idx
@@ -154,7 +169,7 @@ func (m model) View() string {
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(muted.Render("Use ←/→ or 1-5 to switch, j/k to scroll, q to quit."))
+	b.WriteString(muted.Render(fmt.Sprintf("Use ←/→ or 1-%d to switch, j/k to scroll, q to quit.", len(m.sections))))
 	b.WriteString("\n\n")
 
 	var content string
@@ -163,6 +178,8 @@ func (m model) View() string {
 		content = renderPlan(m.data.Plan)
 	case "Events":
 		content = renderEvents(m.data.Events)
+	case "Approvals":
+		content = renderApprovals(m.data.Approvals)
 	case "Evidence":
 		content = renderEvidence(m.data.Evidence)
 	case "Findings":
@@ -196,6 +213,31 @@ func renderPlan(plan contracts.Plan) string {
 	fmt.Fprintf(&b, "Plan: %s | planner: %s | steps: %d\n\n", plan.ID, plan.Planner, len(plan.Steps))
 	for _, step := range plan.Steps {
 		fmt.Fprintf(&b, "- %s\n", step)
+	}
+	return b.String()
+}
+
+func renderApprovals(items []contracts.HITLRequest) string {
+	if len(items) == 0 {
+		return "No approval requests.\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Approvals are read-only in the TUI. Use `cyberagent approvals approve|deny` from CLI to resolve.\n\n")
+	for _, item := range items {
+		fmt.Fprintf(&b, "- [%s] %s\n", item.Status, item.ID)
+		fmt.Fprintf(&b, "  step: %s\n", emptyDash(item.StepID))
+		fmt.Fprintf(&b, "  action: %s\n", emptyDash(item.RequestedAction))
+		fmt.Fprintf(&b, "  policy: %s\n", emptyDash(item.PolicyDecisionID))
+		fmt.Fprintf(&b, "  reason: %s\n", emptyDash(item.Reason))
+		if len(item.Options) > 0 {
+			fmt.Fprintf(&b, "  options: %s\n", strings.Join(item.Options, ", "))
+		}
+		if item.ResolvedAt != nil {
+			fmt.Fprintf(&b, "  resolved_at: %s\n", item.ResolvedAt.Format("2006-01-02 15:04:05 MST"))
+		}
+		if len(item.Resolution) > 0 {
+			fmt.Fprintf(&b, "  resolution: %v\n", item.Resolution)
+		}
 	}
 	return b.String()
 }
@@ -236,6 +278,13 @@ func renderReport(report string) string {
 		return "report.md not found or empty.\n"
 	}
 	return report + "\n"
+}
+
+func emptyDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }
 
 func tailEvents(events []contracts.Event, max int) []contracts.Event {

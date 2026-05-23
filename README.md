@@ -5,7 +5,7 @@ CyberAgent 是一个 **CLI/TUI-first** 的授权 Web/API 安全分析 Agent。MV
 ## 当前 MVP 能力
 
 - Deterministic Web safe scan：`cyberagent scan web`
-- 只读 TUI run viewer：`cyberagent tui <run-dir>`
+- 只读 TUI run viewer：`cyberagent tui <run-dir>`，包含 Plan / Events / Approvals / Evidence / Findings / Report 页签
 - Run workspace：`metadata.json`、`effective_config.json`、`plugins.snapshot.json`、`artifacts/index.json`、`target.json`、`scope.json`、`job.json`、`plan.json`、`events.jsonl`、`commands.log`
 - State Store：bbolt
 - Event Store：JSONL
