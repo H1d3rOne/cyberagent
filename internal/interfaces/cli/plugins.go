@@ -1,11 +1,19 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/H1d3rOne/cyberagent/internal/plugins"
 	"github.com/spf13/cobra"
 )
+
+type pluginsDoctorOutput struct {
+	SchemaVersion string           `json:"schema_version"`
+	OK            bool             `json:"ok"`
+	Count         int              `json:"count"`
+	Plugins       []plugins.Health `json:"plugins"`
+}
 
 func newPluginsCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -38,21 +46,41 @@ func newPluginsCommand() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
+	doctorCmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check plugin dependencies",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			jsonOutput, _ := cmd.Flags().GetBool("json")
 			manifests, err := plugins.NewManager().Discover()
 			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
+			healths := make([]plugins.Health, 0, len(manifests))
+			overallOK := true
+			for _, manifest := range manifests {
+				health := plugins.Doctor(manifest)
+				if !health.OK {
+					overallOK = false
+				}
+				healths = append(healths, health)
+			}
+			if jsonOutput {
+				encoder := json.NewEncoder(out)
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(pluginsDoctorOutput{
+					SchemaVersion: "0.1.1",
+					OK:            overallOK,
+					Count:         len(healths),
+					Plugins:       healths,
+				})
+			}
 			if len(manifests) == 0 {
 				fmt.Fprintln(out, "no plugins discovered")
 				return nil
 			}
-			for _, manifest := range manifests {
-				health := plugins.Doctor(manifest)
+			for _, health := range healths {
+				manifest := health.Plugin
 				status := "ok"
 				if !health.OK {
 					status = "missing"
@@ -89,7 +117,9 @@ func newPluginsCommand() *cobra.Command {
 			}
 			return nil
 		},
-	})
+	}
+	doctorCmd.Flags().Bool("json", false, "output machine-readable JSON")
+	cmd.AddCommand(doctorCmd)
 
 	return cmd
 }

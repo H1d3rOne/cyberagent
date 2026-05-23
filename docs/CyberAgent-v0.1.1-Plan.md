@@ -204,12 +204,12 @@ P0-08 v0.1.1 smoke test 文档
 ### P1：应该完成
 
 ```text
-P1-01 plugins doctor --json
-P1-02 report --format json|md
-P1-03 artifact index hash/size/mime
-P1-04 TUI approvals 只读展示
-P1-05 CLI skipped step 摘要优化
-P1-06 report 中展示 plugin failure reason
+[x] P1-01 plugins doctor --json
+[ ] P1-02 report --format json|md
+[ ] P1-03 artifact index hash/size/mime
+[ ] P1-04 TUI approvals 只读展示
+[ ] P1-05 CLI skipped step 摘要优化
+[ ] P1-06 report 中展示 plugin failure reason
 ```
 
 ### P2：可后置
@@ -281,6 +281,10 @@ go test ./internal/core/runtime ./internal/interfaces/cli
 
 # P0-08 additional verification
 docs/CyberAgent-v0.1.1-Smoke-Test.md 中的 baseline / no-scope / approval / resume-approved smoke 流程通过
+
+# P1-01 additional verification
+go test ./internal/interfaces/cli
+./bin/cyberagent plugins doctor --json
 ```
 
 P0-05 当前边界：
@@ -308,6 +312,15 @@ metadata.json 记录 binary version / commit / build date / module、runtime、c
 effective_config.json 记录 target / scope / profile / out / enabled_plugins / no_external_tools / interactive 的最终生效值。
 plugins.snapshot.json 记录 run 创建时的 discovered plugins，以及 enabled / disabled 状态；依赖可用性仍以 plugins doctor 或 runner 审计为准。
 这些快照描述 run 创建时事实，不在 replay/resume 中覆盖。
+```
+
+P1-01 当前边界：
+
+```text
+plugins doctor 默认文本输出保持不变。
+plugins doctor --json 输出 schema_version / ok / count / plugins[]。
+plugins[] 使用现有 plugin Health 结构，包含 manifest、dependencies、schemas 和 ok。
+--json 用于脚本/CI/未来 TUI/Web 集成读取；缺失可选外部依赖时仍由 Health.ok 表达，不改变命令退出码。
 ```
 
 ---

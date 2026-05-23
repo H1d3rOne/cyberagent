@@ -66,6 +66,7 @@ go build \
 ./bin/cyberagent doctor
 ./bin/cyberagent plugins list
 ./bin/cyberagent plugins doctor
+./bin/cyberagent plugins doctor --json
 ```
 
 验收：
@@ -74,7 +75,7 @@ go build \
 gofmt / test / vet / build 全部通过。
 version 与 --version 均可输出。
 doctor 可运行。
-plugins list / doctor 可运行；缺失可选外部依赖时应报告为不可用，而不是崩溃。
+plugins list / doctor / doctor --json 可运行；缺失可选外部依赖时应报告为不可用，而不是崩溃。
 ```
 
 ---
@@ -355,6 +356,7 @@ go build -ldflags "-X main.version=v0.1.1-smoke -X main.commit=$(git rev-parse -
 ./bin/cyberagent doctor
 ./bin/cyberagent plugins list
 ./bin/cyberagent plugins doctor
+./bin/cyberagent plugins doctor --json
 ```
 
 已通过 smoke 场景：
@@ -368,4 +370,5 @@ approvals approve audit trail
 fake ffuf resume-approved
 report / replay readability
 plugin hardening unit coverage
+plugins doctor --json machine-readable health output
 ```

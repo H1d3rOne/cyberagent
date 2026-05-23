@@ -75,6 +75,7 @@ go build -o bin/cyberagent ./cmd/cyberagent
 # 插件检查
 ./bin/cyberagent plugins list
 ./bin/cyberagent plugins doctor
+./bin/cyberagent plugins doctor --json
 ```
 
 执行一次 safe Web/API 扫描：

@@ -83,6 +83,28 @@ entrypoint:
 				t.Fatalf("plugins doctor output missing %q: %q", want, doctorOut)
 			}
 		}
+
+		doctorJSONOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "plugins", "doctor", "--json")
+		if err != nil {
+			t.Fatalf("plugins doctor --json error = %v", err)
+		}
+		var doctorJSON pluginsDoctorOutput
+		if err := json.Unmarshal([]byte(doctorJSONOut), &doctorJSON); err != nil {
+			t.Fatalf("decode plugins doctor --json output: %v\noutput=%s", err, doctorJSONOut)
+		}
+		if doctorJSON.SchemaVersion != "0.1.1" || !doctorJSON.OK || doctorJSON.Count != 1 || len(doctorJSON.Plugins) != 1 {
+			t.Fatalf("unexpected plugins doctor --json output: %#v", doctorJSON)
+		}
+		health := doctorJSON.Plugins[0]
+		if health.Plugin.Name != "alpha" || !health.OK {
+			t.Fatalf("unexpected plugin health in JSON: %#v", health)
+		}
+		if len(health.Dependencies) != 1 || health.Dependencies[0].Name != "go" || !health.Dependencies[0].OK {
+			t.Fatalf("unexpected dependency JSON: %#v", health.Dependencies)
+		}
+		if len(health.Schemas) != 2 || !health.Schemas[0].OK || !health.Schemas[1].OK {
+			t.Fatalf("unexpected schema JSON: %#v", health.Schemas)
+		}
 	})
 }
 

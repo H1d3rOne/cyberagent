@@ -74,6 +74,7 @@ go build -ldflags "-X main.version=local -X main.commit=$(git rev-parse --short 
 ./bin/cyberagent doctor
 ./bin/cyberagent plugins list
 ./bin/cyberagent plugins doctor
+./bin/cyberagent plugins doctor --json
 ```
 
 验收：
@@ -82,7 +83,7 @@ go build -ldflags "-X main.version=local -X main.commit=$(git rev-parse --short 
 CLI 可构建。
 version 输出包含预期版本信息。
 doctor 可运行。
-插件列表和插件 doctor 可运行，缺失可选依赖时应降级说明而不是崩溃。
+插件列表、插件 doctor 和插件 doctor --json 可运行，缺失可选依赖时应降级说明而不是崩溃。
 ```
 
 ---

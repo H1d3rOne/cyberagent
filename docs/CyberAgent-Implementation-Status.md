@@ -28,6 +28,7 @@ Next：v0.1.1 stabilization / HITL / plugin hardening / reproducibility
 [x] cyberagent doctor
 [x] cyberagent plugins list
 [x] cyberagent plugins doctor
+[x] cyberagent plugins doctor --json
 [x] cyberagent scan web
 [x] cyberagent report <run-dir>
 [x] cyberagent replay <run-dir>
@@ -95,6 +96,7 @@ go test ./...
 ```text
 scope required
 safe planner optional plugins disabled by default
+plugins doctor --json machine-readable health output
 nuclei-safe explicit opt-in + missing dependency skip
 python-js-route-analyzer explicit opt-in + route evidence
 ffuf-low-rate explicit opt-in + approval skip
@@ -206,7 +208,8 @@ go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --
 [x] plugin timeout/output/schema hardening
 [x] run metadata/effective config/plugin snapshot
 [x] v0.1.1 smoke test 文档
-[ ] CLI/TUI/report UX polish
+[x] plugins doctor --json
+[ ] CLI/TUI/report UX polish（remaining: report format / artifact index / TUI approvals / skipped summary / plugin failure reason）
 ```
 
 ### 后置能力
