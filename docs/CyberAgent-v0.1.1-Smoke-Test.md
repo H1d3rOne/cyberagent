@@ -105,6 +105,7 @@ rm -rf runs/smoke-v011-simple-site
   --no-external-tools
 
 ./bin/cyberagent report runs/smoke-v011-simple-site
+./bin/cyberagent report runs/smoke-v011-simple-site --format json
 ./bin/cyberagent replay runs/smoke-v011-simple-site
 ```
 
@@ -357,6 +358,7 @@ go build -ldflags "-X main.version=v0.1.1-smoke -X main.commit=$(git rev-parse -
 ./bin/cyberagent plugins list
 ./bin/cyberagent plugins doctor
 ./bin/cyberagent plugins doctor --json
+./bin/cyberagent report runs/smoke-v011-simple-site --format json
 ```
 
 已通过 smoke 场景：
@@ -369,6 +371,7 @@ ffuf-low-rate approval pending
 approvals approve audit trail
 fake ffuf resume-approved
 report / replay readability
+report --format json readability
 plugin hardening unit coverage
 plugins doctor --json machine-readable health output
 ```

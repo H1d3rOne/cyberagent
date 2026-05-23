@@ -301,6 +301,35 @@ func TestScanReportAndReplayCommands(t *testing.T) {
 		t.Fatalf("unexpected report output: %q", reportOut)
 	}
 
+	reportMDOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "report", runDir, "--format", "md")
+	if err != nil {
+		t.Fatalf("report --format md command error = %v", err)
+	}
+	if reportMDOut != reportOut {
+		t.Fatalf("report --format md output differs from default")
+	}
+
+	reportJSONOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "report", runDir, "--format", "json")
+	if err != nil {
+		t.Fatalf("report --format json command error = %v", err)
+	}
+	var reportJSON struct {
+		Job      contracts.Job       `json:"job"`
+		Target   contracts.Target    `json:"target"`
+		Findings []contracts.Finding `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(reportJSONOut), &reportJSON); err != nil {
+		t.Fatalf("decode report --format json output: %v\noutput=%s", err, reportJSONOut)
+	}
+	if reportJSON.Job.Status != contracts.StatusSucceeded || reportJSON.Target.Value != server.URL {
+		t.Fatalf("unexpected report JSON output: %#v", reportJSON)
+	}
+
+	_, err = executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "report", runDir, "--format", "xml")
+	if err == nil || !strings.Contains(err.Error(), "invalid report format") {
+		t.Fatalf("expected invalid report format error, got %v", err)
+	}
+
 	replayOut, err := executeCLI(NewRootCommand("CyberAgent", "vtest", "github.com/H1d3rOne/cyberagent"), "replay", runDir)
 	if err != nil {
 		t.Fatalf("replay command error = %v", err)

@@ -205,7 +205,7 @@ P0-08 v0.1.1 smoke test 文档
 
 ```text
 [x] P1-01 plugins doctor --json
-[ ] P1-02 report --format json|md
+[x] P1-02 report --format json|md
 [ ] P1-03 artifact index hash/size/mime
 [ ] P1-04 TUI approvals 只读展示
 [ ] P1-05 CLI skipped step 摘要优化
@@ -285,6 +285,10 @@ docs/CyberAgent-v0.1.1-Smoke-Test.md 中的 baseline / no-scope / approval / res
 # P1-01 additional verification
 go test ./internal/interfaces/cli
 ./bin/cyberagent plugins doctor --json
+
+# P1-02 additional verification
+go test ./internal/interfaces/cli
+./bin/cyberagent report <run-dir> --format json
 ```
 
 P0-05 当前边界：
@@ -321,6 +325,15 @@ plugins doctor 默认文本输出保持不变。
 plugins doctor --json 输出 schema_version / ok / count / plugins[]。
 plugins[] 使用现有 plugin Health 结构，包含 manifest、dependencies、schemas 和 ok。
 --json 用于脚本/CI/未来 TUI/Web 集成读取；缺失可选外部依赖时仍由 Health.ok 表达，不改变命令退出码。
+```
+
+P1-02 当前边界：
+
+```text
+report 默认输出 Markdown。
+report --format md/markdown 输出 reports/report.md。
+report --format json 输出 reports/report.json。
+report 命令不重新生成报告，只读取 run-dir 已有 report 文件。
 ```
 
 ---

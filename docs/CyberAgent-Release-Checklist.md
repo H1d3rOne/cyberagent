@@ -106,6 +106,7 @@ rm -rf runs/smoke-simple-site
   --out runs/smoke-simple-site
 
 ./bin/cyberagent report runs/smoke-simple-site
+./bin/cyberagent report runs/smoke-simple-site --format json
 ./bin/cyberagent replay runs/smoke-simple-site
 ```
 
@@ -224,6 +225,7 @@ cyberagent --version
 cyberagent doctor
 cyberagent plugins list
 cyberagent plugins doctor
+cyberagent plugins doctor --json
 ```
 
 对 simple-site 再跑一次 safe scan，并确认：
@@ -231,6 +233,7 @@ cyberagent plugins doctor
 ```text
 report.md 可读。
 report.json 可解析。
+report --format json 可输出已有 report.json。
 replay 输出可解释每一步状态。
 TUI 可只读打开 run-dir。
 ```

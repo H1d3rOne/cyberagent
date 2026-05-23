@@ -92,6 +92,8 @@ go build -o bin/cyberagent ./cmd/cyberagent
 
 ```bash
 ./bin/cyberagent report runs/demo
+./bin/cyberagent report runs/demo --format md
+./bin/cyberagent report runs/demo --format json
 ./bin/cyberagent replay runs/demo
 ./bin/cyberagent tui runs/demo
 ```
