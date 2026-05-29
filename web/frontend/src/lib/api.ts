@@ -2,37 +2,169 @@ const SETTINGS_KEY = 'cyberagent_console_settings'
 const RECENT_JOBS_KEY = 'cyberagent_recent_jobs'
 
 export type ApiStatus = 'idle' | 'loading' | 'ok' | 'error'
-export type RunStatus = 'created' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'skipped' | string
+export type DaemonConnectionStatus = 'online' | 'unauthorized' | 'offline'
+export type ScanStatus = 'running' | 'completed' | 'failed' | 'stopped' | string
+export type RunStatus = 'created' | 'planning' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'skipped' | string
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | string
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'modified' | 'expired' | 'cancelled' | string
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info' | string
+
+export interface AgentProviderSettings {
+  provider: string
+  model: string
+  apiKey: string
+  providerBaseUrl: string
+  instructions: string
+  maxTurns: number
+}
+
+export interface ScanDraft {
+  target: string
+  scope: string
+  multiAgent: boolean
+  interactive: boolean
+}
 
 export interface ConsoleSettings {
   baseUrl: string
   token: string
   operator: string
   language: 'zh' | 'en'
+  agentProvider: AgentProviderSettings
+  scanDraft: ScanDraft
+  autoContinueLimit: number
+}
+
+export interface LocalDaemonBootstrap {
+  available: boolean
+  base_url: string
+  token?: string
+  token_file?: string
+  message?: string
+}
+
+export const defaultAgentProvider: AgentProviderSettings = {
+  provider: 'anthropic',
+  model: '',
+  apiKey: '',
+  providerBaseUrl: '',
+  instructions: '',
+  maxTurns: 50,
+}
+
+export const defaultScanDraft: ScanDraft = {
+  target: '',
+  scope: '',
+  multiAgent: false,
+  interactive: false,
 }
 
 export const defaultSettings: ConsoleSettings = {
-  baseUrl: '',
+  baseUrl: 'http://127.0.0.1:8787',
   token: '',
   operator: 'local-user',
   language: 'zh',
+  agentProvider: defaultAgentProvider,
+  scanDraft: defaultScanDraft,
+  autoContinueLimit: 3,
+}
+
+function stringOrDefault(value: unknown, fallback: string) {
+  return typeof value === 'string' ? value : fallback
+}
+
+function nonEmptyStringOrDefault(value: unknown, fallback: string) {
+  return typeof value === 'string' && value.trim() ? value : fallback
+}
+
+function normalizeMaxTurns(value: unknown) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return defaultAgentProvider.maxTurns
+  return Math.min(200, Math.max(1, Math.round(parsed)))
+}
+
+function normalizeAutoContinueLimit(value: unknown) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return defaultSettings.autoContinueLimit
+  return Math.min(10, Math.max(0, Math.round(parsed)))
+}
+
+function normalizeSettings(raw: unknown): ConsoleSettings {
+  const value = (raw && typeof raw === 'object' ? raw : {}) as Partial<ConsoleSettings> & {
+    scanDefaults?: Partial<AgentProviderSettings & ScanDraft>
+  }
+  const legacyScanDefaults: Partial<AgentProviderSettings & ScanDraft> =
+    value.scanDefaults && typeof value.scanDefaults === 'object' ? value.scanDefaults : {}
+  const agentProvider: Partial<AgentProviderSettings> =
+    value.agentProvider && typeof value.agentProvider === 'object' ? value.agentProvider : {}
+  const scanDraft: Partial<ScanDraft> =
+    value.scanDraft && typeof value.scanDraft === 'object' ? value.scanDraft : {}
+  return {
+    baseUrl: nonEmptyStringOrDefault(value.baseUrl, defaultSettings.baseUrl),
+    token: stringOrDefault(value.token, defaultSettings.token),
+    operator: stringOrDefault(value.operator, defaultSettings.operator),
+    language: value.language === 'en' ? 'en' : 'zh',
+    agentProvider: {
+      provider: stringOrDefault(agentProvider.provider, stringOrDefault(legacyScanDefaults.provider, defaultAgentProvider.provider)),
+      model: stringOrDefault(agentProvider.model, stringOrDefault(legacyScanDefaults.model, defaultAgentProvider.model)),
+      apiKey: stringOrDefault(agentProvider.apiKey, stringOrDefault(legacyScanDefaults.apiKey, defaultAgentProvider.apiKey)),
+      providerBaseUrl: stringOrDefault(
+        agentProvider.providerBaseUrl,
+        stringOrDefault(legacyScanDefaults.providerBaseUrl, defaultAgentProvider.providerBaseUrl),
+      ),
+      instructions: stringOrDefault(
+        agentProvider.instructions,
+        stringOrDefault(legacyScanDefaults.instructions, defaultAgentProvider.instructions),
+      ),
+      maxTurns: normalizeMaxTurns(agentProvider.maxTurns ?? legacyScanDefaults.maxTurns),
+    },
+    scanDraft: {
+      target: stringOrDefault(scanDraft.target, stringOrDefault(legacyScanDefaults.target, defaultScanDraft.target)),
+      scope: stringOrDefault(scanDraft.scope, stringOrDefault(legacyScanDefaults.scope, defaultScanDraft.scope)),
+      multiAgent: scanDraft.multiAgent === true || legacyScanDefaults.multiAgent === true,
+      interactive: scanDraft.interactive === true || legacyScanDefaults.interactive === true,
+    },
+    autoContinueLimit: normalizeAutoContinueLimit(value.autoContinueLimit),
+  }
 }
 
 export function loadSettings(): ConsoleSettings {
   const stored = localStorage.getItem(SETTINGS_KEY)
   if (!stored) return defaultSettings
   try {
-    return { ...defaultSettings, ...JSON.parse(stored) }
+    return normalizeSettings(JSON.parse(stored))
   } catch {
     return defaultSettings
   }
 }
 
 export function saveSettings(settings: ConsoleSettings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalizeSettings(settings)))
+}
+
+function shouldSkipLocalDaemonBootstrap() {
+  if (typeof window === 'undefined') return false
+  const port = window.location.port
+  // `/api/local/daemon-config` only exists on the bundled Go dashboard. Vite
+  // dev/preview runs the frontend standalone, so probing this endpoint creates
+  // noisy 500/404 console errors before the user has configured a daemon.
+  return port === '5173' || port === '4173'
+}
+
+export async function loadLocalDaemonBootstrap(): Promise<LocalDaemonBootstrap | null> {
+  if (shouldSkipLocalDaemonBootstrap()) return null
+  try {
+    const response = await fetch('/api/local/daemon-config', {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    })
+    if (!response.ok) return null
+    const body = (await response.json().catch(() => null)) as LocalDaemonBootstrap | null
+    if (!body || typeof body !== 'object') return null
+    return body
+  } catch {
+    return null
+  }
 }
 
 export interface RecentJobRef {
@@ -102,13 +234,14 @@ export interface VersionInfo {
 
 export interface DoctorCheck {
   name: string
-  ok: boolean
+  ok?: boolean
   message?: string
   status?: string
 }
 
 export interface DoctorReport {
-  ok: boolean
+  ok?: boolean
+  healthy?: boolean
   checks?: DoctorCheck[]
   [key: string]: unknown
 }
@@ -152,6 +285,7 @@ export interface RunCounts {
   artifacts: number
   findings: number
   approvals: number
+  pending_approvals?: number
 }
 
 export interface RunSummary {
@@ -232,14 +366,23 @@ export interface EventPage {
 
 export interface Finding {
   id?: string
+  job_id?: string
   title?: string
   severity?: Severity
   confidence?: string
   category?: string
+  url?: string
   affected_targets?: string[]
+  evidence_ids?: string[]
   description?: string
+  evidence?: string
   impact?: string
   remediation?: string
+  source?: {
+    tool?: string
+    step_id?: string
+  }
+  metadata?: Record<string, unknown>
 }
 
 export interface JsonReport {
@@ -327,6 +470,423 @@ export interface ResumeApprovedResult {
   skipped: string[]
 }
 
+export interface AgentLink {
+  to: string
+  label: string
+  kind?: string
+}
+
+export interface AgentToolCall {
+  id: string
+  name: string
+  status: JobStatus | RunStatus
+  detail?: string
+  started_at: string
+  finished_at?: string
+  result?: Record<string, unknown>
+  error?: { code: string; message: string } | null
+  metadata?: Record<string, unknown>
+}
+
+export interface AgentMessage {
+  id: string
+  role: 'agent' | 'user' | 'tool' | string
+  content: string
+  timestamp: string
+  tool_calls?: AgentToolCall[]
+  links?: AgentLink[]
+  reasoning?: string
+}
+
+export interface AgentTask {
+  id: string
+  goal: string
+  kind: string
+  status: string
+  active_run_id?: string
+  summary?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentTodo {
+  id: string
+  title: string
+  detail?: string
+  status: 'pending' | 'running' | 'done' | 'blocked' | 'skipped' | string
+  priority: number
+  tool_call_id?: string
+  context_ref_ids?: string[]
+  blocked_reason?: string
+  updated_at: string
+}
+
+export interface AgentContextRef {
+  id: string
+  kind: string
+  ref_id: string
+  label: string
+  to?: string
+  summary?: string
+}
+
+export interface AgentNextAction {
+  type: 'continue' | 'wait_user' | 'approval_required' | 'finished' | 'blocked' | string
+  reason?: string
+  suggested_prompt?: string
+  auto_continue?: boolean
+}
+
+export interface AgentWorkspaceChange {
+  id: string
+  group_id?: string
+  path: string
+  old_text?: string
+  new_text?: string
+  size_before: number
+  size_after: number
+  replacements: number
+  diff_preview: string
+  content_preview?: string
+  status: string
+  error?: string
+  created_at: string
+  updated_at: string
+  applied_at?: string
+  tool_call_id?: string
+}
+
+export interface AgentMemorySummary {
+  summary: string
+  message_count: number
+  last_message_id?: string
+  last_message_at?: string
+  updated_at: string
+}
+
+export interface AgentSession {
+  session_id: string
+  created_at: string
+  updated_at: string
+  operator: string
+  language: 'zh' | 'en' | string
+  status?: string
+  messages: AgentMessage[]
+  active_task?: AgentTask
+  todos?: AgentTodo[]
+  tool_calls?: AgentToolCall[]
+  context_refs?: AgentContextRef[]
+  pending_changes?: AgentWorkspaceChange[]
+  memory_summary?: AgentMemorySummary
+  next_action?: AgentNextAction
+}
+
+export interface AgentSessionSummary {
+  session_id: string
+  created_at: string
+  updated_at: string
+  operator: string
+  language: 'zh' | 'en' | string
+  status: string
+  active_task?: AgentTask
+  next_action?: AgentNextAction
+  memory_summary?: AgentMemorySummary
+  run_summary?: AgentSessionRunSummary
+  last_message?: string
+  message_count: number
+  tool_call_count: number
+  context_count: number
+}
+
+export interface AgentSessionRunSummary {
+  run_id: string
+  status?: string
+  target?: string
+  findings: number
+  artifacts: number
+  events: number
+  approvals: number
+  pending_approvals: number
+  report_json?: boolean
+  summary?: string
+  lead_finding?: string
+  lead_evidence?: string
+  lead_artifact?: string
+}
+
+export interface CreateAgentSessionResponse {
+  session: AgentSession
+}
+
+export interface ListAgentSessionsResponse {
+  items: AgentSessionSummary[]
+  count: number
+  limit: number
+}
+
+export interface SendAgentMessageResponse {
+  session_id: string
+  messages: AgentMessage[]
+  tool_calls?: AgentToolCall[]
+  active_task?: AgentTask
+  todos?: AgentTodo[]
+  context_refs?: AgentContextRef[]
+  pending_changes?: AgentWorkspaceChange[]
+  memory_summary?: AgentMemorySummary
+  next_action?: AgentNextAction
+}
+
+export interface AgentSessionStateResponse {
+  session: AgentSession
+  session_id: string
+  status?: string
+  active_task?: AgentTask
+  todos?: AgentTodo[]
+  tool_calls?: AgentToolCall[]
+  context_refs?: AgentContextRef[]
+  pending_changes?: AgentWorkspaceChange[]
+  memory_summary?: AgentMemorySummary
+  next_action?: AgentNextAction
+  run_summary?: AgentSessionRunSummary
+}
+
+export interface AgentSessionContextResponse {
+  session_id: string
+  active_task?: AgentTask
+  context_refs?: AgentContextRef[]
+  pending_changes?: AgentWorkspaceChange[]
+  memory_summary?: AgentMemorySummary
+  run_summary?: AgentSessionRunSummary
+}
+
+export interface AgentCapability {
+  id: string
+  label: string
+  description: string
+  examples?: string[]
+}
+
+export interface AgentCapabilityEndpoint {
+  method: string
+  path: string
+  description: string
+}
+
+export interface AgentCapabilityStage {
+  id: string
+  label: string
+  description: string
+}
+
+export interface AgentCapabilityTool {
+  name: string
+  risk: string
+  auto_run: boolean
+  description: string
+  input_schema?: Record<string, unknown>
+}
+
+export interface AgentCapabilitySafety {
+  scope_policy: string
+  auto_execute_policy: string
+  approval_required: string[]
+  command_allowlist: string[]
+}
+
+export interface AgentCapabilityItem {
+  id: string
+  label: string
+  description: string
+}
+
+export interface AgentCapabilitiesResponse {
+  api_version: string
+  name: string
+  description: string
+  entry_point: string
+  endpoints: AgentCapabilityEndpoint[]
+  capabilities: AgentCapability[]
+  stages: AgentCapabilityStage[]
+  builtin_tools: AgentCapabilityTool[]
+  safety: AgentCapabilitySafety
+  integrations: AgentCapabilityItem[]
+}
+
+export interface WorkspaceCommandResult {
+  command: string
+  exit_code: number
+  stdout: string
+  stderr: string
+  duration_ms: number
+  workdir: string
+}
+
+export interface WorkspacePatchResult {
+  session_id: string
+  path: string
+  size_before: number
+  size_after: number
+  replacements: number
+  diff_preview: string
+  content_preview: string
+}
+
+export interface WorkspaceDiffResult extends WorkspacePatchResult {
+  change_id: string
+  group_id?: string
+  status: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface WorkspaceApplyResult extends WorkspaceDiffResult {}
+export interface WorkspaceDiscardResult extends WorkspaceDiffResult {}
+
+export interface WorkspaceDiffManyInput {
+  path: string
+  old: string
+  new: string
+}
+
+export interface WorkspaceChangeGroupResult {
+  session_id: string
+  group_id: string
+  action?: string
+  status: string
+  count?: number
+  requested_count?: number
+  succeeded_count?: number
+  failed_count?: number
+  changes?: WorkspaceDiffResult[]
+  succeeded?: WorkspaceDiffResult[]
+  failed?: Array<{change_id: string; code?: string; message: string}>
+}
+
+export interface WorkspaceFileEntry {
+  name: string
+  path: string
+  is_dir: boolean
+  size?: number
+}
+
+export type AgentControlAction = 'continue' | 'revise' | 'stop' | 'new_task'
+
+export interface AgentControlRequest {
+  action: AgentControlAction
+  operator: string
+  language: 'zh' | 'en'
+  reason?: string
+  prompt?: string
+  run_id?: string
+  job_id?: string
+  clear_input?: boolean
+}
+
+export interface AgentControlResponse {
+  session: AgentSession
+  message: AgentMessage
+}
+
+export interface AgentSessionStreamEvent {
+  session: AgentSession
+}
+
+export interface AgentActivity {
+  kind: 'message' | 'tool' | 'state' | 'todo' | string
+  id: string
+  title: string
+  detail?: string
+  status?: string
+  timestamp: string
+}
+
+export interface AgentSessionStreamHandlers {
+  onOpen?: () => void
+  onSession?: (session: AgentSession) => void
+  onActivity?: (activity: AgentActivity) => void
+  onPing?: (time: string) => void
+  onError?: (error: ApiErrorPayload) => void
+}
+
+export interface AgentProviderConfig {
+  provider: string
+  model: string
+  api_key: string
+  base_url: string
+  instructions: string
+}
+
+export interface Provider {
+  id: string
+  name: string
+  default_model: string
+}
+
+export interface ToolDef {
+  name: string
+  description: string
+  input_schema: Record<string, unknown>
+}
+
+export interface ScanListItem {
+  id: string
+  target: string
+  status: ScanStatus
+  started_at: string
+  duration: string
+  findings: number
+  turns: number
+  max_turns: number
+  provider: string
+  event_count?: number
+  artifact_count?: number
+  approval_count?: number
+  pending_approvals?: number
+}
+
+export interface UIEvent {
+  type: string
+  message: string
+  tool: string
+  id?: string
+  job_id?: string
+  step_id?: string
+  data?: Record<string, unknown>
+  severity: string
+  turn: number
+  max_turns: number
+  timestamp: number
+  phase?: string
+}
+
+export interface ScanDetail extends ScanListItem {
+  tokens_in: number
+  tokens_out: number
+  est_cost: number
+  findings_detail: Finding[]
+  summary: string
+  model: string
+  events: UIEvent[]
+  approvals?: ApprovalRequest[]
+  artifacts?: Artifact[]
+  interactive: boolean
+  waiting: boolean
+}
+
+export interface StartScanRequest {
+  target: string
+  scope: string
+  provider: string
+  model: string
+  api_key: string
+  base_url: string
+  instructions: string
+  max_turns: number
+  multi_agent: boolean
+  no_confirm: boolean
+  interactive: boolean
+}
+
 export interface ApiClientConfig {
   baseUrl: string
   token: string
@@ -348,20 +908,124 @@ export class ApiClient {
 
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const headers = new Headers(options.headers)
-    headers.set('Content-Type', 'application/json')
+    if (options.body) headers.set('Content-Type', 'application/json')
     if (this.token.trim()) headers.set('Authorization', `Bearer ${this.token.trim()}`)
 
     const response = await fetch(joinUrl(this.baseUrl, path), { ...options, headers })
-    const body = (await response.json().catch(() => null)) as Envelope<T> | null
+    const body = (await response.json().catch(() => null)) as Envelope<T> | T | null
 
-    if (!response.ok || !body?.ok) {
-      const payload = body?.error || {
+    if (!response.ok) {
+      const envelope = body as Envelope<T> | null
+      const payload = envelope && 'error' in envelope && envelope.error ? envelope.error : {
         code: response.status === 401 ? 'unauthorized' : 'request_failed',
         message: response.statusText || 'request failed',
       }
       throw new ApiError(response.status, payload)
     }
-    return body.data as T
+
+    if (body && typeof body === 'object' && 'ok' in body && 'data' in body) {
+      const envelope = body as Envelope<T>
+      if (!envelope.ok) {
+        throw new ApiError(response.status, envelope.error || { code: 'request_failed', message: 'request failed' })
+      }
+      return envelope.data as T
+    }
+    return body as T
+  }
+
+  async streamAgentSession(
+    sessionId: string,
+    handlers: AgentSessionStreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const headers = new Headers()
+    headers.set('Accept', 'text/event-stream')
+    if (this.token.trim()) headers.set('Authorization', `Bearer ${this.token.trim()}`)
+    const response = await fetch(joinUrl(this.baseUrl, `/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/stream`), {
+      headers,
+      signal,
+    })
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as Envelope<unknown> | null
+      throw new ApiError(response.status, body?.error || {
+        code: response.status === 401 ? 'unauthorized' : 'stream_failed',
+        message: response.statusText || 'stream failed',
+      })
+    }
+    if (!response.body) throw new ApiError(0, { code: 'stream_unavailable', message: 'stream body unavailable' })
+
+    handlers.onOpen?.()
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let sep = buffer.indexOf('\n\n')
+      while (sep >= 0) {
+        const raw = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        this.handleSSEBlock(raw, handlers)
+        sep = buffer.indexOf('\n\n')
+      }
+    }
+  }
+
+  private handleSSEBlock(raw: string, handlers: AgentSessionStreamHandlers) {
+    const lines = raw.split(/\r?\n/)
+    let event = 'message'
+    const dataLines: string[] = []
+    for (const line of lines) {
+      if (line.startsWith('event:')) event = line.slice('event:'.length).trim()
+      if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trimStart())
+    }
+    if (dataLines.length === 0) return
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(dataLines.join('\n')) as Record<string, unknown>
+    } catch {
+      return
+    }
+    if (event === 'session') {
+      const payload = parsed as unknown as AgentSessionStreamEvent
+      if (payload.session) handlers.onSession?.(payload.session)
+      return
+    }
+    if (event === 'activity') {
+      const activity = parsed.activity as AgentActivity | undefined
+      if (activity) handlers.onActivity?.(activity)
+      return
+    }
+    if (event === 'ping') {
+      const time = typeof parsed.time === 'string' ? parsed.time : new Date().toISOString()
+      handlers.onPing?.(time)
+      return
+    }
+    if (event === 'error') {
+      const error = parsed.error as ApiErrorPayload | undefined
+      handlers.onError?.(error || { code: 'stream_error', message: 'stream error' })
+    }
+  }
+
+  async pingStatus(): Promise<DaemonConnectionStatus> {
+    try {
+      await this.healthz()
+      return 'online'
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return 'unauthorized'
+      try {
+        await this.listScans()
+        return 'online'
+      } catch (fallbackErr) {
+        if (fallbackErr instanceof ApiError && fallbackErr.status === 401) return 'unauthorized'
+        return 'offline'
+      }
+    }
+  }
+
+  async ping(): Promise<boolean> {
+    return (await this.pingStatus()) === 'online'
   }
 
   healthz() {
@@ -450,6 +1114,215 @@ export class ApiClient {
     return this.request<{ job_id: string; status: JobStatus }>(`/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {
       method: 'POST',
     })
+  }
+
+  getAgentCapabilities(language: 'zh' | 'en') {
+    const params = new URLSearchParams()
+    params.set('language', language)
+    return this.request<AgentCapabilitiesResponse>(`/api/v1/agent/capabilities?${params}`)
+  }
+
+  createAgentSession(operator: string, language: 'zh' | 'en') {
+    return this.request<CreateAgentSessionResponse>('/api/v1/agent/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ operator, language }),
+    })
+  }
+
+  listAgentSessions(limit = 8) {
+    const params = new URLSearchParams()
+    params.set('limit', String(limit))
+    return this.request<ListAgentSessionsResponse>(`/api/v1/agent/sessions?${params}`)
+  }
+
+  getAgentSession(sessionId: string) {
+    return this.request<{ session: AgentSession }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}`)
+  }
+
+  getAgentSessionState(sessionId: string) {
+    return this.request<AgentSessionStateResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/state`)
+  }
+
+  getAgentSessionContext(sessionId: string) {
+    return this.request<AgentSessionContextResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/context`)
+  }
+
+  sendAgentMessage(
+    sessionId: string,
+    message: string,
+    operator: string,
+    language: 'zh' | 'en',
+    providerConfig?: Partial<AgentProviderConfig>,
+  ) {
+    return this.request<SendAgentMessageResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ message, operator, language, ...(providerConfig || {}) }),
+    })
+  }
+
+  controlAgentSession(sessionId: string, request: AgentControlRequest) {
+    return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/control`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  }
+
+  continueAgentSession(sessionId: string, request: Omit<AgentControlRequest, 'action'>) {
+    return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/continue`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  }
+
+  stopAgentSession(sessionId: string, request: Omit<AgentControlRequest, 'action'>) {
+    return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/stop`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  }
+
+  newAgentTask(sessionId: string, request: Omit<AgentControlRequest, 'action'>) {
+    return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/new-task`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  }
+
+  agentWorkspaceCommand(sessionId: string, command: string, workdir = '') {
+    return this.request<WorkspaceCommandResult>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/command`, {
+      method: 'POST',
+      body: JSON.stringify({ command, workdir }),
+    })
+  }
+
+  agentWorkspaceListFiles(sessionId: string, path = '') {
+    return this.request<{ path: string; files: WorkspaceFileEntry[]; count: number }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/list`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    })
+  }
+
+  agentWorkspaceReadFile(sessionId: string, path: string) {
+    return this.request<{ path: string; content: string; size: number }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/read`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    })
+  }
+
+  agentWorkspaceWriteFile(sessionId: string, path: string, content: string) {
+    return this.request<{ path: string; size: number; status: string }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/write`, {
+      method: 'POST',
+      body: JSON.stringify({ path, content }),
+    })
+  }
+
+  agentWorkspacePatchFile(sessionId: string, path: string, oldText: string, newText: string) {
+    return this.request<WorkspacePatchResult>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/patch`, {
+      method: 'POST',
+      body: JSON.stringify({ path, old: oldText, new: newText }),
+    })
+  }
+
+  agentWorkspaceDiffFile(sessionId: string, path: string, oldText: string, newText: string) {
+    return this.request<WorkspaceDiffResult>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/diff`, {
+      method: 'POST',
+      body: JSON.stringify({ path, old: oldText, new: newText }),
+    })
+  }
+
+  agentWorkspaceDiffMany(sessionId: string, changes: WorkspaceDiffManyInput[]) {
+    return this.request<WorkspaceChangeGroupResult>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/diff-many`, {
+      method: 'POST',
+      body: JSON.stringify({ changes }),
+    })
+  }
+
+  agentWorkspaceApplyChange(sessionId: string, changeId: string) {
+    return this.request<WorkspaceApplyResult>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ change_id: changeId }),
+    })
+  }
+
+  agentWorkspaceApplyGroup(sessionId: string, groupId: string) {
+    return this.request<WorkspaceChangeGroupResult>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/apply-group`, {
+      method: 'POST',
+      body: JSON.stringify({ group_id: groupId }),
+    })
+  }
+
+  agentWorkspaceRebaseChange(sessionId: string, changeId: string, oldText: string, newText = '') {
+    return this.request<WorkspaceDiffResult>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/rebase`, {
+      method: 'POST',
+      body: JSON.stringify({ change_id: changeId, old: oldText, new: newText }),
+    })
+  }
+
+  agentWorkspaceDiscardChange(sessionId: string, changeId: string) {
+    return this.request<WorkspaceDiscardResult>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/discard`, {
+      method: 'POST',
+      body: JSON.stringify({ change_id: changeId }),
+    })
+  }
+
+  agentWorkspaceDiscardGroup(sessionId: string, groupId: string) {
+    return this.request<WorkspaceChangeGroupResult>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/discard-group`, {
+      method: 'POST',
+      body: JSON.stringify({ group_id: groupId }),
+    })
+  }
+
+  agentWorkspaceDeleteFile(sessionId: string, path: string) {
+    return this.request<{ path: string; status: string }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    })
+  }
+
+  async listScans() {
+    return this.request<ScanListItem[]>('/api/scans')
+  }
+
+  async getScan(id: string) {
+    return this.request<ScanDetail>(`/api/scans/${encodeURIComponent(id)}`)
+  }
+
+  async startScan(req: Partial<StartScanRequest>) {
+    return this.request<{ id: string }>('/api/scans', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    })
+  }
+
+  async stopScan(id: string) {
+    return this.request<{ status: string }>(`/api/scans/${encodeURIComponent(id)}/stop`, {
+      method: 'POST',
+    })
+  }
+
+  async deleteScan(id: string) {
+    return this.request<{ status: string }>(`/api/scans/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+  }
+
+  async sendMessage(id: string, message: string) {
+    return this.request<{ status: string }>(`/api/scans/${encodeURIComponent(id)}/message`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    })
+  }
+
+  getProviders() {
+    return this.request<Provider[]>('/api/providers')
+  }
+
+  getTools() {
+    return this.request<ToolDef[]>('/api/tools')
+  }
+
+  eventsUrl(id: string) {
+    return `${this.baseUrl.replace(/\/+$/, '')}/api/scans/${encodeURIComponent(id)}/events`
   }
 }
 

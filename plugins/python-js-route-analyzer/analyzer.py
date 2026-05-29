@@ -9,6 +9,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Dict, List, Optional, Set
 from urllib.parse import urljoin
 
 # Conservative patterns aligned with the Go light extractor, plus method hints.
@@ -21,7 +22,7 @@ AJAX_METHOD_RE = re.compile(r"(?is)\b(?:method|type)\s*:\s*[\"'](?P<method>GET|P
 MAX_ARTIFACT_BYTES = 1024 * 1024
 
 
-def is_probably_js_artifact(artifact: dict) -> bool:
+def is_probably_js_artifact(artifact: Dict) -> bool:
     artifact_id = str(artifact.get("id") or "")
     path = str(artifact.get("path") or "")
     mime = str(artifact.get("mime_type") or "").lower()
@@ -33,7 +34,7 @@ def is_probably_js_artifact(artifact: dict) -> bool:
     )
 
 
-def safe_artifact_path(workspace: Path, rel_path: str) -> Path | None:
+def safe_artifact_path(workspace: Path, rel_path: str) -> Optional[Path]:
     if not rel_path or Path(rel_path).is_absolute():
         return None
     try:
@@ -44,14 +45,14 @@ def safe_artifact_path(workspace: Path, rel_path: str) -> Path | None:
     return candidate
 
 
-def normalize_route(raw: str, base_url: str) -> str | None:
+def normalize_route(raw: str, base_url: str) -> Optional[str]:
     raw = raw.strip()
     if not raw or raw.startswith(("#", "javascript:", "mailto:", "tel:", "data:")):
         return None
     return urljoin(base_url.rstrip("/") + "/", raw)
 
 
-def add_route(routes: list[dict], seen: set[str], *, raw: str, resolved: str, source: str, method: str, artifact: dict) -> None:
+def add_route(routes: List[Dict], seen: Set[str], *, raw: str, resolved: str, source: str, method: str, artifact: Dict) -> None:
     if resolved in seen:
         return
     seen.add(resolved)
@@ -69,7 +70,7 @@ def add_route(routes: list[dict], seen: set[str], *, raw: str, resolved: str, so
     )
 
 
-def infer_method(kind: str, axios_method: str | None, match_tail: str) -> str:
+def infer_method(kind: str, axios_method: Optional[str], match_tail: str) -> str:
     if axios_method:
         return axios_method.upper()
     if kind.lower() == "fetch":
@@ -79,9 +80,9 @@ def infer_method(kind: str, axios_method: str | None, match_tail: str) -> str:
     return "GET"
 
 
-def extract_routes_from_js(text: str, base_url: str, artifact: dict) -> list[dict]:
-    routes: list[dict] = []
-    seen: set[str] = set()
+def extract_routes_from_js(text: str, base_url: str, artifact: Dict) -> List[Dict]:
+    routes = []  # type: List[Dict]
+    seen = set()  # type: Set[str]
     source = str(artifact.get("path") or artifact.get("id") or "javascript")
 
     for match in CALL_ROUTE_RE.finditer(text):
@@ -106,8 +107,8 @@ def main() -> int:
     request = json.load(sys.stdin)
     workspace = Path.cwd().resolve()
     base_url = str(request.get("target") or "")
-    routes: list[dict] = []
-    seen: set[str] = set()
+    routes = []  # type: List[Dict]
+    seen = set()  # type: Set[str]
     inspected = 0
 
     for artifact in request.get("artifacts") or []:

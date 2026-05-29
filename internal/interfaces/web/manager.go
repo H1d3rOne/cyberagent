@@ -9,6 +9,7 @@ import (
 
 	"github.com/H1d3rOne/cyberagent/internal/agent"
 	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
+	agenttools "github.com/H1d3rOne/cyberagent/internal/agent/tools"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 )
 
@@ -234,6 +235,7 @@ func (sm *ScanManager) Start(req StartScanRequest) (string, error) {
 			Turn:      e.Turn,
 			MaxTurns:  e.MaxTurns,
 			Timestamp: time.Now().UnixMilli(),
+			Phase:     string(e.Phase),
 		}
 		if e.Finding != nil {
 			uiEvent.Severity = string(e.Finding.Severity)
@@ -422,4 +424,9 @@ func (sm *ScanManager) Delete(id string) error {
 	}
 	delete(sm.scans, id)
 	return nil
+}
+
+func (sm *ScanManager) ToolDefinitions() []llm.ToolDef {
+	r := agenttools.NewRegistry()
+	return r.Definitions()
 }

@@ -1,8 +1,8 @@
 # CyberAgent Implementation Blueprint
 
-版本：v0.1  
-日期：2026-05-23  
-状态：实现蓝图已确认；MVP 实现主链路已跑通
+版本：v0.2-agent-native-correction  
+日期：2026-05-25  
+状态：实现蓝图纠偏；新增 Agent-Native Runtime、Session Store、Task/Todo、Tool Loop 与 Workspace Context 边界
 
 ---
 
@@ -43,15 +43,18 @@ docs/CyberAgent-MVP-Spec.md
 
 ```text
 1. 先契约，后实现。
-2. 先 Runtime 骨架，后安全能力。
-3. 先内置闭环，后外部插件。
-4. 先 CLI 可用，后 TUI 完善。
+2. 先 Agent-Native Runtime，后普通 Dashboard 能力。
+3. 先 Runtime 骨架，后安全能力。
+4. 先内置闭环，后外部插件。
+5. 先 CLI/TUI/Local Web Agent Cockpit，后 Desktop/多用户 Web。
 5. 先本地 Local Runner，后 Docker / Remote Runner。
 6. LLM 只定义接口，MVP 不默认依赖。
 7. 所有外部命令都经过 Runner / Command Executor。
 8. 所有网络动作都经过 Scope Guard / Rate Limiter。
 9. 所有结论都必须有 Evidence。
 10. 所有状态变化都必须有 Event。
+11. Agent 会话、任务、Todo、工具调用和上下文引用必须可持久化恢复。
+12. 前端 localStorage 只能作为 UI 兜底缓存，不能替代 daemon State Store。
 ```
 
 ---
@@ -79,6 +82,10 @@ CyberAgent/
 
     core/
       contracts/                 # 核心数据模型，对应 Core Contracts
+        agent_session.go
+        agent_task.go
+        agent_todo.go
+        agent_context.go
         target.go
         scope.go
         job.go
@@ -214,6 +221,14 @@ CyberAgent/
       gateway.go                 # MVP 只定义接口
       context_builder.go
       README.md
+
+    agent/
+      state.go                   # AgentSession / Task / Todo / ToolCall / ContextRef service model
+      session_store.go           # Agent session persistence over runtime/state or filesystem adapter
+      task_manager.go            # active task / todo lifecycle
+      tool_loop.go               # plan → tool call → observe → update todo → next action
+      workspace_context.go       # run/artifact/finding/report/approval refs
+      responder.go               # message + structured state response assembly
 
   plugins/
     nuclei-safe/
@@ -1196,7 +1211,7 @@ MVP 实现完成必须满足：
 
 ```text
 Desktop
-Web Dashboard
+多用户 Web Dashboard
 Remote Runner
 Docker Runner
 K8s Runner
@@ -1204,7 +1219,7 @@ K8s Runner
 账户权限
 PDF 报告
 复杂 RAG
-长期记忆
+长期 Target Memory
 自动 exploit
 自动修复代码
 插件市场
@@ -1223,12 +1238,15 @@ MVP State Store: bbolt 嵌入式 KV + JSONL 事件流 + 文件系统 artifacts
 SQLite: MVP 阶段跳过；后续如需要复杂关系查询、报表过滤、Web 多任务检索再评估引入
 optional_nuclei_safe: 默认不启用，用户显式 --use-plugin nuclei-safe 或配置启用
 TUI v1: 只读打开已有 run，不负责创建/修改/审批任务
+Agent-Native: AgentSession / Task / Todo / ToolCall / ContextRef 必须进入 daemon State Store
+Local Web Cockpit: 当前阶段作为 Agent Channel，不等同于后置的多用户 Web Dashboard
 ```
 
 说明：
 
 ```text
 State Store 用于保存 Job / Plan / Step 的当前状态快照，支撑恢复、replay、TUI 展示和故障排查。
+Agent Session Store 用于保存 Agent 会话、消息、当前任务、Todo、工具调用、上下文引用，支撑 Claude Code / Codex 型持续任务体验。
 events.jsonl 是 append-only 事实流；state.json 是当前状态快照。
 TUI v1 只读取 run 目录中的 plan/events/evidence/findings/report；实时订阅和 HITL approval 后置。
 ```

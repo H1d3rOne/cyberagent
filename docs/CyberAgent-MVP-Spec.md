@@ -1,8 +1,8 @@
 # CyberAgent MVP Spec
 
-版本：v0.2-confirmed  
-日期：2026-05-23  
-状态：MVP 规格已确认；已进入 MVP 实现/稳定化阶段
+版本：v0.3-agent-native-correction  
+日期：2026-05-25  
+状态：MVP 规格纠偏；Agent-Native 工作流进入 MVP 验收边界
 
 ---
 
@@ -16,6 +16,14 @@ MVP 目标：
 给定一个明确授权的 Web URL，CyberAgent 能在 safe profile 下完成一次低风险 Web/API 安全分析闭环：
 创建任务 → 生成计划 → 执行内置分析步骤 → 可选调用插件 → 保存证据 → 生成 Finding → 输出报告。
 ```
+
+同时，MVP 必须体现 Agent 原生工作方式：
+
+```text
+Chat → Current Task → Todo / Plan → Tool Call → Observation → Context Update → Report / Next Action
+```
+
+不能只交付普通扫描控制台或聊天壳。
 
 本文定义：
 
@@ -40,17 +48,18 @@ safe profile 执行步骤
 MVP 已确认：
 
 ```text
-产品形态：CLI + 基础 TUI
+产品形态：CLI + 基础 TUI + Local Web Agent Cockpit
 核心语言：Go
 插件语言：Python / 外部命令
 目标类型：web_url
 执行环境：Local Runner
-状态存储：bbolt 嵌入式 KV + JSONL 事件流，SQLite 后置评估
+状态存储：bbolt 嵌入式 KV + JSONL 事件流 + Agent Session State，SQLite 后置评估
 LLM：只定义 Gateway / ContextPack，不默认启用
 插件：nuclei-safe 可选但默认不启用；ffuf-low-rate 可选；Python JS analyzer 可选
 报告：Markdown + JSON
 证据：artifact + evidence index
 风险策略：低风险自动，中高风险确认，破坏性禁止
+Agent 能力：session / message / active task / todo / tool call / context refs 持久化
 ```
 
 ---
@@ -191,6 +200,41 @@ Step risk 为 high 时进入 waiting_approval。
 审批结果写入 events.jsonl。
 ```
 
+### Story 7：像 Claude Code / Codex 一样保持 Agent 任务会话
+
+```text
+作为用户，
+我希望 Agent 能保持当前安全任务、聊天上下文、计划、Todo、工具调用和工作区引用，
+以便刷新页面、切换菜单或重启 daemon 后仍可继续工作。
+```
+
+验收：
+
+```text
+Agent session 持久化到 daemon State Store。
+messages / active task / todos / tool calls / context refs 可恢复。
+浏览器 localStorage 只能作为 UI 兜底缓存，不能作为唯一状态源。
+后端 session 丢失时，前端不丢聊天历史，后端可重建并继续。
+```
+
+### Story 8：通过 Agent Tool Loop 执行安全任务
+
+```text
+作为用户，
+我希望用自然语言指挥 Agent，而不是手动理解每个 API 或页面，
+Agent 自动规划、调用工具、观察结果、更新 Todo，并给出下一步。
+```
+
+验收：
+
+```text
+每次用户任务生成 Current Task。
+Agent 返回结构化 Todo。
+每次工具调用返回 ToolCall 记录。
+ToolCall 结果更新 Todo / ContextRefs。
+UI 展示 Current Task / Todo / Tool Calls / Workspace Context。
+```
+
 ---
 
 ## 5. MVP 非目标
@@ -208,7 +252,7 @@ K8s Runner
 自动 exploit
 自动爆破
 自动横向移动
-持久化
+攻击持久化
 破坏性 payload
 企业资产持续监控
 PDF 报告
