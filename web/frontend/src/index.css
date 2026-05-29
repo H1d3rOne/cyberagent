@@ -34,6 +34,11 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
+    min-height: 100dvh;
+    background:
+      radial-gradient(circle at 12% 12%, rgba(37, 99, 235, 0.20), transparent 26rem),
+      radial-gradient(circle at 85% 20%, rgba(6, 182, 212, 0.12), transparent 24rem),
+      linear-gradient(135deg, #020617 0%, #070b1a 46%, #020617 100%);
     font-feature-settings:
       "rlig" 1,
       "calt" 1;
@@ -41,9 +46,146 @@
   ::selection {
     @apply bg-primary/30 text-foreground;
   }
+  * {
+    scrollbar-color: rgba(96, 165, 250, 0.32) transparent;
+  }
+  *::-webkit-scrollbar {
+    height: 10px;
+    width: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: rgba(96, 165, 250, 0.28);
+    background-clip: padding-box;
+  }
 }
 
 @layer components {
+  .mission-panel {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 2rem;
+    background:
+      linear-gradient(145deg, rgba(15, 23, 42, 0.78), rgba(2, 6, 23, 0.72)),
+      radial-gradient(circle at 18% 0%, rgba(37, 99, 235, 0.20), transparent 34rem),
+      radial-gradient(circle at 90% 10%, rgba(20, 184, 166, 0.13), transparent 28rem);
+    box-shadow:
+      0 24px 70px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  .mission-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
+    background-size: 34px 34px;
+    mask-image: radial-gradient(circle at 76% 20%, black, transparent 62%);
+  }
+
+  .glass-panel {
+    border: 1px solid rgba(148, 163, 184, 0.13);
+    border-radius: 1.5rem;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.74), rgba(2, 6, 23, 0.58));
+    box-shadow:
+      0 16px 44px rgba(0, 0, 0, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.055);
+    backdrop-filter: blur(18px);
+  }
+
+  .agent-console {
+    border: 1px solid rgba(96, 165, 250, 0.18);
+    border-radius: 1.75rem;
+    background:
+      linear-gradient(180deg, rgba(8, 13, 30, 0.92), rgba(2, 6, 23, 0.88)),
+      radial-gradient(circle at 22% 0%, rgba(37, 99, 235, 0.20), transparent 24rem);
+    box-shadow:
+      0 28px 80px rgba(0, 0, 0, 0.36),
+      0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  }
+
+  .agent-scroll-area {
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+  }
+
+  .agent-scroll-area::-webkit-scrollbar {
+    height: 12px;
+    width: 12px;
+  }
+
+  .agent-scroll-area::-webkit-scrollbar-track {
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.38);
+  }
+
+  .agent-scroll-area::-webkit-scrollbar-thumb {
+    border: 3px solid rgba(15, 23, 42, 0.38);
+    border-radius: 999px;
+    background: rgba(96, 165, 250, 0.46);
+    background-clip: padding-box;
+  }
+
+  .agent-scroll-area::-webkit-scrollbar-thumb:hover {
+    background: rgba(125, 211, 252, 0.62);
+    background-clip: padding-box;
+  }
+
+  .command-input {
+    border: 1px solid rgba(96, 165, 250, 0.18);
+    background: rgba(2, 6, 23, 0.78);
+    box-shadow:
+      0 18px 44px rgba(0, 0, 0, 0.22),
+      0 0 0 1px rgba(255, 255, 255, 0.025) inset;
+  }
+
+  .subtle-surface {
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    background: rgba(15, 23, 42, 0.45);
+  }
+
+  .list-item {
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    background: rgba(15, 23, 42, 0.48);
+    transition-property: transform, box-shadow, border-color, background-color;
+    transition-duration: 180ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  .list-item:hover {
+    border-color: rgba(96, 165, 250, 0.36);
+    background: rgba(30, 41, 59, 0.72);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
+  }
+
+  .surface-panel {
+    border: 1px solid rgba(148, 163, 184, 0.13);
+    background: rgba(15, 23, 42, 0.55);
+    border-radius: 1.75rem;
+  }
+
+  .interactive-surface {
+    transition-property: transform, box-shadow, border-color, background-color;
+    transition-duration: 180ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  .interactive-surface:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+  }
+
+  .interactive-surface:active {
+    transform: translateY(0);
+  }
   .cyber-grid {
     background-image:
       linear-gradient(rgba(148, 163, 184, 0.055) 1px, transparent 1px),
@@ -110,5 +252,12 @@
 @media (prefers-reduced-motion: reduce) {
   .radar-sweep {
     animation: none;
+  }
+
+  .interactive-surface,
+  .interactive-surface:hover,
+  .interactive-surface:active {
+    transform: none;
+    box-shadow: none;
   }
 }

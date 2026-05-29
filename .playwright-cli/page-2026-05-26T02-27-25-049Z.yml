@@ -1,0 +1,118 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+    - navigation [ref=e10]:
+      - link "总览" [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link "Agent" [ref=e19] [cursor=pointer]:
+        - /url: /agent
+        - img [ref=e20]
+      - link "任务" [ref=e23] [cursor=pointer]:
+        - /url: /tasks
+        - img [ref=e24]
+      - link "历史" [ref=e26] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e27]
+      - link "设置" [ref=e31] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e32]
+    - generic "离线" [ref=e36]:
+      - img [ref=e37]
+  - generic [ref=e44]:
+    - banner [ref=e45]:
+      - generic [ref=e46]:
+        - generic [ref=e47]:
+          - img [ref=e48]
+          - generic [ref=e51]: CyberAgent
+        - generic [ref=e52]:
+          - generic [ref=e53]: 离线
+          - button "Switch to English" [ref=e55] [cursor=pointer]:
+            - img [ref=e56]
+          - link "Agent" [ref=e60] [cursor=pointer]:
+            - /url: /agent
+            - img [ref=e61]
+            - text: Agent
+    - main [ref=e64]:
+      - generic [ref=e65]:
+        - complementary [ref=e66]:
+          - generic [ref=e67]:
+            - heading "会话" [level=2] [ref=e68]:
+              - img [ref=e69]
+              - text: 会话
+            - button "刷新" [ref=e71] [cursor=pointer]:
+              - img [ref=e72]
+          - generic [ref=e78]: 无数据
+        - generic [ref=e79]:
+          - generic [ref=e81]:
+            - generic [ref=e82]:
+              - img [ref=e83]
+              - text: Agent Cockpit
+            - heading "控制台" [level=1] [ref=e86]
+          - generic [ref=e88]:
+            - img [ref=e90]
+            - generic [ref=e93]:
+              - generic [ref=e95]:
+                - img [ref=e96]
+                - text: agent
+              - paragraph [ref=e99]: 我是 CyberAgent。你可以直接用自然语言让我执行操作：扫描授权目标、查看运行、检查插件、查看 daemon 健康、管理 workspace 文件或执行白名单命令。 示例：扫描 http://127.0.0.1:8080 scope=127.0.0.1
+          - generic [ref=e100]:
+            - generic [ref=e101]:
+              - generic [ref=e103]:
+                - generic [ref=e104]:
+                  - img [ref=e105]
+                  - text: 等输入
+                - generic [ref=e107]: 等待下一步指令或自然语言任务
+              - generic [ref=e108]:
+                - button "继续" [disabled]:
+                  - img
+                  - text: 继续
+                - button "暂停" [disabled]:
+                  - img
+                  - text: 暂停
+                - button "新任务" [disabled]:
+                  - img
+                  - text: 新任务
+            - generic [ref=e109]:
+              - textbox "输入修订要求，如：优先检查认证与越权风险" [ref=e110]
+              - button "修订" [disabled]:
+                - img
+                - text: 修订
+          - generic [ref=e112]:
+            - 'textbox "输入目标 URL 启动扫描，如: 扫描 http://127.0.0.1:8080 scope=127.0.0.1" [ref=e113]'
+            - button "发送" [disabled]:
+              - img
+              - generic: 发送
+        - complementary [ref=e114]:
+          - generic [ref=e115]:
+            - heading "Agent 状态" [level=2] [ref=e116]:
+              - img [ref=e117]
+              - text: Agent 状态
+            - generic [ref=e120]:
+              - generic [ref=e121]:
+                - generic [ref=e122]: 当前任务
+                - generic [ref=e123]: 等待自然语言指令
+              - generic [ref=e124]:
+                - generic [ref=e125]:
+                  - generic [ref=e126]: 会话状态
+                  - generic [ref=e127]: idle
+                - generic [ref=e128]:
+                  - generic [ref=e129]: 下一步
+                  - generic [ref=e130]: 等输入
+          - generic [ref=e131]:
+            - heading "Agent 工作区" [level=2] [ref=e132]:
+              - img [ref=e133]
+              - text: Agent 工作区
+            - generic [ref=e135]: Not Found
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - heading "工作区文件" [level=2] [ref=e138]:
+                - img [ref=e139]
+                - text: 工作区文件
+              - button "刷新" [ref=e141] [cursor=pointer]
+            - generic [ref=e142]:
+              - textbox "输入目录路径，如 . 或 src" [ref=e143]: .
+              - button "打开" [disabled]
+            - generic [ref=e144]: 当前目录为空

@@ -1,8 +1,8 @@
 # CyberAgent Task Breakdown
 
-版本：v0.1  
-日期：2026-05-23  
-状态：任务拆解计划完成
+版本：v0.2-agent-native-correction  
+日期：2026-05-25  
+状态：任务拆解纠偏；Agent-Native 能力提升为 P0/P1 主线
 
 ---
 
@@ -21,7 +21,126 @@ P3：明确暂缓
 
 ---
 
-## 2. P0 任务：Core Runtime 闭环
+## 1.1 Agent-Native 纠偏原则
+
+后续任务优先级必须服从：
+
+```text
+Agent 会话 > Agent 当前任务 > Agent Todo > Agent Tool Loop > Workspace Context > UI 展示
+```
+
+不能再把“聊天框 + 扫描状态卡”当成 Agent。
+
+---
+
+## 2. P0 任务：Agent-Native Runtime
+
+### P0-A01：Agent State Contracts
+
+内容：
+
+```text
+AgentSession
+AgentMessage
+AgentTask
+AgentTodo
+AgentToolCall
+AgentContextRef
+AgentNextAction
+```
+
+验收：
+
+```text
+可 JSON 序列化
+可保存/读取
+字段覆盖 session、goal、todo、tool call、workspace refs、next action
+```
+
+### P0-A02：Agent Session Store
+
+内容：
+
+```text
+后端 State Store 保存 Agent 会话状态
+不能只依赖浏览器 localStorage
+daemon 重启后可恢复 session/messages/task/todos/tool_calls/context_refs
+```
+
+验收：
+
+```text
+Create / Get / Update session 可用
+daemon 重启后 GET session 可恢复
+缺失 session 有明确 not_found / recreate 行为
+```
+
+### P0-A03：Agent Task / Todo Manager
+
+内容：
+
+```text
+从用户 prompt 创建 active task
+生成 todo list
+根据工具结果更新 pending/running/done/blocked
+记录 blocked reason 和关联 tool/context
+```
+
+验收：
+
+```text
+一次 scan 意图能生成至少 4 个 todo
+工具完成后 todo 状态变化可观察
+session state 返回 active task 和 todos
+```
+
+### P0-A04：Agent Tool Loop
+
+内容：
+
+```text
+User Message
+→ Load Session
+→ Understand Goal
+→ Update Task/Todo
+→ Select Tool
+→ Policy Gate
+→ Execute Tool
+→ Observe
+→ Update Todo/Context
+→ Next Action
+→ Persist
+```
+
+验收：
+
+```text
+不再只是 prompt keyword → single API route
+每次 send message 返回 messages/task/todos/tool_calls/context_refs/next_action
+工具失败可标记 blocked 或 fallback
+```
+
+### P0-A05：Workspace Context Reader
+
+内容：
+
+```text
+读取 runs
+读取 run detail/events/artifacts/report/findings/approvals
+读取 plugins/doctor/version/health
+生成 ContextRef
+```
+
+验收：
+
+```text
+“分析这个 run/finding/artifact”能绑定对应 context refs
+Agent response 可引用 artifact/finding/report 链接
+```
+
+---
+
+## 3. P0 任务：Core Runtime 闭环
 
 ### P0-01：Core Contracts
 
@@ -172,7 +291,7 @@ Step dependencies 正确
 
 ---
 
-## 3. P0 任务：内置 Web 分析闭环
+## 4. P0 任务：内置 Web 分析闭环
 
 ### P0-08：HTTP Probe
 
@@ -270,7 +389,33 @@ report.json 或 findings.json 可机器读取
 
 ---
 
-## 4. P1 任务：增强内置能力
+## 5. P1 任务：Local Web Agent Cockpit
+
+内容：
+
+```text
+Chat / Execution Stream
+Current Task
+Todo
+Tool Calls
+Workspace Context
+Approvals
+New Task / Stop / Continue
+```
+
+验收：
+
+```text
+首页优先呈现 Agent 工作台
+刷新/切页可恢复 session state
+扫描页不展示全局 AI provider
+总览页只读，不能启动扫描
+设置页统一保存 daemon / AI provider / language / operator
+```
+
+---
+
+## 6. P1 任务：增强内置能力
 
 ```text
 Cookie Checker
@@ -286,7 +431,7 @@ Doctor 完善
 
 ---
 
-## 5. P1 任务：CLI 完整化
+## 7. P1 任务：CLI 完整化
 
 ```text
 scan web 真正执行 Runtime
@@ -298,7 +443,7 @@ doctor 检查插件和外部工具
 
 ---
 
-## 6. P1 任务：TUI Run Viewer
+## 8. P1 任务：TUI Run Viewer / Agent View
 
 ```text
 Plan View
@@ -319,9 +464,19 @@ TUI v1 限制：
 不实时控制任务
 ```
 
+Agent-Native 后续扩展：
+
+```text
+Session View
+Task / Todo View
+Tool Calls View
+Context Refs View
+Approval Control
+```
+
 ---
 
-## 7. P1 任务：插件系统 MVP
+## 9. P1 任务：插件系统 MVP
 
 ```text
 Plugin Manifest schema
@@ -336,7 +491,7 @@ python-js-route-analyzer，可选
 
 ---
 
-## 8. P2 任务：LLM 增强
+## 10. P2 任务：LLM 增强
 
 ```text
 LLM Gateway
@@ -356,7 +511,7 @@ LLM 不审批高风险动作
 
 ---
 
-## 9. P2 任务：Desktop / Local API
+## 11. P2 任务：Desktop / Multi-user Web / Remote API
 
 ```text
 Local API / Daemon
@@ -364,11 +519,12 @@ Wails Desktop
 任务历史
 报告浏览
 配置管理
+多用户 Web 平台后置
 ```
 
 ---
 
-## 10. P3 暂缓任务
+## 12. P3 暂缓任务
 
 ```text
 Web 多用户平台
@@ -385,24 +541,30 @@ PDF 报告
 
 ---
 
-## 11. 推荐实现顺序
+## 13. 推荐实现顺序
 
 ```text
-1. P0-01 Core Contracts
-2. P0-02 Run Workspace
-3. P0-03 State Store
-4. P0-04 Event Store
-5. P0-05 Scope Guard
-6. P0-06 Risk Policy
-7. P0-07 Safe Profile Planner
-8. P0-08 HTTP Probe
-9. P0-09 HTTP Fetcher
-10. P0-10 Header Checker
-11. P0-11 HTML Extractor
-12. P0-12 Evidence/Finding/Report
-13. CLI scan web wiring
-14. Cookie/Robots/API Hint/Content Discovery
-15. Plugin System
-16. TUI Run Viewer
-17. MVP Stabilization
+1. P0-A01 Agent State Contracts
+2. P0-A02 Agent Session Store
+3. P0-A03 Agent Task / Todo Manager
+4. P0-A04 Agent Tool Loop
+5. P0-A05 Workspace Context Reader
+6. Local Web Agent Cockpit 显示 Current Task / Todo / Tool Calls / Context
+7. P0-01 Core Contracts
+8. P0-02 Run Workspace
+9. P0-03 State Store
+10. P0-04 Event Store
+11. P0-05 Scope Guard
+12. P0-06 Risk Policy
+13. P0-07 Safe Profile Planner
+14. P0-08 HTTP Probe
+15. P0-09 HTTP Fetcher
+16. P0-10 Header Checker
+17. P0-11 HTML Extractor
+18. P0-12 Evidence/Finding/Report
+19. CLI scan web wiring
+20. Cookie/Robots/API Hint/Content Discovery
+21. Plugin System
+22. TUI Run Viewer / Agent View
+23. MVP Stabilization
 ```

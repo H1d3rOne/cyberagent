@@ -1,0 +1,267 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+      - generic [ref=e11]:
+        - generic [ref=e12]: CyberAgent
+        - generic [ref=e13]: Agent Cockpit
+    - navigation [ref=e14]:
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /
+        - img [ref=e17]
+        - generic [ref=e24]: 总览
+      - link "Agent" [ref=e25] [cursor=pointer]:
+        - /url: /agent
+        - img [ref=e27]
+        - generic [ref=e30]: Agent
+      - link "任务" [ref=e31] [cursor=pointer]:
+        - /url: /tasks
+        - img [ref=e33]
+        - generic [ref=e35]: 任务
+      - link "历史" [ref=e36] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e38]
+        - generic [ref=e42]: 历史
+      - link "设置" [ref=e43] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e45]
+        - generic [ref=e48]: 设置
+    - generic "离线" [ref=e50]:
+      - img [ref=e51]
+      - generic [ref=e58]: 离线
+  - generic [ref=e59]:
+    - banner [ref=e60]:
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - img [ref=e63]
+          - generic [ref=e66]:
+            - generic [ref=e67]: authorized web/api security agent
+            - generic [ref=e68]: 通过自然语言驱动安全测试、运维与分析
+        - generic [ref=e69]:
+          - generic [ref=e70]: 离线
+          - button "Switch to English" [ref=e72] [cursor=pointer]:
+            - img [ref=e73]
+          - link "Agent" [ref=e77] [cursor=pointer]:
+            - /url: /agent
+            - img [ref=e78]
+            - text: Agent
+    - main [ref=e81]:
+      - generic [ref=e82]:
+        - complementary [ref=e83]:
+          - generic [ref=e84]:
+            - heading "会话" [level=2] [ref=e85]:
+              - img [ref=e86]
+              - text: 会话
+            - generic [ref=e88]:
+              - button "新建会话" [disabled] [ref=e89]:
+                - img [ref=e90]
+              - button "刷新" [ref=e92] [cursor=pointer]:
+                - img [ref=e93]
+          - generic [ref=e98]:
+            - button "0 全部" [ref=e99] [cursor=pointer]:
+              - generic [ref=e100]: "0"
+              - generic [ref=e101]: 全部
+            - button "0 运行" [ref=e102] [cursor=pointer]:
+              - generic [ref=e103]: "0"
+              - generic [ref=e104]: 运行
+            - button "0 审批" [ref=e105] [cursor=pointer]:
+              - generic [ref=e106]: "0"
+              - generic [ref=e107]: 审批
+            - button "0 发现" [ref=e108] [cursor=pointer]:
+              - generic [ref=e109]: "0"
+              - generic [ref=e110]: 发现
+            - button "0 记忆" [ref=e111] [cursor=pointer]:
+              - generic [ref=e112]: "0"
+              - generic [ref=e113]: 记忆
+            - button "0 阻塞" [ref=e114] [cursor=pointer]:
+              - generic [ref=e115]: "0"
+              - generic [ref=e116]: 阻塞
+          - generic [ref=e117]:
+            - img [ref=e118]
+            - textbox [ref=e121]:
+              - /placeholder: 搜索会话 / run / 证据
+        - generic [ref=e123]:
+          - generic [ref=e125]:
+            - img [ref=e127]
+            - generic [ref=e130]:
+              - heading "CyberAgent Cockpit" [level=1] [ref=e131]
+              - generic [ref=e132]:
+                - generic [ref=e133]: plan
+                - generic [ref=e135]: tool
+                - generic [ref=e137]: observe
+                - generic [ref=e139]: synthesize
+            - generic [ref=e141]: 离线
+          - generic [ref=e144]:
+            - img [ref=e146]
+            - generic [ref=e149]:
+              - generic [ref=e151]:
+                - img [ref=e152]
+                - text: agent
+              - paragraph [ref=e155]: 我是 CyberAgent。你可以直接用自然语言让我执行操作：扫描授权目标、查看运行、检查插件、查看 daemon 健康、管理 workspace 文件或执行白名单命令。 示例：扫描 http://127.0.0.1:8080 scope=127.0.0.1
+          - generic [ref=e156]:
+            - generic [ref=e157]:
+              - generic [ref=e159]:
+                - generic [ref=e160]:
+                  - img [ref=e161]
+                  - text: 等输入
+                - generic [ref=e163]: 等待下一步指令或自然语言任务
+              - generic [ref=e164]:
+                - button "继续" [disabled]:
+                  - img
+                  - text: 继续
+                - button "暂停" [disabled]:
+                  - img
+                  - text: 暂停
+                - button "新任务" [disabled]:
+                  - img
+                  - text: 新任务
+            - generic [ref=e165]:
+              - textbox "输入修订要求，如：优先检查认证与越权风险" [ref=e166]
+              - button "修订" [disabled]:
+                - img
+                - text: 修订
+          - generic [ref=e168]:
+            - generic [ref=e169]:
+              - img [ref=e170]
+              - text: 快捷指令
+            - button "继续" [ref=e172] [cursor=pointer]:
+              - img [ref=e173]
+              - text: 继续
+            - button "修订" [ref=e176] [cursor=pointer]:
+              - img [ref=e177]
+              - text: 修订
+            - button "停止" [ref=e180] [cursor=pointer]:
+              - img [ref=e181]
+              - text: 停止
+            - button "新任务" [ref=e183] [cursor=pointer]:
+              - img [ref=e184]
+              - text: 新任务
+            - button "健康检查" [ref=e186] [cursor=pointer]:
+              - img [ref=e187]
+              - text: 健康检查
+            - button "列出工具" [ref=e189] [cursor=pointer]:
+              - img [ref=e190]
+              - text: 列出工具
+            - button "任务概况" [ref=e192] [cursor=pointer]:
+              - img [ref=e193]
+              - text: 任务概况
+            - button "工作区" [ref=e197] [cursor=pointer]:
+              - img [ref=e198]
+              - text: 工作区
+          - generic [ref=e200]:
+            - generic [ref=e201]:
+              - generic [ref=e202]:
+                - button "列文件" [ref=e203] [cursor=pointer]:
+                  - img [ref=e204]
+                  - text: 列文件
+                - button "读文件" [ref=e206] [cursor=pointer]:
+                  - img [ref=e207]
+                  - text: 读文件
+                - button "预览变更" [ref=e210] [cursor=pointer]:
+                  - img [ref=e211]
+                  - text: 预览变更
+                - button "应用变更" [ref=e212] [cursor=pointer]:
+                  - img [ref=e213]
+                  - text: 应用变更
+                - button "工具目录" [ref=e216] [cursor=pointer]:
+                  - img [ref=e217]
+                  - text: 工具目录
+              - generic [ref=e219]:
+                - generic [ref=e220]:
+                  - generic [ref=e221]: Enter
+                  - text: 发送
+                - generic [ref=e222]:
+                  - generic [ref=e223]: Tab
+                  - text: 补全
+                - generic [ref=e224]:
+                  - generic [ref=e225]: ↑/↓
+                  - text: 历史
+                - generic [ref=e226]:
+                  - generic [ref=e227]: /
+                  - text: 工具指令
+            - generic [ref=e228]:
+              - textbox "Agent 指令输入" [ref=e229]:
+                - /placeholder: 自然语言控制：扫描授权目标、继续、修订计划；或 /ls、/write、/diff...
+              - button "发送" [disabled]:
+                - img
+                - generic: 发送
+        - complementary [ref=e230]:
+          - generic [ref=e232]:
+            - button "运行簿 0/4" [pressed] [ref=e233] [cursor=pointer]:
+              - img [ref=e234]
+              - generic [ref=e237]: 运行簿
+              - generic [ref=e238]: 0/4
+            - button "轨迹 0" [ref=e239] [cursor=pointer]:
+              - img [ref=e240]
+              - generic [ref=e242]: 轨迹
+              - generic [ref=e243]: "0"
+            - button "能力 0" [ref=e244] [cursor=pointer]:
+              - img [ref=e245]
+              - generic [ref=e257]: 能力
+              - generic [ref=e258]: "0"
+            - button "工作区" [ref=e259] [cursor=pointer]:
+              - img [ref=e260]
+              - generic [ref=e262]: 工作区
+          - generic [ref=e263]:
+            - generic [ref=e264]:
+              - heading "Agent Runbook" [level=2] [ref=e265]:
+                - img [ref=e266]
+                - text: Agent Runbook
+              - generic [ref=e269]: 等输入
+            - generic [ref=e270]:
+              - generic [ref=e271]:
+                - generic [ref=e272]:
+                  - generic [ref=e273]: 会话状态
+                  - generic [ref=e274]: idle
+                - generic [ref=e275]:
+                  - generic [ref=e276]: 工具调用
+                  - generic [ref=e277]: "0"
+              - generic [ref=e278]:
+                - generic [ref=e279]:
+                  - generic [ref=e280]: 上下文
+                  - generic [ref=e281]: "0"
+                - generic [ref=e282]:
+                  - generic [ref=e283]: 事件
+                  - generic [ref=e284]: "0"
+                - generic [ref=e285]:
+                  - generic [ref=e286]: 审批
+                  - generic [ref=e287]: 0/0
+              - generic [ref=e288]:
+                - generic [ref=e289]: 当前目标
+                - generic [ref=e290]: 等待自然语言指令
+              - generic [ref=e291]:
+                - generic [ref=e292]:
+                  - generic [ref=e293]:
+                    - img [ref=e294]
+                    - generic [ref=e298]: 压缩记忆
+                  - generic [ref=e299]: 待生成
+                - paragraph [ref=e300]: 长会话超过窗口后会自动压缩早期上下文，并在后续 LLM 请求中注入。
+              - generic [ref=e301]:
+                - generic [ref=e302]:
+                  - generic [ref=e303]:
+                    - img [ref=e304]
+                    - text: 计划
+                  - generic [ref=e316]: 0/4
+                - generic [ref=e317]:
+                  - generic [ref=e318]:
+                    - generic [ref=e319]: "1"
+                    - generic [ref=e320]: 理解目标与授权范围
+                    - generic [ref=e321]: ready
+                  - generic [ref=e322]:
+                    - generic [ref=e323]: "2"
+                    - generic [ref=e324]: 制定安全分析计划
+                    - generic [ref=e325]: ready
+                  - generic [ref=e326]:
+                    - generic [ref=e327]: "3"
+                    - generic [ref=e328]: 调用工具并观察结果
+                    - generic [ref=e329]: ready
+                  - generic [ref=e330]:
+                    - generic [ref=e331]: "4"
+                    - generic [ref=e332]: 汇总证据和下一步
+                    - generic [ref=e333]: ready
+              - generic [ref=e334]:
+                - generic [ref=e336]:
+                  - img [ref=e337]
+                  - generic [ref=e349]: 推理 / 计划修订
+                - paragraph [ref=e350]: 等待 Agent 生成可追溯推理：为什么这样规划、为何调用工具、下一步是什么。

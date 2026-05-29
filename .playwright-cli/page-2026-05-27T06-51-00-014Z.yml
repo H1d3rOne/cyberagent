@@ -1,0 +1,416 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+      - generic [ref=e11]:
+        - generic [ref=e12]: CyberAgent
+        - generic [ref=e13]: Agent Cockpit
+    - navigation [ref=e14]:
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /
+        - img [ref=e17]
+        - generic [ref=e24]: 总览
+      - link "Agent" [ref=e25] [cursor=pointer]:
+        - /url: /agent
+        - img [ref=e27]
+        - generic [ref=e30]: Agent
+      - link "任务" [ref=e31] [cursor=pointer]:
+        - /url: /tasks
+        - img [ref=e33]
+        - generic [ref=e35]: 任务
+      - link "历史" [ref=e36] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e38]
+        - generic [ref=e42]: 历史
+      - link "设置" [ref=e43] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e45]
+        - generic [ref=e48]: 设置
+    - generic "在线" [ref=e50]:
+      - img [ref=e51]
+      - generic [ref=e53]: 在线
+  - generic [ref=e54]:
+    - banner [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]:
+          - img [ref=e58]
+          - generic [ref=e61]:
+            - generic [ref=e62]: authorized web/api security agent
+            - generic [ref=e63]: 通过自然语言驱动安全测试、运维与分析
+        - generic [ref=e64]:
+          - generic [ref=e65]: 在线
+          - button "Switch to English" [ref=e67] [cursor=pointer]:
+            - img [ref=e68]
+          - link "Agent" [ref=e72] [cursor=pointer]:
+            - /url: /agent
+            - img [ref=e73]
+            - text: Agent
+    - main [ref=e76]:
+      - generic [ref=e77]:
+        - complementary [ref=e78]:
+          - generic [ref=e79]:
+            - heading "会话" [level=2] [ref=e80]:
+              - img [ref=e81]
+              - text: 会话
+            - generic [ref=e83]:
+              - button "新建会话" [disabled] [ref=e84]:
+                - img [ref=e85]
+              - button "刷新" [ref=e87] [cursor=pointer]:
+                - img [ref=e88]
+          - generic [ref=e93]:
+            - button "0 全部" [ref=e94] [cursor=pointer]:
+              - generic [ref=e95]: "0"
+              - generic [ref=e96]: 全部
+            - button "0 运行" [ref=e97] [cursor=pointer]:
+              - generic [ref=e98]: "0"
+              - generic [ref=e99]: 运行
+            - button "0 审批" [ref=e100] [cursor=pointer]:
+              - generic [ref=e101]: "0"
+              - generic [ref=e102]: 审批
+            - button "0 发现" [ref=e103] [cursor=pointer]:
+              - generic [ref=e104]: "0"
+              - generic [ref=e105]: 发现
+            - button "0 记忆" [ref=e106] [cursor=pointer]:
+              - generic [ref=e107]: "0"
+              - generic [ref=e108]: 记忆
+            - button "0 阻塞" [ref=e109] [cursor=pointer]:
+              - generic [ref=e110]: "0"
+              - generic [ref=e111]: 阻塞
+          - generic [ref=e112]:
+            - img [ref=e113]
+            - textbox [ref=e116]:
+              - /placeholder: 搜索会话 / run / 证据
+        - generic [ref=e118]:
+          - generic [ref=e120]:
+            - img [ref=e122]
+            - generic [ref=e125]:
+              - heading "CyberAgent Cockpit" [level=1] [ref=e126]
+              - generic [ref=e127]:
+                - generic [ref=e128]: plan
+                - generic [ref=e130]: tool
+                - generic [ref=e132]: observe
+                - generic [ref=e134]: synthesize
+            - generic [ref=e136]: 离线
+          - generic [ref=e139]:
+            - img [ref=e141]
+            - generic [ref=e144]:
+              - generic [ref=e146]:
+                - img [ref=e147]
+                - text: agent
+              - paragraph [ref=e150]: 我是 CyberAgent。你可以直接用自然语言让我执行操作：扫描授权目标、查看运行、检查插件、查看 daemon 健康、管理 workspace 文件或执行白名单命令。 示例：扫描 http://127.0.0.1:8080 scope=127.0.0.1
+          - generic [ref=e151]:
+            - generic [ref=e152]:
+              - generic [ref=e154]:
+                - generic [ref=e155]:
+                  - img [ref=e156]
+                  - text: 等输入
+                - generic [ref=e158]: 等待下一步指令或自然语言任务
+              - generic [ref=e159]:
+                - button "继续" [disabled]:
+                  - img
+                  - text: 继续
+                - button "暂停" [disabled]:
+                  - img
+                  - text: 暂停
+                - button "新任务" [disabled]:
+                  - img
+                  - text: 新任务
+            - generic [ref=e160]:
+              - textbox "输入修订要求，如：优先检查认证与越权风险" [ref=e161]
+              - button "修订" [disabled]:
+                - img
+                - text: 修订
+          - generic [ref=e163]:
+            - generic [ref=e164]:
+              - img [ref=e165]
+              - text: 快捷指令
+            - button "健康检查" [ref=e167] [cursor=pointer]:
+              - img [ref=e168]
+              - text: 健康检查
+            - button "列出工具" [ref=e170] [cursor=pointer]:
+              - img [ref=e171]
+              - text: 列出工具
+            - button "任务概况" [ref=e173] [cursor=pointer]:
+              - img [ref=e174]
+              - text: 任务概况
+            - button "工作区" [ref=e178] [cursor=pointer]:
+              - img [ref=e179]
+              - text: 工作区
+          - generic [ref=e181]:
+            - generic [ref=e182]:
+              - generic [ref=e183]:
+                - button "列文件" [ref=e184] [cursor=pointer]:
+                  - img [ref=e185]
+                  - text: 列文件
+                - button "读文件" [ref=e187] [cursor=pointer]:
+                  - img [ref=e188]
+                  - text: 读文件
+                - button "预览变更" [ref=e191] [cursor=pointer]:
+                  - img [ref=e192]
+                  - text: 预览变更
+                - button "应用变更" [ref=e193] [cursor=pointer]:
+                  - img [ref=e194]
+                  - text: 应用变更
+                - button "工具目录" [ref=e197] [cursor=pointer]:
+                  - img [ref=e198]
+                  - text: 工具目录
+              - generic [ref=e200]:
+                - generic [ref=e201]:
+                  - generic [ref=e202]: Enter
+                  - text: 发送
+                - generic [ref=e203]:
+                  - generic [ref=e204]: Tab
+                  - text: 补全
+                - generic [ref=e205]:
+                  - generic [ref=e206]: ↑/↓
+                  - text: 历史
+                - generic [ref=e207]:
+                  - generic [ref=e208]: /
+                  - text: 工具指令
+            - generic [ref=e209]:
+              - textbox "Agent 指令输入" [ref=e210]:
+                - /placeholder: 自然语言或 Slash：扫描授权目标、检查工具、/ls、/write、/diff...
+              - button "发送" [disabled]:
+                - img
+                - generic: 发送
+        - complementary [ref=e211]:
+          - generic [ref=e212]:
+            - generic [ref=e213]:
+              - heading "Agent Runbook" [level=2] [ref=e214]:
+                - img [ref=e215]
+                - text: Agent Runbook
+              - generic [ref=e218]: 等输入
+            - generic [ref=e219]:
+              - generic [ref=e220]:
+                - generic [ref=e221]:
+                  - generic [ref=e222]: 会话状态
+                  - generic [ref=e223]: idle
+                - generic [ref=e224]:
+                  - generic [ref=e225]: 工具调用
+                  - generic [ref=e226]: "0"
+              - generic [ref=e227]:
+                - generic [ref=e228]:
+                  - generic [ref=e229]: 上下文
+                  - generic [ref=e230]: "0"
+                - generic [ref=e231]:
+                  - generic [ref=e232]: 事件
+                  - generic [ref=e233]: "0"
+                - generic [ref=e234]:
+                  - generic [ref=e235]: 审批
+                  - generic [ref=e236]: 0/0
+              - generic [ref=e237]:
+                - generic [ref=e238]: 当前目标
+                - generic [ref=e239]: 等待自然语言指令
+              - generic [ref=e240]:
+                - generic [ref=e241]:
+                  - generic [ref=e242]:
+                    - img [ref=e243]
+                    - generic [ref=e247]: 压缩记忆
+                  - generic [ref=e248]: 待生成
+                - paragraph [ref=e249]: 长会话超过窗口后会自动压缩早期上下文，并在后续 LLM 请求中注入。
+              - generic [ref=e250]:
+                - generic [ref=e251]:
+                  - generic [ref=e252]:
+                    - img [ref=e253]
+                    - text: 计划
+                  - generic [ref=e265]: 0/4
+                - generic [ref=e266]:
+                  - generic [ref=e267]:
+                    - generic [ref=e268]: "1"
+                    - generic [ref=e269]: 理解目标与授权范围
+                    - generic [ref=e270]: ready
+                  - generic [ref=e271]:
+                    - generic [ref=e272]: "2"
+                    - generic [ref=e273]: 制定安全分析计划
+                    - generic [ref=e274]: ready
+                  - generic [ref=e275]:
+                    - generic [ref=e276]: "3"
+                    - generic [ref=e277]: 调用工具并观察结果
+                    - generic [ref=e278]: ready
+                  - generic [ref=e279]:
+                    - generic [ref=e280]: "4"
+                    - generic [ref=e281]: 汇总证据和下一步
+                    - generic [ref=e282]: ready
+              - generic [ref=e283]:
+                - generic [ref=e285]:
+                  - img [ref=e286]
+                  - generic [ref=e298]: 推理 / 计划修订
+                - paragraph [ref=e299]: 等待 Agent 生成可追溯推理：为什么这样规划、为何调用工具、下一步是什么。
+          - generic [ref=e300]:
+            - generic [ref=e301]:
+              - heading "Agent 能力" [level=2] [ref=e302]:
+                - img [ref=e303]
+                - text: Agent 能力
+              - generic [ref=e315]: v0.1.4
+            - paragraph [ref=e316]: 面向授权目标的 Web/API 安全分析 Agent：通过自然语言维护任务、规划步骤、调用工具、沉淀上下文并生成可复现结论。
+            - generic [ref=e317]:
+              - generic [ref=e318]:
+                - generic [ref=e319]:
+                  - img [ref=e320]
+                  - generic [ref=e322]: "5"
+                - generic [ref=e323]: 能力
+              - generic [ref=e324]:
+                - generic [ref=e325]:
+                  - img [ref=e326]
+                  - generic [ref=e328]: "13"
+                - generic [ref=e329]: 内置工具
+            - generic [ref=e330]:
+              - generic [ref=e331]:
+                - generic [ref=e332]:
+                  - img [ref=e333]
+                  - generic [ref=e336]: 自然语言运维/测试
+                - paragraph [ref=e337]: 将操作者意图转为任务、待办、工具调用和下一步建议。
+              - generic [ref=e338]:
+                - generic [ref=e339]:
+                  - img [ref=e340]
+                  - generic [ref=e343]: 会话与上下文保持
+                - paragraph [ref=e344]: 保持聊天会话、任务状态、工具轨迹、上下文引用和下一步动作。
+              - generic [ref=e345]:
+                - generic [ref=e346]:
+                  - img [ref=e347]
+                  - generic [ref=e350]: 规划→工具→总结闭环
+                - paragraph [ref=e351]: 支持 JSON actions 与模型原生 tool_calls，执行低风险工具后回灌 observation 并生成最终总结。
+              - generic [ref=e352]:
+                - generic [ref=e353]:
+                  - img [ref=e354]
+                  - generic [ref=e357]: Web/API 安全运行时
+                - paragraph [ref=e358]: 可按明确授权指令启动 safe profile 扫描、跟踪运行、收集证据、处理审批并复测。
+            - generic [ref=e359]:
+              - generic [ref=e360]:
+                - img [ref=e361]
+                - text: 执行阶段
+              - generic [ref=e373]:
+                - generic [ref=e374]:
+                  - generic [ref=e375]: "1"
+                  - text: 理解
+                - generic [ref=e376]:
+                  - generic [ref=e377]: "2"
+                  - text: 规划
+                - generic [ref=e378]:
+                  - generic [ref=e379]: "3"
+                  - text: 工具调用
+                - generic [ref=e380]:
+                  - generic [ref=e381]: "4"
+                  - text: 观测
+                - generic [ref=e382]:
+                  - generic [ref=e383]: "5"
+                  - text: 总结
+            - generic [ref=e384]:
+              - generic [ref=e385]:
+                - generic [ref=e386]:
+                  - img [ref=e387]
+                  - text: 工具
+                - generic [ref=e389]: 13/13 auto
+              - generic [ref=e390]:
+                - generic [ref=e391]:
+                  - generic [ref=e392]:
+                    - generic [ref=e393]:
+                      - img [ref=e394]
+                      - generic [ref=e396]: 命令执行
+                    - generic [ref=e397]: "1"
+                  - 'generic "Run a low-risk allowlisted read-only command in the current Agent workspace. Allowed examples: pwd, ls, cat, head, tail, grep, find, wc, git status." [ref=e399]':
+                    - generic [ref=e400]:
+                      - generic [ref=e401]: workspace.command
+                      - generic [ref=e402]: auto
+                    - paragraph [ref=e403]: "Run a low-risk allowlisted read-only command in the current Agent workspace. Allowed examples: pwd, ls, cat, head, tail, grep, find, wc, git status."
+                - generic [ref=e404]:
+                  - generic [ref=e405]:
+                    - generic [ref=e406]:
+                      - img [ref=e407]
+                      - generic [ref=e410]: 文件与变更
+                    - generic [ref=e411]: "9"
+                  - generic [ref=e412]:
+                    - generic "List files in the current Agent workspace." [ref=e413]:
+                      - generic [ref=e414]:
+                        - generic [ref=e415]: workspace.files.list
+                        - generic [ref=e416]: auto
+                      - paragraph [ref=e417]: List files in the current Agent workspace.
+                    - generic "Read a workspace-relative file from the current Agent workspace." [ref=e418]:
+                      - generic [ref=e419]:
+                        - generic [ref=e420]: workspace.files.read
+                        - generic [ref=e421]: auto
+                      - paragraph [ref=e422]: Read a workspace-relative file from the current Agent workspace.
+                    - generic "Write or replace a workspace-relative file in the current Agent workspace when explicitly requested by the operator." [ref=e423]:
+                      - generic [ref=e424]:
+                        - generic [ref=e425]: workspace.files.write
+                        - generic [ref=e426]: auto
+                      - paragraph [ref=e427]: Write or replace a workspace-relative file in the current Agent workspace when explicitly requested by the operator.
+                    - generic "Patch a workspace-relative file by replacing one exact old text block with new text and returning a diff preview." [ref=e428]:
+                      - generic [ref=e429]:
+                        - generic [ref=e430]: workspace.files.patch
+                        - generic [ref=e431]: auto
+                      - paragraph [ref=e432]: Patch a workspace-relative file by replacing one exact old text block with new text and returning a diff preview.
+                    - generic "Create a staged workspace file change by replacing one exact old text block with new text; returns a diff preview and change_id without modifying the file." [ref=e433]:
+                      - generic [ref=e434]:
+                        - generic [ref=e435]: workspace.files.diff
+                        - generic [ref=e436]: auto
+                      - paragraph [ref=e437]: Create a staged workspace file change by replacing one exact old text block with new text; returns a diff preview and change_id without modifying the file.
+                    - generic "Create one staged change set across multiple workspace files. Each item replaces one exact old text block with new text and returns a shared group_id plus per-file change_id values without modifying files." [ref=e438]:
+                      - generic [ref=e439]:
+                        - generic [ref=e440]: workspace.files.diff_many
+                        - generic [ref=e441]: auto
+                      - paragraph [ref=e442]: Create one staged change set across multiple workspace files. Each item replaces one exact old text block with new text and returns a shared group_id plus per-file change_id values without modifying files.
+                    - generic "Regenerate a pending/conflict staged change by change_id using the current exact old text from the workspace file. The replacement defaults to the original staged new text; returns a new change_id and supersedes the old change." [ref=e443]:
+                      - generic [ref=e444]:
+                        - generic [ref=e445]: workspace.files.rebase
+                        - generic [ref=e446]: auto
+                      - paragraph [ref=e447]: Regenerate a pending/conflict staged change by change_id using the current exact old text from the workspace file. The replacement defaults to the original staged new text; returns a new change_id and supersedes the old change.
+                    - generic "Apply a previously staged workspace file change by change_id, a staged group by group_id, or all pending changes with all=true after validating old text still matches exactly once." [ref=e448]:
+                      - generic [ref=e449]:
+                        - generic [ref=e450]: workspace.files.apply
+                        - generic [ref=e451]: auto
+                      - paragraph [ref=e452]: Apply a previously staged workspace file change by change_id, a staged group by group_id, or all pending changes with all=true after validating old text still matches exactly once.
+                    - generic "Discard a previously staged workspace file change by change_id, a staged group by group_id, or all pending/conflict changes with all=true without modifying files." [ref=e453]:
+                      - generic [ref=e454]:
+                        - generic [ref=e455]: workspace.files.discard
+                        - generic [ref=e456]: auto
+                      - paragraph [ref=e457]: Discard a previously staged workspace file change by change_id, a staged group by group_id, or all pending/conflict changes with all=true without modifying files.
+                - generic [ref=e458]:
+                  - generic [ref=e459]:
+                    - generic [ref=e460]:
+                      - img [ref=e461]
+                      - generic [ref=e463]: 运行态
+                    - generic [ref=e464]: "2"
+                  - generic [ref=e465]:
+                    - generic "Check CyberAgent daemon health/version/status." [ref=e466]:
+                      - generic [ref=e467]:
+                        - generic [ref=e468]: daemon.health
+                        - generic [ref=e469]: auto
+                      - paragraph [ref=e470]: Check CyberAgent daemon health/version/status.
+                    - generic "List recent CyberAgent runs/history." [ref=e471]:
+                      - generic [ref=e472]:
+                        - generic [ref=e473]: runs.list
+                        - generic [ref=e474]: auto
+                      - paragraph [ref=e475]: List recent CyberAgent runs/history.
+                - generic [ref=e476]:
+                  - generic [ref=e477]:
+                    - generic [ref=e478]:
+                      - img [ref=e479]
+                      - generic [ref=e481]: 插件
+                    - generic [ref=e482]: "1"
+                  - generic "List available CyberAgent plugins/tools." [ref=e484]:
+                    - generic [ref=e485]:
+                      - generic [ref=e486]: plugins.list
+                      - generic [ref=e487]: auto
+                    - paragraph [ref=e488]: List available CyberAgent plugins/tools.
+            - generic [ref=e489]:
+              - generic [ref=e490]:
+                - img [ref=e491]
+                - text: 安全策略
+              - paragraph [ref=e493]: LLM 自动执行仅限低风险内置工具；扫描需明确自然语言指令；外部插件/高风险动作进入审批 gate。
+          - generic [ref=e494]:
+            - heading "Agent 工作区" [level=2] [ref=e495]:
+              - img [ref=e496]
+              - text: Agent 工作区
+            - generic [ref=e498]: 正在创建工作区会话...
+          - generic [ref=e499]:
+            - generic [ref=e500]:
+              - heading "工作区文件" [level=2] [ref=e501]:
+                - img [ref=e502]
+                - text: 工作区文件
+              - button "刷新" [ref=e504] [cursor=pointer]
+            - generic [ref=e505]:
+              - textbox "输入目录路径，如 . 或 src" [ref=e506]: .
+              - button "打开" [disabled]
+            - generic [ref=e507]: 当前目录为空

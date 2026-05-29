@@ -1,8 +1,8 @@
 # CyberAgent 总体计划
 
-版本：v0.3-planning-final  
-日期：2026-05-23  
-状态：规划基线已冻结；已进入 MVP 实现/稳定化阶段
+版本：v0.4-agent-native-correction  
+日期：2026-05-25  
+状态：规划基线纠偏；CyberAgent 必须优先满足 Claude Code / Codex 型可执行 Agent 能力
 
 ---
 
@@ -24,6 +24,21 @@ CyberAgent 是一个面向**授权目标**的 Web/API 安全分析 Agent。
 自动规划 → 调用工具 → 分析结果 → 形成证据链 → 输出报告
 ```
 
+更准确地说，CyberAgent 不是“安全后台加聊天框”，而是：
+
+```text
+面向授权 Web/API 目标的 Cybersecurity Agent Workbench。
+
+它应具备 Claude Code / Codex 类 Agent 的基础形态：
+会话保持、任务目标、计划/Todo、工具调用循环、工作区上下文、可打断/继续、错误恢复、状态持久化。
+```
+
+Agent 原生能力是最高优先级验收约束，详见：
+
+```text
+docs/CyberAgent-Agent-Native-Benchmark.md
+```
+
 ---
 
 ## 2. 产品形态规划
@@ -31,7 +46,7 @@ CyberAgent 是一个面向**授权目标**的 Web/API 安全分析 Agent。
 当前推荐路线：
 
 ```text
-Go Core + CLI/TUI First + Python Plugin Layer + Desktop Later
+Go Core + CLI/TUI Agent Runtime + Local Web Agent Cockpit + Python Plugin Layer + Desktop Later
 ```
 
 阶段顺序：
@@ -39,8 +54,9 @@ Go Core + CLI/TUI First + Python Plugin Layer + Desktop Later
 ```text
 第一阶段：CLI / TUI
 第二阶段：Local API / Daemon
-第三阶段：Desktop
-第四阶段：Web / Remote Runner
+第三阶段：Local Web Agent Cockpit
+第四阶段：Desktop
+第五阶段：多用户 Web / Remote Runner
 ```
 
 ### 形态分工
@@ -48,9 +64,10 @@ Go Core + CLI/TUI First + Python Plugin Layer + Desktop Later
 | 形态 | 定位 | 优先级 |
 |---|---|---|
 | CLI | 自动化、脚本化、CI/CD、CTF、远程环境 | 高 |
-| TUI | Agent 主要交互界面，查看计划、日志、证据、确认操作 | 高 |
+| TUI | Agent 原生终端工作台，查看任务、Todo、工具调用、证据、确认操作 | 高 |
+| Local Web | Agent Cockpit，降低操作门槛，承载 Chat / Todo / Tool Loop / Workspace Context | 高 |
 | Desktop | 简化操作，面向非命令行用户，本地安全工作台 | 中 |
-| Web | 团队协作、多任务、远程 Runner、报告平台 | 后置 |
+| Multi-user Web | 团队协作、多任务、远程 Runner、报告平台 | 后置 |
 
 ---
 
@@ -128,6 +145,8 @@ CLI / TUI / Desktop / Web
 ```text
 Agent Core
   ├── Planner Runtime      任务规划、计划更新、步骤跳过/重排
+  ├── Agent Session        会话、消息、active task、todo、tool call、context refs 持久化
+  ├── Agent Tool Loop      plan → tool call → observe → update todo → next action
   ├── Scheduler            步骤调度、并发控制、取消/重试
   ├── Policy Engine        Scope Guard、Risk Policy、确认策略、禁止动作策略
   ├── Runner Layer         Local / Docker / Remote 执行抽象
@@ -136,6 +155,7 @@ Agent Core
   ├── Plugin Runtime       Python / 外部进程插件运行
   ├── Event Bus            实时事件，写入 events.jsonl，供 CLI/TUI/API 订阅
   ├── State Store          Job / Step 状态持久化
+  ├── Agent State Store    Agent session / task / todo / tool call / context ref 持久化
   ├── Artifact Store       原始输出、HTML、JSONL、截图、工具产物落盘
   ├── Evidence Store       证据索引、hash、来源 step、关联 finding
   ├── Finding Analyzer     结果归一化、去重、风险评级、置信度
@@ -160,6 +180,11 @@ LLM 增强层：作为 Analyzer / Reporter 插件，不作为 Core 必需依赖
 后续需要优先确定这些数据契约：
 
 ```text
+AgentSession 会话
+AgentMessage 消息
+AgentTask    当前任务
+AgentTodo    计划/Todo
+AgentContextRef 工作区上下文引用
 Target      目标
 Scope       授权范围
 Job         任务
@@ -184,6 +209,7 @@ Runner      执行器
 
 ```text
 授权 Web/API 目标分析
+Agent 原生工作流：Chat → Task/Todo → Tool Loop → Evidence/Report
 ```
 
 ### 最小输入
@@ -784,4 +810,3 @@ docs/CyberAgent-Risk-Plan.md
 docs/CyberAgent-Test-Plan.md
 docs/CyberAgent-Release-Plan.md
 ```
-

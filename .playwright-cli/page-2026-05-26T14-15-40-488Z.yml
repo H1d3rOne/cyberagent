@@ -1,0 +1,215 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+      - generic [ref=e11]:
+        - generic [ref=e12]: CyberAgent
+        - generic [ref=e13]: Agent Cockpit
+    - navigation [ref=e14]:
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /
+        - img [ref=e17]
+        - generic [ref=e24]: 总览
+      - link "Agent" [ref=e25] [cursor=pointer]:
+        - /url: /agent
+        - img [ref=e27]
+        - generic [ref=e30]: Agent
+      - link "任务" [ref=e31] [cursor=pointer]:
+        - /url: /tasks
+        - img [ref=e33]
+        - generic [ref=e35]: 任务
+      - link "历史" [ref=e36] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e38]
+        - generic [ref=e42]: 历史
+      - link "设置" [ref=e43] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e45]
+        - generic [ref=e48]: 设置
+    - generic "离线" [ref=e50]:
+      - img [ref=e51]
+      - generic [ref=e58]: 离线
+  - generic [ref=e59]:
+    - banner [ref=e60]:
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - img [ref=e63]
+          - generic [ref=e66]:
+            - generic [ref=e67]: authorized web/api security agent
+            - generic [ref=e68]: 通过自然语言驱动安全测试、运维与分析
+        - generic [ref=e69]:
+          - generic [ref=e70]: 离线
+          - button "Switch to English" [ref=e72] [cursor=pointer]:
+            - img [ref=e73]
+          - link "Agent" [ref=e77] [cursor=pointer]:
+            - /url: /agent
+            - img [ref=e78]
+            - text: Agent
+    - main [ref=e81]:
+      - generic [ref=e82]:
+        - complementary [ref=e83]:
+          - generic [ref=e84]:
+            - heading "会话" [level=2] [ref=e85]:
+              - img [ref=e86]
+              - text: 会话
+            - generic [ref=e88]:
+              - button "新建会话" [ref=e89] [cursor=pointer]:
+                - img [ref=e90]
+              - button "刷新" [ref=e92] [cursor=pointer]:
+                - img [ref=e93]
+        - generic [ref=e99]:
+          - generic [ref=e101]:
+            - img [ref=e103]
+            - generic [ref=e106]:
+              - heading "CyberAgent Cockpit" [level=1] [ref=e107]
+              - generic [ref=e108]:
+                - generic [ref=e109]: plan
+                - generic [ref=e111]: tool
+                - generic [ref=e113]: observe
+                - generic [ref=e115]: synthesize
+            - 'generic "最后同步: 22:15:40" [ref=e117]': 实时在线
+          - generic [ref=e120]:
+            - img [ref=e122]
+            - generic [ref=e125]:
+              - generic [ref=e127]:
+                - img [ref=e128]
+                - text: agent
+              - paragraph [ref=e131]: 我是 CyberAgent。你可以直接用自然语言让我执行操作：扫描授权目标、查看运行、检查插件、查看 daemon 健康、管理 workspace 文件或执行白名单命令。 示例：扫描 http://127.0.0.1:8080 scope=127.0.0.1
+          - generic [ref=e132]:
+            - generic [ref=e133]:
+              - generic [ref=e135]:
+                - generic [ref=e136]:
+                  - img [ref=e137]
+                  - text: 等输入
+                - generic [ref=e139]: 等待用户给出授权目标、scope 或下一步指令。
+              - generic [ref=e140]:
+                - button "继续" [ref=e141] [cursor=pointer]:
+                  - img [ref=e142]
+                  - text: 继续
+                - button "暂停" [ref=e145] [cursor=pointer]:
+                  - img [ref=e146]
+                  - text: 暂停
+                - button "新任务" [ref=e148] [cursor=pointer]:
+                  - img [ref=e149]
+                  - text: 新任务
+            - generic [ref=e151]:
+              - textbox "输入修订要求，如：优先检查认证与越权风险" [ref=e152]
+              - button "修订" [disabled]:
+                - img
+                - text: 修订
+          - generic [ref=e154]:
+            - generic [ref=e155]:
+              - img [ref=e156]
+              - text: 快捷指令
+            - button "健康检查" [ref=e158] [cursor=pointer]:
+              - img [ref=e159]
+              - text: 健康检查
+            - button "列出工具" [ref=e161] [cursor=pointer]:
+              - img [ref=e162]
+              - text: 列出工具
+            - button "任务概况" [ref=e164] [cursor=pointer]:
+              - img [ref=e165]
+              - text: 任务概况
+            - button "工作区" [ref=e169] [cursor=pointer]:
+              - img [ref=e170]
+              - text: 工作区
+          - generic [ref=e173]:
+            - 'textbox "输入目标 URL 启动扫描，如: 扫描 http://127.0.0.1:8080 scope=127.0.0.1" [ref=e174]'
+            - button "发送" [disabled]:
+              - img
+              - generic: 发送
+        - complementary [ref=e175]:
+          - generic [ref=e176]:
+            - generic [ref=e177]:
+              - heading "Agent Runbook" [level=2] [ref=e178]:
+                - img [ref=e179]
+                - text: Agent Runbook
+              - generic [ref=e182]: 等输入
+            - generic [ref=e183]:
+              - generic [ref=e184]:
+                - generic [ref=e185]:
+                  - generic [ref=e186]: 会话状态
+                  - generic [ref=e187]: idle
+                - generic [ref=e188]:
+                  - generic [ref=e189]: 工具调用
+                  - generic [ref=e190]: "0"
+              - generic [ref=e191]:
+                - generic [ref=e192]: 当前目标
+                - generic [ref=e193]: 等待自然语言指令
+              - generic [ref=e194]:
+                - generic [ref=e195]:
+                  - generic [ref=e196]:
+                    - img [ref=e197]
+                    - text: 计划
+                  - generic [ref=e209]: 0/4
+                - generic [ref=e210]:
+                  - generic [ref=e211]:
+                    - generic [ref=e212]: "1"
+                    - generic [ref=e213]: 理解目标与授权范围
+                    - generic [ref=e214]: ready
+                  - generic [ref=e215]:
+                    - generic [ref=e216]: "2"
+                    - generic [ref=e217]: 制定安全分析计划
+                    - generic [ref=e218]: ready
+                  - generic [ref=e219]:
+                    - generic [ref=e220]: "3"
+                    - generic [ref=e221]: 调用工具并观察结果
+                    - generic [ref=e222]: ready
+                  - generic [ref=e223]:
+                    - generic [ref=e224]: "4"
+                    - generic [ref=e225]: 汇总证据和下一步
+                    - generic [ref=e226]: ready
+          - generic [ref=e227]:
+            - heading "Agent 工作区" [level=2] [ref=e228]:
+              - img [ref=e229]
+              - text: Agent 工作区
+            - generic [ref=e231]:
+              - generic [ref=e232]: agent_20260526_141540_24758b
+              - button "pwd" [ref=e233] [cursor=pointer]
+              - button "ls -la" [ref=e234] [cursor=pointer]
+              - button "git status" [ref=e235] [cursor=pointer]
+            - generic [ref=e236]:
+              - 'textbox "输入白名单命令，如: ls -la、cat README.md" [ref=e237]'
+              - button "执行" [disabled]
+            - generic [ref=e238]: 尚未执行命令。建议先用 pwd / ls -la 确认工作区位置。
+          - generic [ref=e239]:
+            - generic [ref=e240]:
+              - heading "工作区文件" [level=2] [ref=e241]:
+                - img [ref=e242]
+                - text: 工作区文件
+              - button "刷新" [ref=e244] [cursor=pointer]
+            - generic [ref=e245]:
+              - textbox "输入目录路径，如 . 或 src" [ref=e246]: .
+              - button "加载中..." [disabled]
+            - generic [ref=e247]: 正在读取目录...
+          - generic [ref=e248]:
+            - heading "最近扫描" [level=2] [ref=e249]:
+              - img [ref=e250]
+              - text: 最近扫描
+            - generic [ref=e254]:
+              - link "127.0.0.1:18080 完成" [ref=e255] [cursor=pointer]:
+                - /url: /scan/job_20260526_141209_029a0a
+                - generic [ref=e256]:
+                  - generic [ref=e257]: 127.0.0.1:18080
+                  - generic [ref=e258]: 完成
+              - link "127.0.0.1:18080 完成" [ref=e259] [cursor=pointer]:
+                - /url: /scan/job_20260526_141043_923a96
+                - generic [ref=e260]:
+                  - generic [ref=e261]: 127.0.0.1:18080
+                  - generic [ref=e262]: 完成
+              - link "www.baidu.com 完成" [ref=e263] [cursor=pointer]:
+                - /url: /scan/job_20260525_130330_c0544d
+                - generic [ref=e264]:
+                  - generic [ref=e265]: www.baidu.com
+                  - generic [ref=e266]: 完成
+              - link "www.baidu.com 完成" [ref=e267] [cursor=pointer]:
+                - /url: /scan/job_20260524_201339_73c743
+                - generic [ref=e268]:
+                  - generic [ref=e269]: www.baidu.com
+                  - generic [ref=e270]: 完成
+              - link "127.0.0.1:5173 完成" [ref=e271] [cursor=pointer]:
+                - /url: /scan/job_20260524_042535_3ddfc4
+                - generic [ref=e272]:
+                  - generic [ref=e273]: 127.0.0.1:5173
+                  - generic [ref=e274]: 完成

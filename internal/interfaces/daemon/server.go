@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	"github.com/H1d3rOne/cyberagent/internal/interfaces/web"
 )
 
 // Server owns the local daemon HTTP adapter.
@@ -30,15 +32,20 @@ func NewServer(cfg Config) (*Server, error) {
 		Build:             cfg.Build,
 		MaxConcurrentJobs: cfg.MaxConcurrentJobs,
 	})
+	scanManager := web.NewScanManager(func(name string, cfg llm.ProviderConfig) llm.Provider {
+		return buildAgentLLMProvider(name, cfg)
+	})
+
 	return &Server{
 		cfg:   cfg,
 		token: token,
 		handler: newRouter(routerServices{
-			version:   version,
-			plugins:   services.NewPluginService(),
-			runs:      runs,
-			approvals: services.NewApprovalService(cfg.RunsDir),
-			jobs:      jobs,
+			version:      version,
+			plugins:      services.NewPluginService(),
+			runs:         runs,
+			approvals:    services.NewApprovalService(cfg.RunsDir),
+			jobs:         jobs,
+			scanManager:  scanManager,
 		}, token),
 	}, nil
 }

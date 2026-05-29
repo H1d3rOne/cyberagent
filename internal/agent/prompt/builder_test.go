@@ -70,8 +70,20 @@ func TestBuildSystemMinimalConfig(t *testing.T) {
 	if !strings.Contains(result, "# Role") {
 		t.Error("system prompt should contain role block")
 	}
-	if !strings.Contains(result, "## Workflow") {
-		t.Error("system prompt should contain workflow block")
+	if !strings.Contains(result, "## Execution Model") {
+		t.Error("system prompt should contain execution model block")
+	}
+	if !strings.Contains(result, "## PLAN") {
+		t.Error("system prompt should contain PLAN phase")
+	}
+	if !strings.Contains(result, "## STEP") {
+		t.Error("system prompt should contain STEP phase")
+	}
+	if !strings.Contains(result, "## STEPREPLAN") {
+		t.Error("system prompt should contain STEPREPLAN phase")
+	}
+	if !strings.Contains(result, "## FINAL_ANSWER") {
+		t.Error("system prompt should contain FINAL_ANSWER phase")
 	}
 	if strings.Contains(result, "## Additional Instructions") {
 		t.Error("should not contain instructions section when empty")

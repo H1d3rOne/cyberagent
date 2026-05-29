@@ -91,7 +91,8 @@ func (w *WebInteractiveAgent) loop() {
 		default:
 		}
 
-		a.emit(Event{Type: EventProgress, Turn: w.turn + 1, MaxTurns: a.config.MaxTurns, Elapsed: time.Since(w.start)})
+		phase := a.inferPhase(w.turn, a.history)
+		a.emit(Event{Type: EventProgress, Turn: w.turn + 1, MaxTurns: a.config.MaxTurns, Elapsed: time.Since(w.start), Phase: phase})
 		a.history = compressHistory(a.history)
 
 		chatReq := llm.ChatRequest{
@@ -120,13 +121,16 @@ func (w *WebInteractiveAgent) loop() {
 
 		toolCalls := a.extractToolCalls(resp.Content)
 		if len(toolCalls) > 0 {
+			a.currentPhase = PhaseExecuting
+			a.emit(Event{Type: EventProgress, Turn: w.turn, MaxTurns: a.config.MaxTurns, Elapsed: time.Since(w.start), Phase: PhaseExecuting, Message: fmt.Sprintf("Executing %d tool(s)", len(toolCalls))})
 			results := a.executeTools(w.ctx, toolCalls)
 			a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: results})
 			continue
 		}
 
 		text := a.extractText(resp.Content)
-		a.emit(Event{Type: EventDone, Message: text})
+		a.currentPhase = PhaseFinalAnswer
+		a.emit(Event{Type: EventDone, Message: text, Phase: PhaseFinalAnswer})
 
 		w.waiting = true
 		select {

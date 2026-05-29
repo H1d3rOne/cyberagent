@@ -145,6 +145,36 @@ func TestRunServiceRejectsTraversalAndMissingRun(t *testing.T) {
 	}
 }
 
+func TestRunServiceIgnoresInternalAgentStateDirectory(t *testing.T) {
+	runsDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(runsDir, ".agent", "sessions"), 0o755); err != nil {
+		t.Fatalf("mkdir agent sessions: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runsDir, ".agent", "sessions", "agent_001.json"), []byte(`{"session_id":"agent_001"}`), 0o644); err != nil {
+		t.Fatalf("write agent session: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(runsDir, "scratch", "reports"), 0o755); err != nil {
+		t.Fatalf("mkdir scratch dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runsDir, "scratch", "notes.txt"), []byte("not a run workspace"), 0o644); err != nil {
+		t.Fatalf("write scratch file: %v", err)
+	}
+
+	service := NewRunService(runsDir)
+	page, err := service.ListRuns(context.Background(), RunListRequest{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuns() error = %v", err)
+	}
+	if len(page.Items) != 0 || !page.EOF {
+		t.Fatalf("internal/non-run directories must not be listed as runs: %#v", page)
+	}
+
+	_, err = service.GetRunSummary(context.Background(), ".agent")
+	if err == nil || ErrorCodeOf(err) != CodeBadRequest {
+		t.Fatalf("hidden internal run id error code = %s, err=%v", ErrorCodeOf(err), err)
+	}
+}
+
 func TestRunServiceReportErrors(t *testing.T) {
 	runsDir := t.TempDir()
 	runDir := filepath.Join(runsDir, "run_001")

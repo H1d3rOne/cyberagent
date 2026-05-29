@@ -63,10 +63,11 @@ type ReportAvailability struct {
 
 // RunCounts summarizes known run artifacts.
 type RunCounts struct {
-	Events    int `json:"events"`
-	Artifacts int `json:"artifacts"`
-	Findings  int `json:"findings"`
-	Approvals int `json:"approvals"`
+	Events           int `json:"events"`
+	Artifacts        int `json:"artifacts"`
+	Findings         int `json:"findings"`
+	Approvals        int `json:"approvals"`
+	PendingApprovals int `json:"pending_approvals,omitempty"`
 }
 
 // RunSummary is a lightweight view over one run workspace.
@@ -138,10 +139,20 @@ func (s RunService) ListRuns(ctx context.Context, req RunListRequest) (RunListRe
 		if err := ctxErr(ctx); err != nil {
 			return RunListResponse{}, err
 		}
-		if !entry.IsDir() {
+		if !entry.IsDir() || !isRunListCandidate(entry.Name()) {
 			continue
 		}
-		summary, err := s.GetRunSummary(ctx, entry.Name())
+		layout, err := s.openLayout(entry.Name())
+		if err != nil {
+			if ErrorCodeOf(err) == CodeNotFound || ErrorCodeOf(err) == CodeBadRequest {
+				continue
+			}
+			return RunListResponse{}, err
+		}
+		if !isRunWorkspace(layout) {
+			continue
+		}
+		summary, err := s.summaryForLayout(layout)
 		if err != nil {
 			if ErrorCodeOf(err) == CodeNotFound || ErrorCodeOf(err) == CodeBadRequest {
 				continue
@@ -174,6 +185,27 @@ func (s RunService) ListRuns(ctx context.Context, req RunListRequest) (RunListRe
 		next = strconv.Itoa(end)
 	}
 	return RunListResponse{Items: page, NextCursor: next, EOF: eof, Limit: limit}, nil
+}
+
+func isRunListCandidate(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.HasPrefix(name, ".") {
+		return false
+	}
+	return true
+}
+
+func isRunWorkspace(layout runs.Layout) bool {
+	for _, path := range []string{
+		filepath.Join(layout.Path, "metadata.json"),
+		filepath.Join(layout.Path, "effective_config.json"),
+		layout.JobPath,
+	} {
+		if fileExists(path) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetRun returns persisted snapshots and summary for one run.
@@ -377,11 +409,18 @@ func (s RunService) countsForLayout(layout runs.Layout) (RunCounts, error) {
 	if err != nil {
 		return RunCounts{}, internalError("read approvals", err)
 	}
+	pendingApprovals := 0
+	for _, approval := range approvals {
+		if approval.Status == contracts.HITLPending {
+			pendingApprovals++
+		}
+	}
 	return RunCounts{
-		Events:    eventsCount,
-		Artifacts: artifactCount,
-		Findings:  findingCount,
-		Approvals: len(approvals),
+		Events:           eventsCount,
+		Artifacts:        artifactCount,
+		Findings:         findingCount,
+		Approvals:        len(approvals),
+		PendingApprovals: pendingApprovals,
 	}, nil
 }
 
@@ -430,7 +469,13 @@ func (s RunService) resolveRunID(runIDOrPath string) (string, error) {
 		if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || strings.ContainsAny(rel, `/\`) {
 			return "", badRequest("invalid run path", nil)
 		}
+		if !isRunListCandidate(rel) {
+			return "", badRequest("invalid run path", nil)
+		}
 		return rel, nil
+	}
+	if !isRunListCandidate(identifier) {
+		return "", badRequest("invalid run id", nil)
 	}
 	return identifier, nil
 }

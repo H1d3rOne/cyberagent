@@ -1,0 +1,205 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+    - navigation [ref=e10]:
+      - link "Agent" [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /ops
+        - img [ref=e16]
+      - link "扫描" [ref=e23] [cursor=pointer]:
+        - /url: /scan/new
+        - img [ref=e24]
+      - link "运行" [ref=e26] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e27]
+      - link "设置" [ref=e31] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e32]
+    - generic "在线" [ref=e983]:
+      - img [ref=e984]
+  - generic [ref=e44]:
+    - banner [ref=e45]:
+      - generic [ref=e46]:
+        - generic [ref=e47]:
+          - img [ref=e48]
+          - generic [ref=e51]: CyberAgent
+        - generic [ref=e52]:
+          - generic [ref=e53]: 地址
+          - generic [ref=e54]:
+            - img [ref=e55]
+            - textbox "地址" [ref=e61]:
+              - /placeholder: http://127.0.0.1:8787
+          - generic [ref=e62]: 在线
+          - button "Switch to English" [ref=e64] [cursor=pointer]:
+            - img [ref=e65]
+          - link "Agent" [ref=e69] [cursor=pointer]:
+            - /url: /
+            - img [ref=e70]
+            - text: Agent
+    - main [ref=e73]:
+      - generic [ref=e74]:
+        - generic [ref=e75]:
+          - generic [ref=e76]:
+            - link "运行" [ref=e77] [cursor=pointer]:
+              - /url: /history
+              - img [ref=e78]
+              - text: 运行
+            - button "刷新" [ref=e81] [cursor=pointer]:
+              - img [ref=e82]
+              - text: 刷新
+          - generic [ref=e87]:
+            - generic [ref=e88]:
+              - generic [ref=e89]:
+                - img [ref=e90]
+                - text: safe
+              - heading "127.0.0.1:5173" [level=1] [ref=e92]
+              - generic [ref=e93]:
+                - generic [ref=e94]: job_20260524_024413_72a15c
+                - generic [ref=e95]: 127.0.0.1
+                - generic [ref=e96]: runs/job_20260524_024413_72a15c
+            - generic [ref=e97]:
+              - generic [ref=e98]:
+                - generic [ref=e99]: 作业
+                - generic [ref=e100]: 完成
+              - generic [ref=e101]: job_20260524_024413_72a15c
+        - generic [ref=e102]:
+          - generic [ref=e103]:
+            - generic [ref=e104]:
+              - img [ref=e105]
+              - heading "实时联动" [level=2] [ref=e107]
+            - generic [ref=e108]: 静态快照
+          - generic [ref=e110]:
+            - generic [ref=e111]:
+              - img [ref=e112]
+              - generic [ref=e115]: 完成
+              - generic [ref=e116]: 作业
+            - generic [ref=e117]:
+              - img [ref=e118]
+              - generic [ref=e120]: "106"
+              - generic [ref=e121]: 事件
+            - generic [ref=e122]:
+              - img [ref=e123]
+              - generic [ref=e126]: "8"
+              - generic [ref=e127]: 证据
+            - generic [ref=e128]:
+              - img [ref=e129]
+              - generic [ref=e132]: "0"
+              - generic [ref=e133]: 审批
+          - generic [ref=e134]:
+            - generic [ref=e135]:
+              - generic [ref=e136]: 最新事件
+              - generic [ref=e137]: 10:44:16
+            - generic [ref=e138]:
+              - generic [ref=e139]: "#106"
+              - generic [ref=e140]: job.finished
+            - paragraph [ref=e141]: job finished
+          - generic [ref=e142]:
+            - generic [ref=e143]:
+              - img [ref=e144]
+              - generic [ref=e146]: safe
+              - generic [ref=e147]: 策略
+            - generic [ref=e148]:
+              - img [ref=e149]
+              - generic [ref=e151]: "off"
+              - generic [ref=e152]: interactive
+            - generic [ref=e153]:
+              - img [ref=e154]
+              - generic [ref=e157]: "off"
+              - generic [ref=e158]: planner
+            - generic [ref=e159]:
+              - img [ref=e160]
+              - generic [ref=e162]: "off"
+              - generic [ref=e163]: external
+            - generic [ref=e164]:
+              - img [ref=e165]
+              - generic [ref=e168]: markdown,json
+              - generic [ref=e169]: reports
+            - generic [ref=e170]:
+              - img [ref=e171]
+              - generic [ref=e174]: 直接打开
+              - generic [ref=e175]: 发起
+        - generic [ref=e176]:
+          - generic [ref=e177]:
+            - generic [ref=e178]:
+              - generic [ref=e179]: 事件
+              - img [ref=e181]
+            - generic [ref=e183]: "106"
+          - generic [ref=e184]:
+            - generic [ref=e185]:
+              - generic [ref=e186]: 证据
+              - img [ref=e188]
+            - generic [ref=e191]: "8"
+          - generic [ref=e192]:
+            - generic [ref=e193]:
+              - generic [ref=e194]: 发现
+              - img [ref=e196]
+            - generic [ref=e198]: "3"
+          - generic [ref=e199]:
+            - generic [ref=e200]:
+              - generic [ref=e201]: 审批
+              - img [ref=e203]
+            - generic [ref=e206]: "0"
+          - generic [ref=e207]:
+            - generic [ref=e208]:
+              - generic [ref=e209]: 更新
+              - img [ref=e211]
+            - generic [ref=e214]: 05/24 10:44
+        - generic [ref=e215]:
+          - navigation [ref=e216]:
+            - button "事件 106" [ref=e217] [cursor=pointer]:
+              - generic [ref=e218]:
+                - img [ref=e219]
+                - generic [ref=e222]: 事件
+              - generic [ref=e223]: "106"
+            - button "报告 3" [active] [ref=e224] [cursor=pointer]:
+              - generic [ref=e225]:
+                - img [ref=e226]
+                - generic [ref=e229]: 报告
+              - generic [ref=e230]: "3"
+            - button "证据 8" [ref=e231] [cursor=pointer]:
+              - generic [ref=e232]:
+                - img [ref=e233]
+                - generic [ref=e236]: 证据
+              - generic [ref=e237]: "8"
+            - button "审批 0" [ref=e238] [cursor=pointer]:
+              - generic [ref=e239]:
+                - img [ref=e240]
+                - generic [ref=e242]: 审批
+              - generic [ref=e243]: "0"
+          - generic [ref=e986]:
+            - generic [ref=e987]:
+              - generic [ref=e988]:
+                - img [ref=e989]
+                - text: 发现
+              - generic [ref=e994]:
+                - generic [ref=e995]:
+                  - generic [ref=e996]: low
+                  - generic [ref=e997]: Missing X-Content-Type-Options Header
+                - paragraph [ref=e998]: X-Content-Type-Options header is not present.
+                - link "交给 Agent" [ref=e999] [cursor=pointer]:
+                  - /url: /?prompt=%E5%88%86%E6%9E%90%E8%BF%90%E8%A1%8C%20job_20260524_024413_72a15c%20%E5%9C%A8%20http%3A%2F%2F127.0.0.1%3A5173%20%E4%B8%8A%E7%9A%84%E8%BF%99%E4%B8%AA%20finding%EF%BC%9Aseverity%3Dlow%EF%BC%8Ccategory%3Dsecurity_headers%EF%BC%8Ctitle%3D%22Missing%20X-Content-Type-Options%20Header%22%E3%80%82%E8%AF%B7%E8%A7%A3%E9%87%8A%E5%BD%B1%E5%93%8D%E3%80%81%E5%85%B3%E9%94%AE%E8%AF%81%E6%8D%AE%E3%80%81%E8%AF%AF%E6%8A%A5%E6%A3%80%E6%9F%A5%E3%80%81%E4%BF%AE%E5%A4%8D%E5%BB%BA%E8%AE%AE%EF%BC%8C%E4%BB%A5%E5%8F%8A%E6%98%AF%E5%90%A6%E9%9C%80%E8%A6%81%E5%90%8E%E7%BB%AD%E6%B5%8B%E8%AF%95%E3%80%82%E4%B8%8A%E4%B8%8B%E6%96%87%EF%BC%9AX-Content-Type-Options%20header%20is%20not%20present.
+                  - img [ref=e1000]
+                  - text: 交给 Agent
+              - generic [ref=e1003]:
+                - generic [ref=e1004]:
+                  - generic [ref=e1005]: low
+                  - generic [ref=e1006]: Missing Frame Protection Headers
+                - paragraph [ref=e1007]: Neither Content-Security-Policy frame-ancestors nor X-Frame-Options is present.
+                - link "交给 Agent" [ref=e1008] [cursor=pointer]:
+                  - /url: /?prompt=%E5%88%86%E6%9E%90%E8%BF%90%E8%A1%8C%20job_20260524_024413_72a15c%20%E5%9C%A8%20http%3A%2F%2F127.0.0.1%3A5173%20%E4%B8%8A%E7%9A%84%E8%BF%99%E4%B8%AA%20finding%EF%BC%9Aseverity%3Dlow%EF%BC%8Ccategory%3Dsecurity_headers%EF%BC%8Ctitle%3D%22Missing%20Frame%20Protection%20Headers%22%E3%80%82%E8%AF%B7%E8%A7%A3%E9%87%8A%E5%BD%B1%E5%93%8D%E3%80%81%E5%85%B3%E9%94%AE%E8%AF%81%E6%8D%AE%E3%80%81%E8%AF%AF%E6%8A%A5%E6%A3%80%E6%9F%A5%E3%80%81%E4%BF%AE%E5%A4%8D%E5%BB%BA%E8%AE%AE%EF%BC%8C%E4%BB%A5%E5%8F%8A%E6%98%AF%E5%90%A6%E9%9C%80%E8%A6%81%E5%90%8E%E7%BB%AD%E6%B5%8B%E8%AF%95%E3%80%82%E4%B8%8A%E4%B8%8B%E6%96%87%EF%BC%9ANeither%20Content-Security-Policy%20frame-ancestors%20nor%20X-Frame-Options%20is%20present.
+                  - img [ref=e1009]
+                  - text: 交给 Agent
+              - generic [ref=e1012]:
+                - generic [ref=e1013]:
+                  - generic [ref=e1014]: info
+                  - generic [ref=e1015]: Missing Referrer-Policy Header
+                - paragraph [ref=e1016]: Referrer-Policy header is not present.
+                - link "交给 Agent" [ref=e1017] [cursor=pointer]:
+                  - /url: /?prompt=%E5%88%86%E6%9E%90%E8%BF%90%E8%A1%8C%20job_20260524_024413_72a15c%20%E5%9C%A8%20http%3A%2F%2F127.0.0.1%3A5173%20%E4%B8%8A%E7%9A%84%E8%BF%99%E4%B8%AA%20finding%EF%BC%9Aseverity%3Dinfo%EF%BC%8Ccategory%3Dsecurity_headers%EF%BC%8Ctitle%3D%22Missing%20Referrer-Policy%20Header%22%E3%80%82%E8%AF%B7%E8%A7%A3%E9%87%8A%E5%BD%B1%E5%93%8D%E3%80%81%E5%85%B3%E9%94%AE%E8%AF%81%E6%8D%AE%E3%80%81%E8%AF%AF%E6%8A%A5%E6%A3%80%E6%9F%A5%E3%80%81%E4%BF%AE%E5%A4%8D%E5%BB%BA%E8%AE%AE%EF%BC%8C%E4%BB%A5%E5%8F%8A%E6%98%AF%E5%90%A6%E9%9C%80%E8%A6%81%E5%90%8E%E7%BB%AD%E6%B5%8B%E8%AF%95%E3%80%82%E4%B8%8A%E4%B8%8B%E6%96%87%EF%BC%9AReferrer-Policy%20header%20is%20not%20present.
+                  - img [ref=e1018]
+                  - text: 交给 Agent
+            - generic [ref=e1021]: "# CyberAgent Report ## 1. Summary - Target: `http://127.0.0.1:5173` - Scope ID: `scope_001` - Profile: `safe` - Job: `job_20260524_024413_72a15c` - Status: `succeeded` - Findings: `3` ## 2. Execution Overview - Planner: `builtin.web.safe.v1` - Steps planned: `20` - Steps skipped: `step_tls_inspect_001` - Evidence items: `13` - Artifacts: `8` ## 3. Findings ### Missing X-Content-Type-Options Header - Severity: `low` - Confidence: `high` - Category: `security_headers` - Affected: `http://127.0.0.1:5173` - Evidence: `evidence_missing_x_content_type_options_001` X-Content-Type-Options header is not present. Impact: Browsers may MIME-sniff responses in some contexts. Reproduction: - `curl -I http://127.0.0.1:5173` Remediation: Set X-Content-Type-Options: nosniff. ### Missing Frame Protection Headers - Severity: `low` - Confidence: `medium` - Category: `security_headers` - Affected: `http://127.0.0.1:5173` - Evidence: `evidence_missing_frame_protection_001` Neither Content-Security-Policy frame-ancestors nor X-Frame-Options is present. Impact: Pages may be more exposed to clickjacking depending on application context. Reproduction: - `curl -I http://127.0.0.1:5173` Remediation: Set CSP frame-ancestors and/or X-Frame-Options as appropriate. ### Missing Referrer-Policy Header - Severity: `info` - Confidence: `high` - Category: `security_headers` - Affected: `http://127.0.0.1:5173` - Evidence: `evidence_missing_referrer_policy_001` Referrer-Policy header is not present. Impact: Browsers may send more referrer information than intended. Reproduction: - `curl -I http://127.0.0.1:5173` Remediation: Set a Referrer-Policy such as strict-origin-when-cross-origin. ## 4. Evidence Index - `evidence_http_status_001` [http_response] HTTP response status (artifact: `artifact_http_probe_001`) - `evidence_missing_x_content_type_options_001` [http_header] Missing X-Content-Type-Options Header (artifact: `artifact_homepage_headers_001`) - `evidence_missing_frame_protection_001` [http_header] Missing Frame Protection Headers (artifact: `artifact_homepage_headers_001`) - `evidence_missing_referrer_policy_001` [http_header] Missing Referrer-Policy Header (artifact: `artifact_homepage_headers_001`) - `evidence_html_script_001` [html_link] JavaScript asset discovered (artifact: `artifact_homepage_html_001`) - `evidence_html_script_002` [html_link] JavaScript asset discovered (artifact: `artifact_homepage_html_001`) - `evidence_content_discovery_001` [http_response] Interesting path discovered - `evidence_content_discovery_002` [http_response] Interesting path discovered - `evidence_content_discovery_003` [http_response] Interesting path discovered - `evidence_content_discovery_004` [http_response] Interesting path discovered - `evidence_content_discovery_005` [http_response] Interesting path discovered - `evidence_content_discovery_006` [http_response] Interesting path discovered - `evidence_port_003_step_tcp_port_check_001` [port_status] Open port: 127.0.0.1:8080 ## 5. Artifacts - `artifact_http_probe_001` → `artifacts/http/probe.json` (json, 585 bytes) - `artifact_homepage_html_001` → `artifacts/http/homepage.html` (html, 716 bytes) - `artifact_homepage_headers_001` → `artifacts/http/homepage_headers.json` (json, 344 bytes) - `artifact_robots_txt_001` → `artifacts/http/robots.txt` (text, 716 bytes) - `artifact_sitemap_xml_001` → `artifacts/http/sitemap.xml` (xml, 716 bytes) - `artifact_js_asset_001` → `artifacts/http/js_001.js` (text, 182631 bytes) - `artifact_js_asset_002` → `artifacts/http/js_002.js` (text, 3260 bytes) - `artifact_content_discovery_001` → `artifacts/http/content_discovery.json` (json, 4294 bytes) ## 6. Limitations - Only low-risk built-in checks were executed unless optional plugins were explicitly enabled."
