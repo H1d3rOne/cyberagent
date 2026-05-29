@@ -1,0 +1,174 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+      - generic [ref=e11]:
+        - generic [ref=e12]: CyberAgent
+        - generic [ref=e13]: Agent Cockpit
+    - navigation [ref=e14]:
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /
+        - img [ref=e17]
+        - generic [ref=e24]: 总览
+      - link "Agent" [ref=e25] [cursor=pointer]:
+        - /url: /agent
+        - img [ref=e27]
+        - generic [ref=e30]: Agent
+      - link "任务" [ref=e31] [cursor=pointer]:
+        - /url: /tasks
+        - img [ref=e33]
+        - generic [ref=e35]: 任务
+      - link "历史" [ref=e36] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e38]
+        - generic [ref=e42]: 历史
+      - link "设置" [ref=e43] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e45]
+        - generic [ref=e48]: 设置
+    - generic "需要令牌" [ref=e50]:
+      - img [ref=e51]
+      - generic [ref=e54]: 需要令牌
+  - generic [ref=e55]:
+    - banner [ref=e56]:
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - img [ref=e59]
+          - generic [ref=e62]:
+            - generic [ref=e63]: authorized web/api security agent
+            - generic [ref=e64]: 通过自然语言驱动安全测试、运维与分析
+        - generic [ref=e65]:
+          - generic [ref=e66]: 需要令牌
+          - button "Switch to English" [ref=e68] [cursor=pointer]:
+            - img [ref=e69]
+          - link "Agent" [ref=e73] [cursor=pointer]:
+            - /url: /agent
+            - img [ref=e74]
+            - text: Agent
+    - main [ref=e77]:
+      - generic [ref=e78]:
+        - complementary [ref=e79]:
+          - generic [ref=e80]:
+            - heading "会话" [level=2] [ref=e81]:
+              - img [ref=e82]
+              - text: 会话
+            - button "刷新" [ref=e84] [cursor=pointer]:
+              - img [ref=e85]
+          - generic [ref=e91]: 无数据
+        - generic [ref=e92]:
+          - generic [ref=e94]:
+            - img [ref=e96]
+            - generic [ref=e99]:
+              - heading "CyberAgent Cockpit" [level=1] [ref=e100]
+              - generic [ref=e101]:
+                - generic [ref=e102]: plan
+                - generic [ref=e104]: tool
+                - generic [ref=e106]: observe
+                - generic [ref=e108]: synthesize
+          - generic [ref=e110]:
+            - img [ref=e112]
+            - generic [ref=e115]:
+              - generic [ref=e117]:
+                - img [ref=e118]
+                - text: agent
+              - paragraph [ref=e121]: 我是 CyberAgent。你可以直接用自然语言让我执行操作：扫描授权目标、查看运行、检查插件、查看 daemon 健康、管理 workspace 文件或执行白名单命令。 示例：扫描 http://127.0.0.1:8080 scope=127.0.0.1
+          - generic [ref=e122]:
+            - generic [ref=e123]:
+              - generic [ref=e125]:
+                - generic [ref=e126]:
+                  - img [ref=e127]
+                  - text: 等输入
+                - generic [ref=e129]: 等待下一步指令或自然语言任务
+              - generic [ref=e130]:
+                - button "继续" [disabled]:
+                  - img
+                  - text: 继续
+                - button "暂停" [disabled]:
+                  - img
+                  - text: 暂停
+                - button "新任务" [disabled]:
+                  - img
+                  - text: 新任务
+            - generic [ref=e131]:
+              - textbox "输入修订要求，如：优先检查认证与越权风险" [ref=e132]
+              - button "修订" [disabled]:
+                - img
+                - text: 修订
+          - generic [ref=e134]:
+            - generic [ref=e135]:
+              - img [ref=e136]
+              - text: 快捷指令
+            - button "健康检查" [ref=e138] [cursor=pointer]:
+              - img [ref=e139]
+              - text: 健康检查
+            - button "列出工具" [ref=e141] [cursor=pointer]:
+              - img [ref=e142]
+              - text: 列出工具
+            - button "任务概况" [ref=e144] [cursor=pointer]:
+              - img [ref=e145]
+              - text: 任务概况
+            - button "工作区" [ref=e149] [cursor=pointer]:
+              - img [ref=e150]
+              - text: 工作区
+          - generic [ref=e153]:
+            - 'textbox "输入目标 URL 启动扫描，如: 扫描 http://127.0.0.1:8080 scope=127.0.0.1" [ref=e154]'
+            - button "发送" [disabled]:
+              - img
+              - generic: 发送
+        - complementary [ref=e155]:
+          - generic [ref=e156]:
+            - generic [ref=e157]:
+              - heading "Agent Runbook" [level=2] [ref=e158]:
+                - img [ref=e159]
+                - text: Agent Runbook
+              - generic [ref=e162]: 等输入
+            - generic [ref=e163]:
+              - generic [ref=e164]:
+                - generic [ref=e165]:
+                  - generic [ref=e166]: 会话状态
+                  - generic [ref=e167]: idle
+                - generic [ref=e168]:
+                  - generic [ref=e169]: 工具调用
+                  - generic [ref=e170]: "0"
+              - generic [ref=e171]:
+                - generic [ref=e172]: 当前目标
+                - generic [ref=e173]: 等待自然语言指令
+              - generic [ref=e174]:
+                - generic [ref=e175]:
+                  - generic [ref=e176]:
+                    - img [ref=e177]
+                    - text: 计划
+                  - generic [ref=e189]: 0/4
+                - generic [ref=e190]:
+                  - generic [ref=e191]:
+                    - generic [ref=e192]: "1"
+                    - generic [ref=e193]: 理解目标与授权范围
+                    - generic [ref=e194]: ready
+                  - generic [ref=e195]:
+                    - generic [ref=e196]: "2"
+                    - generic [ref=e197]: 制定安全分析计划
+                    - generic [ref=e198]: ready
+                  - generic [ref=e199]:
+                    - generic [ref=e200]: "3"
+                    - generic [ref=e201]: 调用工具并观察结果
+                    - generic [ref=e202]: ready
+                  - generic [ref=e203]:
+                    - generic [ref=e204]: "4"
+                    - generic [ref=e205]: 汇总证据和下一步
+                    - generic [ref=e206]: ready
+          - generic [ref=e207]:
+            - heading "Agent 工作区" [level=2] [ref=e208]:
+              - img [ref=e209]
+              - text: Agent 工作区
+            - generic [ref=e211]: missing or invalid bearer token
+          - generic [ref=e212]:
+            - generic [ref=e213]:
+              - heading "工作区文件" [level=2] [ref=e214]:
+                - img [ref=e215]
+                - text: 工作区文件
+              - button "刷新" [ref=e217] [cursor=pointer]
+            - generic [ref=e218]:
+              - textbox "输入目录路径，如 . 或 src" [ref=e219]: .
+              - button "打开" [disabled]
+            - generic [ref=e220]: 当前目录为空

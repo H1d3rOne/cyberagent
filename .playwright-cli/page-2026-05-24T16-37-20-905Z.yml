@@ -1,0 +1,249 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+    - navigation [ref=e10]:
+      - link "Agent" [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link "Overview" [ref=e15] [cursor=pointer]:
+        - /url: /ops
+        - img [ref=e16]
+      - link "Scan" [ref=e23] [cursor=pointer]:
+        - /url: /scan/new
+        - img [ref=e24]
+      - link "History" [ref=e26] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e27]
+      - link "Settings" [ref=e31] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e32]
+    - generic "Offline" [ref=e36]:
+      - img [ref=e37]
+  - generic [ref=e44]:
+    - banner [ref=e45]:
+      - generic [ref=e46]:
+        - generic [ref=e47]:
+          - img [ref=e48]
+          - generic [ref=e51]: CyberAgent
+        - generic [ref=e52]:
+          - generic [ref=e53]: Offline
+          - button "切换到中文" [ref=e55] [cursor=pointer]:
+            - img [ref=e56]
+          - link "Agent" [ref=e60] [cursor=pointer]:
+            - /url: /
+            - img [ref=e61]
+            - text: Agent
+    - main [ref=e64]:
+      - generic [ref=e65]:
+        - generic [ref=e66]:
+          - generic [ref=e69]:
+            - generic [ref=e70]:
+              - generic [ref=e71]:
+                - generic [ref=e72]:
+                  - img [ref=e73]
+                  - text: Agent Cockpit
+                - generic [ref=e76]: Local fallback
+                - generic [ref=e78]:
+                  - img [ref=e79]
+                  - text: daemon offline
+              - heading "CyberAgent" [level=1] [ref=e82]
+              - paragraph [ref=e83]: "Command the Agent through chat: convert security management, testing and operations into auditable daemon tasks."
+            - generic [ref=e84]:
+              - generic [ref=e85]:
+                - generic [ref=e86]:
+                  - generic [ref=e87]: Running
+                  - img [ref=e89]
+                - generic [ref=e91]: "0"
+              - generic [ref=e92]:
+                - generic [ref=e93]:
+                  - generic [ref=e94]: Findings
+                  - img [ref=e96]
+                - generic [ref=e98]: "0"
+              - generic [ref=e99]:
+                - generic [ref=e100]:
+                  - generic [ref=e101]: Tools
+                  - img [ref=e103]
+                - generic [ref=e109]: "0"
+          - generic [ref=e110]:
+            - button "Scan" [ref=e111] [cursor=pointer]:
+              - img [ref=e112]
+              - generic [ref=e114]: Scan
+            - button "Doctor" [ref=e115] [cursor=pointer]:
+              - img [ref=e116]
+              - generic [ref=e119]: Doctor
+            - button "Tools" [ref=e120] [cursor=pointer]:
+              - img [ref=e121]
+              - generic [ref=e127]: Tools
+            - button "Runs" [ref=e128] [cursor=pointer]:
+              - img [ref=e129]
+              - generic [ref=e133]: Runs
+            - button "Approvals" [ref=e134] [cursor=pointer]:
+              - img [ref=e135]
+              - generic [ref=e139]: Approvals
+          - generic [ref=e141]:
+            - img [ref=e143]
+            - generic [ref=e146]:
+              - paragraph [ref=e147]: "I am CyberAgent. Give me an authorized target and scope; I will plan steps, select tools, run the safe profile, collect evidence and produce a reproducible report. Try: scan http://127.0.0.1:18080 scope=127.0.0.1"
+              - generic [ref=e148]: 12:37:20 AM
+          - generic [ref=e149]:
+            - generic [ref=e150]:
+              - textbox "Tell the Agent what to do, e.g. scan http://127.0.0.1:18080 scope=127.0.0.1" [ref=e151]
+              - button "Send" [disabled]:
+                - img
+                - generic: Send
+            - generic [ref=e152]:
+              - button "Web scan" [ref=e153] [cursor=pointer]:
+                - img [ref=e154]
+                - generic [ref=e156]: Web scan
+                - img [ref=e157]
+              - button "Daemon doctor" [ref=e159] [cursor=pointer]:
+                - img [ref=e160]
+                - generic [ref=e163]: Daemon doctor
+                - img [ref=e164]
+              - button "Plugin abilities" [ref=e166] [cursor=pointer]:
+                - img [ref=e167]
+                - generic [ref=e173]: Plugin abilities
+                - img [ref=e174]
+              - button "Approval queue" [ref=e176] [cursor=pointer]:
+                - img [ref=e177]
+                - generic [ref=e181]: Approval queue
+                - img [ref=e182]
+        - complementary [ref=e184]:
+          - generic [ref=e185]:
+            - generic [ref=e186]:
+              - generic [ref=e187]:
+                - img [ref=e188]
+                - heading "Agent Runtime" [level=2] [ref=e191]
+              - generic [ref=e192]: Local fallback
+            - generic [ref=e194]:
+              - generic [ref=e195]:
+                - generic [ref=e196]:
+                  - generic [ref=e197]: Operator
+                  - img [ref=e199]
+                - generic [ref=e208]: H1d3rOne
+              - generic [ref=e209]:
+                - generic [ref=e210]:
+                  - generic [ref=e211]: Auth
+                  - img [ref=e213]
+                - generic [ref=e216]: Configured
+              - generic [ref=e217]:
+                - generic [ref=e218]:
+                  - generic [ref=e219]: Session
+                  - img [ref=e221]
+                - generic [ref=e225]: —
+              - generic [ref=e226]:
+                - generic [ref=e227]:
+                  - generic [ref=e228]: Profile
+                  - img [ref=e230]
+                - generic [ref=e234]: safe
+            - generic [ref=e235]:
+              - generic [ref=e236]:
+                - img [ref=e237]
+                - text: endpoint
+              - generic [ref=e240]: http://127.0.0.1:8787
+            - generic [ref=e241]: Failed to fetch
+          - generic [ref=e242]:
+            - generic [ref=e244]:
+              - img [ref=e245]
+              - heading "Active run" [level=2] [ref=e247]
+            - generic [ref=e248]: Start a scan and the Agent will keep syncing the run here.
+          - generic [ref=e249]:
+            - generic [ref=e250]:
+              - generic [ref=e251]:
+                - img [ref=e252]
+                - heading "Agent abilities" [level=2] [ref=e258]
+              - generic [ref=e259]: v0.1.2
+            - generic [ref=e260]:
+              - generic [ref=e261]:
+                - generic [ref=e262]:
+                  - img [ref=e263]
+                  - generic [ref=e275]: Perceive
+                - generic [ref=e276]: target/scope
+              - generic [ref=e277]:
+                - generic [ref=e278]:
+                  - img [ref=e279]
+                  - generic [ref=e283]: Plan
+                - generic [ref=e284]: safe profile
+              - generic [ref=e285]:
+                - generic [ref=e286]:
+                  - img [ref=e287]
+                  - generic [ref=e289]: Tools
+                - generic [ref=e290]: registry
+              - generic [ref=e291]:
+                - generic [ref=e292]:
+                  - img [ref=e293]
+                  - generic [ref=e295]: Run
+                - generic [ref=e296]: daemon
+              - generic [ref=e297]:
+                - generic [ref=e298]:
+                  - img [ref=e299]
+                  - generic [ref=e302]: Evidence
+                - generic [ref=e303]: artifacts
+              - generic [ref=e304]:
+                - generic [ref=e305]:
+                  - img [ref=e306]
+                  - generic [ref=e310]: HITL
+                - generic [ref=e311]: policy
+              - generic [ref=e312]:
+                - generic [ref=e313]:
+                  - img [ref=e314]
+                  - generic [ref=e317]: Report
+                - generic [ref=e318]: md/json
+          - generic [ref=e319]:
+            - generic [ref=e320]:
+              - img [ref=e321]
+              - heading "Decision chain" [level=2] [ref=e325]
+            - generic [ref=e326]:
+              - generic [ref=e327]:
+                - img [ref=e329]
+                - generic [ref=e331]:
+                  - generic [ref=e332]: Prompt
+                  - generic [ref=e333]: chat
+                - img [ref=e334]
+              - generic [ref=e336]:
+                - img [ref=e338]
+                - generic [ref=e350]:
+                  - generic [ref=e351]: Reason
+                  - generic [ref=e352]: plan
+                - img [ref=e353]
+              - generic [ref=e355]:
+                - img [ref=e357]
+                - generic [ref=e360]:
+                  - generic [ref=e361]: Policy
+                  - generic [ref=e362]: safe / HITL
+                - img [ref=e363]
+              - generic [ref=e365]:
+                - img [ref=e367]
+                - generic [ref=e369]:
+                  - generic [ref=e370]: Tools
+                  - generic [ref=e371]: api / plugin
+                - img [ref=e372]
+              - generic [ref=e374]:
+                - img [ref=e376]
+                - generic [ref=e379]:
+                  - generic [ref=e380]: Report
+                  - generic [ref=e381]: evidence
+                - img [ref=e382]
+          - generic [ref=e384]:
+            - generic [ref=e385]:
+              - generic [ref=e386]:
+                - img [ref=e387]
+                - heading "Tool calls" [level=2] [ref=e390]
+              - button [ref=e391] [cursor=pointer]:
+                - img [ref=e392]
+            - generic [ref=e398]: Waiting for Agent tool calls
+          - generic [ref=e399]:
+            - generic [ref=e400]:
+              - img [ref=e401]
+              - heading "Recent runs" [level=2] [ref=e405]
+            - generic [ref=e407]: No data
+          - generic [ref=e408]:
+            - generic [ref=e409]:
+              - img [ref=e410]
+              - text: Default policy
+            - generic [ref=e413]:
+              - generic [ref=e414]: profile=safe
+              - generic [ref=e415]: no_external_tools=true
+              - generic [ref=e416]: operator=H1d3rOne

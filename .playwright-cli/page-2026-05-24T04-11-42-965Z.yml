@@ -1,0 +1,276 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+    - navigation [ref=e10]:
+      - link "Agent" [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /ops
+        - img [ref=e16]
+      - link "扫描" [ref=e23] [cursor=pointer]:
+        - /url: /scan/new
+        - img [ref=e24]
+      - link "运行" [ref=e26] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e27]
+      - link "设置" [ref=e31] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e32]
+    - generic "离线" [ref=e36]:
+      - img [ref=e37]
+  - generic [ref=e44]:
+    - banner [ref=e45]:
+      - generic [ref=e46]:
+        - generic [ref=e47]:
+          - img [ref=e48]
+          - generic [ref=e51]: CyberAgent
+        - generic [ref=e52]:
+          - generic [ref=e53]: 地址
+          - generic [ref=e54]:
+            - img [ref=e55]
+            - textbox "地址" [ref=e61]:
+              - /placeholder: http://127.0.0.1:8787
+          - generic [ref=e62]: 离线
+          - button "Switch to English" [ref=e64] [cursor=pointer]:
+            - img [ref=e65]
+          - link "Agent" [ref=e69] [cursor=pointer]:
+            - /url: /
+            - img [ref=e70]
+            - text: Agent
+    - main [ref=e73]:
+      - generic [ref=e74]:
+        - generic [ref=e75]:
+          - generic [ref=e78]:
+            - generic [ref=e79]:
+              - generic [ref=e80]:
+                - generic [ref=e81]:
+                  - img [ref=e82]
+                  - text: Agent Cockpit
+                - generic [ref=e85]: 需要令牌
+                - generic [ref=e87]:
+                  - img [ref=e88]
+                  - text: daemon 离线
+              - heading "CyberAgent" [level=1] [ref=e91]
+              - paragraph [ref=e92]: 用聊天指挥 Agent：把安全管理、测试、运维动作转成可审计 daemon 任务。
+            - generic [ref=e93]:
+              - generic [ref=e94]:
+                - generic [ref=e95]:
+                  - generic [ref=e96]: 运行
+                  - img [ref=e98]
+                - generic [ref=e100]: "0"
+              - generic [ref=e101]:
+                - generic [ref=e102]:
+                  - generic [ref=e103]: 发现
+                  - img [ref=e105]
+                - generic [ref=e107]: "0"
+              - generic [ref=e108]:
+                - generic [ref=e109]:
+                  - generic [ref=e110]: 工具
+                  - img [ref=e112]
+                - generic [ref=e118]: "0"
+          - generic [ref=e119]:
+            - button "扫描" [ref=e120] [cursor=pointer]:
+              - img [ref=e121]
+              - generic [ref=e123]: 扫描
+            - button "体检" [ref=e124] [cursor=pointer]:
+              - img [ref=e125]
+              - generic [ref=e128]: 体检
+            - button "工具" [ref=e129] [cursor=pointer]:
+              - img [ref=e130]
+              - generic [ref=e136]: 工具
+            - button "运行" [ref=e137] [cursor=pointer]:
+              - img [ref=e138]
+              - generic [ref=e142]: 运行
+            - button "审批" [ref=e143] [cursor=pointer]:
+              - img [ref=e144]
+              - generic [ref=e148]: 审批
+          - generic [ref=e149]:
+            - generic [ref=e150]:
+              - generic [ref=e151]:
+                - img [ref=e152]
+                - text: 需要连接令牌
+              - generic [ref=e155]: 当前聊天仍可描述任务，但要让 Agent 真正调用 daemon / 扫描 / 插件，请先去设置页填写 Bearer token。
+              - link "去设置" [ref=e157] [cursor=pointer]:
+                - /url: /settings
+                - img [ref=e158]
+                - text: 去设置
+            - generic [ref=e164]:
+              - img [ref=e166]
+              - generic [ref=e169]:
+                - paragraph [ref=e170]: 我是 CyberAgent。给我一个授权目标和 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。试试：扫描 http://127.0.0.1:18080 scope=127.0.0.1
+                - generic [ref=e171]: 12:11:42
+            - generic [ref=e172]:
+              - img [ref=e174]
+              - generic [ref=e177]:
+                - paragraph [ref=e178]: 需要 Bearer token 才能连接后端 Agent Runtime 并调用工具。请进入设置粘贴 .tmp/web-dev/token 的内容；未连接前我只能解释能力，不能执行 daemon 任务。
+                - link "打开设置" [ref=e180] [cursor=pointer]:
+                  - /url: /settings
+                  - img [ref=e181]
+                  - text: 打开设置
+                - generic [ref=e187]: 12:11:42
+          - generic [ref=e188]:
+            - generic [ref=e189]:
+              - textbox "告诉 Agent 要做什么，例如：扫描 http://127.0.0.1:18080 scope=127.0.0.1" [ref=e190]
+              - button "发送" [disabled]:
+                - img
+                - generic: 发送
+            - generic [ref=e191]:
+              - button "Web 扫描" [ref=e192] [cursor=pointer]:
+                - img [ref=e193]
+                - generic [ref=e195]: Web 扫描
+                - img [ref=e196]
+              - button "Daemon 体检" [ref=e198] [cursor=pointer]:
+                - img [ref=e199]
+                - generic [ref=e202]: Daemon 体检
+                - img [ref=e203]
+              - button "插件能力" [ref=e205] [cursor=pointer]:
+                - img [ref=e206]
+                - generic [ref=e212]: 插件能力
+                - img [ref=e213]
+              - button "审批队列" [ref=e215] [cursor=pointer]:
+                - img [ref=e216]
+                - generic [ref=e220]: 审批队列
+                - img [ref=e221]
+        - complementary [ref=e223]:
+          - generic [ref=e224]:
+            - generic [ref=e225]:
+              - generic [ref=e226]:
+                - img [ref=e227]
+                - heading "Agent 运行时" [level=2] [ref=e230]
+              - generic [ref=e231]: 需要令牌
+            - generic [ref=e233]:
+              - generic [ref=e234]:
+                - generic [ref=e235]:
+                  - generic [ref=e236]: 操作员
+                  - img [ref=e238]
+                - generic [ref=e247]: local-user
+              - generic [ref=e248]:
+                - generic [ref=e249]:
+                  - generic [ref=e250]: 认证
+                  - img [ref=e252]
+                - generic [ref=e255]: 缺失
+              - generic [ref=e256]:
+                - generic [ref=e257]:
+                  - generic [ref=e258]: 会话
+                  - img [ref=e260]
+                - generic [ref=e264]: —
+              - generic [ref=e265]:
+                - generic [ref=e266]:
+                  - generic [ref=e267]: 策略
+                  - img [ref=e269]
+                - generic [ref=e273]: safe
+            - generic [ref=e274]:
+              - generic [ref=e275]:
+                - img [ref=e276]
+                - text: 地址
+              - generic [ref=e279]: /api (Vite proxy)
+            - link "粘贴 Token 并接入 Runtime" [ref=e280] [cursor=pointer]:
+              - /url: /settings
+              - img [ref=e281]
+              - text: 粘贴 Token 并接入 Runtime
+          - generic [ref=e287]:
+            - generic [ref=e289]:
+              - img [ref=e290]
+              - heading "活跃运行" [level=2] [ref=e292]
+            - generic [ref=e293]: 发起一次扫描后，Agent 会在这里持续同步运行态。
+          - generic [ref=e294]:
+            - generic [ref=e295]:
+              - generic [ref=e296]:
+                - img [ref=e297]
+                - heading "Agent 能力" [level=2] [ref=e303]
+              - generic [ref=e304]: v0.1.2
+            - generic [ref=e305]:
+              - generic [ref=e306]:
+                - generic [ref=e307]:
+                  - img [ref=e308]
+                  - generic [ref=e320]: 理解
+                - generic [ref=e321]: target/scope
+              - generic [ref=e322]:
+                - generic [ref=e323]:
+                  - img [ref=e324]
+                  - generic [ref=e328]: 规划
+                - generic [ref=e329]: safe profile
+              - generic [ref=e330]:
+                - generic [ref=e331]:
+                  - img [ref=e332]
+                  - generic [ref=e334]: 选工具
+                - generic [ref=e335]: registry
+              - generic [ref=e336]:
+                - generic [ref=e337]:
+                  - img [ref=e338]
+                  - generic [ref=e340]: 执行
+                - generic [ref=e341]: daemon
+              - generic [ref=e342]:
+                - generic [ref=e343]:
+                  - img [ref=e344]
+                  - generic [ref=e347]: 证据
+                - generic [ref=e348]: artifacts
+              - generic [ref=e349]:
+                - generic [ref=e350]:
+                  - img [ref=e351]
+                  - generic [ref=e355]: 审批
+                - generic [ref=e356]: policy
+              - generic [ref=e357]:
+                - generic [ref=e358]:
+                  - img [ref=e359]
+                  - generic [ref=e362]: 报告
+                - generic [ref=e363]: md/json
+          - generic [ref=e364]:
+            - generic [ref=e365]:
+              - img [ref=e366]
+              - heading "决策链" [level=2] [ref=e370]
+            - generic [ref=e371]:
+              - generic [ref=e372]:
+                - img [ref=e374]
+                - generic [ref=e376]:
+                  - generic [ref=e377]: 输入
+                  - generic [ref=e378]: chat
+                - img [ref=e379]
+              - generic [ref=e381]:
+                - img [ref=e383]
+                - generic [ref=e395]:
+                  - generic [ref=e396]: 推理
+                  - generic [ref=e397]: plan
+                - img [ref=e398]
+              - generic [ref=e400]:
+                - img [ref=e402]
+                - generic [ref=e405]:
+                  - generic [ref=e406]: 策略
+                  - generic [ref=e407]: safe / HITL
+                - img [ref=e408]
+              - generic [ref=e410]:
+                - img [ref=e412]
+                - generic [ref=e414]:
+                  - generic [ref=e415]: 工具
+                  - generic [ref=e416]: api / plugin
+                - img [ref=e417]
+              - generic [ref=e419]:
+                - img [ref=e421]
+                - generic [ref=e424]:
+                  - generic [ref=e425]: 报告
+                  - generic [ref=e426]: evidence
+                - img [ref=e427]
+          - generic [ref=e429]:
+            - generic [ref=e430]:
+              - generic [ref=e431]:
+                - img [ref=e432]
+                - heading "工具调用" [level=2] [ref=e435]
+              - button [ref=e436] [cursor=pointer]:
+                - img [ref=e437]
+            - generic [ref=e443]: 等待 Agent 调用工具
+          - generic [ref=e444]:
+            - generic [ref=e445]:
+              - img [ref=e446]
+              - heading "最近运行" [level=2] [ref=e450]
+            - generic [ref=e452]: 无数据
+          - generic [ref=e453]:
+            - generic [ref=e454]:
+              - img [ref=e455]
+              - text: 默认策略
+            - generic [ref=e458]:
+              - generic [ref=e459]: profile=safe
+              - generic [ref=e460]: no_external_tools=true
+              - generic [ref=e461]: operator=local-user

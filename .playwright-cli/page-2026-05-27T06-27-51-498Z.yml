@@ -1,0 +1,913 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+      - generic [ref=e11]:
+        - generic [ref=e12]: CyberAgent
+        - generic [ref=e13]: Agent Cockpit
+    - navigation [ref=e14]:
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /
+        - img [ref=e17]
+        - generic [ref=e24]: 总览
+      - link "Agent" [ref=e25] [cursor=pointer]:
+        - /url: /agent
+        - img [ref=e27]
+        - generic [ref=e30]: Agent
+      - link "任务" [ref=e31] [cursor=pointer]:
+        - /url: /tasks
+        - img [ref=e33]
+        - generic [ref=e35]: 任务
+      - link "历史" [ref=e36] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e38]
+        - generic [ref=e42]: 历史
+      - link "设置" [ref=e43] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e45]
+        - generic [ref=e48]: 设置
+    - generic "在线" [ref=e50]:
+      - img [ref=e51]
+      - generic [ref=e53]: 在线
+  - generic [ref=e54]:
+    - banner [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]:
+          - img [ref=e58]
+          - generic [ref=e61]:
+            - generic [ref=e62]: authorized web/api security agent
+            - generic [ref=e63]: 通过自然语言驱动安全测试、运维与分析
+        - generic [ref=e64]:
+          - generic [ref=e65]: 在线
+          - button "Switch to English" [ref=e67] [cursor=pointer]:
+            - img [ref=e68]
+          - link "Agent" [ref=e72] [cursor=pointer]:
+            - /url: /agent
+            - img [ref=e73]
+            - text: Agent
+    - main [ref=e76]:
+      - generic [ref=e77]:
+        - complementary [ref=e78]:
+          - generic [ref=e79]:
+            - heading "会话" [level=2] [ref=e80]:
+              - img [ref=e81]
+              - text: 会话
+            - generic [ref=e83]:
+              - button "新建会话" [ref=e84] [cursor=pointer]:
+                - img [ref=e85]
+              - button "刷新" [ref=e87] [cursor=pointer]:
+                - img [ref=e88]
+          - generic [ref=e93]:
+            - button "20 全部" [ref=e388] [cursor=pointer]:
+              - generic [ref=e95]: "20"
+              - generic [ref=e96]: 全部
+            - button "0 运行" [ref=e97] [cursor=pointer]:
+              - generic [ref=e98]: "0"
+              - generic [ref=e99]: 运行
+            - button "0 审批" [ref=e100] [cursor=pointer]:
+              - generic [ref=e101]: "0"
+              - generic [ref=e102]: 审批
+            - button "2 发现" [ref=e389] [cursor=pointer]:
+              - generic [ref=e104]: "2"
+              - generic [ref=e105]: 发现
+            - button "0 记忆" [ref=e106] [cursor=pointer]:
+              - generic [ref=e107]: "0"
+              - generic [ref=e108]: 记忆
+            - button "0 阻塞" [ref=e109] [cursor=pointer]:
+              - generic [ref=e110]: "0"
+              - generic [ref=e111]: 阻塞
+          - generic [ref=e112]:
+            - img [ref=e113]
+            - textbox [ref=e116]:
+              - /placeholder: 搜索会话 / run / 证据
+          - generic [ref=e117]:
+            - button "置顶会话 20260527_062705_9f3e6f 已完成 回答并澄清安全任务 5 2 1" [ref=e1102] [cursor=pointer]:
+              - generic [ref=e391]:
+                - generic [ref=e392]:
+                  - button "置顶会话" [ref=e393]:
+                    - img [ref=e394]
+                  - generic [ref=e396]: 20260527_062705_9f3e6f
+                - generic [ref=e397]: 已完成
+              - paragraph [ref=e398]: 回答并澄清安全任务
+              - generic [ref=e399]:
+                - generic [ref=e400]:
+                  - img [ref=e401]
+                  - text: "5"
+                - generic [ref=e403]:
+                  - img [ref=e404]
+                  - text: "2"
+                - generic [ref=e406]:
+                  - img [ref=e407]
+                  - text: "1"
+            - button "置顶会话 20260527_062200_d3be32 已完成 回答并澄清安全任务 3 2 0" [ref=e410] [cursor=pointer]:
+              - generic [ref=e411]:
+                - generic [ref=e412]:
+                  - button "置顶会话" [ref=e413]:
+                    - img [ref=e414]
+                  - generic [ref=e416]: 20260527_062200_d3be32
+                - generic [ref=e417]: 已完成
+              - paragraph [ref=e418]: 回答并澄清安全任务
+              - generic [ref=e419]:
+                - generic [ref=e420]:
+                  - img [ref=e421]
+                  - text: "3"
+                - generic [ref=e423]:
+                  - img [ref=e424]
+                  - text: "2"
+                - generic [ref=e426]:
+                  - img [ref=e427]
+                  - text: "0"
+            - button "置顶会话 20260527_061357_3dee25 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e430] [cursor=pointer]:
+              - generic [ref=e431]:
+                - generic [ref=e432]:
+                  - button "置顶会话" [ref=e433]:
+                    - img [ref=e434]
+                  - generic [ref=e436]: 20260527_061357_3dee25
+                - generic [ref=e437]: 等输入
+              - paragraph [ref=e438]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e439]:
+                - generic [ref=e440]:
+                  - img [ref=e441]
+                  - text: "1"
+                - generic [ref=e443]:
+                  - img [ref=e444]
+                  - text: "0"
+                - generic [ref=e446]:
+                  - img [ref=e447]
+                  - text: "0"
+            - button "置顶会话 20260527_060856_5deb9b 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e450] [cursor=pointer]:
+              - generic [ref=e451]:
+                - generic [ref=e452]:
+                  - button "置顶会话" [ref=e453]:
+                    - img [ref=e454]
+                  - generic [ref=e456]: 20260527_060856_5deb9b
+                - generic [ref=e457]: 等输入
+              - paragraph [ref=e458]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e459]:
+                - generic [ref=e460]:
+                  - img [ref=e461]
+                  - text: "1"
+                - generic [ref=e463]:
+                  - img [ref=e464]
+                  - text: "0"
+                - generic [ref=e466]:
+                  - img [ref=e467]
+                  - text: "0"
+            - button "置顶会话 20260527_060448_2ca122 已完成 回答并澄清安全任务 5 2 1" [ref=e470] [cursor=pointer]:
+              - generic [ref=e471]:
+                - generic [ref=e472]:
+                  - button "置顶会话" [ref=e473]:
+                    - img [ref=e474]
+                  - generic [ref=e476]: 20260527_060448_2ca122
+                - generic [ref=e477]: 已完成
+              - paragraph [ref=e478]: 回答并澄清安全任务
+              - generic [ref=e479]:
+                - generic [ref=e480]:
+                  - img [ref=e481]
+                  - text: "5"
+                - generic [ref=e483]:
+                  - img [ref=e484]
+                  - text: "2"
+                - generic [ref=e486]:
+                  - img [ref=e487]
+                  - text: "1"
+            - button "置顶会话 20260527_060135_bf8e8c 已完成 回答并澄清安全任务 5 2 0" [ref=e490] [cursor=pointer]:
+              - generic [ref=e491]:
+                - generic [ref=e492]:
+                  - button "置顶会话" [ref=e493]:
+                    - img [ref=e494]
+                  - generic [ref=e496]: 20260527_060135_bf8e8c
+                - generic [ref=e497]: 已完成
+              - paragraph [ref=e498]: 回答并澄清安全任务
+              - generic [ref=e499]:
+                - generic [ref=e500]:
+                  - img [ref=e501]
+                  - text: "5"
+                - generic [ref=e503]:
+                  - img [ref=e504]
+                  - text: "2"
+                - generic [ref=e506]:
+                  - img [ref=e507]
+                  - text: "0"
+            - button "置顶会话 20260527_055054_85da03 已完成 检查 daemon 健康状态 3 1 1" [ref=e510] [cursor=pointer]:
+              - generic [ref=e511]:
+                - generic [ref=e512]:
+                  - button "置顶会话" [ref=e513]:
+                    - img [ref=e514]
+                  - generic [ref=e516]: 20260527_055054_85da03
+                - generic [ref=e517]: 已完成
+              - paragraph [ref=e518]: 检查 daemon 健康状态
+              - generic [ref=e519]:
+                - generic [ref=e520]:
+                  - img [ref=e521]
+                  - text: "3"
+                - generic [ref=e523]:
+                  - img [ref=e524]
+                  - text: "1"
+                - generic [ref=e526]:
+                  - img [ref=e527]
+                  - text: "1"
+            - button "置顶会话 20260526_021735_e884c2 已完成 回答并澄清安全任务 9 3 1" [ref=e530] [cursor=pointer]:
+              - generic [ref=e531]:
+                - generic [ref=e532]:
+                  - button "置顶会话" [ref=e533]:
+                    - img [ref=e534]
+                  - generic [ref=e536]: 20260526_021735_e884c2
+                - generic [ref=e537]: 已完成
+              - paragraph [ref=e538]: 回答并澄清安全任务
+              - generic [ref=e539]:
+                - generic [ref=e540]:
+                  - img [ref=e541]
+                  - text: "9"
+                - generic [ref=e543]:
+                  - img [ref=e544]
+                  - text: "3"
+                - generic [ref=e546]:
+                  - img [ref=e547]
+                  - text: "1"
+            - button "置顶会话 20260527_054447_403f61 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e550] [cursor=pointer]:
+              - generic [ref=e551]:
+                - generic [ref=e552]:
+                  - button "置顶会话" [ref=e553]:
+                    - img [ref=e554]
+                  - generic [ref=e556]: 20260527_054447_403f61
+                - generic [ref=e557]: 等输入
+              - paragraph [ref=e558]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e559]:
+                - generic [ref=e560]:
+                  - img [ref=e561]
+                  - text: "1"
+                - generic [ref=e563]:
+                  - img [ref=e564]
+                  - text: "0"
+                - generic [ref=e566]:
+                  - img [ref=e567]
+                  - text: "0"
+            - button "置顶会话 20260527_054038_ee67f5 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e570] [cursor=pointer]:
+              - generic [ref=e571]:
+                - generic [ref=e572]:
+                  - button "置顶会话" [ref=e573]:
+                    - img [ref=e574]
+                  - generic [ref=e576]: 20260527_054038_ee67f5
+                - generic [ref=e577]: 等输入
+              - paragraph [ref=e578]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e579]:
+                - generic [ref=e580]:
+                  - img [ref=e581]
+                  - text: "1"
+                - generic [ref=e583]:
+                  - img [ref=e584]
+                  - text: "0"
+                - generic [ref=e586]:
+                  - img [ref=e587]
+                  - text: "0"
+            - button "置顶会话 20260526_162909_1a9591 已完成 列出 Agent 工具和插件能力 5 2 2" [ref=e590] [cursor=pointer]:
+              - generic [ref=e591]:
+                - generic [ref=e592]:
+                  - button "置顶会话" [ref=e593]:
+                    - img [ref=e594]
+                  - generic [ref=e596]: 20260526_162909_1a9591
+                - generic [ref=e597]: 已完成
+              - paragraph [ref=e598]: 列出 Agent 工具和插件能力
+              - generic [ref=e599]:
+                - generic [ref=e600]:
+                  - img [ref=e601]
+                  - text: "5"
+                - generic [ref=e603]:
+                  - img [ref=e604]
+                  - text: "2"
+                - generic [ref=e606]:
+                  - img [ref=e607]
+                  - text: "2"
+            - button "置顶会话 20260526_153059_6213ba 已完成 检查 daemon 健康状态 3 1 1" [ref=e610] [cursor=pointer]:
+              - generic [ref=e611]:
+                - generic [ref=e612]:
+                  - button "置顶会话" [ref=e613]:
+                    - img [ref=e614]
+                  - generic [ref=e616]: 20260526_153059_6213ba
+                - generic [ref=e617]: 已完成
+              - paragraph [ref=e618]: 检查 daemon 健康状态
+              - generic [ref=e619]:
+                - generic [ref=e620]:
+                  - img [ref=e621]
+                  - text: "3"
+                - generic [ref=e623]:
+                  - img [ref=e624]
+                  - text: "1"
+                - generic [ref=e626]:
+                  - img [ref=e627]
+                  - text: "1"
+            - button "置顶会话 20260526_152321_503710 已完成 检查 daemon 健康状态 3 1 1" [ref=e630] [cursor=pointer]:
+              - generic [ref=e631]:
+                - generic [ref=e632]:
+                  - button "置顶会话" [ref=e633]:
+                    - img [ref=e634]
+                  - generic [ref=e636]: 20260526_152321_503710
+                - generic [ref=e637]: 已完成
+              - paragraph [ref=e638]: 检查 daemon 健康状态
+              - generic [ref=e639]:
+                - generic [ref=e640]:
+                  - img [ref=e641]
+                  - text: "3"
+                - generic [ref=e643]:
+                  - img [ref=e644]
+                  - text: "1"
+                - generic [ref=e646]:
+                  - img [ref=e647]
+                  - text: "1"
+            - button "置顶会话 20260526_141540_24758b 已完成 检查 daemon 健康状态 3 1 1" [ref=e650] [cursor=pointer]:
+              - generic [ref=e651]:
+                - generic [ref=e652]:
+                  - button "置顶会话" [ref=e653]:
+                    - img [ref=e654]
+                  - generic [ref=e656]: 20260526_141540_24758b
+                - generic [ref=e657]: 已完成
+              - paragraph [ref=e658]: 检查 daemon 健康状态
+              - generic [ref=e659]:
+                - generic [ref=e660]:
+                  - img [ref=e661]
+                  - text: "3"
+                - generic [ref=e663]:
+                  - img [ref=e664]
+                  - text: "1"
+                - generic [ref=e666]:
+                  - img [ref=e667]
+                  - text: "1"
+            - button "置顶会话 20260526_142611_95d44a 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e670] [cursor=pointer]:
+              - generic [ref=e671]:
+                - generic [ref=e672]:
+                  - button "置顶会话" [ref=e673]:
+                    - img [ref=e674]
+                  - generic [ref=e676]: 20260526_142611_95d44a
+                - generic [ref=e677]: 等输入
+              - paragraph [ref=e678]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e679]:
+                - generic [ref=e680]:
+                  - img [ref=e681]
+                  - text: "1"
+                - generic [ref=e683]:
+                  - img [ref=e684]
+                  - text: "0"
+                - generic [ref=e686]:
+                  - img [ref=e687]
+                  - text: "0"
+            - 'button "置顶会话 20260526_141209_8762c1 等输入 扫描授权目标 http://127.0.0.1:18080 scope=127.0.0.1:18080 20260526_141209_029a0a succeeded 3 6 0 106 关键上下文 LOW · Missing X-Content-Type-Options Header · category=security_headers · fix=Set X-Content-Type-Options: nosniff." [ref=e690] [cursor=pointer]':
+              - generic [ref=e691]:
+                - generic [ref=e692]:
+                  - button "置顶会话" [ref=e693]:
+                    - img [ref=e694]
+                  - generic [ref=e696]: 20260526_141209_8762c1
+                - generic [ref=e697]: 等输入
+              - paragraph [ref=e698]: 扫描授权目标 http://127.0.0.1:18080 scope=127.0.0.1:18080
+              - generic [ref=e699]:
+                - generic [ref=e700]:
+                  - generic [ref=e701]:
+                    - img [ref=e702]
+                    - generic [ref=e704]: 20260526_141209_029a0a
+                  - generic [ref=e705]: succeeded
+                - generic [ref=e706]:
+                  - generic "发现" [ref=e707]:
+                    - img [ref=e708]
+                    - text: "3"
+                  - generic "证据" [ref=e710]:
+                    - img [ref=e711]
+                    - text: "6"
+                  - generic "审批" [ref=e714]:
+                    - img [ref=e715]
+                    - text: "0"
+                  - generic "事件" [ref=e718]:
+                    - img [ref=e719]
+                    - text: "106"
+                - generic [ref=e721]:
+                  - generic [ref=e722]:
+                    - img [ref=e723]
+                    - text: 关键上下文
+                  - paragraph [ref=e727]: "LOW · Missing X-Content-Type-Options Header · category=security_headers · fix=Set X-Content-Type-Options: nosniff."
+            - 'button "置顶会话 20260526_141043_3c6f07 等输入 扫描授权目标 http://127.0.0.1:18080 scope=127.0.0.1:18080 20260526_141043_923a96 succeeded 3 6 0 106 关键上下文 LOW · Missing X-Content-Type-Options Header · category=security_headers · fix=Set X-Content-Type-Options: nosniff." [ref=e728] [cursor=pointer]':
+              - generic [ref=e729]:
+                - generic [ref=e730]:
+                  - button "置顶会话" [ref=e731]:
+                    - img [ref=e732]
+                  - generic [ref=e734]: 20260526_141043_3c6f07
+                - generic [ref=e735]: 等输入
+              - paragraph [ref=e736]: 扫描授权目标 http://127.0.0.1:18080 scope=127.0.0.1:18080
+              - generic [ref=e737]:
+                - generic [ref=e738]:
+                  - generic [ref=e739]:
+                    - img [ref=e740]
+                    - generic [ref=e742]: 20260526_141043_923a96
+                  - generic [ref=e743]: succeeded
+                - generic [ref=e744]:
+                  - generic "发现" [ref=e745]:
+                    - img [ref=e746]
+                    - text: "3"
+                  - generic "证据" [ref=e748]:
+                    - img [ref=e749]
+                    - text: "6"
+                  - generic "审批" [ref=e752]:
+                    - img [ref=e753]
+                    - text: "0"
+                  - generic "事件" [ref=e756]:
+                    - img [ref=e757]
+                    - text: "106"
+                - generic [ref=e759]:
+                  - generic [ref=e760]:
+                    - img [ref=e761]
+                    - text: 关键上下文
+                  - paragraph [ref=e765]: "LOW · Missing X-Content-Type-Options Header · category=security_headers · fix=Set X-Content-Type-Options: nosniff."
+            - button "置顶会话 20260526_130027_90086e 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e766] [cursor=pointer]:
+              - generic [ref=e767]:
+                - generic [ref=e768]:
+                  - button "置顶会话" [ref=e769]:
+                    - img [ref=e770]
+                  - generic [ref=e772]: 20260526_130027_90086e
+                - generic [ref=e773]: 等输入
+              - paragraph [ref=e774]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e775]:
+                - generic [ref=e776]:
+                  - img [ref=e777]
+                  - text: "1"
+                - generic [ref=e779]:
+                  - img [ref=e780]
+                  - text: "0"
+                - generic [ref=e782]:
+                  - img [ref=e783]
+                  - text: "0"
+            - button "置顶会话 20260526_123836_e945dc 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e786] [cursor=pointer]:
+              - generic [ref=e787]:
+                - generic [ref=e788]:
+                  - button "置顶会话" [ref=e789]:
+                    - img [ref=e790]
+                  - generic [ref=e792]: 20260526_123836_e945dc
+                - generic [ref=e793]: 等输入
+              - paragraph [ref=e794]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e795]:
+                - generic [ref=e796]:
+                  - img [ref=e797]
+                  - text: "1"
+                - generic [ref=e799]:
+                  - img [ref=e800]
+                  - text: "0"
+                - generic [ref=e802]:
+                  - img [ref=e803]
+                  - text: "0"
+            - button "置顶会话 20260525_125241_b600b3 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e806] [cursor=pointer]:
+              - generic [ref=e807]:
+                - generic [ref=e808]:
+                  - button "置顶会话" [ref=e809]:
+                    - img [ref=e810]
+                  - generic [ref=e812]: 20260525_125241_b600b3
+                - generic [ref=e813]: 等输入
+              - paragraph [ref=e814]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e815]:
+                - generic [ref=e816]:
+                  - img [ref=e817]
+                  - text: "1"
+                - generic [ref=e819]:
+                  - img [ref=e820]
+                  - text: "0"
+                - generic [ref=e822]:
+                  - img [ref=e823]
+                  - text: "0"
+        - generic [ref=e118]:
+          - generic [ref=e120]:
+            - img [ref=e122]
+            - generic [ref=e125]:
+              - heading "CyberAgent Cockpit" [level=1] [ref=e126]
+              - generic [ref=e127]:
+                - generic [ref=e128]: plan
+                - generic [ref=e130]: tool
+                - generic [ref=e132]: observe
+                - generic [ref=e134]: synthesize
+            - 'generic "最后同步: 14:27:50" [ref=e1103]': 实时在线
+          - generic [ref=e138]:
+            - generic [ref=e827]:
+              - img [ref=e829]
+              - generic [ref=e832]:
+                - generic [ref=e834]:
+                  - img [ref=e835]
+                  - text: agent
+                - paragraph [ref=e838]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+            - generic [ref=e924]:
+              - paragraph [ref=e926]: "写入工作空间文件 smoke-agent.md 内容: CyberAgent slash write v2"
+              - img [ref=e928]
+            - generic [ref=e931]:
+              - img [ref=e933]
+              - generic [ref=e935]:
+                - generic [ref=e936]:
+                  - generic [ref=e937]:
+                    - img [ref=e938]
+                    - text: observation
+                  - generic [ref=e940]: workspace.files.write
+                - paragraph [ref=e941]: "已写入工作空间文件 `smoke-agent.md`（25 bytes）。 内容预览： ```text CyberAgent slash write v2 ```"
+                - generic [ref=e943]:
+                  - generic [ref=e944]:
+                    - generic [ref=e945]: workspace.files.write
+                    - generic [ref=e946]: succeeded
+                  - generic [ref=e947]:
+                    - generic [ref=e948]: workspace
+                    - generic [ref=e949]: 风险:low
+                    - generic [ref=e950]: auto
+                    - generic [ref=e951]: 免审批
+                    - generic [ref=e952]: auto_low_risk_builtin
+                  - paragraph [ref=e953]: smoke-agent.md
+            - generic [ref=e1104]:
+              - paragraph [ref=e1106]: 读取工作空间文件 file=smoke-agent.md
+              - img [ref=e1108]
+            - generic [ref=e1111]:
+              - img [ref=e1113]
+              - generic [ref=e1115]:
+                - generic [ref=e1116]:
+                  - generic [ref=e1117]:
+                    - img [ref=e1118]
+                    - text: observation
+                  - generic [ref=e1120]: workspace.files.read
+                - paragraph [ref=e1121]: "已读取工作空间文件 `smoke-agent.md`： ```text CyberAgent slash write v2 ```"
+                - generic [ref=e1123]:
+                  - generic [ref=e1124]:
+                    - generic [ref=e1125]: workspace.files.read
+                    - generic [ref=e1126]: succeeded
+                  - generic [ref=e1127]:
+                    - generic [ref=e1128]: workspace
+                    - generic [ref=e1129]: 风险:low
+                    - generic [ref=e1130]: auto
+                    - generic [ref=e1131]: 免审批
+                    - generic [ref=e1132]: auto_low_risk_builtin
+                  - paragraph [ref=e1133]: smoke-agent.md
+          - generic [ref=e151]:
+            - generic [ref=e152]:
+              - generic [ref=e154]:
+                - generic [ref=e155]:
+                  - img [ref=e156]
+                  - text: 已完成
+                - generic [ref=e158]: task steps completed
+              - generic [ref=e159]:
+                - button "继续" [ref=e839] [cursor=pointer]:
+                  - img [ref=e840]
+                  - text: 继续
+                - button "暂停" [ref=e843] [cursor=pointer]:
+                  - img [ref=e844]
+                  - text: 暂停
+                - button "新任务" [ref=e846] [cursor=pointer]:
+                  - img [ref=e847]
+                  - text: 新任务
+            - generic [ref=e160]:
+              - textbox "输入修订要求，如：优先检查认证与越权风险" [ref=e161]
+              - button "修订" [disabled]:
+                - img
+                - text: 修订
+          - generic [ref=e163]:
+            - generic [ref=e164]:
+              - img [ref=e165]
+              - text: 快捷指令
+            - button "健康检查" [ref=e167] [cursor=pointer]:
+              - img [ref=e168]
+              - text: 健康检查
+            - button "列出工具" [ref=e170] [cursor=pointer]:
+              - img [ref=e171]
+              - text: 列出工具
+            - button "任务概况" [ref=e173] [cursor=pointer]:
+              - img [ref=e174]
+              - text: 任务概况
+            - button "工作区" [ref=e178] [cursor=pointer]:
+              - img [ref=e179]
+              - text: 工作区
+          - generic [ref=e182]:
+            - 'textbox "输入目标 URL 启动扫描，如: 扫描 http://127.0.0.1:8080 scope=127.0.0.1" [active] [ref=e183]'
+            - button "发送" [disabled]:
+              - img
+              - generic: 发送
+        - complementary [ref=e184]:
+          - generic [ref=e185]:
+            - generic [ref=e186]:
+              - heading "Agent Runbook" [level=2] [ref=e187]:
+                - img [ref=e188]
+                - text: Agent Runbook
+              - generic [ref=e191]: 已完成
+            - generic [ref=e192]:
+              - generic [ref=e193]:
+                - generic [ref=e194]:
+                  - generic [ref=e195]: 会话状态
+                  - generic [ref=e196]: idle
+                - generic [ref=e197]:
+                  - generic [ref=e198]: 工具调用
+                  - generic [ref=e199]: "2"
+              - generic [ref=e200]:
+                - generic [ref=e201]:
+                  - generic [ref=e202]: 上下文
+                  - generic [ref=e203]: "1"
+                - generic [ref=e204]:
+                  - generic [ref=e205]: 事件
+                  - generic [ref=e206]: "0"
+                - generic [ref=e207]:
+                  - generic [ref=e208]: 审批
+                  - generic [ref=e209]: 0/0
+              - generic [ref=e210]:
+                - generic [ref=e211]: 当前目标
+                - generic [ref=e212]: 回答并澄清安全任务
+              - generic [ref=e213]:
+                - generic [ref=e214]:
+                  - generic [ref=e215]:
+                    - img [ref=e216]
+                    - generic [ref=e220]: 压缩记忆
+                  - generic [ref=e221]: 待生成
+                - paragraph [ref=e222]: 长会话超过窗口后会自动压缩早期上下文，并在后续 LLM 请求中注入。
+              - generic [ref=e223]:
+                - generic [ref=e224]:
+                  - generic [ref=e225]:
+                    - img [ref=e226]
+                    - text: 计划
+                  - generic [ref=e238]: 3/3
+                - generic [ref=e239]:
+                  - generic [ref=e954]:
+                    - generic [ref=e955]: ✓
+                    - generic [ref=e956]: 理解用户意图
+                    - generic [ref=e957]: done
+                  - generic [ref=e958]:
+                    - generic [ref=e959]: ✓
+                    - generic [ref=e960]: 选择必要工具或本地回答
+                    - generic [ref=e961]: done
+                  - generic [ref=e962]:
+                    - generic [ref=e963]: ✓
+                    - generic [ref=e964]: 返回结果和下一步
+                    - generic [ref=e965]: done
+              - generic [ref=e256]:
+                - generic [ref=e258]:
+                  - img [ref=e259]
+                  - generic [ref=e271]: 推理 / 计划修订
+                - paragraph [ref=e272]: 等待 Agent 生成可追溯推理：为什么这样规划、为何调用工具、下一步是什么。
+              - generic [ref=e966]:
+                - generic [ref=e967]:
+                  - img [ref=e968]
+                  - text: 执行轨迹
+                - generic [ref=e1134]:
+                  - generic [ref=e1135]:
+                    - generic [ref=e1136]: workspace.files.write
+                    - generic [ref=e1137]: succeeded
+                  - generic [ref=e1138]:
+                    - generic [ref=e1139]: workspace
+                    - generic [ref=e1140]: 风险:low
+                    - generic [ref=e1141]: auto
+                    - generic [ref=e1142]: 免审批
+                  - paragraph [ref=e1143]: smoke-agent.md
+                - generic [ref=e1144]:
+                  - generic [ref=e1145]:
+                    - generic [ref=e1146]: workspace.files.read
+                    - generic [ref=e1147]: succeeded
+                  - generic [ref=e1148]:
+                    - generic [ref=e1149]: workspace
+                    - generic [ref=e1150]: 风险:low
+                    - generic [ref=e1151]: auto
+                    - generic [ref=e1152]: 免审批
+                  - paragraph [ref=e1153]: smoke-agent.md
+              - generic [ref=e980]:
+                - generic [ref=e982]:
+                  - img [ref=e983]
+                  - text: 上下文引用
+                - button "file smoke-agent.md workspace.files.read 文件" [ref=e1154] [cursor=pointer]:
+                  - img [ref=e987]
+                  - generic [ref=e990]:
+                    - generic [ref=e991]: file smoke-agent.md
+                    - generic [ref=e992]: workspace.files.read
+                  - generic [ref=e993]: 文件
+          - generic [ref=e849]:
+            - heading "执行 Timeline" [level=2] [ref=e850]:
+              - img [ref=e851]
+              - text: 执行 Timeline
+            - generic [ref=e853]:
+              - generic [ref=e1014]:
+                - generic [ref=e1015]:
+                  - generic [ref=e1016]:
+                    - generic [ref=e1017]: state
+                    - generic [ref=e1018]: 当前任务更新
+                  - generic [ref=e1019]: done
+                - paragraph [ref=e1020]: 回答并澄清安全任务
+              - generic [ref=e1023]:
+                - generic [ref=e1024]:
+                  - generic [ref=e1025]:
+                    - generic [ref=e1026]: msg
+                    - generic [ref=e1027]: 工具观察
+                  - generic [ref=e1028]: tool
+                - paragraph [ref=e1029]: "已写入工作空间文件 `smoke-agent.md`（25 bytes）。 内容预览： ```text CyberAgent slash write v2 ```"
+              - generic [ref=e1032]:
+                - generic [ref=e1033]:
+                  - generic [ref=e1034]:
+                    - generic [ref=e1035]: evt
+                    - generic [ref=e1036]: workspace.files.write
+                  - generic [ref=e1037]: succeeded
+                - paragraph [ref=e1038]: smoke-agent.md
+              - generic [ref=e1042]:
+                - generic [ref=e1043]:
+                  - generic [ref=e1044]: todo
+                  - generic [ref=e1045]: 理解用户意图
+                - generic [ref=e1046]: done
+              - generic [ref=e1050]:
+                - generic [ref=e1051]:
+                  - generic [ref=e1052]: todo
+                  - generic [ref=e1053]: 选择必要工具或本地回答
+                - generic [ref=e1054]: done
+              - generic [ref=e1058]:
+                - generic [ref=e1059]:
+                  - generic [ref=e1060]: todo
+                  - generic [ref=e1061]: 返回结果和下一步
+                - generic [ref=e1062]: done
+              - generic [ref=e1157]:
+                - generic [ref=e1158]:
+                  - generic [ref=e1159]:
+                    - generic [ref=e1160]: 工具
+                    - generic [ref=e1161]: workspace.files.write
+                  - generic [ref=e1162]: succeeded
+                - paragraph [ref=e1163]: smoke-agent.md
+                - generic [ref=e1164]:
+                  - generic [ref=e1165]: risk:low
+                  - generic [ref=e1166]: auto
+              - generic [ref=e1169]:
+                - generic [ref=e1170]:
+                  - generic [ref=e1171]:
+                    - generic [ref=e1172]: msg
+                    - generic [ref=e1173]: 操作者消息
+                  - generic [ref=e1174]: user
+                - paragraph [ref=e1175]: 读取工作空间文件 file=smoke-agent.md
+              - generic [ref=e1178]:
+                - generic [ref=e1179]:
+                  - generic [ref=e1180]:
+                    - generic [ref=e1181]: state
+                    - generic [ref=e1182]: 当前任务更新
+                  - generic [ref=e1183]: done
+                - paragraph [ref=e1184]: 回答并澄清安全任务
+              - generic [ref=e1187]:
+                - generic [ref=e1188]:
+                  - generic [ref=e1189]:
+                    - generic [ref=e1190]: msg
+                    - generic [ref=e1191]: 工具观察
+                  - generic [ref=e1192]: tool
+                - paragraph [ref=e1193]: "已读取工作空间文件 `smoke-agent.md`： ```text CyberAgent slash write v2 ```"
+              - generic [ref=e1196]:
+                - generic [ref=e1197]:
+                  - generic [ref=e1198]:
+                    - generic [ref=e1199]: evt
+                    - generic [ref=e1200]: workspace.files.read
+                  - generic [ref=e1201]: succeeded
+                - paragraph [ref=e1202]: smoke-agent.md
+              - generic [ref=e1206]:
+                - generic [ref=e1207]:
+                  - generic [ref=e1208]: todo
+                  - generic [ref=e1209]: 理解用户意图
+                - generic [ref=e1210]: done
+              - generic [ref=e1214]:
+                - generic [ref=e1215]:
+                  - generic [ref=e1216]: todo
+                  - generic [ref=e1217]: 选择必要工具或本地回答
+                - generic [ref=e1218]: done
+              - generic [ref=e1222]:
+                - generic [ref=e1223]:
+                  - generic [ref=e1224]: todo
+                  - generic [ref=e1225]: 返回结果和下一步
+                - generic [ref=e1226]: done
+              - generic [ref=e1229]:
+                - generic [ref=e1230]:
+                  - generic [ref=e1231]:
+                    - generic [ref=e1232]: 工具
+                    - generic [ref=e1233]: workspace.files.read
+                  - generic [ref=e1234]: succeeded
+                - paragraph [ref=e1235]: smoke-agent.md
+                - generic [ref=e1236]:
+                  - generic [ref=e1237]: risk:low
+                  - generic [ref=e1238]: auto
+              - generic [ref=e1077]:
+                - generic [ref=e1078]:
+                  - generic [ref=e1079]:
+                    - generic [ref=e1080]: 下一步
+                    - generic [ref=e1081]: 下一步动作
+                  - generic [ref=e1082]: finished
+                - paragraph [ref=e1083]: task steps completed
+          - generic [ref=e273]:
+            - generic [ref=e274]:
+              - heading "Agent 能力" [level=2] [ref=e275]:
+                - img [ref=e276]
+                - text: Agent 能力
+              - generic [ref=e288]: v0.1.4
+            - paragraph [ref=e289]: 面向授权目标的 Web/API 安全分析 Agent：通过自然语言维护任务、规划步骤、调用工具、沉淀上下文并生成可复现结论。
+            - generic [ref=e290]:
+              - generic [ref=e291]:
+                - generic [ref=e292]:
+                  - img [ref=e293]
+                  - generic [ref=e295]: "5"
+                - generic [ref=e296]: 能力
+              - generic [ref=e297]:
+                - generic [ref=e298]:
+                  - img [ref=e299]
+                  - generic [ref=e301]: "13"
+                - generic [ref=e302]: 内置工具
+            - generic [ref=e303]:
+              - generic [ref=e304]:
+                - generic [ref=e305]:
+                  - img [ref=e306]
+                  - generic [ref=e309]: 自然语言运维/测试
+                - paragraph [ref=e310]: 将操作者意图转为任务、待办、工具调用和下一步建议。
+              - generic [ref=e311]:
+                - generic [ref=e312]:
+                  - img [ref=e313]
+                  - generic [ref=e316]: 会话与上下文保持
+                - paragraph [ref=e317]: 保持聊天会话、任务状态、工具轨迹、上下文引用和下一步动作。
+              - generic [ref=e318]:
+                - generic [ref=e319]:
+                  - img [ref=e320]
+                  - generic [ref=e323]: 规划→工具→总结闭环
+                - paragraph [ref=e324]: 支持 JSON actions 与模型原生 tool_calls，执行低风险工具后回灌 observation 并生成最终总结。
+              - generic [ref=e325]:
+                - generic [ref=e326]:
+                  - img [ref=e327]
+                  - generic [ref=e330]: Web/API 安全运行时
+                - paragraph [ref=e331]: 可按明确授权指令启动 safe profile 扫描、跟踪运行、收集证据、处理审批并复测。
+            - generic [ref=e332]:
+              - generic [ref=e333]:
+                - img [ref=e334]
+                - text: 执行阶段
+              - generic [ref=e346]:
+                - generic [ref=e347]:
+                  - generic [ref=e348]: "1"
+                  - text: 理解
+                - generic [ref=e349]:
+                  - generic [ref=e350]: "2"
+                  - text: 规划
+                - generic [ref=e351]:
+                  - generic [ref=e352]: "3"
+                  - text: 工具调用
+                - generic [ref=e353]:
+                  - generic [ref=e354]: "4"
+                  - text: 观测
+                - generic [ref=e355]:
+                  - generic [ref=e356]: "5"
+                  - text: 总结
+            - generic [ref=e357]:
+              - generic [ref=e358]:
+                - img [ref=e359]
+                - text: 工具
+              - generic [ref=e361]:
+                - generic [ref=e362]: auto · workspace.command
+                - generic [ref=e363]: auto · workspace.files.list
+                - generic [ref=e364]: auto · workspace.files.read
+                - generic [ref=e365]: auto · workspace.files.write
+                - generic [ref=e366]: auto · workspace.files.patch
+                - generic [ref=e367]: auto · workspace.files.diff
+                - generic [ref=e368]: auto · workspace.files.diff_many
+            - generic [ref=e369]:
+              - generic [ref=e370]:
+                - img [ref=e371]
+                - text: 安全策略
+              - paragraph [ref=e373]: LLM 自动执行仅限低风险内置工具；扫描需明确自然语言指令；外部插件/高风险动作进入审批 gate。
+          - generic [ref=e374]:
+            - heading "Agent 工作区" [level=2] [ref=e375]:
+              - img [ref=e376]
+              - text: Agent 工作区
+            - generic [ref=e863]:
+              - generic [ref=e864]: agent_20260527_062705_9f3e6f
+              - button "pwd" [ref=e865] [cursor=pointer]
+              - button "ls -la" [ref=e866] [cursor=pointer]
+              - button "git status" [ref=e867] [cursor=pointer]
+            - generic [ref=e868]:
+              - 'textbox "输入白名单命令，如: ls -la、cat README.md" [ref=e869]'
+              - button "执行" [disabled]
+            - generic [ref=e870]: 尚未执行命令。建议先用 pwd / ls -la 确认工作区位置。
+          - generic [ref=e379]:
+            - generic [ref=e380]:
+              - heading "工作区文件" [level=2] [ref=e381]:
+                - img [ref=e382]
+                - text: 工作区文件
+              - button "刷新" [ref=e384] [cursor=pointer]
+            - generic [ref=e385]:
+              - textbox "输入目录路径，如 . 或 src" [ref=e386]: .
+              - button "打开" [ref=e871] [cursor=pointer]
+            - generic [ref=e387]: 当前目录为空
+          - generic [ref=e872]:
+            - heading "最近扫描" [level=2] [ref=e873]:
+              - img [ref=e874]
+              - text: 最近扫描
+            - generic [ref=e878]:
+              - link "127.0.0.1:18080 完成" [ref=e879] [cursor=pointer]:
+                - /url: /scan/job_20260526_141209_029a0a
+                - generic [ref=e880]:
+                  - generic [ref=e881]: 127.0.0.1:18080
+                  - generic [ref=e882]: 完成
+              - link "127.0.0.1:18080 完成" [ref=e883] [cursor=pointer]:
+                - /url: /scan/job_20260526_141043_923a96
+                - generic [ref=e884]:
+                  - generic [ref=e885]: 127.0.0.1:18080
+                  - generic [ref=e886]: 完成
+              - link "www.baidu.com 完成" [ref=e887] [cursor=pointer]:
+                - /url: /scan/job_20260525_130330_c0544d
+                - generic [ref=e888]:
+                  - generic [ref=e889]: www.baidu.com
+                  - generic [ref=e890]: 完成
+              - link "www.baidu.com 完成" [ref=e891] [cursor=pointer]:
+                - /url: /scan/job_20260524_201339_73c743
+                - generic [ref=e892]:
+                  - generic [ref=e893]: www.baidu.com
+                  - generic [ref=e894]: 完成
+              - link "127.0.0.1:5173 完成" [ref=e895] [cursor=pointer]:
+                - /url: /scan/job_20260524_042535_3ddfc4
+                - generic [ref=e896]:
+                  - generic [ref=e897]: 127.0.0.1:5173
+                  - generic [ref=e898]: 完成

@@ -1,0 +1,123 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+      - generic [ref=e11]:
+        - generic [ref=e12]: CyberAgent
+        - generic [ref=e13]: Agent Cockpit
+    - navigation [ref=e14]:
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /
+        - img [ref=e17]
+        - generic [ref=e24]: 总览
+      - link "Agent" [ref=e25] [cursor=pointer]:
+        - /url: /agent
+        - img [ref=e27]
+        - generic [ref=e30]: Agent
+      - link "任务" [ref=e31] [cursor=pointer]:
+        - /url: /tasks
+        - img [ref=e33]
+        - generic [ref=e35]: 任务
+      - link "历史" [ref=e36] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e38]
+        - generic [ref=e42]: 历史
+      - link "设置" [ref=e43] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e45]
+        - generic [ref=e48]: 设置
+    - generic "离线" [ref=e50]:
+      - img [ref=e51]
+      - generic [ref=e58]: 离线
+  - generic [ref=e59]:
+    - banner [ref=e60]:
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - img [ref=e63]
+          - generic [ref=e66]:
+            - generic [ref=e67]: authorized web/api security agent
+            - generic [ref=e68]: 通过自然语言驱动安全测试、运维与分析
+        - generic [ref=e69]:
+          - generic [ref=e70]: 离线
+          - button "Switch to English" [ref=e72] [cursor=pointer]:
+            - img [ref=e73]
+          - link "Agent" [ref=e77] [cursor=pointer]:
+            - /url: /agent
+            - img [ref=e78]
+            - text: Agent
+    - main [ref=e81]:
+      - generic [ref=e82]:
+        - generic [ref=e85]:
+          - generic [ref=e86]:
+            - generic [ref=e87]:
+              - img [ref=e88]
+              - text: Agent 指挥面板
+            - heading "总览" [level=1] [ref=e91]
+            - paragraph [ref=e92]: 这里不发起任务，只给安全 Agent 的运行态势：任务数量、成功率、发现密度、状态分布和近 7 日活动趋势。
+          - button "刷新" [ref=e93] [cursor=pointer]:
+            - img [ref=e94]
+            - text: 刷新
+        - generic [ref=e99]:
+          - img [ref=e100]
+          - generic [ref=e102]: Not Found
+        - generic [ref=e103]:
+          - generic [ref=e104]:
+            - generic [ref=e105]:
+              - generic [ref=e106]: 任务总数
+              - img [ref=e108]
+            - generic [ref=e112]: "0"
+          - generic [ref=e113]:
+            - generic [ref=e114]:
+              - generic [ref=e115]: 运行中
+              - img [ref=e117]
+            - generic [ref=e119]: "0"
+          - generic [ref=e120]:
+            - generic [ref=e121]:
+              - generic [ref=e122]: 完成
+              - img [ref=e124]
+            - generic [ref=e127]: "0"
+          - generic [ref=e128]:
+            - generic [ref=e129]:
+              - generic [ref=e130]: 失败
+              - img [ref=e132]
+            - generic [ref=e134]: "0"
+          - generic [ref=e135]:
+            - generic [ref=e136]:
+              - generic [ref=e137]: 发现
+              - img [ref=e139]
+            - generic [ref=e141]: "0"
+        - generic [ref=e142]:
+          - generic [ref=e143]:
+            - generic [ref=e144]:
+              - heading "任务状态分布" [level=2] [ref=e145]:
+                - img [ref=e146]
+                - text: 任务状态分布
+              - generic [ref=e148]: 0% success
+            - generic [ref=e149]:
+              - generic [ref=e150]:
+                - generic [ref=e151]: 运行中
+                - generic [ref=e154]: "0"
+              - generic [ref=e155]:
+                - generic [ref=e156]: 完成
+                - generic [ref=e159]: "0"
+              - generic [ref=e160]:
+                - generic [ref=e161]: 失败
+                - generic [ref=e164]: "0"
+          - generic [ref=e165]:
+            - heading "近 7 日活动" [level=2] [ref=e167]:
+              - img [ref=e168]
+              - text: 近 7 日活动
+            - generic [ref=e171]:
+              - generic [ref=e175]: 05-20
+              - generic [ref=e179]: 05-21
+              - generic [ref=e183]: 05-22
+              - generic [ref=e187]: 05-23
+              - generic [ref=e191]: 05-24
+              - generic [ref=e195]: 05-25
+              - generic [ref=e199]: 05-26
+        - generic [ref=e200]:
+          - heading "发现密度 Top 目标" [level=2] [ref=e202]:
+            - img [ref=e203]
+            - text: 发现密度 Top 目标
+          - generic [ref=e205]: 暂无发现数据

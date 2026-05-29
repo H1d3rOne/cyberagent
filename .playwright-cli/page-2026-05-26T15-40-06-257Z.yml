@@ -1,0 +1,374 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+      - generic [ref=e11]:
+        - generic [ref=e12]: CyberAgent
+        - generic [ref=e13]: Agent Cockpit
+    - navigation [ref=e14]:
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /
+        - img [ref=e17]
+        - generic [ref=e24]: 总览
+      - link "Agent" [ref=e25] [cursor=pointer]:
+        - /url: /agent
+        - img [ref=e27]
+        - generic [ref=e30]: Agent
+      - link "任务" [ref=e31] [cursor=pointer]:
+        - /url: /tasks
+        - img [ref=e33]
+        - generic [ref=e35]: 任务
+      - link "历史" [ref=e36] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e38]
+        - generic [ref=e42]: 历史
+      - link "设置" [ref=e43] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e45]
+        - generic [ref=e48]: 设置
+    - generic "在线" [ref=e50]:
+      - img [ref=e51]
+      - generic [ref=e53]: 在线
+  - generic [ref=e54]:
+    - banner [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]:
+          - img [ref=e58]
+          - generic [ref=e61]:
+            - generic [ref=e62]: authorized web/api security agent
+            - generic [ref=e63]: 通过自然语言驱动安全测试、运维与分析
+        - generic [ref=e64]:
+          - generic [ref=e65]: 在线
+          - button "Switch to English" [ref=e67] [cursor=pointer]:
+            - img [ref=e68]
+          - link "Agent" [ref=e72] [cursor=pointer]:
+            - /url: /agent
+            - img [ref=e73]
+            - text: Agent
+    - main [ref=e76]:
+      - generic [ref=e77]:
+        - complementary [ref=e78]:
+          - generic [ref=e79]:
+            - heading "会话" [level=2] [ref=e80]:
+              - img [ref=e81]
+              - text: 会话
+            - generic [ref=e83]:
+              - button "新建会话" [ref=e84] [cursor=pointer]:
+                - img [ref=e85]
+              - button "刷新" [ref=e87] [cursor=pointer]:
+                - img [ref=e88]
+          - generic [ref=e93]:
+            - button "20260526_153059_6213ba idle Daemon 在线，版本 v0.1.0。必需检查通过，检查项 5；可选工具缺失 3 个（nuclei, ffuf, nmap）（不影响内置 safe 能力）。" [ref=e94] [cursor=pointer]:
+              - generic [ref=e95]:
+                - generic [ref=e96]: 20260526_153059_6213ba
+                - generic [ref=e97]: idle
+              - paragraph [ref=e98]: Daemon 在线，版本 v0.1.0。必需检查通过，检查项 5；可选工具缺失 3 个（nuclei, ffuf, nmap）（不影响内置 safe 能力）。
+            - button "20260526_152321_503710 idle Daemon 在线，版本 v0.1.0。必需检查通过，检查项 5；可选工具缺失 3 个（nuclei, ffuf, nmap）（不影响内置 safe 能力）。" [ref=e99] [cursor=pointer]:
+              - generic [ref=e100]:
+                - generic [ref=e101]: 20260526_152321_503710
+                - generic [ref=e102]: idle
+              - paragraph [ref=e103]: Daemon 在线，版本 v0.1.0。必需检查通过，检查项 5；可选工具缺失 3 个（nuclei, ffuf, nmap）（不影响内置 safe 能力）。
+            - button "20260526_141540_24758b idle Daemon 在线，版本 v0.1.0。体检 通过，检查项 5，异常 3。" [ref=e104] [cursor=pointer]:
+              - generic [ref=e105]:
+                - generic [ref=e106]: 20260526_141540_24758b
+                - generic [ref=e107]: idle
+              - paragraph [ref=e108]: Daemon 在线，版本 v0.1.0。体检 通过，检查项 5，异常 3。
+            - button "20260526_142611_95d44a idle 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。" [ref=e109] [cursor=pointer]:
+              - generic [ref=e110]:
+                - generic [ref=e111]: 20260526_142611_95d44a
+                - generic [ref=e112]: idle
+              - paragraph [ref=e113]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+            - button "20260526_141209_8762c1 running 我已读取运行 job_20260526_141209_029a0a 的报告上下文。这个 finding（当前条目）应按“影响 → 证据 → 误报 → 修复 → 复测”处理：影响通�…" [ref=e114] [cursor=pointer]:
+              - generic [ref=e115]:
+                - generic [ref=e116]: 20260526_141209_8762c1
+                - generic [ref=e117]: running
+              - paragraph [ref=e118]: 我已读取运行 job_20260526_141209_029a0a 的报告上下文。这个 finding（当前条目）应按“影响 → 证据 → 误报 → 修复 → 复测”处理：影响通�…
+            - button "20260526_141043_3c6f07 running 已把任务交给 daemon：job=job_20260526_141043_09333e，run=job_20260526_141043_923a96。运行详情会持续同步事件、证据、审批和报告。" [ref=e119] [cursor=pointer]:
+              - generic [ref=e120]:
+                - generic [ref=e121]: 20260526_141043_3c6f07
+                - generic [ref=e122]: running
+              - paragraph [ref=e123]: 已把任务交给 daemon：job=job_20260526_141043_09333e，run=job_20260526_141043_923a96。运行详情会持续同步事件、证据、审批和报告。
+            - button "20260526_130027_90086e idle 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。" [ref=e124] [cursor=pointer]:
+              - generic [ref=e125]:
+                - generic [ref=e126]: 20260526_130027_90086e
+                - generic [ref=e127]: idle
+              - paragraph [ref=e128]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+            - button "20260526_123836_e945dc idle 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。" [ref=e129] [cursor=pointer]:
+              - generic [ref=e130]:
+                - generic [ref=e131]: 20260526_123836_e945dc
+                - generic [ref=e132]: idle
+              - paragraph [ref=e133]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+            - button "20260526_021735_e884c2 running 我不是普通扫描后台：你用自然语言给目标、范围、策略和意图；我负责理解任务、生成计划、选择工具、执行 daemon job、跟踪事件、沉�…" [ref=e134] [cursor=pointer]:
+              - generic [ref=e135]:
+                - generic [ref=e136]: 20260526_021735_e884c2
+                - generic [ref=e137]: running
+              - paragraph [ref=e138]: 我不是普通扫描后台：你用自然语言给目标、范围、策略和意图；我负责理解任务、生成计划、选择工具、执行 daemon job、跟踪事件、沉�…
+            - button "20260525_125241_b600b3 idle 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。" [ref=e139] [cursor=pointer]:
+              - generic [ref=e140]:
+                - generic [ref=e141]: 20260525_125241_b600b3
+                - generic [ref=e142]: idle
+              - paragraph [ref=e143]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+            - button "20260525_124555_9816d1 idle 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。" [ref=e144] [cursor=pointer]:
+              - generic [ref=e145]:
+                - generic [ref=e146]: 20260525_124555_9816d1
+                - generic [ref=e147]: idle
+              - paragraph [ref=e148]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+            - button "20260525_122837_79fb79 idle 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。" [ref=e149] [cursor=pointer]:
+              - generic [ref=e150]:
+                - generic [ref=e151]: 20260525_122837_79fb79
+                - generic [ref=e152]: idle
+              - paragraph [ref=e153]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+            - button "20260525_121732_05aa3c idle 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。" [ref=e154] [cursor=pointer]:
+              - generic [ref=e155]:
+                - generic [ref=e156]: 20260525_121732_05aa3c
+                - generic [ref=e157]: idle
+              - paragraph [ref=e158]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+            - button "20260525_121732_d51af1 idle 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。" [ref=e159] [cursor=pointer]:
+              - generic [ref=e160]:
+                - generic [ref=e161]: 20260525_121732_d51af1
+                - generic [ref=e162]: idle
+              - paragraph [ref=e163]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+        - generic [ref=e164]:
+          - generic [ref=e166]:
+            - img [ref=e168]
+            - generic [ref=e171]:
+              - heading "CyberAgent Cockpit" [level=1] [ref=e172]
+              - generic [ref=e173]:
+                - generic [ref=e174]: plan
+                - generic [ref=e176]: tool
+                - generic [ref=e178]: observe
+                - generic [ref=e180]: synthesize
+            - 'generic "最后同步: 23:31:17" [ref=e182]': 实时在线
+          - generic [ref=e184]:
+            - generic [ref=e185]:
+              - img [ref=e187]
+              - generic [ref=e190]:
+                - generic [ref=e192]:
+                  - img [ref=e193]
+                  - text: agent
+                - paragraph [ref=e196]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+            - generic [ref=e197]:
+              - paragraph [ref=e199]: 检查 daemon 健康状态，并告诉我当前 Agent 能力是否可用
+              - img [ref=e201]
+            - generic [ref=e204]:
+              - img [ref=e206]
+              - generic [ref=e208]:
+                - generic [ref=e209]:
+                  - generic [ref=e210]:
+                    - img [ref=e211]
+                    - text: observation
+                  - generic [ref=e213]: GET /api/v1/doctor
+                - paragraph [ref=e214]: Daemon 在线，版本 v0.1.0。必需检查通过，检查项 5；可选工具缺失 3 个（nuclei, ffuf, nmap）（不影响内置 safe 能力）。
+                - generic [ref=e216]:
+                  - generic [ref=e217]:
+                    - generic [ref=e218]: GET /api/v1/doctor
+                    - generic [ref=e219]: succeeded
+                  - generic [ref=e220]:
+                    - generic [ref=e221]: tool_call
+                    - generic [ref=e222]: 风险:low
+                    - generic [ref=e223]: auto
+                    - generic [ref=e224]: 免审批
+                    - generic [ref=e225]: auto_low_risk_builtin
+                  - paragraph [ref=e226]: daemon
+          - generic [ref=e227]:
+            - generic [ref=e228]:
+              - generic [ref=e230]:
+                - generic [ref=e231]:
+                  - img [ref=e232]
+                  - text: 已完成
+                - generic [ref=e234]: task steps completed
+              - generic [ref=e235]:
+                - button "继续" [ref=e236] [cursor=pointer]:
+                  - img [ref=e237]
+                  - text: 继续
+                - button "暂停" [ref=e240] [cursor=pointer]:
+                  - img [ref=e241]
+                  - text: 暂停
+                - button "新任务" [ref=e243] [cursor=pointer]:
+                  - img [ref=e244]
+                  - text: 新任务
+            - generic [ref=e246]:
+              - textbox "输入修订要求，如：优先检查认证与越权风险" [ref=e247]
+              - button "修订" [disabled]:
+                - img
+                - text: 修订
+          - generic [ref=e249]:
+            - generic [ref=e250]:
+              - img [ref=e251]
+              - text: 快捷指令
+            - button "健康检查" [ref=e253] [cursor=pointer]:
+              - img [ref=e254]
+              - text: 健康检查
+            - button "列出工具" [ref=e256] [cursor=pointer]:
+              - img [ref=e257]
+              - text: 列出工具
+            - button "任务概况" [ref=e259] [cursor=pointer]:
+              - img [ref=e260]
+              - text: 任务概况
+            - button "工作区" [ref=e264] [cursor=pointer]:
+              - img [ref=e265]
+              - text: 工作区
+          - generic [ref=e268]:
+            - 'textbox "输入目标 URL 启动扫描，如: 扫描 http://127.0.0.1:8080 scope=127.0.0.1" [ref=e269]'
+            - button "发送" [disabled]:
+              - img
+              - generic: 发送
+        - complementary [ref=e270]:
+          - generic [ref=e271]:
+            - generic [ref=e272]:
+              - heading "Agent Runbook" [level=2] [ref=e273]:
+                - img [ref=e274]
+                - text: Agent Runbook
+              - generic [ref=e277]: 已完成
+            - generic [ref=e278]:
+              - generic [ref=e279]:
+                - generic [ref=e280]:
+                  - generic [ref=e281]: 会话状态
+                  - generic [ref=e282]: idle
+                - generic [ref=e283]:
+                  - generic [ref=e284]: 工具调用
+                  - generic [ref=e285]: "1"
+              - generic [ref=e286]:
+                - generic [ref=e287]: 当前目标
+                - generic [ref=e288]: 检查 daemon 健康状态
+              - generic [ref=e289]:
+                - generic [ref=e290]:
+                  - generic [ref=e291]:
+                    - img [ref=e292]
+                    - text: 计划
+                  - generic [ref=e304]: 3/3
+                - generic [ref=e305]:
+                  - generic [ref=e306]:
+                    - generic [ref=e307]: ✓
+                    - generic [ref=e308]: 理解用户意图
+                    - generic [ref=e309]: done
+                  - generic [ref=e310]:
+                    - generic [ref=e311]: ✓
+                    - generic [ref=e312]: 选择必要工具或本地回答
+                    - generic [ref=e313]: done
+                  - generic [ref=e314]:
+                    - generic [ref=e315]: ✓
+                    - generic [ref=e316]: 返回结果和下一步
+                    - generic [ref=e317]: done
+              - generic [ref=e318]:
+                - generic [ref=e319]:
+                  - img [ref=e320]
+                  - text: 执行轨迹
+                - generic [ref=e322]:
+                  - generic [ref=e323]:
+                    - generic [ref=e324]: GET /api/v1/doctor
+                    - generic [ref=e325]: succeeded
+                  - generic [ref=e326]:
+                    - generic [ref=e327]: tool_call
+                    - generic [ref=e328]: 风险:low
+                    - generic [ref=e329]: auto
+                    - generic [ref=e330]: 免审批
+                  - paragraph [ref=e331]: daemon
+          - generic [ref=e332]:
+            - heading "执行 Timeline" [level=2] [ref=e333]:
+              - img [ref=e334]
+              - text: 执行 Timeline
+            - generic [ref=e339]:
+              - generic [ref=e340]:
+                - generic [ref=e341]: GET /api/v1/doctor
+                - generic [ref=e342]: succeeded
+              - paragraph [ref=e343]: daemon
+          - generic [ref=e344]:
+            - generic [ref=e345]:
+              - heading "Agent 能力" [level=2] [ref=e346]:
+                - img [ref=e347]
+                - text: Agent 能力
+              - generic [ref=e359]: v0.1.2
+            - paragraph [ref=e360]: 面向授权目标的 Web/API 安全分析 Agent：通过自然语言维护任务、规划步骤、调用工具、沉淀上下文并生成可复现结论。
+            - generic [ref=e361]:
+              - generic [ref=e362]:
+                - generic [ref=e363]:
+                  - img [ref=e364]
+                  - generic [ref=e366]: "5"
+                - generic [ref=e367]: 能力
+              - generic [ref=e368]:
+                - generic [ref=e369]:
+                  - img [ref=e370]
+                  - generic [ref=e372]: "6"
+                - generic [ref=e373]: 内置工具
+            - generic [ref=e374]:
+              - generic [ref=e375]:
+                - generic [ref=e376]:
+                  - img [ref=e377]
+                  - generic [ref=e380]: 自然语言运维/测试
+                - paragraph [ref=e381]: 将操作者意图转为任务、待办、工具调用和下一步建议。
+              - generic [ref=e382]:
+                - generic [ref=e383]:
+                  - img [ref=e384]
+                  - generic [ref=e387]: 会话与上下文保持
+                - paragraph [ref=e388]: 保持聊天会话、任务状态、工具轨迹、上下文引用和下一步动作。
+              - generic [ref=e389]:
+                - generic [ref=e390]:
+                  - img [ref=e391]
+                  - generic [ref=e394]: 规划→工具→总结闭环
+                - paragraph [ref=e395]: 支持 JSON actions 与模型原生 tool_calls，执行低风险工具后回灌 observation 并生成最终总结。
+              - generic [ref=e396]:
+                - generic [ref=e397]:
+                  - img [ref=e398]
+                  - generic [ref=e401]: Web/API 安全运行时
+                - paragraph [ref=e402]: 可按明确授权指令启动 safe profile 扫描、跟踪运行、收集证据、处理审批并复测。
+            - generic [ref=e403]:
+              - generic [ref=e404]:
+                - img [ref=e405]
+                - text: 执行阶段
+              - generic [ref=e417]:
+                - generic [ref=e418]:
+                  - generic [ref=e419]: "1"
+                  - text: 理解
+                - generic [ref=e420]:
+                  - generic [ref=e421]: "2"
+                  - text: 规划
+                - generic [ref=e422]:
+                  - generic [ref=e423]: "3"
+                  - text: 工具调用
+                - generic [ref=e424]:
+                  - generic [ref=e425]: "4"
+                  - text: 观测
+                - generic [ref=e426]:
+                  - generic [ref=e427]: "5"
+                  - text: 总结
+            - generic [ref=e428]:
+              - generic [ref=e429]:
+                - img [ref=e430]
+                - text: 工具
+              - generic [ref=e432]:
+                - generic [ref=e433]: auto · workspace.command
+                - generic [ref=e434]: auto · workspace.files.list
+                - generic [ref=e435]: auto · workspace.files.read
+                - generic [ref=e436]: auto · daemon.health
+                - generic [ref=e437]: auto · plugins.list
+                - generic [ref=e438]: auto · runs.list
+            - generic [ref=e439]:
+              - generic [ref=e440]:
+                - img [ref=e441]
+                - text: 安全策略
+              - paragraph [ref=e443]: LLM 自动执行仅限低风险内置工具；扫描需明确自然语言指令；外部插件/高风险动作进入审批 gate。
+          - generic [ref=e444]:
+            - heading "Agent 工作区" [level=2] [ref=e445]:
+              - img [ref=e446]
+              - text: Agent 工作区
+            - generic [ref=e448]:
+              - generic [ref=e449]: agent_20260526_153059_6213ba
+              - button "pwd" [ref=e450] [cursor=pointer]
+              - button "ls -la" [ref=e451] [cursor=pointer]
+              - button "git status" [ref=e452] [cursor=pointer]
+            - generic [ref=e453]:
+              - 'textbox "输入白名单命令，如: ls -la、cat README.md" [ref=e454]'
+              - button "执行" [disabled]
+            - generic [ref=e455]: 尚未执行命令。建议先用 pwd / ls -la 确认工作区位置。
+          - generic [ref=e456]:
+            - generic [ref=e457]:
+              - heading "工作区文件" [level=2] [ref=e458]:
+                - img [ref=e459]
+                - text: 工作区文件
+              - button "刷新" [ref=e461] [cursor=pointer]
+            - generic [ref=e462]:
+              - textbox "输入目录路径，如 . 或 src" [ref=e463]: .
+              - button "打开" [ref=e464] [cursor=pointer]
+            - generic [ref=e465]: 当前目录为空

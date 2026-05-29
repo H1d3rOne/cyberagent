@@ -1,0 +1,277 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+    - navigation [ref=e10]:
+      - link "Agent" [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /ops
+        - img [ref=e16]
+      - link "扫描" [ref=e23] [cursor=pointer]:
+        - /url: /scan/new
+        - img [ref=e24]
+      - link "运行" [ref=e26] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e27]
+      - link "设置" [ref=e31] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e32]
+    - generic "在线" [ref=e36]:
+      - img [ref=e37]
+  - generic [ref=e39]:
+    - banner [ref=e40]:
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - img [ref=e43]
+          - generic [ref=e46]: CyberAgent
+        - generic [ref=e47]:
+          - generic [ref=e48]: 地址
+          - generic [ref=e49]:
+            - img [ref=e50]
+            - textbox "地址" [ref=e56]:
+              - /placeholder: http://127.0.0.1:8787
+          - generic [ref=e57]: 在线
+          - button "Switch to English" [ref=e59] [cursor=pointer]:
+            - img [ref=e60]
+          - link "Agent" [ref=e64] [cursor=pointer]:
+            - /url: /
+            - img [ref=e65]
+            - text: Agent
+    - main [ref=e68]:
+      - generic [ref=e69]:
+        - generic [ref=e70]:
+          - generic [ref=e71]:
+            - link "运行" [ref=e72] [cursor=pointer]:
+              - /url: /history
+              - img [ref=e73]
+              - text: 运行
+            - button "刷新" [ref=e76] [cursor=pointer]:
+              - img [ref=e77]
+              - text: 刷新
+          - generic [ref=e82]:
+            - generic [ref=e83]:
+              - generic [ref=e84]:
+                - img [ref=e85]
+                - text: safe
+              - heading "127.0.0.1:5173" [level=1] [ref=e87]
+              - generic [ref=e88]:
+                - generic [ref=e89]: job_20260524_024413_72a15c
+                - generic [ref=e90]: 127.0.0.1
+                - generic [ref=e91]: runs/job_20260524_024413_72a15c
+            - generic [ref=e92]:
+              - generic [ref=e93]:
+                - generic [ref=e94]: 作业
+                - generic [ref=e95]: 完成
+              - generic [ref=e96]: job_20260524_024413_72a15c
+        - generic [ref=e97]:
+          - generic [ref=e98]:
+            - generic [ref=e99]:
+              - img [ref=e100]
+              - heading "实时联动" [level=2] [ref=e102]
+            - generic [ref=e103]: 静态快照
+          - generic [ref=e105]:
+            - generic [ref=e106]:
+              - img [ref=e107]
+              - generic [ref=e110]: 完成
+              - generic [ref=e111]: 作业
+            - generic [ref=e112]:
+              - img [ref=e113]
+              - generic [ref=e115]: "106"
+              - generic [ref=e116]: 事件
+            - generic [ref=e117]:
+              - img [ref=e118]
+              - generic [ref=e121]: "8"
+              - generic [ref=e122]: 证据
+            - generic [ref=e123]:
+              - img [ref=e124]
+              - generic [ref=e127]: "0"
+              - generic [ref=e128]: 审批
+          - generic [ref=e129]:
+            - generic [ref=e130]:
+              - generic [ref=e131]: 最新事件
+              - generic [ref=e132]: 10:44:16
+            - generic [ref=e133]:
+              - generic [ref=e134]: "#106"
+              - generic [ref=e135]: job.finished
+            - paragraph [ref=e136]: job finished
+          - generic [ref=e137]:
+            - generic [ref=e138]:
+              - img [ref=e139]
+              - generic [ref=e141]: safe
+              - generic [ref=e142]: 策略
+            - generic [ref=e143]:
+              - img [ref=e144]
+              - generic [ref=e146]: "off"
+              - generic [ref=e147]: interactive
+            - generic [ref=e148]:
+              - img [ref=e149]
+              - generic [ref=e152]: "off"
+              - generic [ref=e153]: planner
+            - generic [ref=e154]:
+              - img [ref=e155]
+              - generic [ref=e157]: "off"
+              - generic [ref=e158]: external
+            - generic [ref=e159]:
+              - img [ref=e160]
+              - generic [ref=e163]: markdown,json
+              - generic [ref=e164]: reports
+            - generic [ref=e165]:
+              - img [ref=e166]
+              - generic [ref=e169]: 直接打开
+              - generic [ref=e170]: 发起
+        - generic [ref=e171]:
+          - generic [ref=e172]:
+            - generic [ref=e173]:
+              - generic [ref=e174]: 事件
+              - img [ref=e176]
+            - generic [ref=e178]: "106"
+          - generic [ref=e179]:
+            - generic [ref=e180]:
+              - generic [ref=e181]: 证据
+              - img [ref=e183]
+            - generic [ref=e186]: "8"
+          - generic [ref=e187]:
+            - generic [ref=e188]:
+              - generic [ref=e189]: 发现
+              - img [ref=e191]
+            - generic [ref=e193]: "3"
+          - generic [ref=e194]:
+            - generic [ref=e195]:
+              - generic [ref=e196]: 审批
+              - img [ref=e198]
+            - generic [ref=e201]: "0"
+          - generic [ref=e202]:
+            - generic [ref=e203]:
+              - generic [ref=e204]: 更新
+              - img [ref=e206]
+            - generic [ref=e209]: 05/24 10:44
+        - generic [ref=e210]:
+          - navigation [ref=e211]:
+            - button "事件 106" [ref=e212] [cursor=pointer]:
+              - generic [ref=e213]:
+                - img [ref=e214]
+                - generic [ref=e217]: 事件
+              - generic [ref=e218]: "106"
+            - button "报告 3" [ref=e219] [cursor=pointer]:
+              - generic [ref=e220]:
+                - img [ref=e221]
+                - generic [ref=e224]: 报告
+              - generic [ref=e225]: "3"
+            - button "证据 8" [active] [ref=e226] [cursor=pointer]:
+              - generic [ref=e227]:
+                - img [ref=e228]
+                - generic [ref=e231]: 证据
+              - generic [ref=e232]: "8"
+            - button "审批 0" [ref=e233] [cursor=pointer]:
+              - generic [ref=e234]:
+                - img [ref=e235]
+                - generic [ref=e237]: 审批
+              - generic [ref=e238]: "0"
+          - generic [ref=e978]:
+            - generic [ref=e979]:
+              - generic [ref=e980]:
+                - generic [ref=e981]:
+                  - img [ref=e982]
+                  - generic [ref=e985]: artifacts/http/probe.json
+                - generic [ref=e986]:
+                  - generic [ref=e987]: json
+                  - generic [ref=e988]: 9f37c477e2b643ae0b…
+              - generic [ref=e989]: 585 B
+              - link "让 Agent 分析" [ref=e991] [cursor=pointer]:
+                - /url: /
+                - img [ref=e992]
+                - text: 让 Agent 分析
+            - generic [ref=e995]:
+              - generic [ref=e996]:
+                - generic [ref=e997]:
+                  - img [ref=e998]
+                  - generic [ref=e1001]: artifacts/http/homepage.html
+                - generic [ref=e1002]:
+                  - generic [ref=e1003]: html
+                  - generic [ref=e1004]: 1134154f269893ea6a…
+              - generic [ref=e1005]: 716 B
+              - link "让 Agent 分析" [ref=e1007] [cursor=pointer]:
+                - /url: /
+                - img [ref=e1008]
+                - text: 让 Agent 分析
+            - generic [ref=e1011]:
+              - generic [ref=e1012]:
+                - generic [ref=e1013]:
+                  - img [ref=e1014]
+                  - generic [ref=e1017]: artifacts/http/homepage_headers.json
+                - generic [ref=e1018]:
+                  - generic [ref=e1019]: json
+                  - generic [ref=e1020]: 51b5b35e861d5f4563…
+              - generic [ref=e1021]: 344 B
+              - link "让 Agent 分析" [ref=e1023] [cursor=pointer]:
+                - /url: /
+                - img [ref=e1024]
+                - text: 让 Agent 分析
+            - generic [ref=e1027]:
+              - generic [ref=e1028]:
+                - generic [ref=e1029]:
+                  - img [ref=e1030]
+                  - generic [ref=e1033]: artifacts/http/robots.txt
+                - generic [ref=e1034]:
+                  - generic [ref=e1035]: text
+                  - generic [ref=e1036]: 1134154f269893ea6a…
+              - generic [ref=e1037]: 716 B
+              - link "让 Agent 分析" [ref=e1039] [cursor=pointer]:
+                - /url: /
+                - img [ref=e1040]
+                - text: 让 Agent 分析
+            - generic [ref=e1043]:
+              - generic [ref=e1044]:
+                - generic [ref=e1045]:
+                  - img [ref=e1046]
+                  - generic [ref=e1049]: artifacts/http/sitemap.xml
+                - generic [ref=e1050]:
+                  - generic [ref=e1051]: xml
+                  - generic [ref=e1052]: 1134154f269893ea6a…
+              - generic [ref=e1053]: 716 B
+              - link "让 Agent 分析" [ref=e1055] [cursor=pointer]:
+                - /url: /
+                - img [ref=e1056]
+                - text: 让 Agent 分析
+            - generic [ref=e1059]:
+              - generic [ref=e1060]:
+                - generic [ref=e1061]:
+                  - img [ref=e1062]
+                  - generic [ref=e1065]: artifacts/http/js_001.js
+                - generic [ref=e1066]:
+                  - generic [ref=e1067]: text
+                  - generic [ref=e1068]: 7ce7b4de7f1d9c6886…
+              - generic [ref=e1069]: 178.4 KB
+              - link "让 Agent 分析" [ref=e1071] [cursor=pointer]:
+                - /url: /
+                - img [ref=e1072]
+                - text: 让 Agent 分析
+            - generic [ref=e1075]:
+              - generic [ref=e1076]:
+                - generic [ref=e1077]:
+                  - img [ref=e1078]
+                  - generic [ref=e1081]: artifacts/http/js_002.js
+                - generic [ref=e1082]:
+                  - generic [ref=e1083]: text
+                  - generic [ref=e1084]: 9898a4798dc9781c2a…
+              - generic [ref=e1085]: 3.2 KB
+              - link "让 Agent 分析" [ref=e1087] [cursor=pointer]:
+                - /url: /
+                - img [ref=e1088]
+                - text: 让 Agent 分析
+            - generic [ref=e1091]:
+              - generic [ref=e1092]:
+                - generic [ref=e1093]:
+                  - img [ref=e1094]
+                  - generic [ref=e1097]: artifacts/http/content_discovery.json
+                - generic [ref=e1098]:
+                  - generic [ref=e1099]: json
+                  - generic [ref=e1100]: 7131901e88df476f91…
+              - generic [ref=e1101]: 4.2 KB
+              - link "让 Agent 分析" [ref=e1103] [cursor=pointer]:
+                - /url: /
+                - img [ref=e1104]
+                - text: 让 Agent 分析

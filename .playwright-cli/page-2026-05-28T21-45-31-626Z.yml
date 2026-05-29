@@ -1,0 +1,608 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+      - generic [ref=e11]:
+        - generic [ref=e12]: CyberAgent
+        - generic [ref=e13]: Agent Cockpit
+    - navigation [ref=e14]:
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /
+        - img [ref=e17]
+        - generic [ref=e24]: 总览
+      - link "Agent" [ref=e25] [cursor=pointer]:
+        - /url: /agent
+        - img [ref=e27]
+        - generic [ref=e30]: Agent
+      - link "任务" [ref=e31] [cursor=pointer]:
+        - /url: /tasks
+        - img [ref=e33]
+        - generic [ref=e35]: 任务
+      - link "历史" [ref=e36] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e38]
+        - generic [ref=e42]: 历史
+      - link "设置" [ref=e43] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e45]
+        - generic [ref=e48]: 设置
+    - generic "在线" [ref=e287]:
+      - img [ref=e288]
+      - generic [ref=e58]: 在线
+  - generic [ref=e59]:
+    - banner [ref=e60]:
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - img [ref=e63]
+          - generic [ref=e66]:
+            - generic [ref=e67]: authorized web/api security agent
+            - generic [ref=e68]: 通过自然语言驱动安全测试、运维与分析
+        - generic [ref=e69]:
+          - generic [ref=e70]: 在线
+          - button "Switch to English" [ref=e72] [cursor=pointer]:
+            - img [ref=e73]
+          - link "Agent" [ref=e77] [cursor=pointer]:
+            - /url: /agent
+            - img [ref=e78]
+            - text: Agent
+    - main [ref=e81]:
+      - generic [ref=e82]:
+        - complementary [ref=e83]:
+          - generic [ref=e84]:
+            - heading "会话" [level=2] [ref=e85]:
+              - img [ref=e86]
+              - text: 会话
+            - generic [ref=e88]:
+              - button "新建会话" [ref=e89] [cursor=pointer]:
+                - img [ref=e90]
+              - button "刷新" [ref=e92] [cursor=pointer]:
+                - img [ref=e93]
+          - generic [ref=e98]:
+            - button "20 全部" [ref=e290] [cursor=pointer]:
+              - generic [ref=e100]: "20"
+              - generic [ref=e101]: 全部
+            - button "0 运行" [ref=e102] [cursor=pointer]:
+              - generic [ref=e103]: "0"
+              - generic [ref=e104]: 运行
+            - button "0 审批" [ref=e105] [cursor=pointer]:
+              - generic [ref=e106]: "0"
+              - generic [ref=e107]: 审批
+            - button "0 发现" [ref=e108] [cursor=pointer]:
+              - generic [ref=e109]: "0"
+              - generic [ref=e110]: 发现
+            - button "0 记忆" [ref=e111] [cursor=pointer]:
+              - generic [ref=e112]: "0"
+              - generic [ref=e113]: 记忆
+            - button "0 阻塞" [ref=e114] [cursor=pointer]:
+              - generic [ref=e115]: "0"
+              - generic [ref=e116]: 阻塞
+          - generic [ref=e117]:
+            - img [ref=e118]
+            - textbox [ref=e121]:
+              - /placeholder: 搜索会话 / run / 证据
+          - generic:
+            - button "置顶会话 20260528_214504_dff8d2 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e291] [cursor=pointer]:
+              - generic [ref=e292]:
+                - generic [ref=e293]:
+                  - button "置顶会话" [ref=e294]:
+                    - img [ref=e295]
+                  - generic [ref=e297]: 20260528_214504_dff8d2
+                - generic [ref=e298]: 等输入
+              - paragraph [ref=e299]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e300]:
+                - generic [ref=e301]:
+                  - img [ref=e302]
+                  - text: "1"
+                - generic [ref=e304]:
+                  - img [ref=e305]
+                  - text: "0"
+                - generic [ref=e307]:
+                  - img [ref=e308]
+                  - text: "0"
+            - button "置顶会话 20260526_021735_e884c2 已完成 检查 daemon 健康状态 5 2 0" [ref=e311] [cursor=pointer]:
+              - generic [ref=e312]:
+                - generic [ref=e313]:
+                  - button "置顶会话" [ref=e314]:
+                    - img [ref=e315]
+                  - generic [ref=e317]: 20260526_021735_e884c2
+                - generic [ref=e318]: 已完成
+              - paragraph [ref=e319]: 检查 daemon 健康状态
+              - generic [ref=e320]:
+                - generic [ref=e321]:
+                  - img [ref=e322]
+                  - text: "5"
+                - generic [ref=e324]:
+                  - img [ref=e325]
+                  - text: "2"
+                - generic [ref=e327]:
+                  - img [ref=e328]
+                  - text: "0"
+            - button "置顶会话 20260528_213255_4b2a31 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e331] [cursor=pointer]:
+              - generic [ref=e332]:
+                - generic [ref=e333]:
+                  - button "置顶会话" [ref=e334]:
+                    - img [ref=e335]
+                  - generic [ref=e337]: 20260528_213255_4b2a31
+                - generic [ref=e338]: 等输入
+              - paragraph [ref=e339]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e340]:
+                - generic [ref=e341]:
+                  - img [ref=e342]
+                  - text: "1"
+                - generic [ref=e344]:
+                  - img [ref=e345]
+                  - text: "0"
+                - generic [ref=e347]:
+                  - img [ref=e348]
+                  - text: "0"
+            - button "置顶会话 20260528_211908_f6f4ca 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e351] [cursor=pointer]:
+              - generic [ref=e352]:
+                - generic [ref=e353]:
+                  - button "置顶会话" [ref=e354]:
+                    - img [ref=e355]
+                  - generic [ref=e357]: 20260528_211908_f6f4ca
+                - generic [ref=e358]: 等输入
+              - paragraph [ref=e359]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e360]:
+                - generic [ref=e361]:
+                  - img [ref=e362]
+                  - text: "1"
+                - generic [ref=e364]:
+                  - img [ref=e365]
+                  - text: "0"
+                - generic [ref=e367]:
+                  - img [ref=e368]
+                  - text: "0"
+            - button "置顶会话 20260528_210622_4e0597 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e371] [cursor=pointer]:
+              - generic [ref=e372]:
+                - generic [ref=e373]:
+                  - button "置顶会话" [ref=e374]:
+                    - img [ref=e375]
+                  - generic [ref=e377]: 20260528_210622_4e0597
+                - generic [ref=e378]: 等输入
+              - paragraph [ref=e379]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e380]:
+                - generic [ref=e381]:
+                  - img [ref=e382]
+                  - text: "1"
+                - generic [ref=e384]:
+                  - img [ref=e385]
+                  - text: "0"
+                - generic [ref=e387]:
+                  - img [ref=e388]
+                  - text: "0"
+            - button "置顶会话 20260528_210538_aed270 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e391] [cursor=pointer]:
+              - generic [ref=e392]:
+                - generic [ref=e393]:
+                  - button "置顶会话" [ref=e394]:
+                    - img [ref=e395]
+                  - generic [ref=e397]: 20260528_210538_aed270
+                - generic [ref=e398]: 等输入
+              - paragraph [ref=e399]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e400]:
+                - generic [ref=e401]:
+                  - img [ref=e402]
+                  - text: "1"
+                - generic [ref=e404]:
+                  - img [ref=e405]
+                  - text: "0"
+                - generic [ref=e407]:
+                  - img [ref=e408]
+                  - text: "0"
+            - button "置顶会话 20260528_204257_e80190 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e411] [cursor=pointer]:
+              - generic [ref=e412]:
+                - generic [ref=e413]:
+                  - button "置顶会话" [ref=e414]:
+                    - img [ref=e415]
+                  - generic [ref=e417]: 20260528_204257_e80190
+                - generic [ref=e418]: 等输入
+              - paragraph [ref=e419]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e420]:
+                - generic [ref=e421]:
+                  - img [ref=e422]
+                  - text: "1"
+                - generic [ref=e424]:
+                  - img [ref=e425]
+                  - text: "0"
+                - generic [ref=e427]:
+                  - img [ref=e428]
+                  - text: "0"
+            - button "置顶会话 20260528_163234_a9f8e1 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e431] [cursor=pointer]:
+              - generic [ref=e432]:
+                - generic [ref=e433]:
+                  - button "置顶会话" [ref=e434]:
+                    - img [ref=e435]
+                  - generic [ref=e437]: 20260528_163234_a9f8e1
+                - generic [ref=e438]: 等输入
+              - paragraph [ref=e439]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e440]:
+                - generic [ref=e441]:
+                  - img [ref=e442]
+                  - text: "1"
+                - generic [ref=e444]:
+                  - img [ref=e445]
+                  - text: "0"
+                - generic [ref=e447]:
+                  - img [ref=e448]
+                  - text: "0"
+            - button "置顶会话 20260528_161413_ea2a7c 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e451] [cursor=pointer]:
+              - generic [ref=e452]:
+                - generic [ref=e453]:
+                  - button "置顶会话" [ref=e454]:
+                    - img [ref=e455]
+                  - generic [ref=e457]: 20260528_161413_ea2a7c
+                - generic [ref=e458]: 等输入
+              - paragraph [ref=e459]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e460]:
+                - generic [ref=e461]:
+                  - img [ref=e462]
+                  - text: "1"
+                - generic [ref=e464]:
+                  - img [ref=e465]
+                  - text: "0"
+                - generic [ref=e467]:
+                  - img [ref=e468]
+                  - text: "0"
+            - button "置顶会话 20260528_160726_df857b 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e471] [cursor=pointer]:
+              - generic [ref=e472]:
+                - generic [ref=e473]:
+                  - button "置顶会话" [ref=e474]:
+                    - img [ref=e475]
+                  - generic [ref=e477]: 20260528_160726_df857b
+                - generic [ref=e478]: 等输入
+              - paragraph [ref=e479]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e480]:
+                - generic [ref=e481]:
+                  - img [ref=e482]
+                  - text: "1"
+                - generic [ref=e484]:
+                  - img [ref=e485]
+                  - text: "0"
+                - generic [ref=e487]:
+                  - img [ref=e488]
+                  - text: "0"
+            - button "置顶会话 20260528_160725_f03c67 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e491] [cursor=pointer]:
+              - generic [ref=e492]:
+                - generic [ref=e493]:
+                  - button "置顶会话" [ref=e494]:
+                    - img [ref=e495]
+                  - generic [ref=e497]: 20260528_160725_f03c67
+                - generic [ref=e498]: 等输入
+              - paragraph [ref=e499]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e500]:
+                - generic [ref=e501]:
+                  - img [ref=e502]
+                  - text: "1"
+                - generic [ref=e504]:
+                  - img [ref=e505]
+                  - text: "0"
+                - generic [ref=e507]:
+                  - img [ref=e508]
+                  - text: "0"
+            - button "置顶会话 20260528_155912_43e6f7 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e511] [cursor=pointer]:
+              - generic [ref=e512]:
+                - generic [ref=e513]:
+                  - button "置顶会话" [ref=e514]:
+                    - img [ref=e515]
+                  - generic [ref=e517]: 20260528_155912_43e6f7
+                - generic [ref=e518]: 等输入
+              - paragraph [ref=e519]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e520]:
+                - generic [ref=e521]:
+                  - img [ref=e522]
+                  - text: "1"
+                - generic [ref=e524]:
+                  - img [ref=e525]
+                  - text: "0"
+                - generic [ref=e527]:
+                  - img [ref=e528]
+                  - text: "0"
+            - button "置顶会话 20260527_065059_a90f2f 已完成 回答并澄清安全任务 3 2 0" [ref=e531] [cursor=pointer]:
+              - generic [ref=e532]:
+                - generic [ref=e533]:
+                  - button "置顶会话" [ref=e534]:
+                    - img [ref=e535]
+                  - generic [ref=e537]: 20260527_065059_a90f2f
+                - generic [ref=e538]: 已完成
+              - paragraph [ref=e539]: 回答并澄清安全任务
+              - generic [ref=e540]:
+                - generic [ref=e541]:
+                  - img [ref=e542]
+                  - text: "3"
+                - generic [ref=e544]:
+                  - img [ref=e545]
+                  - text: "2"
+                - generic [ref=e547]:
+                  - img [ref=e548]
+                  - text: "0"
+            - button "置顶会话 20260527_064659_e9c9ce 已完成 查看运行历史和报告上下文 7 3 3" [ref=e551] [cursor=pointer]:
+              - generic [ref=e552]:
+                - generic [ref=e553]:
+                  - button "置顶会话" [ref=e554]:
+                    - img [ref=e555]
+                  - generic [ref=e557]: 20260527_064659_e9c9ce
+                - generic [ref=e558]: 已完成
+              - paragraph [ref=e559]: 查看运行历史和报告上下文
+              - generic [ref=e560]:
+                - generic [ref=e561]:
+                  - img [ref=e562]
+                  - text: "7"
+                - generic [ref=e564]:
+                  - img [ref=e565]
+                  - text: "3"
+                - generic [ref=e567]:
+                  - img [ref=e568]
+                  - text: "3"
+            - button "置顶会话 20260527_064202_958f78 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e571] [cursor=pointer]:
+              - generic [ref=e572]:
+                - generic [ref=e573]:
+                  - button "置顶会话" [ref=e574]:
+                    - img [ref=e575]
+                  - generic [ref=e577]: 20260527_064202_958f78
+                - generic [ref=e578]: 等输入
+              - paragraph [ref=e579]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e580]:
+                - generic [ref=e581]:
+                  - img [ref=e582]
+                  - text: "1"
+                - generic [ref=e584]:
+                  - img [ref=e585]
+                  - text: "0"
+                - generic [ref=e587]:
+                  - img [ref=e588]
+                  - text: "0"
+            - button "置顶会话 20260527_062705_9f3e6f 已完成 回答并澄清安全任务 11 5 1" [ref=e591] [cursor=pointer]:
+              - generic [ref=e592]:
+                - generic [ref=e593]:
+                  - button "置顶会话" [ref=e594]:
+                    - img [ref=e595]
+                  - generic [ref=e597]: 20260527_062705_9f3e6f
+                - generic [ref=e598]: 已完成
+              - paragraph [ref=e599]: 回答并澄清安全任务
+              - generic [ref=e600]:
+                - generic [ref=e601]:
+                  - img [ref=e602]
+                  - text: "11"
+                - generic [ref=e604]:
+                  - img [ref=e605]
+                  - text: "5"
+                - generic [ref=e607]:
+                  - img [ref=e608]
+                  - text: "1"
+            - button "置顶会话 20260527_062200_d3be32 已完成 回答并澄清安全任务 3 2 0" [ref=e611] [cursor=pointer]:
+              - generic [ref=e612]:
+                - generic [ref=e613]:
+                  - button "置顶会话" [ref=e614]:
+                    - img [ref=e615]
+                  - generic [ref=e617]: 20260527_062200_d3be32
+                - generic [ref=e618]: 已完成
+              - paragraph [ref=e619]: 回答并澄清安全任务
+              - generic [ref=e620]:
+                - generic [ref=e621]:
+                  - img [ref=e622]
+                  - text: "3"
+                - generic [ref=e624]:
+                  - img [ref=e625]
+                  - text: "2"
+                - generic [ref=e627]:
+                  - img [ref=e628]
+                  - text: "0"
+            - button "置顶会话 20260527_061357_3dee25 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e631] [cursor=pointer]:
+              - generic [ref=e632]:
+                - generic [ref=e633]:
+                  - button "置顶会话" [ref=e634]:
+                    - img [ref=e635]
+                  - generic [ref=e637]: 20260527_061357_3dee25
+                - generic [ref=e638]: 等输入
+              - paragraph [ref=e639]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e640]:
+                - generic [ref=e641]:
+                  - img [ref=e642]
+                  - text: "1"
+                - generic [ref=e644]:
+                  - img [ref=e645]
+                  - text: "0"
+                - generic [ref=e647]:
+                  - img [ref=e648]
+                  - text: "0"
+            - button "置顶会话 20260527_060856_5deb9b 等输入 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。 1 0 0" [ref=e651] [cursor=pointer]:
+              - generic [ref=e652]:
+                - generic [ref=e653]:
+                  - button "置顶会话" [ref=e654]:
+                    - img [ref=e655]
+                  - generic [ref=e657]: 20260527_060856_5deb9b
+                - generic [ref=e658]: 等输入
+              - paragraph [ref=e659]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+              - generic [ref=e660]:
+                - generic [ref=e661]:
+                  - img [ref=e662]
+                  - text: "1"
+                - generic [ref=e664]:
+                  - img [ref=e665]
+                  - text: "0"
+                - generic [ref=e667]:
+                  - img [ref=e668]
+                  - text: "0"
+            - button "置顶会话 20260527_060448_2ca122 已完成 回答并澄清安全任务 5 2 1" [ref=e671] [cursor=pointer]:
+              - generic [ref=e672]:
+                - generic [ref=e673]:
+                  - button "置顶会话" [ref=e674]:
+                    - img [ref=e675]
+                  - generic [ref=e677]: 20260527_060448_2ca122
+                - generic [ref=e678]: 已完成
+              - paragraph [ref=e679]: 回答并澄清安全任务
+              - generic [ref=e680]:
+                - generic [ref=e681]:
+                  - img [ref=e682]
+                  - text: "5"
+                - generic [ref=e684]:
+                  - img [ref=e685]
+                  - text: "2"
+                - generic [ref=e687]:
+                  - img [ref=e688]
+                  - text: "1"
+        - generic [ref=e123]:
+          - generic [ref=e125]:
+            - img [ref=e127]
+            - generic [ref=e130]:
+              - heading "CyberAgent Cockpit" [level=1] [ref=e131]
+              - generic [ref=e132]:
+                - generic [ref=e133]: plan
+                - generic [ref=e135]: tool
+                - generic [ref=e137]: observe
+                - generic [ref=e139]: synthesize
+            - 'generic "最后同步: 05:45:19" [ref=e707]': 实时在线
+          - generic [ref=e692]:
+            - img [ref=e694]
+            - generic [ref=e697]:
+              - generic [ref=e699]:
+                - img [ref=e700]
+                - text: agent
+              - paragraph [ref=e703]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+          - generic [ref=e144]:
+            - button "等输入 等待用户给出授权目标、scope 或下一步指令。 收起控制" [expanded] [ref=e708] [cursor=pointer]:
+              - generic [ref=e146]:
+                - generic [ref=e147]:
+                  - img [ref=e148]
+                  - text: 等输入
+                - generic [ref=e150]: 等待用户给出授权目标、scope 或下一步指令。
+              - generic [ref=e151]:
+                - text: 收起控制
+                - img [ref=e709]
+            - generic [ref=e711]:
+              - generic [ref=e712]:
+                - generic [ref=e714]: 等待用户给出授权目标、scope 或下一步指令。
+                - generic [ref=e715]:
+                  - button "继续" [ref=e716] [cursor=pointer]:
+                    - img [ref=e717]
+                    - text: 继续
+                  - button "暂停" [ref=e720] [cursor=pointer]:
+                    - img [ref=e721]
+                    - text: 暂停
+                  - button "新任务" [ref=e723] [cursor=pointer]:
+                    - img [ref=e724]
+                    - text: 新任务
+              - generic [ref=e726]:
+                - textbox "输入修订要求，如：优先检查认证与越权风险" [ref=e727]
+                - button "修订" [disabled]:
+                  - img
+                  - text: 修订
+          - generic [ref=e154]:
+            - button "快捷指令 收起" [expanded] [active] [ref=e728] [cursor=pointer]:
+              - generic [ref=e156]:
+                - img [ref=e157]
+                - generic [ref=e159]: 快捷指令
+              - generic [ref=e160]:
+                - text: 收起
+                - img [ref=e729]
+            - generic [ref=e731]:
+              - button "继续" [ref=e732] [cursor=pointer]:
+                - img [ref=e733]
+                - text: 继续
+              - button "修订" [ref=e736] [cursor=pointer]:
+                - img [ref=e737]
+                - text: 修订
+              - button "停止" [ref=e740] [cursor=pointer]:
+                - img [ref=e741]
+                - text: 停止
+              - button "新任务" [ref=e743] [cursor=pointer]:
+                - img [ref=e744]
+                - text: 新任务
+              - button "健康检查" [ref=e746] [cursor=pointer]:
+                - img [ref=e747]
+                - text: 健康检查
+              - button "列出工具" [ref=e749] [cursor=pointer]:
+                - img [ref=e750]
+                - text: 列出工具
+              - button "任务概况" [ref=e752] [cursor=pointer]:
+                - img [ref=e753]
+                - text: 任务概况
+              - button "工作区" [ref=e757] [cursor=pointer]:
+                - img [ref=e758]
+                - text: 工作区
+          - generic [ref=e164]:
+            - textbox "Agent 指令输入" [ref=e165]:
+              - /placeholder: 自然语言控制：扫描授权目标、继续、修订计划；或 /ls、/write、/diff...
+            - button "发送" [disabled]:
+              - img
+              - generic: 发送
+        - complementary [ref=e166]:
+          - generic [ref=e168]:
+            - button "运行簿 0/4" [pressed] [ref=e169] [cursor=pointer]:
+              - img [ref=e170]
+              - generic [ref=e173]: 运行簿
+              - generic [ref=e174]: 0/4
+            - button "轨迹 1" [ref=e705] [cursor=pointer]:
+              - img [ref=e176]
+              - generic [ref=e178]: 轨迹
+              - generic [ref=e179]: "1"
+            - button "能力 17" [ref=e706] [cursor=pointer]:
+              - img [ref=e181]
+              - generic [ref=e193]: 能力
+              - generic [ref=e194]: "17"
+            - button "工作区" [ref=e195] [cursor=pointer]:
+              - img [ref=e196]
+              - generic [ref=e198]: 工作区
+          - generic [ref=e199]:
+            - generic [ref=e200]:
+              - heading "Agent Runbook" [level=2] [ref=e201]:
+                - img [ref=e202]
+                - text: Agent Runbook
+              - generic [ref=e205]: 等输入
+            - generic [ref=e206]:
+              - generic [ref=e207]:
+                - generic [ref=e208]:
+                  - generic [ref=e209]: 会话状态
+                  - generic [ref=e210]: idle
+                - generic [ref=e211]:
+                  - generic [ref=e212]: 工具调用
+                  - generic [ref=e213]: "0"
+              - generic [ref=e214]:
+                - generic [ref=e215]:
+                  - generic [ref=e216]: 上下文
+                  - generic [ref=e217]: "0"
+                - generic [ref=e218]:
+                  - generic [ref=e219]: 事件
+                  - generic [ref=e220]: "0"
+                - generic [ref=e221]:
+                  - generic [ref=e222]: 审批
+                  - generic [ref=e223]: 0/0
+              - generic [ref=e224]:
+                - generic [ref=e225]: 当前目标
+                - generic [ref=e226]: 等待自然语言指令
+              - generic [ref=e227]:
+                - generic [ref=e228]:
+                  - generic [ref=e229]:
+                    - img [ref=e230]
+                    - generic [ref=e234]: 压缩记忆
+                  - generic [ref=e235]: 待生成
+                - paragraph [ref=e236]: 长会话超过窗口后会自动压缩早期上下文，并在后续 LLM 请求中注入。
+              - generic [ref=e237]:
+                - generic [ref=e238]:
+                  - generic [ref=e239]:
+                    - img [ref=e240]
+                    - text: 计划
+                  - generic [ref=e252]: 0/4
+                - generic [ref=e253]:
+                  - generic [ref=e254]:
+                    - generic [ref=e255]: "1"
+                    - generic [ref=e256]: 理解目标与授权范围
+                    - generic [ref=e257]: ready
+                  - generic [ref=e258]:
+                    - generic [ref=e259]: "2"
+                    - generic [ref=e260]: 制定安全分析计划
+                    - generic [ref=e261]: ready
+                  - generic [ref=e262]:
+                    - generic [ref=e263]: "3"
+                    - generic [ref=e264]: 调用工具并观察结果
+                    - generic [ref=e265]: ready
+                  - generic [ref=e266]:
+                    - generic [ref=e267]: "4"
+                    - generic [ref=e268]: 汇总证据和下一步
+                    - generic [ref=e269]: ready
+              - generic [ref=e270]:
+                - generic [ref=e272]:
+                  - img [ref=e273]
+                  - generic [ref=e285]: 推理 / 计划修订
+                - paragraph [ref=e286]: 等待 Agent 生成可追溯推理：为什么这样规划、为何调用工具、下一步是什么。

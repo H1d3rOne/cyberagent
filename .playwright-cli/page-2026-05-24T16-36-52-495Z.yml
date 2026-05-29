@@ -1,0 +1,204 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+    - navigation [ref=e10]:
+      - link "Agent" [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /ops
+        - img [ref=e16]
+      - link "扫描" [ref=e23] [cursor=pointer]:
+        - /url: /scan/new
+        - img [ref=e24]
+      - link "历史" [ref=e26] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e27]
+      - link "设置" [ref=e31] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e32]
+    - generic "离线" [ref=e36]:
+      - img [ref=e37]
+  - generic [ref=e44]:
+    - banner [ref=e45]:
+      - generic [ref=e46]:
+        - generic [ref=e47]:
+          - img [ref=e48]
+          - generic [ref=e51]: CyberAgent
+        - generic [ref=e52]:
+          - generic [ref=e53]: 离线
+          - button "Switch to English" [ref=e55] [cursor=pointer]:
+            - img [ref=e56]
+          - link "Agent" [ref=e60] [cursor=pointer]:
+            - /url: /
+            - img [ref=e61]
+            - text: Agent
+    - main [ref=e64]:
+      - generic [ref=e65]:
+        - generic [ref=e66]:
+          - generic [ref=e67]:
+            - generic [ref=e68]:
+              - img [ref=e69]
+              - text: 配置
+            - heading "设置" [level=1] [ref=e75]
+            - paragraph [ref=e76]: 所有控制台设置都会自动保存到本地浏览器：连接信息、Agent 操作员、语言和扫描默认值。
+          - generic [ref=e77]:
+            - generic [ref=e78]:
+              - img [ref=e80]
+              - generic [ref=e85]:
+                - heading "Daemon" [level=2] [ref=e86]
+                - paragraph [ref=e87]: /api/v1
+            - generic [ref=e88]:
+              - generic [ref=e89]:
+                - generic [ref=e90]:
+                  - img [ref=e91]
+                  - text: 后端地址
+                - textbox "后端地址" [ref=e96]:
+                  - /placeholder: http://127.0.0.1:8787
+                  - text: http://127.0.0.1:8787
+              - generic [ref=e97]:
+                - generic [ref=e98]:
+                  - img [ref=e99]
+                  - text: 令牌
+                - textbox "令牌" [ref=e102]:
+                  - /placeholder: Bearer token
+                  - text: dev-token-123
+              - generic [ref=e103]:
+                - generic [ref=e104]:
+                  - img [ref=e105]
+                  - text: 操作员
+                - textbox "操作员" [ref=e108]:
+                  - /placeholder: local-user
+                  - text: H1d3rOne
+            - generic [ref=e109]:
+              - button "保存" [ref=e110] [cursor=pointer]:
+                - img [ref=e111]
+                - text: 保存
+              - button "连接" [ref=e115] [cursor=pointer]:
+                - img [ref=e116]
+                - text: 连接
+              - button "重置" [ref=e121] [cursor=pointer]:
+                - img [ref=e122]
+                - text: 重置
+          - generic [ref=e125]:
+            - generic [ref=e126]:
+              - img [ref=e128]
+              - generic [ref=e131]:
+                - heading "Agent 默认值" [level=2] [ref=e132]
+                - paragraph [ref=e133]: scan / planner / cockpit
+            - generic [ref=e134]:
+              - generic [ref=e135]:
+                - generic [ref=e136]:
+                  - generic [ref=e137]:
+                    - img [ref=e138]
+                    - text: 目标
+                  - textbox "目标" [ref=e142]:
+                    - /placeholder: http://127.0.0.1:18080
+                    - text: http://127.0.0.1:18080
+                - generic [ref=e143]:
+                  - generic [ref=e144]:
+                    - img [ref=e145]
+                    - text: 范围
+                  - textbox "范围" [ref=e147]:
+                    - /placeholder: 127.0.0.1
+                    - text: 127.0.0.1
+              - generic [ref=e148]:
+                - generic [ref=e149]:
+                  - generic [ref=e150]:
+                    - img [ref=e151]
+                    - text: 提供商
+                  - textbox "提供商" [ref=e157]:
+                    - /placeholder: anthropic
+                    - text: openai
+                - generic [ref=e158]:
+                  - generic [ref=e159]:
+                    - img [ref=e160]
+                    - text: 模型
+                  - textbox "模型" [ref=e161]:
+                    - /placeholder: model name
+                    - text: gpt-5.4
+              - generic [ref=e162]:
+                - generic [ref=e163]:
+                  - generic [ref=e164]:
+                    - img [ref=e165]
+                    - text: API Key
+                  - textbox "API Key" [ref=e168]:
+                    - /placeholder: sk-...
+                    - text: sk-test
+                - generic [ref=e169]:
+                  - generic [ref=e170]:
+                    - img [ref=e171]
+                    - text: Provider Base URL
+                  - textbox "Provider Base URL" [ref=e176]:
+                    - /placeholder: 可选
+                    - text: http://127.0.0.1:4000/v1
+              - generic [ref=e177]:
+                - generic [ref=e178]:
+                  - img [ref=e179]
+                  - text: 默认指令
+                - textbox "默认指令" [ref=e181]:
+                  - /placeholder: 可选的 Agent 扫描偏好、限制或报告要求...
+                  - text: safe profile only; keep evidence
+              - generic [ref=e182]:
+                - generic [ref=e183]:
+                  - generic [ref=e184]:
+                    - img [ref=e185]
+                    - text: 轮次
+                  - spinbutton "轮次" [ref=e186]: "77"
+                - generic [ref=e187]:
+                  - button "单 Agent 默认自主扫描" [ref=e188] [cursor=pointer]:
+                    - img [ref=e190]
+                    - generic [ref=e193]:
+                      - generic [ref=e194]: 单 Agent
+                      - generic [ref=e195]: 默认自主扫描
+                  - button "多Agent 多角色编排" [active] [ref=e196] [cursor=pointer]:
+                    - img [ref=e198]
+                    - generic [ref=e199]:
+                      - generic [ref=e200]: 多Agent
+                      - generic [ref=e201]: 多角色编排
+                  - button "交互 对话引导" [ref=e202] [cursor=pointer]:
+                    - img [ref=e204]
+                    - generic [ref=e206]:
+                      - generic [ref=e207]: 交互
+                      - generic [ref=e208]: 对话引导
+          - generic [ref=e209]:
+            - generic [ref=e210]:
+              - img [ref=e212]
+              - generic [ref=e216]:
+                - heading "语言" [level=2] [ref=e217]
+                - paragraph [ref=e218]: 中文 / English
+            - generic [ref=e219]:
+              - button "中文 简体中文界面" [ref=e220] [cursor=pointer]:
+                - generic [ref=e221]: 中文
+                - generic [ref=e222]: 简体中文界面
+              - button "English English interface" [ref=e223] [cursor=pointer]:
+                - generic [ref=e224]: English
+                - generic [ref=e225]: English interface
+        - complementary [ref=e226]:
+          - generic [ref=e279]:
+            - generic [ref=e280]:
+              - img [ref=e281]
+              - text: 离线
+            - paragraph [ref=e283]: Failed to fetch
+          - generic [ref=e227]:
+            - img [ref=e230]
+            - generic [ref=e233]: 版本
+            - generic [ref=e234]: —
+            - generic [ref=e235]: github.com/H1d3rOne/cyberagent
+          - generic [ref=e236]:
+            - img [ref=e239]
+            - generic [ref=e243]: 体检
+            - generic [ref=e244]: —
+            - generic [ref=e245]: 0 checks
+          - generic [ref=e246]:
+            - img [ref=e249]
+            - generic [ref=e256]: 插件
+            - generic [ref=e257]: —
+            - generic [ref=e258]: 0 plugins
+          - generic [ref=e259]:
+            - img [ref=e262]
+            - generic [ref=e266]: 持久化
+            - generic [ref=e267]: localStorage
+            - generic [ref=e268]: cyberagent_console_settings

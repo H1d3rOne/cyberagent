@@ -1,0 +1,324 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "CyberAgent" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=e7]
+    - navigation [ref=e10]:
+      - link "Agent" [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link "总览" [ref=e15] [cursor=pointer]:
+        - /url: /ops
+        - img [ref=e16]
+      - link "扫描" [ref=e23] [cursor=pointer]:
+        - /url: /scan/new
+        - img [ref=e24]
+      - link "运行" [ref=e26] [cursor=pointer]:
+        - /url: /history
+        - img [ref=e27]
+      - link "设置" [ref=e31] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e32]
+    - generic "在线" [ref=e36]:
+      - img [ref=e37]
+  - generic [ref=e39]:
+    - banner [ref=e40]:
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - img [ref=e43]
+          - generic [ref=e46]: CyberAgent
+        - generic [ref=e47]:
+          - generic [ref=e48]: 地址
+          - generic [ref=e49]:
+            - img [ref=e50]
+            - textbox "地址" [ref=e56]:
+              - /placeholder: http://127.0.0.1:8787
+          - generic [ref=e57]: 在线
+          - button "Switch to English" [ref=e59] [cursor=pointer]:
+            - img [ref=e60]
+          - link "Agent" [ref=e64] [cursor=pointer]:
+            - /url: /
+            - img [ref=e65]
+            - text: Agent
+    - main [ref=e68]:
+      - generic [ref=e452]:
+        - generic [ref=e453]:
+          - generic [ref=e456]:
+            - generic [ref=e457]:
+              - generic [ref=e458]:
+                - generic [ref=e459]:
+                  - img [ref=e460]
+                  - text: Agent Cockpit
+                - generic [ref=e463]: Runtime 在线
+                - generic [ref=e465]:
+                  - img [ref=e466]
+                  - text: daemon 在线
+              - heading "CyberAgent" [level=1] [ref=e469]
+              - paragraph [ref=e470]: 用聊天指挥 Agent：把安全管理、测试、运维动作转成可审计 daemon 任务。
+            - generic [ref=e471]:
+              - generic [ref=e472]:
+                - generic [ref=e473]:
+                  - generic [ref=e474]: 运行
+                  - img [ref=e476]
+                - generic [ref=e478]: "0"
+              - generic [ref=e479]:
+                - generic [ref=e480]:
+                  - generic [ref=e481]: 发现
+                  - img [ref=e483]
+                - generic [ref=e485]: "0"
+              - generic [ref=e486]:
+                - generic [ref=e487]:
+                  - generic [ref=e488]: 工具
+                  - img [ref=e490]
+                - generic [ref=e496]: "2"
+          - generic [ref=e497]:
+            - button "扫描" [ref=e498] [cursor=pointer]:
+              - img [ref=e499]
+              - generic [ref=e501]: 扫描
+            - button "体检" [ref=e502] [cursor=pointer]:
+              - img [ref=e503]
+              - generic [ref=e506]: 体检
+            - button "工具" [ref=e507] [cursor=pointer]:
+              - img [ref=e508]
+              - generic [ref=e514]: 工具
+            - button "运行" [ref=e515] [cursor=pointer]:
+              - img [ref=e516]
+              - generic [ref=e520]: 运行
+            - button "审批" [ref=e521] [cursor=pointer]:
+              - img [ref=e522]
+              - generic [ref=e526]: 审批
+          - generic [ref=e527]:
+            - generic [ref=e528]:
+              - img [ref=e530]
+              - generic [ref=e532]:
+                - paragraph [ref=e533]: 我是 CyberAgent。给我授权目标与 scope，我会规划步骤、选择工具、执行 safe profile、收集证据并生成可复现报告。
+                - generic [ref=e534]: 10:39:59
+            - generic [ref=e807]:
+              - generic [ref=e808]:
+                - paragraph [ref=e809]: 扫描 http://127.0.0.1:8787 scope=127.0.0.1
+                - generic [ref=e810]: 10:41:08
+              - img [ref=e812]
+            - generic [ref=e815]:
+              - img [ref=e817]
+              - generic [ref=e821]:
+                - paragraph [ref=e822]: 已生成执行计划：校验 scope=127.0.0.1 → 使用 safe profile → 默认禁用外部工具 → 收集证据与报告。
+                - generic [ref=e823]: 10:41:08
+            - generic [ref=e824]:
+              - img [ref=e826]
+              - generic [ref=e828]:
+                - paragraph [ref=e829]: 已把任务交给 daemon：job=job_20260524_024108_252c13，run=job_20260524_024108_339ec0。运行详情会持续同步事件、证据、审批和报告。
+                - link "打开运行" [ref=e831] [cursor=pointer]:
+                  - /url: /scan/job_20260524_024108_339ec0
+                  - img [ref=e832]
+                  - text: 打开运行
+                - generic [ref=e837]: 10:41:08
+          - generic [ref=e535]:
+            - generic [ref=e536]:
+              - textbox "告诉 Agent 要做什么，例如：扫描 http://127.0.0.1:18080 scope=127.0.0.1" [active] [ref=e537]
+              - button "发送" [disabled]:
+                - img
+                - generic: 发送
+            - generic [ref=e538]:
+              - button "Web 扫描" [ref=e539] [cursor=pointer]:
+                - img [ref=e540]
+                - generic [ref=e542]: Web 扫描
+                - img [ref=e543]
+              - button "Daemon 体检" [ref=e545] [cursor=pointer]:
+                - img [ref=e546]
+                - generic [ref=e549]: Daemon 体检
+                - img [ref=e550]
+              - button "插件能力" [ref=e552] [cursor=pointer]:
+                - img [ref=e553]
+                - generic [ref=e559]: 插件能力
+                - img [ref=e560]
+              - button "审批队列" [ref=e562] [cursor=pointer]:
+                - img [ref=e563]
+                - generic [ref=e567]: 审批队列
+                - img [ref=e568]
+        - complementary [ref=e570]:
+          - generic [ref=e571]:
+            - generic [ref=e572]:
+              - generic [ref=e573]:
+                - img [ref=e574]
+                - heading "Agent 运行时" [level=2] [ref=e577]
+              - generic [ref=e578]: Runtime 在线
+            - generic [ref=e580]:
+              - generic [ref=e581]:
+                - generic [ref=e582]:
+                  - generic [ref=e583]: 操作员
+                  - img [ref=e585]
+                - generic [ref=e594]: local-user
+              - generic [ref=e595]:
+                - generic [ref=e596]:
+                  - generic [ref=e597]: 认证
+                  - img [ref=e599]
+                - generic [ref=e602]: 已配置
+              - generic [ref=e603]:
+                - generic [ref=e604]:
+                  - generic [ref=e605]: 会话
+                  - img [ref=e607]
+                - generic [ref=e611]: agent_20260524_023…
+              - generic [ref=e612]:
+                - generic [ref=e613]:
+                  - generic [ref=e614]: 策略
+                  - img [ref=e616]
+                - generic [ref=e620]: safe
+            - generic [ref=e621]:
+              - generic [ref=e622]:
+                - img [ref=e623]
+                - text: 地址
+              - generic [ref=e626]: /api (Vite proxy)
+          - generic [ref=e627]:
+            - generic [ref=e628]:
+              - generic [ref=e629]:
+                - img [ref=e630]
+                - heading "活跃运行" [level=2] [ref=e632]
+              - link "详情" [ref=e838] [cursor=pointer]:
+                - /url: /scan/job_20260524_024108_339ec0
+                - img [ref=e839]
+                - text: 详情
+            - generic [ref=e633]:
+              - generic [ref=e844]:
+                - generic [ref=e845]:
+                  - generic [ref=e846]: 127.0.0.1:8787
+                  - generic [ref=e847]: unknown
+                - generic [ref=e848]:
+                  - generic [ref=e849]: job_20260524_024…
+                  - generic [ref=e850]: 05/24 10:41
+              - generic [ref=e851]:
+                - generic [ref=e852]:
+                  - generic [ref=e853]:
+                    - generic [ref=e854]: 事件
+                    - img [ref=e856]
+                  - generic [ref=e859]: "0"
+                - generic [ref=e860]:
+                  - generic [ref=e861]:
+                    - generic [ref=e862]: 证据
+                    - img [ref=e864]
+                  - generic [ref=e867]: "0"
+                - generic [ref=e868]:
+                  - generic [ref=e869]:
+                    - generic [ref=e870]: 发现
+                    - img [ref=e872]
+                  - generic [ref=e874]: "0"
+                - generic [ref=e875]:
+                  - generic [ref=e876]:
+                    - generic [ref=e877]: 审批
+                    - img [ref=e879]
+                  - generic [ref=e883]: "0"
+              - generic [ref=e884]:
+                - generic [ref=e886]: 实时轨迹
+                - generic [ref=e888]: 等待运行事件
+          - generic [ref=e634]:
+            - generic [ref=e635]:
+              - generic [ref=e636]:
+                - img [ref=e637]
+                - heading "Agent 能力" [level=2] [ref=e643]
+              - generic [ref=e644]: v0.1.2
+            - generic [ref=e645]:
+              - generic [ref=e646]:
+                - generic [ref=e647]:
+                  - img [ref=e648]
+                  - generic [ref=e660]: 理解
+                - generic [ref=e661]: target/scope
+              - generic [ref=e662]:
+                - generic [ref=e663]:
+                  - img [ref=e664]
+                  - generic [ref=e668]: 规划
+                - generic [ref=e669]: safe profile
+              - generic [ref=e670]:
+                - generic [ref=e671]:
+                  - img [ref=e672]
+                  - generic [ref=e674]: 选工具
+                - generic [ref=e675]: registry
+              - generic [ref=e676]:
+                - generic [ref=e677]:
+                  - img [ref=e678]
+                  - generic [ref=e680]: 执行
+                - generic [ref=e681]: daemon
+              - generic [ref=e682]:
+                - generic [ref=e683]:
+                  - img [ref=e684]
+                  - generic [ref=e687]: 证据
+                - generic [ref=e688]: artifacts
+              - generic [ref=e689]:
+                - generic [ref=e690]:
+                  - img [ref=e691]
+                  - generic [ref=e695]: 审批
+                - generic [ref=e696]: policy
+              - generic [ref=e697]:
+                - generic [ref=e698]:
+                  - img [ref=e699]
+                  - generic [ref=e702]: 报告
+                - generic [ref=e703]: md/json
+          - generic [ref=e704]:
+            - generic [ref=e705]:
+              - img [ref=e706]
+              - heading "决策链" [level=2] [ref=e710]
+            - generic [ref=e711]:
+              - generic [ref=e712]:
+                - img [ref=e714]
+                - generic [ref=e716]:
+                  - generic [ref=e717]: 输入
+                  - generic [ref=e718]: chat
+                - img [ref=e719]
+              - generic [ref=e721]:
+                - img [ref=e723]
+                - generic [ref=e735]:
+                  - generic [ref=e736]: 推理
+                  - generic [ref=e737]: plan
+                - img [ref=e738]
+              - generic [ref=e740]:
+                - img [ref=e742]
+                - generic [ref=e745]:
+                  - generic [ref=e746]: 策略
+                  - generic [ref=e747]: safe / HITL
+                - img [ref=e748]
+              - generic [ref=e750]:
+                - img [ref=e752]
+                - generic [ref=e754]:
+                  - generic [ref=e755]: 工具
+                  - generic [ref=e756]: api / plugin
+                - img [ref=e757]
+              - generic [ref=e759]:
+                - img [ref=e761]
+                - generic [ref=e764]:
+                  - generic [ref=e765]: 报告
+                  - generic [ref=e766]: evidence
+                - img [ref=e767]
+          - generic [ref=e769]:
+            - generic [ref=e770]:
+              - generic [ref=e771]:
+                - img [ref=e772]
+                - heading "工具调用" [level=2] [ref=e775]
+              - button [ref=e776] [cursor=pointer]:
+                - img [ref=e777]
+            - generic [ref=e889]:
+              - generic [ref=e890]:
+                - generic [ref=e891]:
+                  - img [ref=e892]
+                  - generic [ref=e894]: POST /api/v1/scans/web
+                - generic [ref=e895]: ok
+              - generic [ref=e896]:
+                - generic [ref=e897]: 127.0.0.1:8787
+                - generic [ref=e898]: 10:41
+          - generic [ref=e784]:
+            - generic [ref=e785]:
+              - img [ref=e786]
+              - heading "最近运行" [level=2] [ref=e790]
+            - link "127.0.0.1:8787 unknown job_20260524_024… 05/24 10:41" [ref=e899] [cursor=pointer]:
+              - /url: /scan/job_20260524_024108_339ec0
+              - generic [ref=e900]:
+                - generic [ref=e901]: 127.0.0.1:8787
+                - generic [ref=e902]: unknown
+              - generic [ref=e903]:
+                - generic [ref=e904]: job_20260524_024…
+                - generic [ref=e905]: 05/24 10:41
+          - generic [ref=e793]:
+            - generic [ref=e794]:
+              - img [ref=e795]
+              - text: 默认策略
+            - generic [ref=e798]:
+              - generic [ref=e799]: profile=safe
+              - generic [ref=e800]: no_external_tools=true
+              - generic [ref=e801]: operator=local-user
