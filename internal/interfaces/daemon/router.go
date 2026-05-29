@@ -3,29 +3,47 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/H1d3rOne/cyberagent/internal/command"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	"github.com/H1d3rOne/cyberagent/internal/interfaces/web"
 )
 
 type routerServices struct {
-	version   services.VersionService
-	plugins   services.PluginService
-	runs      services.RunService
-	approvals services.ApprovalService
-	jobs      *jobManager
+	version      services.VersionService
+	plugins      services.PluginService
+	runs         services.RunService
+	approvals    services.ApprovalService
+	jobs         *jobManager
+	agent        *agentManager
+	scanManager  *web.ScanManager
 }
 
 func newRouter(svc routerServices, token string) http.Handler {
 	if svc.jobs == nil {
 		svc.jobs = newJobManager(jobManagerConfig{})
 	}
+	if svc.agent == nil {
+		svc.agent = newAgentManager(svc.runs.RunsDir)
+	}
 	mux := http.NewServeMux()
+
+	// Register /api/scans endpoints from the web API server
+	if svc.scanManager != nil {
+		scanAPI := web.NewAPIServer(svc.scanManager)
+		mux.Handle("/api/scans", scanAPI.Handler())
+		mux.Handle("/api/scans/", scanAPI.Handler())
+		mux.Handle("/api/providers", scanAPI.Handler())
+		mux.Handle("/api/tools", scanAPI.Handler())
+	}
+
 	mux.HandleFunc("/api/v1/healthz", requireMethod(http.MethodGet, handleHealthz))
 	mux.HandleFunc("/api/v1/version", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
 		writeOK(w, http.StatusOK, svc.version.GetVersion(r.Context()))
@@ -49,6 +67,15 @@ func newRouter(svc routerServices, token string) http.Handler {
 		}
 		writeOK(w, http.StatusOK, report)
 	}))
+	mux.HandleFunc("/api/v1/agent/capabilities", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
+		writeOK(w, http.StatusOK, agentCapabilities(r.URL.Query().Get("language")))
+	}))
+	mux.HandleFunc("/api/v1/agent/sessions", func(w http.ResponseWriter, r *http.Request) {
+		handleAgentSessionsRoute(w, r, svc)
+	})
+	mux.HandleFunc("/api/v1/agent/sessions/", func(w http.ResponseWriter, r *http.Request) {
+		handleAgentSessionsRoute(w, r, svc)
+	})
 	mux.HandleFunc("/api/v1/runs", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
 		limit, err := optionalInt(r.URL.Query().Get("limit"))
 		if err != nil {
@@ -76,9 +103,20 @@ func newRouter(svc routerServices, token string) http.Handler {
 		handleJobRoute(w, r, svc)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Serve frontend for non-API routes
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			web.FrontendHandler().ServeHTTP(w, r)
+			return
+		}
 		writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
 	})
-	return bearerAuth(token, mux)
+	// Frontend routes don't need auth; API routes do
+	mainMux := http.NewServeMux()
+	mainMux.Handle("/api/", corsMiddleware(bearerAuth(token, mux)))
+	mainMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		web.FrontendHandler().ServeHTTP(w, r)
+	})
+	return mainMux
 }
 
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -96,6 +134,428 @@ func requireMethod(method string, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		next(w, r)
+	}
+}
+
+func handleAgentSessionsRoute(w http.ResponseWriter, r *http.Request, svc routerServices) {
+	if r.URL.Path == "/api/v1/agent/sessions" {
+		switch r.Method {
+		case http.MethodGet:
+			limit, err := optionalInt(r.URL.Query().Get("limit"))
+			if err != nil {
+				writeServiceError(w, services.NewError(services.CodeBadRequest, "invalid limit", map[string]any{"field": "limit"}, err))
+				return
+			}
+			response, err := svc.agent.ListSessions(r.Context(), limit)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, response)
+			return
+		case http.MethodPost:
+			var body createAgentSessionRequest
+			if err := decodeJSONBody(r, &body); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			response, err := svc.agent.CreateSession(body)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusCreated, response)
+			return
+		default:
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+	}
+
+	sessionID, resource, ok := parseAgentSessionPath(r.URL.Path)
+	if !ok {
+		writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if resource == "stream" {
+			handleAgentSessionStream(w, r, svc, sessionID)
+			return
+		}
+		session, err := svc.agent.GetSession(r.Context(), sessionID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		switch resource {
+		case "":
+			writeOK(w, http.StatusOK, map[string]any{"session": session})
+		case "state":
+			writeOK(w, http.StatusOK, agentSessionStatePayload(r, svc, session))
+		case "context":
+			writeOK(w, http.StatusOK, agentSessionContextPayload(r, svc, session))
+		default:
+			writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+		}
+	case http.MethodPost:
+		switch resource {
+		case "messages":
+			var body sendAgentMessageRequest
+			if err := decodeJSONBody(r, &body); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			response, err := svc.agent.SendMessage(r.Context(), sessionID, body, svc)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, response)
+		case "control":
+			var body agentControlRequest
+			if err := decodeJSONBody(r, &body); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			response, err := svc.agent.ControlSession(r.Context(), sessionID, body, svc)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, response)
+		case "continue", "stop", "new-task", "new_task":
+			var body agentControlRequest
+			if err := decodeJSONBody(r, &body); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			body.Action = resource
+			response, err := svc.agent.ControlSession(r.Context(), sessionID, body, svc)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, response)
+		case "workspace":
+			handleWorkspaceRoute(w, r, svc, sessionID)
+		default:
+			writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+		}
+	default:
+		writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+	}
+}
+
+func agentSessionStatePayload(r *http.Request, svc routerServices, session agentSession) map[string]any {
+	return map[string]any{
+		"session":         session,
+		"session_id":      session.SessionID,
+		"status":          session.Status,
+		"active_task":     cloneAgentTask(session.ActiveTask),
+		"todos":           cloneAgentTodos(session.Todos),
+		"tool_calls":      cloneAgentToolCalls(session.ToolCalls),
+		"context_refs":    cloneAgentContextRefs(session.ContextRefs),
+		"pending_changes": cloneAgentWorkspaceChanges(session.PendingChanges),
+		"memory_summary":  cloneAgentMemorySummary(session.MemorySummary),
+		"next_action":     cloneAgentNextAction(session.NextAction),
+		"run_summary":     svc.agent.agentSessionRunSummary(r.Context(), &session),
+	}
+}
+
+func agentSessionContextPayload(r *http.Request, svc routerServices, session agentSession) map[string]any {
+	return map[string]any{
+		"session_id":      session.SessionID,
+		"active_task":     cloneAgentTask(session.ActiveTask),
+		"context_refs":    cloneAgentContextRefs(session.ContextRefs),
+		"pending_changes": cloneAgentWorkspaceChanges(session.PendingChanges),
+		"memory_summary":  cloneAgentMemorySummary(session.MemorySummary),
+		"run_summary":     svc.agent.agentSessionRunSummary(r.Context(), &session),
+	}
+}
+
+func handleAgentSessionStream(w http.ResponseWriter, r *http.Request, svc routerServices, sessionID string) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeServiceError(w, services.NewError(services.CodeUnsupported, "streaming is not supported by this server", nil, nil))
+		return
+	}
+
+	session, err := svc.agent.GetSession(r.Context(), sessionID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	lastSignature := ""
+	writeJSONEvent := func(event string, payload any) bool {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return false
+		}
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, encoded)
+		flusher.Flush()
+		return true
+	}
+	writeSessionEvent := func(session agentSession) bool {
+		signature := agentSessionStreamSignature(session)
+		if signature == lastSignature {
+			return false
+		}
+		lastSignature = signature
+		return writeJSONEvent("session", map[string]any{"session": session})
+	}
+
+	writeSessionEvent(session)
+	previousSession := session
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	pingTicker := time.NewTicker(15 * time.Second)
+	defer pingTicker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			session, err := svc.agent.GetSession(r.Context(), sessionID)
+			if err != nil {
+				writeJSONEvent("error", map[string]any{"error": serviceErrorMap(err)})
+				return
+			}
+			for _, activity := range agentSessionStreamActivities(previousSession, session) {
+				writeJSONEvent("activity", map[string]any{"activity": activity})
+			}
+			writeSessionEvent(session)
+			previousSession = session
+		case <-pingTicker.C:
+			_, _ = fmt.Fprintf(w, "event: ping\ndata: {\"time\":%q}\n\n", time.Now().UTC().Format(time.RFC3339))
+			flusher.Flush()
+		}
+	}
+}
+
+type agentStreamActivity struct {
+	Kind      string    `json:"kind"`
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Detail    string    `json:"detail,omitempty"`
+	Status    string    `json:"status,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+func agentSessionStreamActivities(previous, current agentSession) []agentStreamActivity {
+	activities := make([]agentStreamActivity, 0, 8)
+	now := current.UpdatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	if previous.Status != current.Status {
+		activities = append(activities, agentStreamActivity{
+			Kind:      "state",
+			ID:        "state:status",
+			Title:     agentText(current.Language, "会话状态变化", "Session status changed"),
+			Detail:    previous.Status + " → " + current.Status,
+			Status:    current.Status,
+			Timestamp: now,
+		})
+	}
+
+	if previousNext, currentNext := agentNextActionStreamSignature(previous.NextAction), agentNextActionStreamSignature(current.NextAction); previousNext != currentNext {
+		status := ""
+		detail := ""
+		if current.NextAction != nil {
+			status = current.NextAction.Type
+			detail = current.NextAction.Reason
+			if detail == "" {
+				detail = current.NextAction.SuggestedPrompt
+			}
+		}
+		activities = append(activities, agentStreamActivity{
+			Kind:      "state",
+			ID:        "state:next_action",
+			Title:     agentText(current.Language, "下一步动作更新", "Next action updated"),
+			Detail:    trimSummary(detail, 220),
+			Status:    status,
+			Timestamp: now,
+		})
+	}
+
+	if previousTask, currentTask := agentTaskStreamSignature(previous.ActiveTask), agentTaskStreamSignature(current.ActiveTask); previousTask != currentTask && current.ActiveTask != nil {
+		activities = append(activities, agentStreamActivity{
+			Kind:      "state",
+			ID:        "state:active_task",
+			Title:     agentText(current.Language, "当前任务更新", "Active task updated"),
+			Detail:    trimSummary(current.ActiveTask.Goal, 240),
+			Status:    current.ActiveTask.Status,
+			Timestamp: current.ActiveTask.UpdatedAt,
+		})
+	}
+
+	previousMessages := make(map[string]struct{}, len(previous.Messages))
+	for _, message := range previous.Messages {
+		if message.ID != "" {
+			previousMessages[message.ID] = struct{}{}
+		}
+	}
+	for _, message := range current.Messages {
+		if message.ID == "" {
+			continue
+		}
+		if _, ok := previousMessages[message.ID]; ok {
+			continue
+		}
+		title := agentText(current.Language, "Agent 消息", "Agent message")
+		switch message.Role {
+		case "user":
+			title = agentText(current.Language, "操作者消息", "Operator message")
+		case "tool":
+			title = agentText(current.Language, "工具观察", "Tool observation")
+		case "system":
+			title = agentText(current.Language, "系统消息", "System message")
+		}
+		activities = append(activities, agentStreamActivity{
+			Kind:      "message",
+			ID:        "message:" + message.ID,
+			Title:     title,
+			Detail:    trimSummary(message.Content, 240),
+			Status:    message.Role,
+			Timestamp: message.Timestamp,
+		})
+	}
+
+	previousTools := make(map[string]string, len(previous.ToolCalls))
+	for _, tool := range previous.ToolCalls {
+		previousTools[agentToolCallStreamID(tool)] = agentToolCallStreamSignature(tool)
+	}
+	for _, tool := range current.ToolCalls {
+		id := agentToolCallStreamID(tool)
+		signature := agentToolCallStreamSignature(tool)
+		if previousTools[id] == signature {
+			continue
+		}
+		detail := tool.Detail
+		if detail == "" && tool.Error != nil {
+			detail = tool.Error.Message
+		}
+		timestamp := tool.StartedAt
+		if tool.FinishedAt != nil {
+			timestamp = *tool.FinishedAt
+		}
+		activities = append(activities, agentStreamActivity{
+			Kind:      "tool",
+			ID:        "tool:" + id,
+			Title:     tool.Name,
+			Detail:    trimSummary(detail, 240),
+			Status:    string(tool.Status),
+			Timestamp: timestamp,
+		})
+	}
+
+	previousTodos := make(map[string]string, len(previous.Todos))
+	for _, todo := range previous.Todos {
+		previousTodos[todo.ID] = agentTodoStreamSignature(todo)
+	}
+	for _, todo := range current.Todos {
+		if todo.ID == "" {
+			continue
+		}
+		if previousTodos[todo.ID] == agentTodoStreamSignature(todo) {
+			continue
+		}
+		detail := todo.Detail
+		if detail == "" {
+			detail = todo.BlockedReason
+		}
+		activities = append(activities, agentStreamActivity{
+			Kind:      "todo",
+			ID:        "todo:" + todo.ID,
+			Title:     trimSummary(todo.Title, 160),
+			Detail:    trimSummary(detail, 220),
+			Status:    todo.Status,
+			Timestamp: todo.UpdatedAt,
+		})
+	}
+
+	return activities
+}
+
+func agentSessionStreamSignature(session agentSession) string {
+	nextAction := ""
+	if session.NextAction != nil {
+		nextAction = agentNextActionStreamSignature(session.NextAction)
+	}
+	activeRun := ""
+	if session.ActiveTask != nil {
+		activeRun = session.ActiveTask.ID + "|" + session.ActiveTask.Status + "|" + session.ActiveTask.ActiveRunID + "|" + session.ActiveTask.UpdatedAt.Format(time.RFC3339Nano)
+	}
+	memory := ""
+	if session.MemorySummary != nil {
+		memory = strconv.Itoa(session.MemorySummary.MessageCount) + "|" + session.MemorySummary.LastMessageID + "|" + session.MemorySummary.UpdatedAt.Format(time.RFC3339Nano)
+	}
+	return fmt.Sprintf(
+		"%s|%s|%d|%d|%d|%s|%s|%s",
+		session.UpdatedAt.Format(time.RFC3339Nano),
+		session.Status,
+		len(session.Messages),
+		len(session.ToolCalls),
+		len(session.Todos),
+		nextAction,
+		activeRun,
+		memory,
+	)
+}
+
+func agentNextActionStreamSignature(next *agentNextAction) string {
+	if next == nil {
+		return ""
+	}
+	return next.Type + "|" + next.Reason + "|" + next.SuggestedPrompt + "|" + strconv.FormatBool(next.AutoContinue)
+}
+
+func agentTaskStreamSignature(task *agentTask) string {
+	if task == nil {
+		return ""
+	}
+	return task.ID + "|" + task.Goal + "|" + task.Status + "|" + task.ActiveRunID + "|" + task.Summary + "|" + task.UpdatedAt.Format(time.RFC3339Nano)
+}
+
+func agentToolCallStreamID(tool agentToolCall) string {
+	if strings.TrimSpace(tool.ID) != "" {
+		return tool.ID
+	}
+	return tool.Name + ":" + tool.StartedAt.Format(time.RFC3339Nano)
+}
+
+func agentToolCallStreamSignature(tool agentToolCall) string {
+	finished := ""
+	if tool.FinishedAt != nil {
+		finished = tool.FinishedAt.Format(time.RFC3339Nano)
+	}
+	errMessage := ""
+	if tool.Error != nil {
+		errMessage = string(tool.Error.Code) + ":" + tool.Error.Message
+	}
+	return tool.Name + "|" + string(tool.Status) + "|" + tool.Detail + "|" + finished + "|" + errMessage
+}
+
+func agentTodoStreamSignature(todo agentTodo) string {
+	return todo.Title + "|" + todo.Detail + "|" + todo.Status + "|" + todo.BlockedReason + "|" + todo.UpdatedAt.Format(time.RFC3339Nano)
+}
+
+func serviceErrorMap(err error) map[string]any {
+	_, body := serviceErrorBody(err)
+	return map[string]any{
+		"code":    body.Code,
+		"message": body.Message,
+		"details": body.Details,
 	}
 }
 
@@ -366,6 +826,27 @@ func parseJobPath(path string) (jobID string, action string, ok bool) {
 	return "", "", false
 }
 
+func parseAgentSessionPath(path string) (sessionID string, resource string, ok bool) {
+	rest := strings.TrimPrefix(path, "/api/v1/agent/sessions/")
+	if rest == "" || rest == path {
+		return "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return "", "", false
+	}
+	if len(parts) == 1 {
+		return parts[0], "", true
+	}
+	if len(parts) >= 2 && strings.TrimSpace(parts[1]) == "workspace" {
+		return parts[0], "workspace", true
+	}
+	if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+		return parts[0], parts[1], true
+	}
+	return "", "", false
+}
+
 func decodeJSONBody(r *http.Request, out any) error {
 	if r.Body == nil {
 		return nil
@@ -416,4 +897,308 @@ func reportPayload(report services.RunReport) reportHTTPPayload {
 	}
 	payload.Content = string(report.Bytes)
 	return payload
+}
+
+func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServices, sessionID string) {
+	// Parse workspace action from URL
+	// Expected: /api/v1/agent/sessions/{id}/workspace/{action}
+	path := r.URL.Path
+	prefix := "/api/v1/agent/sessions/" + sessionID + "/workspace/"
+	action := strings.TrimPrefix(path, prefix)
+	action = strings.TrimSuffix(action, "/")
+
+	switch action {
+	case "files/read":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if _, err := svc.agent.workspace.Create(sessionID); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		data, err := svc.agent.workspace.ReadFile(sessionID, body.Path)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{
+			"path":    body.Path,
+			"content": string(data),
+			"size":    len(data),
+		})
+
+	case "files/write":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if _, err := svc.agent.workspace.Create(sessionID); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if err := svc.agent.workspace.WriteFile(sessionID, body.Path, []byte(body.Content)); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{
+			"path":   body.Path,
+			"size":   len(body.Content),
+			"status": "written",
+		})
+
+	case "files/patch":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+			Old  string `json:"old"`
+			New  string `json:"new"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		result, err := svc.agent.patchWorkspaceFile(sessionID, body.Path, body.Old, body.New)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+
+	case "files/diff":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+			Old  string `json:"old"`
+			New  string `json:"new"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		result, err := svc.agent.stageWorkspaceFileChange(sessionID, body.Path, body.Old, body.New, "")
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+
+	case "files/diff-many":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			Changes []agentWorkspaceChangeInput `json:"changes"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		result, err := svc.agent.stageWorkspaceFileChanges(sessionID, body.Changes, "")
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+
+	case "files/rebase":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			ChangeID string `json:"change_id"`
+			Old      string `json:"old"`
+			New      string `json:"new"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		result, err := svc.agent.rebaseWorkspaceFileChange(sessionID, body.ChangeID, body.Old, body.New, "")
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+
+	case "files/apply":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			ChangeID string `json:"change_id"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		result, err := svc.agent.applyWorkspaceFileChange(sessionID, body.ChangeID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+
+	case "files/apply-group":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			GroupID string `json:"group_id"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		result, err := svc.agent.applyWorkspaceChangeGroup(sessionID, body.GroupID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+
+	case "files/discard":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			ChangeID string `json:"change_id"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		result, err := svc.agent.discardWorkspaceFileChange(sessionID, body.ChangeID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+
+	case "files/discard-group":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			GroupID string `json:"group_id"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		result, err := svc.agent.discardWorkspaceChangeGroup(sessionID, body.GroupID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+
+	case "files/list":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if _, err := svc.agent.workspace.Create(sessionID); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		files, err := svc.agent.workspace.ListFiles(sessionID, body.Path)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{
+			"path":  body.Path,
+			"files": files,
+			"count": len(files),
+		})
+
+	case "files/delete":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if _, err := svc.agent.workspace.Create(sessionID); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if err := svc.agent.workspace.DeleteFile(sessionID, body.Path); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{
+			"path":   body.Path,
+			"status": "deleted",
+		})
+
+	case "command":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			Command string `json:"command"`
+			WorkDir string `json:"workdir"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		ws, err := svc.agent.workspace.Create(sessionID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		executor := command.NewExecutor(ws.Path, 0, 0)
+		result, err := executor.Execute(r.Context(), body.Command, body.WorkDir)
+		if err != nil {
+			writeServiceError(w, agentCommandServiceError(err, body.Command, body.WorkDir))
+			return
+		}
+		writeOK(w, http.StatusOK, result)
+
+	default:
+		writeServiceError(w, services.NewError(services.CodeNotFound, "workspace action not found", map[string]any{"action": action}, nil))
+	}
 }

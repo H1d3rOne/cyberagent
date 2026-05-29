@@ -1,8 +1,8 @@
 # CyberAgent Agent 架构与实现规划
 
-版本：v0.1  
-日期：2026-05-23  
-状态：Agent 架构基线已确认；MVP 实现主链路已跑通
+版本：v0.2-agent-native  
+日期：2026-05-25  
+状态：Agent 架构基线纠偏；必须对标 Claude Code / Codex 型可执行 Agent，而不是普通安全后台加聊天框
 
 ---
 
@@ -72,6 +72,53 @@ CyberAgent 的定义：
 状态恢复
 插件扩展
 多入口复用
+```
+
+### 2.1 Agent 原生能力基线：对标 Claude Code / Codex
+
+CyberAgent 的核心验收标准不是“有聊天窗口”，而是具备 Claude Code / Codex 这类可执行 Agent 的工作方式：
+
+```text
+1. 会话保持：刷新、切页、daemon 重启后仍能恢复用户任务、聊天、计划、工具调用和上下文。
+2. 任务目标：每个会话必须有可追踪的 current goal / active task，而不是孤立问答。
+3. 计划与 Todo：Agent 必须把用户意图拆成结构化 todo，并持续更新 pending/running/done/blocked。
+4. 工具循环：User → Plan → Tool Call → Observation → Update Todo → Next Action，而不是一句话匹配一个 API。
+5. 工作区上下文：Agent 能读取 run、events、artifacts、findings、reports、plugin manifest、配置和审批状态。
+6. 可执行动作：Agent 能启动扫描、读取证据、分析结果、生成报告、提出下一步动作，并记录每次工具输入/输出。
+7. 可打断/继续：用户可以 stop / continue / revise / approve / deny / new task。
+8. 可解释过程：UI 必须展示 Agent 正在做什么、下一步准备做什么、调用了什么工具、观察到了什么。
+9. 错误恢复：工具失败、session 丢失、provider 失败时，Agent 要能降级、重试或请求用户修正。
+10. 持久状态：Agent session、messages、tasks、todos、tool calls、context refs 必须进入 State Store。
+```
+
+因此，CyberAgent 的产品形态应定义为：
+
+```text
+Cybersecurity Agent Workbench
+= Agent Chat + Task/Todo + Tool Loop + Workspace Context + Evidence/Report + HITL
+```
+
+而不是：
+
+```text
+安全扫描系统 + 聊天入口
+```
+
+### 2.2 Agent 与安全系统的职责关系
+
+```text
+安全系统能力：扫描、工具、证据、报告、审批、历史记录。
+Agent 能力：理解目标、规划任务、选择工具、执行循环、读写上下文、解释和纠偏。
+```
+
+前端页面必须优先呈现 Agent 工作面：
+
+```text
+主区域：聊天 + 执行流
+侧边栏：Current Task / Todo / Tool Calls / Workspace Context / Approvals
+总览页：只读运行监控
+扫描页：手动构造扫描参数或交给 Agent，不重复全局配置
+设置页：统一配置 daemon / AI provider / language / operator
 ```
 
 ---
@@ -478,10 +525,10 @@ commands.log
 入口层：
 
 ```text
-CLI       自动化、脚本、CI/CD、远程环境
-TUI       主要交互界面，查看计划、日志、证据、Finding、审批
-Desktop   后置，本地工作台
-Web       后置，团队协作与远程 Runner
+CLI       自动化、脚本、CI/CD、远程环境，适合 Agent 后台执行
+TUI       Agent 原生终端工作台，查看计划、日志、证据、Finding、审批
+Web       Local Agent Cockpit，降低操作门槛，承载 Chat / Todo / Tool Loop / Workspace
+Desktop   后置，本地完整工作台，复用同一 Agent Runtime
 ```
 
 职责：
@@ -491,6 +538,7 @@ Web       后置，团队协作与远程 Runner
 展示实时事件
 发起 HITL 决策
 查看证据和报告
+展示 Agent 当前任务、Todo、工具调用和上下文
 不承载核心业务逻辑
 ```
 
@@ -516,6 +564,8 @@ Runtime 是核心执行循环。
 职责：
 
 ```text
+加载/保存 Agent Session
+维护 Active Task / Todo
 组装上下文
 生成或加载 plan
 执行 step
@@ -525,6 +575,17 @@ Runtime 是核心执行循环。
 触发反思
 触发 HITL
 生成报告
+支持 stop / continue / revise / resume
+```
+
+Agent Runtime 必须提供面向 Channel 的结构化状态：
+
+```text
+Session：会话、消息、operator、language、provider snapshot
+Task：用户目标、状态、active run、创建/更新时间
+Todos：计划步骤、状态、阻塞原因、关联 tool call / artifact / finding
+ToolCalls：工具名称、输入摘要、输出摘要、状态、错误、关联 run/job/artifact
+ContextRefs：run、event、artifact、finding、report、approval、plugin/config 引用
 ```
 
 ### 5.4 Planner Runtime
@@ -649,26 +710,35 @@ Remediation Suggestion Assistant
 推荐循环：
 
 ```text
-1. Receive Request
-2. Normalize Target & Scope
-3. Create Job Workspace
-4. Build Initial Plan
-5. Preflight / Doctor
-6. For each Step:
-   6.1 Check Scope
-   6.2 Check Risk Policy
-   6.3 If needed, request HITL approval
-   6.4 Select Builtin Tool or Plugin
-   6.5 Execute via Runner
-   6.6 Capture artifacts
-   6.7 Parse evidence
-   6.8 Update state and events
-   6.9 Trigger reflection if needed
-   6.10 Replan / retry / skip if needed
-7. Normalize Findings
-8. Report Reflection Gate
-9. Generate Report
-10. Save and Return Summary
+1. Receive User Message / Continue / Stop / Approval
+2. Load Agent Session + Active Task + Todos + ContextRefs
+3. Understand Intent and Update Goal
+4. Build/Update Plan and Todo List
+5. Build Minimal Context Pack
+6. Select Next Tool or Ask Clarifying Question
+7. Run Policy / Scope / Risk Gate
+8. Execute Tool via Tool Router / Runner
+9. Observe Result and Save ToolCall / Artifact / Evidence
+10. Update Todo Status and Active Task
+11. Decide Next Action:
+    - continue
+    - ask approval
+    - ask correction
+    - retry / replan
+    - finish with report
+12. Stream State to Channel
+13. Persist Session State
+```
+
+安全扫描 Runtime 是 Agent Tool Loop 中的一类工具执行路径：
+
+```text
+scan_web_safe(target, scope)
+  → Create Job Workspace
+  → Build Safe Plan
+  → Execute Steps
+  → Generate Evidence/Finding/Report
+  → Return run_id / report refs to Agent
 ```
 
 ---
@@ -678,6 +748,14 @@ Remediation Suggestion Assistant
 ### 7.1 MVP 必须具备
 
 ```text
+Agent Session Manager
+Agent Task / Todo Model
+Agent Tool Call Model
+Agent Workspace Context Refs
+Agent Tool Loop：plan → execute → observe → update
+Agent stop / continue / new task
+Local Web Agent Cockpit：Chat + Todo + Tool Calls + Workspace Context
+Session State Store：messages / task / todos / tool calls / context refs
 确定性 Web safe profile planner
 Scope Guard
 Run Manager

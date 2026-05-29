@@ -1,8 +1,8 @@
 # CyberAgent Roadmap
 
-版本：v0.1
-日期：2026-05-24
-状态：v0.1.1 本地 RC 准备完成，v0.1.2 Local Daemon / Web API 进入计划完成状态
+版本：v0.2-agent-native-correction
+日期：2026-05-25
+状态：加入 v0.1.3 Agent-Native Correction；后续优先补齐 Claude Code / Codex 型 Agent 能力
 
 ---
 
@@ -13,8 +13,9 @@
 路线图原则：
 
 ```text
+先满足 Agent-Native 基线，再扩展普通 Dashboard 能力。
 先完成 Agent Core 闭环，再扩展工具。
-先 CLI/TUI，再 Desktop/Web。
+先 CLI/TUI/Local Web Agent Cockpit，再 Desktop/多用户 Web。
 先本地单机 Runner，再 Remote Runner。
 先确定性规则，再 LLM 增强。
 先证据链和可复现，再追求自动化深度。
@@ -33,10 +34,11 @@ Phase 4：TUI Run Viewer（完成）
 Phase 5：MVP Stabilization（v0.1.0 本地完成）
 Phase 5.1：v0.1.1 Stabilization / HITL / Plugin Hardening（本地 RC 完成）
 Phase 5.2：v0.1.2 Local Daemon / Web API Foundation（当前计划完成，待实现）
+Phase 5.3：v0.1.3 Agent-Native Correction（下一阶段主线）
 Phase 6：LLM 增强
 Phase 7：Desktop 本地工作台
 Phase 8：Local API / Daemon 稳定版
-Phase 9：Web / Remote Runner
+Phase 9：多用户 Web / Remote Runner
 Phase 10：平台化与生态扩展
 ```
 
@@ -111,7 +113,7 @@ TUI 实时控制
 插件执行
 LLM
 Desktop
-Web
+多用户 Web
 ```
 
 验收标准：
@@ -333,7 +335,7 @@ API contract / smoke test
 
 ```text
 Desktop/Wails
-完整 Web UI
+多用户 Web UI
 多用户 SaaS
 Remote Runner
 公网监听 daemon
@@ -342,6 +344,56 @@ SQLite 强制迁移
 ```
 
 详细计划：`docs/CyberAgent-v0.1.2-Plan.md`
+
+---
+
+## 8.3 Phase 5.3：v0.1.3 Agent-Native Correction
+
+目标：
+
+```text
+纠偏产品主线：CyberAgent 必须具备 Claude Code / Codex 型可执行 Agent 的基础能力，
+而不是普通安全后台外面套聊天框。
+```
+
+范围：
+
+```text
+Agent State Contracts
+Agent Session Store
+Agent Task / Todo Manager
+Agent Tool Loop
+Workspace Context Reader
+Agent next_action
+Local Web Agent Cockpit：Chat / Current Task / Todo / Tool Calls / Workspace Context / Approvals
+New Task / Stop / Continue
+前端刷新/切页恢复后端 session state
+daemon 重启后恢复 Agent session state
+```
+
+验收：
+
+```text
+POST /api/v1/agent/sessions/{id}/messages 返回 messages/task/todos/tool_calls/context_refs/next_action
+GET /api/v1/agent/sessions/{id} 可恢复完整 Agent 状态
+一次 scan 意图会生成 Current Task 和结构化 Todo
+工具调用后 Todo 状态和 ContextRefs 更新
+UI 首页是 Agent Cockpit，而不是普通 Dashboard
+浏览器 localStorage 只作为兜底缓存，不作为唯一状态源
+```
+
+非目标：
+
+```text
+多用户 Web
+Remote Runner
+长期 Target Memory
+复杂 RAG
+自动 exploit
+高风险动作自动批准
+```
+
+详细计划：待新增 `docs/CyberAgent-v0.1.3-Agent-Native-Plan.md`
 
 ---
 

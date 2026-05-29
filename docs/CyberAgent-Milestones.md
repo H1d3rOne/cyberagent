@@ -1,8 +1,8 @@
 # CyberAgent Milestones
 
-版本：v0.1  
-日期：2026-05-23  
-状态：里程碑计划完成
+版本：v0.2-agent-native-correction  
+日期：2026-05-25  
+状态：里程碑计划纠偏；加入 Agent-Native Gate
 
 ---
 
@@ -17,6 +17,22 @@
 范围明确
 验收标准明确
 非目标明确
+```
+
+---
+
+## Agent-Native Gate
+
+从 v0.1.3 起，任何声称“Agent 能力完成”的里程碑必须通过以下 Gate：
+
+```text
+Agent Session 可持久化恢复
+Agent Current Task 可展示
+Agent Todo / Plan 可展示并更新
+Agent Tool Calls 可审计
+Agent Workspace Context 可引用 run / artifact / finding / report / approval
+Agent 支持 stop / continue / new task
+Agent UI 以 Chat + Task/Todo + Tool Loop 为中心，而不是普通安全后台
 ```
 
 ---
@@ -209,6 +225,57 @@ cyberagent tui runs/{job_id} 可启动
 可查看 Evidence
 可查看 Findings
 可查看 Report 路径/摘要
+```
+
+---
+
+## M7.5：Agent-Native Runtime Ready
+
+目标：
+
+```text
+Agent Runtime 具备 Claude Code / Codex 型可执行 Agent 的最小状态和循环能力。
+```
+
+验收：
+
+```text
+AgentSession / AgentMessage 可持久化
+AgentTask / AgentTodo 可持久化
+AgentToolCall / AgentContextRef 可持久化
+POST /api/v1/agent/sessions/{id}/messages 返回 task / todos / tool_calls / context_refs / next_action
+daemon 重启后可恢复 session state
+工具失败或 session 丢失时可重建/降级，不丢用户聊天和任务状态
+```
+
+非目标：
+
+```text
+不要求多用户协作
+不要求远程 Runner
+不要求复杂长期 RAG
+```
+
+---
+
+## M7.6：Local Web Agent Cockpit Ready
+
+目标：
+
+```text
+Web 首页成为真正的 Agent Cockpit，而不是普通安全 Dashboard。
+```
+
+验收：
+
+```text
+主区域为 Agent Chat / Execution Stream
+侧边栏包含 Current Task / Todo / Tool Calls / Workspace Context / Approvals
+支持 New Task / Stop / Continue
+设置页统一配置 daemon token、AI provider、language、operator
+扫描页只做本次扫描参数和交给 Agent，不重复全局 AI provider
+总览页只读监控，不能启动扫描
+刷新/切页后恢复 Agent 会话状态
 ```
 
 ---

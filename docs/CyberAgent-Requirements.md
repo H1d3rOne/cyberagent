@@ -1,8 +1,8 @@
 # CyberAgent 需求基线文档
 
-版本：v0.3-confirmed  
-日期：2026-05-23  
-状态：MVP 需求已确认；已进入 MVP 实现/稳定化阶段
+版本：v0.4-agent-native-correction  
+日期：2026-05-25  
+状态：需求基线纠偏；Agent-Native 能力作为最高优先级验收约束
 
 ---
 
@@ -34,13 +34,54 @@ MVP 边界
 |---|---|---|
 | 首期用户 | 个人安全研究员 / CTF 玩家 / 授权测试人员 | 最适合 CLI/TUI，反馈快，范围清晰 |
 | 首期场景 | 本地靶场 + 明确授权 Web/API 目标分析 | 避免企业级复杂度，先跑通闭环 |
-| 首期形态 | CLI + TUI | Agent 原生运行方式，兼顾自动化和交互 |
+| 首期形态 | CLI + TUI + Local Web Agent Cockpit | CLI/TUI 适合 Agent 执行，Web Cockpit 降低操作门槛并承载 Chat/Todo/Tool Loop |
 | Desktop | 后置，但从架构上预留 | 满足易用性，但不拖慢 MVP |
-| Web | 后置 | 团队化、多用户、远程 Runner 后续再做 |
+| 多用户 Web | 后置 | 团队化、多用户、远程 Runner 后续再做；本地 Web Cockpit 不后置 |
 | 核心语言 | Go | 适合 CLI/TUI、并发、分发、长期运行 |
 | 插件语言 | Python | 复用安全与 AI 生态 |
 | 自动化程度 | 自动信息收集 + 低风险验证；高风险动作需确认 | 平衡效率、可控性和可复现性 |
 | 输出标准 | Markdown + JSON + evidence 目录 | 人可读、机器可读、方便扩展 |
+
+---
+
+## 2.1 Agent-Native 需求纠偏
+
+CyberAgent 的核心不是“安全系统 + 聊天框”，而是对标 Claude Code / Codex 的可执行 Agent。
+
+必须具备：
+
+```text
+Agent 会话保持
+Agent Current Task
+Agent Todo / Plan
+Agent Tool Loop
+Agent Workspace Context
+Agent 可打断 / 可继续 / 可新建任务
+Agent 错误恢复
+Agent 状态持久化
+Agent 可解释执行轨迹
+```
+
+Local Web Agent Cockpit 必须服务于这些能力：
+
+```text
+Chat
+Current Task
+Todo
+Tool Calls
+Workspace Context
+Approvals
+Stop / Continue / New Task
+```
+
+不合格形态：
+
+```text
+只有扫描表单
+只有运行列表
+只有普通聊天回复
+只有安全状态卡片
+```
 
 ---
 
@@ -101,7 +142,7 @@ https://authorized-lab.example
 未授权第三方目标扫描
 自动爆破
 自动横向移动
-持久化
+攻击持久化
 破坏性 payload
 企业多用户协作
 长期资产监控
@@ -233,7 +274,7 @@ XSS 实际 payload 验证
 ```text
 密码爆破
 凭证填充
-持久化
+攻击持久化
 横向移动
 数据破坏
 无范围目标扫描
@@ -247,6 +288,12 @@ XSS 实际 payload 验证
 ### 8.1 必须有
 
 ```text
+Agent Session / Message 持久化
+Agent Current Task
+Agent Todo / Plan 状态
+Agent Tool Call 记录
+Agent Workspace Context 引用
+Local Web Agent Cockpit
 目标与 scope 输入
 scope 校验
 任务模型 Job / Step
@@ -282,7 +329,7 @@ TUI 任务视图
 云端同步
 远程 Runner
 Desktop UI
-Web Dashboard
+多用户 Web Dashboard
 PDF 报告
 企业权限系统
 自动修复代码
@@ -296,7 +343,7 @@ PDF 报告
 
 1. 首期用户锁定为：个人安全研究员 / CTF / 授权测试人员。
 2. MVP 只做 Web URL；OpenAPI 深度导入、源码目录分析后置。
-3. 首期形态采用 CLI + TUI；CLI 负责自动化执行，TUI v1 负责只读查看已有 run。
+3. 首期形态采用 CLI + TUI + Local Web Agent Cockpit；CLI 负责自动化执行，TUI/Web 负责 Agent 工作台体验。
 4. `nuclei-safe` 作为可选插件进入规划，但默认不启用，用户显式开启后才运行。
 5. MVP 先做非 LLM 确定性流程；LLM 只定义 Gateway / ContextPack / 插件扩展点。
 6. Desktop 后续默认优先评估 Wails + Go Core，不重写核心 Runtime。
@@ -432,6 +479,8 @@ Template Renderer    Markdown / JSON 报告模板渲染
 Cache/Dedup          URL、响应、证据、finding 去重，避免重复请求和重复报告
 LLM Gateway          可选模型调用抽象；MVP 可只定义接口，不作为核心依赖
 Prompt/Context Store 可选提示词、摘要、上下文包管理；避免 LLM 直接读取全部原始证据
+Agent Session Store 保存 Agent 会话、消息、任务、Todo、工具调用、上下文引用；不能只依赖浏览器 localStorage
+Agent Tool Loop       维护 plan → tool call → observe → update todo → next action 的执行循环
 ```
 
 后续可内置，但不进入 MVP：

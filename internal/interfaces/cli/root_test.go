@@ -49,6 +49,82 @@ func TestDaemonCommandHelp(t *testing.T) {
 	}
 }
 
+func TestDashboardLocalDaemonBootstrapLoopback(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("test-token\n"), 0o600); err != nil {
+		t.Fatalf("write token file: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/local/daemon-config", nil)
+	req.RemoteAddr = "127.0.0.1:45678"
+	rec := httptest.NewRecorder()
+
+	handleLocalDaemonBootstrap("http://127.0.0.1:8787", tokenFile).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Available bool   `json:"available"`
+		BaseURL   string `json:"base_url"`
+		Token     string `json:"token"`
+		TokenFile string `json:"token_file"`
+		Message   string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v\nbody=%s", err, rec.Body.String())
+	}
+	if !got.Available || got.BaseURL != "http://127.0.0.1:8787" || got.Token != "test-token" || got.TokenFile != tokenFile {
+		t.Fatalf("unexpected bootstrap response: %#v", got)
+	}
+	if got.Message != "" {
+		t.Fatalf("unexpected message: %q", got.Message)
+	}
+}
+
+func TestDashboardLocalDaemonBootstrapRejectsNonLoopback(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/local/daemon-config", nil)
+	req.RemoteAddr = "203.0.113.10:45678"
+	rec := httptest.NewRecorder()
+
+	handleLocalDaemonBootstrap("http://127.0.0.1:8787", "ignored").ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "loopback") {
+		t.Fatalf("response should explain loopback restriction: %s", rec.Body.String())
+	}
+}
+
+func TestDashboardLocalDaemonBootstrapMissingTokenFile(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "missing-token")
+	req := httptest.NewRequest(http.MethodGet, "/api/local/daemon-config", nil)
+	req.RemoteAddr = "[::1]:45678"
+	rec := httptest.NewRecorder()
+
+	handleLocalDaemonBootstrap("http://127.0.0.1:8787", tokenFile).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Available bool   `json:"available"`
+		BaseURL   string `json:"base_url"`
+		TokenFile string `json:"token_file"`
+		Message   string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v\nbody=%s", err, rec.Body.String())
+	}
+	if got.Available || got.BaseURL != "http://127.0.0.1:8787" || got.TokenFile != tokenFile {
+		t.Fatalf("unexpected bootstrap response: %#v", got)
+	}
+	if !strings.Contains(got.Message, "read token file") {
+		t.Fatalf("unexpected message: %q", got.Message)
+	}
+}
+
 func TestPluginsCommands(t *testing.T) {
 	withTempWorkingDir(t, func(root string) {
 		if err := os.MkdirAll(filepath.Join(root, "schemas", "plugins"), 0o755); err != nil {

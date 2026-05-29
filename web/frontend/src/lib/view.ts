@@ -9,12 +9,15 @@ export function statusLabel(status: RunStatus | JobStatus | ApprovalStatus | und
     queued: { zh: '排队', en: 'Queued' },
     running: { zh: '运行', en: 'Running' },
     succeeded: { zh: '完成', en: 'Done' },
+    completed: { zh: '完成', en: 'Completed' },
     failed: { zh: '失败', en: 'Failed' },
     cancelled: { zh: '取消', en: 'Cancelled' },
+    stopped: { zh: '已停止', en: 'Stopped' },
     skipped: { zh: '跳过', en: 'Skipped' },
     pending: { zh: '待审', en: 'Pending' },
     approved: { zh: '通过', en: 'Approved' },
     rejected: { zh: '拒绝', en: 'Rejected' },
+    denied: { zh: '拒绝', en: 'Denied' },
     expired: { zh: '过期', en: 'Expired' },
   }
   return labels[value]?.[language] || value
@@ -27,14 +30,17 @@ export function statusTone(status: RunStatus | JobStatus | ApprovalStatus | unde
     case 'planning':
       return 'border-cyan-400/25 bg-cyan-400/10 text-cyan-200'
     case 'succeeded':
+    case 'completed':
     case 'approved':
       return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200'
     case 'failed':
     case 'rejected':
+    case 'denied':
       return 'border-red-400/25 bg-red-400/10 text-red-200'
     case 'pending':
       return 'border-amber-400/25 bg-amber-400/10 text-amber-200'
     case 'cancelled':
+    case 'stopped':
     case 'skipped':
       return 'border-zinc-400/25 bg-zinc-400/10 text-zinc-200'
     default:

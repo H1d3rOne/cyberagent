@@ -26,6 +26,7 @@ func (s *APIServer) registerRoutes() {
 	s.mux.HandleFunc("/api/scans", s.handleScans)
 	s.mux.HandleFunc("/api/scans/", s.handleScanByID)
 	s.mux.HandleFunc("/api/providers", s.handleProviders)
+	s.mux.HandleFunc("/api/tools", s.handleTools)
 }
 
 func (s *APIServer) handleScans(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +193,23 @@ func (s *APIServer) handleProviders(w http.ResponseWriter, r *http.Request) {
 		{"id": "openai-compatible", "name": "OpenAI Compatible", "default_model": ""},
 	}
 	writeJSON(w, http.StatusOK, providers)
+}
+
+func (s *APIServer) handleTools(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	defs := s.manager.ToolDefinitions()
+	tools := make([]map[string]interface{}, 0, len(defs))
+	for _, d := range defs {
+		tools = append(tools, map[string]interface{}{
+			"name":        d.Name,
+			"description": d.Description,
+			"input_schema": d.InputSchema,
+		})
+	}
+	writeJSON(w, http.StatusOK, tools)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

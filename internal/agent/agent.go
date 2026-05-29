@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +43,15 @@ const (
 	EventProgress   EventType = "progress"
 )
 
+type AgentPhase string
+
+const (
+	PhasePlanning    AgentPhase = "planning"
+	PhaseExecuting   AgentPhase = "executing"
+	PhaseReplanning  AgentPhase = "replanning"
+	PhaseFinalAnswer AgentPhase = "final_answer"
+)
+
 type Event struct {
 	Type      EventType
 	Message   string
@@ -51,6 +61,7 @@ type Event struct {
 	Turn      int
 	MaxTurns  int
 	Elapsed   time.Duration
+	Phase     AgentPhase
 }
 
 type Result struct {
@@ -64,15 +75,16 @@ type Result struct {
 }
 
 type Agent struct {
-	config     Config
-	registry   *tools.Registry
-	scopeGuard policy.ScopeGuard
-	scope      contracts.Scope
-	limiter    *ratelimit.Limiter
-	redactor   *redactor.Redactor
-	history    []llm.Message
-	findings   []contracts.Finding
-	mu         sync.Mutex
+	config       Config
+	registry     *tools.Registry
+	scopeGuard   policy.ScopeGuard
+	scope        contracts.Scope
+	limiter      *ratelimit.Limiter
+	redactor     *redactor.Redactor
+	history      []llm.Message
+	findings     []contracts.Finding
+	mu           sync.Mutex
+	currentPhase AgentPhase
 }
 
 func New(cfg Config) *Agent {
@@ -111,7 +123,8 @@ func (a *Agent) Run(ctx context.Context) (*Result, error) {
 	}}
 
 	for turn := 0; turn < a.config.MaxTurns; turn++ {
-		a.emit(Event{Type: EventProgress, Turn: turn + 1, MaxTurns: a.config.MaxTurns, Elapsed: time.Since(start)})
+		phase := a.inferPhase(turn, a.history)
+		a.emit(Event{Type: EventProgress, Turn: turn + 1, MaxTurns: a.config.MaxTurns, Elapsed: time.Since(start), Phase: phase})
 		a.history = compressHistory(a.history)
 
 		chatReq := llm.ChatRequest{
@@ -136,7 +149,8 @@ func (a *Agent) Run(ctx context.Context) (*Result, error) {
 		toolCalls := a.extractToolCalls(resp.Content)
 		if len(toolCalls) == 0 {
 			summary := a.extractText(resp.Content)
-			a.emit(Event{Type: EventDone, Message: summary})
+			a.currentPhase = PhaseFinalAnswer
+			a.emit(Event{Type: EventDone, Message: summary, Phase: PhaseFinalAnswer})
 			return &Result{
 				Findings:   a.findings,
 				Summary:    summary,
@@ -148,6 +162,8 @@ func (a *Agent) Run(ctx context.Context) (*Result, error) {
 			}, nil
 		}
 
+		a.currentPhase = PhaseExecuting
+		a.emit(Event{Type: EventProgress, Turn: turn + 1, MaxTurns: a.config.MaxTurns, Elapsed: time.Since(start), Phase: PhaseExecuting, Message: fmt.Sprintf("Executing %d tool(s)", len(toolCalls))})
 		results := a.executeTools(ctx, toolCalls)
 		a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: results})
 	}
@@ -475,6 +491,38 @@ func limitOutput(s string) string {
 		return s
 	}
 	return s[:maxToolOutputBytes] + fmt.Sprintf("\n...[output truncated from %d bytes to %d bytes]", len(s), maxToolOutputBytes)
+}
+
+func (a *Agent) inferPhase(turn int, history []llm.Message) AgentPhase {
+	if turn == 0 {
+		return PhasePlanning
+	}
+	// Check last assistant message for phase indicators
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == llm.RoleAssistant {
+			text := ""
+			for _, b := range history[i].Content {
+				if tb, ok := b.(llm.TextBlock); ok {
+					text += tb.Text
+				}
+			}
+			lower := strings.ToLower(text)
+			if strings.Contains(lower, "## plan") || strings.Contains(lower, "assessment plan") {
+				return PhasePlanning
+			}
+			if strings.Contains(lower, "## stepreplan") || strings.Contains(lower, "plan unchanged") || strings.Contains(lower, "plan revision") {
+				return PhaseReplanning
+			}
+			if strings.Contains(lower, "## final_answer") || strings.Contains(lower, "final assessment") {
+				return PhaseFinalAnswer
+			}
+			break
+		}
+	}
+	if a.currentPhase == PhasePlanning {
+		return PhaseExecuting
+	}
+	return a.currentPhase
 }
 
 func (a *Agent) autoSaveSession() {
