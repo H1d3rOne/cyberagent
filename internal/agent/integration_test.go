@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent"
@@ -17,9 +18,30 @@ type scenarioProvider struct {
 	callCount int
 }
 
+func isPlanRequest(req llm.ChatRequest) bool {
+	for _, msg := range req.Messages {
+		for _, b := range msg.Content {
+			if tb, ok := b.(llm.TextBlock); ok && strings.Contains(tb.Text, "Output ONLY a JSON object") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func planResponse(jsonText string) *llm.ChatResponse {
+	return &llm.ChatResponse{
+		Content:    []llm.ContentBlock{llm.TextBlock{Text: jsonText}},
+		StopReason: llm.StopReasonEndTurn,
+	}
+}
+
 func (p *scenarioProvider) Name() string { return "scenario" }
 
 func (p *scenarioProvider) Chat(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	if isPlanRequest(req) {
+		return planResponse(`{"goal":"assess","todos":[{"title":"assess","stage":"analysis"}]}`), nil
+	}
 	p.callCount++
 
 	switch p.callCount {

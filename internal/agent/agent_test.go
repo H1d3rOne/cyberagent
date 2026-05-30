@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
@@ -15,7 +16,10 @@ type mockProvider struct {
 
 func (m *mockProvider) Name() string { return "mock" }
 
-func (m *mockProvider) Chat(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+func (m *mockProvider) Chat(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	if isPlanRequest(req) {
+		return planResponse(`{"goal":"assess","todos":[{"title":"assess","stage":"analysis"}]}`), nil
+	}
 	if m.callIdx >= len(m.responses) {
 		return &llm.ChatResponse{
 			Content:    []llm.ContentBlock{llm.TextBlock{Text: "Done."}},
@@ -25,6 +29,24 @@ func (m *mockProvider) Chat(_ context.Context, _ llm.ChatRequest) (*llm.ChatResp
 	resp := m.responses[m.callIdx]
 	m.callIdx++
 	return resp, nil
+}
+
+func isPlanRequest(req llm.ChatRequest) bool {
+	for _, msg := range req.Messages {
+		for _, b := range msg.Content {
+			if tb, ok := b.(llm.TextBlock); ok && strings.Contains(tb.Text, "Output ONLY a JSON object") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func planResponse(jsonText string) *llm.ChatResponse {
+	return &llm.ChatResponse{
+		Content:    []llm.ContentBlock{llm.TextBlock{Text: jsonText}},
+		StopReason: llm.StopReasonEndTurn,
+	}
 }
 
 func TestAgentRunTextOnly(t *testing.T) {
@@ -214,5 +236,71 @@ func TestAgentParallelToolCalls(t *testing.T) {
 	}
 	if len(result.Findings) != 2 {
 		t.Fatalf("expected 2 findings, got %d", len(result.Findings))
+	}
+}
+
+type planProvider struct {
+	planJSON string
+	callIdx  int
+	steps    []*llm.ChatResponse
+}
+
+func (p *planProvider) Name() string { return "plan-mock" }
+
+func (p *planProvider) Chat(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	if isPlanRequest(req) {
+		return planResponse(p.planJSON), nil
+	}
+	if p.callIdx >= len(p.steps) {
+		return &llm.ChatResponse{Content: []llm.ContentBlock{llm.TextBlock{Text: "step done"}}, StopReason: llm.StopReasonEndTurn}, nil
+	}
+	resp := p.steps[p.callIdx]
+	p.callIdx++
+	return resp, nil
+}
+
+func TestAgentPlanCoverage(t *testing.T) {
+	provider := &planProvider{
+		planJSON: `{"goal":"assess","todos":[{"title":"recon","stage":"recon"},{"title":"analyze","stage":"analysis"}]}`,
+		// Each todo's inner loop returns a tool-call then a text completion.
+		steps: []*llm.ChatResponse{
+			{Content: []llm.ContentBlock{llm.ToolUseBlock{ID: "tu_1", Name: "add_finding", Input: json.RawMessage(`{"title":"A","severity":"low","description":"d","evidence":"e"}`)}}, StopReason: llm.StopReasonToolUse},
+			{Content: []llm.ContentBlock{llm.TextBlock{Text: "recon done"}}, StopReason: llm.StopReasonEndTurn},
+		},
+	}
+
+	var planEvents []Event
+	agent := New(Config{
+		Provider: provider,
+		Target:   "http://example.com",
+		Scope:    []string{"example.com"},
+		MaxTurns: 20,
+		OnEvent: func(e Event) {
+			if e.Type == EventPlanUpdate {
+				planEvents = append(planEvents, e)
+			}
+		},
+	})
+
+	result, err := agent.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planEvents) == 0 {
+		t.Fatal("expected plan_update events")
+	}
+	last := planEvents[len(planEvents)-1]
+	if last.Plan == nil {
+		t.Fatal("plan_update event missing plan")
+	}
+	done, total := last.Plan.Coverage()
+	if total != 2 {
+		t.Errorf("expected 2 todos, got %d", total)
+	}
+	if done != 2 {
+		t.Errorf("expected full coverage 2/2, got %d/%d", done, total)
+	}
+	if len(result.Findings) != 1 {
+		t.Errorf("expected 1 finding, got %d", len(result.Findings))
 	}
 }
