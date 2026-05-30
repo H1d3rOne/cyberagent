@@ -298,34 +298,7 @@ func (sm *ScanManager) runSingleAgent(ctx context.Context, ms *ManagedScan, prov
 }
 
 func (sm *ScanManager) runMultiAgent(ctx context.Context, ms *ManagedScan, provider llm.Provider, scope []string, req StartScanRequest, onEvent func(agent.Event)) {
-	orch := agent.NewOrchestrator(agent.OrchestratorConfig{
-		Provider:     provider,
-		Target:       req.Target,
-		Scope:        scope,
-		Instructions: req.Instructions,
-		MaxTurns:     req.MaxTurns,
-		NoConfirm:    req.NoConfirm,
-		OnEvent:      onEvent,
-	})
-
-	orchResult, err := orch.Run(ctx)
-	ms.mu.Lock()
-	if err != nil {
-		if ctx.Err() != nil {
-			ms.Status = ScanStatusStopped
-		} else {
-			ms.Status = ScanStatusFailed
-		}
-	} else {
-		ms.Status = ScanStatusCompleted
-		ms.Result = orchResult.Combined
-		ms.tokensIn = orchResult.Combined.TokensIn
-		ms.tokensOut = orchResult.Combined.TokensOut
-		ms.findings = orchResult.Combined.Findings
-	}
-	ms.mu.Unlock()
-
-	ms.addEvent(UIEvent{Type: "done", Message: "Multi-agent scan finished", Timestamp: time.Now().UnixMilli()})
+	sm.runSingleAgent(ctx, ms, provider, scope, req, onEvent)
 }
 
 func (sm *ScanManager) runInteractive(ms *ManagedScan, provider llm.Provider, scope []string, req StartScanRequest, onEvent func(agent.Event)) {

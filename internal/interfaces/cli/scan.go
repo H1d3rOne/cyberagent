@@ -293,48 +293,12 @@ func newScanAgentCommand() *cobra.Command {
 
 			var result *agent.Result
 			if multiAgent {
-				fmt.Fprintf(outWriter, "Multi-agent mode: recon → deep analysis\n\n")
-				orch := agent.NewOrchestrator(agent.OrchestratorConfig{
-					Provider:     provider,
-					Target:       target,
-					Scope:        scopeList,
-					Instructions: instructions,
-					MaxTurns:     maxTurns,
-					NoConfirm:    noConfirm,
-					OutDir:       out,
-					OnEvent: func(e agent.Event) {
-						if eventLogger != nil {
-							eventLogger.Log(e)
-						}
-						switch e.Type {
-						case agent.EventProgress:
-							logger.Info("  %s", e.Message)
-						case agent.EventTextDelta:
-							fmt.Fprint(outWriter, e.Message)
-						case agent.EventToolCall:
-							fmt.Fprintf(outWriter, "\n")
-							logger.Info("  [tool] %s", e.ToolName)
-						case agent.EventFinding:
-							logger.Info("  [finding] %s (%s)", e.Message, e.Finding.Severity)
-						case agent.EventError:
-							logger.Info("  [error] %s", e.Message)
-						case agent.EventDone:
-							fmt.Fprintf(outWriter, "\n")
-						}
-					},
-					OnConfirm: func(toolName string, input json.RawMessage) bool {
-						fmt.Fprintf(outWriter, "\n[CONFIRM] High-risk tool %q requested. Input: %s\n", toolName, string(input))
-						fmt.Fprintf(outWriter, "Allow? [y/N]: ")
-						var answer string
-						fmt.Fscanln(cmd.InOrStdin(), &answer)
-						return answer == "y" || answer == "Y" || answer == "yes"
-					},
-				})
-				orchResult, err := orch.Run(ctx)
+				fmt.Fprintf(outWriter, "Plan-driven assessment\n\n")
+				var err error
+				result, err = a.Run(ctx)
 				if err != nil {
-					return fmt.Errorf("multi-agent scan: %w", err)
+					return fmt.Errorf("scan: %w", err)
 				}
-				result = orchResult.Combined
 			} else if interactive {
 				fmt.Fprintf(outWriter, "Interactive agent mode. Type 'exit' or 'quit' to end.\n\n")
 				var err error
