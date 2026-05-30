@@ -38,10 +38,12 @@ func newRouter(svc routerServices, token string) http.Handler {
 
 	// Register /api/scans endpoints from the web API server
 	if svc.scanManager != nil {
-		scanAPI := web.NewAPIServer(svc.scanManager)
+		scanAPI := web.NewAPIServer(svc.scanManager, newProviderStore(""))
 		mux.Handle("/api/scans", scanAPI.Handler())
 		mux.Handle("/api/scans/", scanAPI.Handler())
 		mux.Handle("/api/providers", scanAPI.Handler())
+		mux.Handle("/api/provider-profiles", scanAPI.Handler())
+		mux.Handle("/api/provider-profiles/", scanAPI.Handler())
 		mux.Handle("/api/tools", scanAPI.Handler())
 	}
 

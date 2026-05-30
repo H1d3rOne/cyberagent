@@ -23,42 +23,14 @@ import { Button } from '@/components/ui/button'
 import { PageDescription, PageHeader, PageTitle, Section, SectionHeader, SectionTitle } from '@/components/layout-primitives'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import type { AgentProviderSettings, ApiAuthProfile, ApiAuthProfileType, Provider } from '@/lib/api'
+import type { AgentProviderProfile, AgentProviderType, ApiAuthProfile, ApiAuthProfileType, Provider } from '@/lib/api'
 import { normalizeAgentOperationLevel, type AgentOperationLevel } from '@/lib/api'
 import { text, useConsole } from '@/lib/console'
 import { cn } from '@/lib/utils'
 
-const AI_PROVIDER_OPTIONS = [
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    defaultModel: 'gpt-4o',
-    detail: 'Chat Completions',
-  },
-  {
-    id: 'anthropic',
-    name: 'Anthropic',
-    defaultModel: 'claude-sonnet-4-20250514',
-    detail: 'Claude Messages',
-  },
-  {
-    id: 'ollama',
-    name: 'Ollama',
-    defaultModel: 'llama3.1',
-    detail: 'Local /v1 compatible',
-  },
-  {
-    id: 'openai-compatible',
-    name: 'OpenAI Compatible',
-    defaultModel: '',
-    detail: 'Custom /v1 endpoint',
-  },
-  {
-    id: 'anthropic-compatible',
-    name: 'Anthropic Compatible',
-    defaultModel: '',
-    detail: 'Custom messages endpoint',
-  },
+const PROVIDER_TYPES: { id: AgentProviderType; name: string; defaultModel: string; detail: string }[] = [
+  { id: 'openai', name: 'OpenAI', defaultModel: 'gpt-4o', detail: 'Chat Completions / compatible' },
+  { id: 'anthropic', name: 'Anthropic', defaultModel: 'claude-sonnet-4-20250514', detail: 'Claude Messages / compatible' },
 ]
 
 const OPERATION_LEVELS: AgentOperationLevel[] = ['read_only', 'workspace', 'safe_scan', 'approval_ops', 'advanced']
@@ -103,12 +75,19 @@ function authProfileTypeLabel(type: ApiAuthProfileType, language: 'zh' | 'en') {
 
 export function SettingsPage() {
   const { client, language, setLanguage, settings, updateSettings, resetSettings, t } = useConsole()
-  const agentProvider = settings.agentProvider
   const [saved, setSaved] = useState(false)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState('')
   const [connected, setConnected] = useState(false)
   const [providers, setProviders] = useState<Provider[]>([])
+  const [savingProviders, setSavingProviders] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  const aiProviders = settings.aiProviders || []
+  const activeProvider = aiProviders.find((p) => p.id === settings.activeAiProviderId) || aiProviders[0]
+  const providerType = PROVIDER_TYPES.find((tp) => tp.id === activeProvider?.type)
+  const providerReady = Boolean(activeProvider?.apiKey.trim() || activeProvider?.baseUrl.trim())
 
   const check = useCallback(async () => {
     setChecking(true)
@@ -117,6 +96,14 @@ export function SettingsPage() {
       const providerList = await client.getProviders()
       setProviders(providerList || [])
       setConnected(true)
+      try {
+        const remote = await client.getProviderProfiles()
+        if (remote.providers.length) {
+          updateSettings({ aiProviders: remote.providers, activeAiProviderId: remote.activeId || remote.providers[0].id })
+        }
+      } catch {
+        // provider profiles unavailable; fall back to local settings
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'connection failed')
       setConnected(false)
@@ -124,33 +111,90 @@ export function SettingsPage() {
     } finally {
       setChecking(false)
     }
-  }, [client])
+  }, [client, updateSettings])
 
   useEffect(() => {
     check()
-  }, [check])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client])
 
   const save = () => {
     setSaved(true)
     window.setTimeout(() => setSaved(false), 1600)
   }
 
-  const updateAgentProvider = <K extends keyof AgentProviderSettings>(key: K, value: AgentProviderSettings[K]) => {
-    updateSettings({ agentProvider: { [key]: value } as Partial<AgentProviderSettings> })
-  }
-  const selectedProvider = AI_PROVIDER_OPTIONS.find((provider) => provider.id === agentProvider.provider)
-  const providerReady =
-    agentProvider.provider === 'ollama' || Boolean(agentProvider.apiKey.trim() || agentProvider.providerBaseUrl.trim())
-
-  const chooseProvider = (providerId: string) => {
-    const provider = AI_PROVIDER_OPTIONS.find((item) => item.id === providerId)
+  const updateActiveProvider = (patch: Partial<AgentProviderProfile>) => {
+    if (!activeProvider) return
     updateSettings({
-      agentProvider: {
-        provider: providerId,
-        model: provider?.defaultModel || agentProvider.model,
-      },
+      aiProviders: aiProviders.map((p) => (p.id === activeProvider.id ? { ...p, ...patch } : p)),
     })
   }
+
+  const addProvider = () => {
+    const id = `ai_provider_${Date.now().toString(36)}`
+    updateSettings({
+      aiProviders: [
+        ...aiProviders,
+        {
+          id,
+          name: text(language, '新 Provider', 'New provider'),
+          type: 'openai',
+          model: 'gpt-4o',
+          apiKey: '',
+          baseUrl: '',
+          instructions: '',
+          maxTurns: 50,
+        },
+      ],
+      activeAiProviderId: id,
+    })
+  }
+
+  const deleteProvider = (id: string) => {
+    if (aiProviders.length <= 1) return
+    const next = aiProviders.filter((p) => p.id !== id)
+    updateSettings({
+      aiProviders: next,
+      activeAiProviderId: settings.activeAiProviderId === id ? next[0]?.id || '' : settings.activeAiProviderId,
+    })
+  }
+
+  const saveProviders = async () => {
+    if (!connected) return
+    setSavingProviders(true)
+    try {
+      await client.saveProviderProfiles(aiProviders, settings.activeAiProviderId)
+      save()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'save failed')
+    } finally {
+      setSavingProviders(false)
+    }
+  }
+
+  const testProvider = async () => {
+    if (!activeProvider) return
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await client.testProvider({
+        type: activeProvider.type,
+        model: activeProvider.model,
+        api_key: activeProvider.apiKey,
+        base_url: activeProvider.baseUrl || undefined,
+      })
+      setTestResult(
+        res.ok
+          ? { ok: true, message: `${res.provider} · ${res.latency_ms}ms` }
+          : { ok: false, message: (res as { error?: string }).error || text(language, '连接失败', 'connection failed') },
+      )
+    } catch (err) {
+      setTestResult({ ok: false, message: err instanceof Error ? err.message : 'test failed' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
   const authProfiles = settings.apiAuthProfiles || []
 
   const addAuthProfile = () => {
@@ -288,68 +332,90 @@ export function SettingsPage() {
         <div className="rounded-[1.5rem] border border-white/[0.08] bg-white/[0.03] p-4 sm:p-5">
           <SectionHeader>
             <SectionTitle icon={Bot}>{text(language, 'AI Provider', 'AI Provider')}</SectionTitle>
-            <span className="font-mono text-xs text-muted-foreground">chat / planner / cockpit</span>
+            <Button type="button" variant="outline" size="sm" onClick={addProvider} className="h-8 rounded-xl bg-transparent px-2">
+              <Plus className="mr-1 h-3.5 w-3.5" />
+              {text(language, '新增', 'Add')}
+            </Button>
           </SectionHeader>
 
           <div className="grid gap-4">
-            <Field icon={PlugZap} label={t('provider')} htmlFor="default-provider">
-              <select
-                id="default-provider"
-                value={agentProvider.provider}
-                onChange={(event) => chooseProvider(event.target.value)}
-                className="h-10 w-full rounded-xl border border-input bg-background px-3 py-2 font-mono text-sm text-foreground ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              >
-                {AI_PROVIDER_OPTIONS.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.name}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-                {selectedProvider?.defaultModel || selectedProvider?.detail || text(language, '选择提供商', 'Choose provider')}
-              </div>
-            </Field>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Field icon={PlugZap} label={text(language, '选择 Provider', 'Select provider')} htmlFor="provider-select">
+                <select
+                  id="provider-select"
+                  value={settings.activeAiProviderId}
+                  onChange={(event) => updateSettings({ activeAiProviderId: event.target.value })}
+                  className="h-10 w-full rounded-xl border border-input bg-background px-3 py-2 font-mono text-sm text-foreground ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  {aiProviders.map((provider) => (
+                    <option key={provider.id} value={provider.id}>{provider.name || provider.id}</option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field icon={Bot} label={text(language, '类型', 'Type')} htmlFor="provider-type">
+                <select
+                  id="provider-type"
+                  value={activeProvider?.type || 'openai'}
+                  onChange={(event) => updateActiveProvider({ type: event.target.value as AgentProviderType })}
+                  className="h-10 w-full rounded-xl border border-input bg-background px-3 py-2 font-mono text-sm text-foreground ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  {PROVIDER_TYPES.map((tp) => (
+                    <option key={tp.id} value={tp.id}>{tp.name}</option>
+                  ))}
+                </select>
+                <div className="mt-1 font-mono text-[11px] text-muted-foreground">{providerType?.detail}</div>
+              </Field>
+            </div>
 
             <div className="grid gap-4 lg:grid-cols-2">
-              <Field icon={SlidersHorizontal} label={t('model')} htmlFor="default-model">
+              <Field icon={MessageSquare} label={text(language, '名称', 'Name')} htmlFor="provider-name">
                 <Input
-                  id="default-model"
-                  value={agentProvider.model}
-                  onChange={(event) => updateAgentProvider('model', event.target.value)}
-                  placeholder={selectedProvider?.defaultModel || 'model name'}
+                  id="provider-name"
+                  value={activeProvider?.name || ''}
+                  onChange={(event) => updateActiveProvider({ name: event.target.value })}
+                  placeholder={text(language, 'Provider 名称', 'Provider name')}
                   className="h-10 rounded-xl font-mono"
                 />
               </Field>
 
-              <Field icon={KeyRound} label="API Key" htmlFor="default-api-key">
+              <Field icon={SlidersHorizontal} label={t('model')} htmlFor="provider-model">
                 <Input
-                  id="default-api-key"
-                  value={agentProvider.apiKey}
-                  onChange={(event) => updateAgentProvider('apiKey', event.target.value)}
+                  id="provider-model"
+                  value={activeProvider?.model || ''}
+                  onChange={(event) => updateActiveProvider({ model: event.target.value })}
+                  placeholder={providerType?.defaultModel || 'model name'}
+                  className="h-10 rounded-xl font-mono"
+                />
+              </Field>
+
+              <Field icon={KeyRound} label="API Key" htmlFor="provider-api-key">
+                <Input
+                  id="provider-api-key"
+                  value={activeProvider?.apiKey || ''}
+                  onChange={(event) => updateActiveProvider({ apiKey: event.target.value })}
                   placeholder="sk-..."
                   type="password"
                   className="h-10 rounded-xl font-mono"
                 />
               </Field>
-            </div>
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Field icon={Globe2} label="Provider Base URL" htmlFor="default-provider-base-url">
+              <Field icon={Globe2} label="Provider Base URL" htmlFor="provider-base-url">
                 <Input
-                  id="default-provider-base-url"
-                  value={agentProvider.providerBaseUrl}
-                  onChange={(event) => updateAgentProvider('providerBaseUrl', event.target.value)}
+                  id="provider-base-url"
+                  value={activeProvider?.baseUrl || ''}
+                  onChange={(event) => updateActiveProvider({ baseUrl: event.target.value })}
                   placeholder={text(language, '可选', 'Optional')}
                   className="h-10 rounded-xl font-mono"
                 />
               </Field>
 
-              <Field icon={SlidersHorizontal} label={t('turns')} htmlFor="default-max-turns">
+              <Field icon={SlidersHorizontal} label={t('turns')} htmlFor="provider-max-turns">
                 <Input
-                  id="default-max-turns"
+                  id="provider-max-turns"
                   type="number"
-                  value={agentProvider.maxTurns}
-                  onChange={(event) => updateAgentProvider('maxTurns', Number(event.target.value))}
+                  value={activeProvider?.maxTurns || 50}
+                  onChange={(event) => updateActiveProvider({ maxTurns: Number(event.target.value) })}
                   min={1}
                   max={200}
                   className="h-10 rounded-xl font-mono"
@@ -369,16 +435,38 @@ export function SettingsPage() {
               </Field>
             </div>
 
-            <Field icon={MessageSquare} label={text(language, 'Agent 指令', 'Agent instructions')} htmlFor="default-instructions">
+            <Field icon={MessageSquare} label={text(language, 'Agent 指令', 'Agent instructions')} htmlFor="provider-instructions">
               <textarea
-                id="default-instructions"
-                value={agentProvider.instructions}
-                onChange={(event) => updateAgentProvider('instructions', event.target.value)}
+                id="provider-instructions"
+                value={activeProvider?.instructions || ''}
+                onChange={(event) => updateActiveProvider({ instructions: event.target.value })}
                 placeholder={text(language, '可选的全局偏好、限制或回答风格...', 'Optional global preferences, limits or response style...')}
                 rows={2}
                 className="w-full rounded-xl subtle-surface px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </Field>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" onClick={saveProviders} disabled={!connected || savingProviders} className="rounded-2xl">
+                {saved ? <Check className="mr-2 h-4 w-4" /> : <Save className={cn('mr-2 h-4 w-4', savingProviders && 'animate-spin')} />}
+                {saved ? text(language, '已保存', 'Saved') : t('save')}
+              </Button>
+              <Button type="button" variant="outline" onClick={testProvider} disabled={!connected || testing} className="rounded-2xl bg-transparent">
+                <Activity className={cn('mr-2 h-4 w-4', testing && 'animate-spin')} />
+                {text(language, '测试连通性', 'Test connection')}
+              </Button>
+              {aiProviders.length > 1 && activeProvider && (
+                <Button type="button" variant="ghost" onClick={() => deleteProvider(activeProvider.id)} className="rounded-2xl text-muted-foreground">
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  {text(language, '删除', 'Delete')}
+                </Button>
+              )}
+              {testResult && (
+                <span className={cn('font-mono text-xs', testResult.ok ? 'text-emerald-300' : 'text-red-300')}>
+                  {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -613,8 +701,8 @@ export function SettingsPage() {
           icon={PlugZap}
           label={text(language, 'AI 模型', 'AI Model')}
           ok={providerReady}
-          value={agentProvider.provider || '—'}
-          detail={agentProvider.model || selectedProvider?.defaultModel || text(language, '默认模型', 'default model')}
+          value={activeProvider?.type || '—'}
+          detail={activeProvider?.model || providerType?.defaultModel || text(language, '默认模型', 'default model')}
         />
         <StatusCard
           icon={KeyRound}

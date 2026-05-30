@@ -1598,6 +1598,38 @@ export class ApiClient {
     return this.request<Provider[]>('/api/providers')
   }
 
+  async getProviderProfiles(): Promise<{ providers: AgentProviderProfile[]; activeId: string }> {
+    const cfg = await this.request<{ providers?: unknown; active_id?: string }>('/api/provider-profiles')
+    return {
+      providers: normalizeAgentProviderProfiles(cfg?.providers, defaultAgentProvider),
+      activeId: stringOrDefault(cfg?.active_id, ''),
+    }
+  }
+
+  async saveProviderProfiles(providers: AgentProviderProfile[], activeId: string) {
+    const body = {
+      providers: providers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        type: p.type,
+        model: p.model,
+        api_key: p.apiKey,
+        base_url: p.baseUrl,
+        instructions: p.instructions,
+        max_turns: p.maxTurns,
+      })),
+      active_id: activeId,
+    }
+    return this.request<unknown>('/api/provider-profiles', { method: 'PUT', body: JSON.stringify(body) })
+  }
+
+  testProvider(req: AgentProviderTestRequest) {
+    return this.request<AgentProviderTestResponse>('/api/provider-profiles/test', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    })
+  }
+
   getTools() {
     return this.request<ToolDef[]>('/api/tools')
   }

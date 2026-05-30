@@ -32,7 +32,7 @@ func newDashboardCommand() *cobra.Command {
 				return buildProvider(name, cfg)
 			})
 
-			apiServer := web.NewAPIServer(manager)
+			apiServer := web.NewAPIServer(manager, nil)
 
 			mux := http.NewServeMux()
 			mux.HandleFunc("/api/local/daemon-config", handleLocalDaemonBootstrap(daemonURL, daemonTokenFile))

@@ -1,19 +1,48 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
 )
 
-type APIServer struct {
-	manager *ScanManager
-	mux     *http.ServeMux
+// ProviderProfile is a persisted AI provider configuration.
+type ProviderProfile struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Model        string `json:"model"`
+	APIKey       string `json:"api_key"`
+	BaseURL      string `json:"base_url"`
+	Instructions string `json:"instructions"`
+	MaxTurns     int    `json:"max_turns"`
 }
 
-func NewAPIServer(manager *ScanManager) *APIServer {
-	s := &APIServer{manager: manager, mux: http.NewServeMux()}
+// ProviderConfig is the persisted set of providers plus the active selection.
+type ProviderConfig struct {
+	Providers []ProviderProfile `json:"providers"`
+	ActiveID  string            `json:"active_id"`
+}
+
+// ProviderStore persists provider configurations.
+type ProviderStore interface {
+	Load() (ProviderConfig, error)
+	Save(ProviderConfig) error
+}
+
+type APIServer struct {
+	manager   *ScanManager
+	providers ProviderStore
+	mux       *http.ServeMux
+}
+
+func NewAPIServer(manager *ScanManager, providers ProviderStore) *APIServer {
+	s := &APIServer{manager: manager, providers: providers, mux: http.NewServeMux()}
 	s.registerRoutes()
 	return s
 }
@@ -26,6 +55,8 @@ func (s *APIServer) registerRoutes() {
 	s.mux.HandleFunc("/api/scans", s.handleScans)
 	s.mux.HandleFunc("/api/scans/", s.handleScanByID)
 	s.mux.HandleFunc("/api/providers", s.handleProviders)
+	s.mux.HandleFunc("/api/provider-profiles", s.handleProviderProfiles)
+	s.mux.HandleFunc("/api/provider-profiles/test", s.handleProviderTest)
 	s.mux.HandleFunc("/api/tools", s.handleTools)
 }
 
@@ -193,6 +224,88 @@ func (s *APIServer) handleProviders(w http.ResponseWriter, r *http.Request) {
 		{"id": "openai-compatible", "name": "OpenAI Compatible", "default_model": ""},
 	}
 	writeJSON(w, http.StatusOK, providers)
+}
+
+func (s *APIServer) handleProviderProfiles(w http.ResponseWriter, r *http.Request) {
+	if s.providers == nil {
+		http.Error(w, "provider store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		cfg, err := s.providers.Load()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, cfg)
+	case http.MethodPut:
+		var cfg ProviderConfig
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		if err := s.providers.Save(cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, cfg)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *APIServer) handleProviderTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Type    string `json:"type"`
+		Model   string `json:"model"`
+		APIKey  string `json:"api_key"`
+		BaseURL string `json:"base_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	cfg := llm.ProviderConfig{APIKey: req.APIKey, BaseURL: req.BaseURL, Model: req.Model}
+	var provider llm.Provider
+	if strings.Contains(strings.ToLower(req.Type), "anthropic") {
+		provider = llm.NewAnthropic(cfg)
+	} else {
+		provider = llm.NewOpenAI(cfg)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	start := time.Now()
+	resp, err := provider.Chat(ctx, llm.ChatRequest{
+		Model:     req.Model,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.TextBlock{Text: "ping"}}}},
+		MaxTokens: 1,
+	})
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": false, "provider": provider.Name(), "model": req.Model,
+			"latency_ms": latency, "error": err.Error(),
+		})
+		return
+	}
+	output := ""
+	if resp != nil {
+		for _, block := range resp.Content {
+			if tb, ok := block.(llm.TextBlock); ok {
+				output += tb.Text
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "provider": provider.Name(), "model": req.Model,
+		"latency_ms": latency, "output": output,
+	})
 }
 
 func (s *APIServer) handleTools(w http.ResponseWriter, r *http.Request) {
