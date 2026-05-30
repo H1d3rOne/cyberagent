@@ -2,9 +2,12 @@ package daemon
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -43,6 +46,7 @@ type agentSession struct {
 	UpdatedAt      time.Time              `json:"updated_at"`
 	Operator       string                 `json:"operator"`
 	Language       string                 `json:"language"`
+	OperationLevel string                 `json:"operation_level,omitempty"`
 	Status         string                 `json:"status"`
 	Messages       []agentMessage         `json:"messages"`
 	ActiveTask     *agentTask             `json:"active_task,omitempty"`
@@ -59,6 +63,7 @@ type agentMessage struct {
 	Role      string          `json:"role"`
 	Content   string          `json:"content"`
 	Timestamp time.Time       `json:"timestamp"`
+	Phase     string          `json:"phase,omitempty"`
 	ToolCalls []agentToolCall `json:"tool_calls,omitempty"`
 	Links     []agentLink     `json:"links,omitempty"`
 	Reasoning string          `json:"reasoning,omitempty"`
@@ -192,8 +197,9 @@ type preparedWorkspaceApply struct {
 }
 
 type createAgentSessionRequest struct {
-	Operator string `json:"operator"`
-	Language string `json:"language"`
+	Operator       string `json:"operator"`
+	Language       string `json:"language"`
+	OperationLevel string `json:"operation_level,omitempty"`
 }
 
 type createAgentSessionResponse struct {
@@ -201,20 +207,57 @@ type createAgentSessionResponse struct {
 }
 
 type agentSessionSummary struct {
-	SessionID     string                  `json:"session_id"`
-	CreatedAt     time.Time               `json:"created_at"`
-	UpdatedAt     time.Time               `json:"updated_at"`
-	Operator      string                  `json:"operator"`
-	Language      string                  `json:"language"`
-	Status        string                  `json:"status"`
-	ActiveTask    *agentTask              `json:"active_task,omitempty"`
-	NextAction    *agentNextAction        `json:"next_action,omitempty"`
-	RunSummary    *agentSessionRunSummary `json:"run_summary,omitempty"`
-	MemorySummary *agentMemorySummary     `json:"memory_summary,omitempty"`
-	LastMessage   string                  `json:"last_message,omitempty"`
-	MessageCount  int                     `json:"message_count"`
-	ToolCallCount int                     `json:"tool_call_count"`
-	ContextCount  int                     `json:"context_count"`
+	SessionID      string                  `json:"session_id"`
+	CreatedAt      time.Time               `json:"created_at"`
+	UpdatedAt      time.Time               `json:"updated_at"`
+	Operator       string                  `json:"operator"`
+	Language       string                  `json:"language"`
+	OperationLevel string                  `json:"operation_level,omitempty"`
+	Status         string                  `json:"status"`
+	ActiveTask     *agentTask              `json:"active_task,omitempty"`
+	NextAction     *agentNextAction        `json:"next_action,omitempty"`
+	RunSummary     *agentSessionRunSummary `json:"run_summary,omitempty"`
+	MemorySummary  *agentMemorySummary     `json:"memory_summary,omitempty"`
+	LastMessage    string                  `json:"last_message,omitempty"`
+	MessageCount   int                     `json:"message_count"`
+	ToolCallCount  int                     `json:"tool_call_count"`
+	ContextCount   int                     `json:"context_count"`
+}
+
+type agentTraceResponse struct {
+	SessionID   string                  `json:"session_id"`
+	GeneratedAt time.Time               `json:"generated_at"`
+	Summary     agentTraceSummary       `json:"summary"`
+	Session     agentSession            `json:"session"`
+	Events      []agentTraceEvent       `json:"events"`
+	ActiveTask  *agentTask              `json:"active_task,omitempty"`
+	Todos       []agentTodo             `json:"todos,omitempty"`
+	NextAction  *agentNextAction        `json:"next_action,omitempty"`
+	ContextRefs []agentContextRef       `json:"context_refs,omitempty"`
+	RunSummary  *agentSessionRunSummary `json:"run_summary,omitempty"`
+}
+
+type agentTraceSummary struct {
+	Messages       int `json:"messages"`
+	ToolCalls      int `json:"tool_calls"`
+	Todos          int `json:"todos"`
+	ContextRefs    int `json:"context_refs"`
+	PendingChanges int `json:"pending_changes"`
+}
+
+type agentTraceEvent struct {
+	Index      int                    `json:"index"`
+	Timestamp  time.Time              `json:"timestamp"`
+	Kind       string                 `json:"kind"`
+	ID         string                 `json:"id"`
+	Phase      string                 `json:"phase,omitempty"`
+	Role       string                 `json:"role,omitempty"`
+	Title      string                 `json:"title"`
+	Detail     string                 `json:"detail,omitempty"`
+	Status     string                 `json:"status,omitempty"`
+	ToolName   string                 `json:"tool_name,omitempty"`
+	ToolCallID string                 `json:"tool_call_id,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type agentSessionRunSummary struct {
@@ -239,26 +282,58 @@ type listAgentSessionsResponse struct {
 	Limit int                   `json:"limit"`
 }
 
+type deleteAgentSessionResponse struct {
+	SessionID string `json:"session_id"`
+	Status    string `json:"status"`
+}
+
 type sendAgentMessageRequest struct {
-	Message      string `json:"message"`
-	Operator     string `json:"operator"`
-	Language     string `json:"language"`
-	Provider     string `json:"provider,omitempty"`
-	Model        string `json:"model,omitempty"`
-	APIKey       string `json:"api_key,omitempty"`
-	BaseURL      string `json:"base_url,omitempty"`
-	Instructions string `json:"instructions,omitempty"`
+	Message              string                 `json:"message"`
+	Operator             string                 `json:"operator"`
+	Language             string                 `json:"language"`
+	OperationLevel       string                 `json:"operation_level,omitempty"`
+	Provider             string                 `json:"provider,omitempty"`
+	Model                string                 `json:"model,omitempty"`
+	APIKey               string                 `json:"api_key,omitempty"`
+	BaseURL              string                 `json:"base_url,omitempty"`
+	Instructions         string                 `json:"instructions,omitempty"`
+	AuthProfiles         []agentHTTPAuthProfile `json:"auth_profiles,omitempty"`
+	DefaultAuthProfileID string                 `json:"default_auth_profile_id,omitempty"`
+}
+
+type agentHTTPAuthProfile struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Type        string `json:"type,omitempty"`
+	BaseURL     string `json:"base_url,omitempty"`
+	Token       string `json:"token,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Password    string `json:"password,omitempty"`
+	HeaderName  string `json:"header_name,omitempty"`
+	HeaderValue string `json:"header_value,omitempty"`
+	Cookie      string `json:"cookie,omitempty"`
+	Enabled     *bool  `json:"enabled,omitempty"`
+}
+
+type agentHTTPAuthProfileUsage struct {
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Type    string `json:"type,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
+	Host    string `json:"host,omitempty"`
+	Applied bool   `json:"applied"`
 }
 
 type agentControlRequest struct {
-	Action     string `json:"action"`
-	Operator   string `json:"operator"`
-	Language   string `json:"language"`
-	Reason     string `json:"reason,omitempty"`
-	Prompt     string `json:"prompt,omitempty"`
-	RunID      string `json:"run_id,omitempty"`
-	JobID      string `json:"job_id,omitempty"`
-	ClearInput bool   `json:"clear_input,omitempty"`
+	Action         string `json:"action"`
+	Operator       string `json:"operator"`
+	Language       string `json:"language"`
+	OperationLevel string `json:"operation_level,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	Prompt         string `json:"prompt,omitempty"`
+	RunID          string `json:"run_id,omitempty"`
+	JobID          string `json:"job_id,omitempty"`
+	ClearInput     bool   `json:"clear_input,omitempty"`
 }
 
 type agentControlResponse struct {
@@ -332,6 +407,7 @@ type agentCapabilityItem struct {
 }
 
 type agentPlannerResponse struct {
+	Phase       string               `json:"phase,omitempty"`
 	Answer      string               `json:"answer"`
 	Task        *agentPlannerTask    `json:"task,omitempty"`
 	Todos       []agentPlannerTodo   `json:"todos,omitempty"`
@@ -419,12 +495,13 @@ func newAgentManager(runsDir string) *agentManager {
 func (m *agentManager) CreateSession(req createAgentSessionRequest) (createAgentSessionResponse, error) {
 	now := time.Now().UTC()
 	session := &agentSession{
-		SessionID: strings.Replace(runs.NewJobID(now), "job_", "agent_", 1),
-		CreatedAt: now,
-		UpdatedAt: now,
-		Operator:  normalizeAgentOperator(req.Operator),
-		Language:  normalizeAgentLanguage(req.Language),
-		Status:    "idle",
+		SessionID:      strings.Replace(runs.NewJobID(now), "job_", "agent_", 1),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Operator:       normalizeAgentOperator(req.Operator),
+		Language:       normalizeAgentLanguage(req.Language),
+		OperationLevel: normalizeAgentOperationLevel(req.OperationLevel),
+		Status:         "idle",
 		NextAction: &agentNextAction{
 			Type:   "wait_user",
 			Reason: agentText(req.Language, "等待用户给出授权目标、scope 或下一步指令。", "Waiting for an authorized target, scope, or next instruction."),
@@ -486,6 +563,34 @@ func (m *agentManager) ListSessions(ctx context.Context, limit int) (listAgentSe
 	return listAgentSessionsResponse{Items: items, Count: len(items), Limit: limit}, nil
 }
 
+func (m *agentManager) DeleteSession(ctx context.Context, sessionID string) (deleteAgentSessionResponse, error) {
+	if err := contextError(ctx); err != nil {
+		return deleteAgentSessionResponse{}, err
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return deleteAgentSessionResponse{}, services.NewError(services.CodeBadRequest, "session id is required", map[string]any{"field": "session_id"}, nil)
+	}
+	if err := m.loadSessions(); err != nil {
+		return deleteAgentSessionResponse{}, services.NewError(services.CodeInternal, "load agent sessions", nil, err)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.sessions[sessionID]; !ok {
+		return deleteAgentSessionResponse{}, services.NewError(services.CodeNotFound, "agent session not found", map[string]any{"session_id": sessionID}, nil)
+	}
+	delete(m.sessions, sessionID)
+
+	if path := m.sessionPath(sessionID); path != "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return deleteAgentSessionResponse{}, services.NewError(services.CodeInternal, "delete agent session", map[string]any{"session_id": sessionID}, err)
+		}
+	}
+	return deleteAgentSessionResponse{SessionID: sessionID, Status: "deleted"}, nil
+}
+
 func agentCapabilities(language string) agentCapabilitiesResponse {
 	language = normalizeAgentLanguage(language)
 	tools := make([]agentCapabilityTool, 0, len(agentLLMToolDefinitions()))
@@ -515,10 +620,13 @@ func agentCapabilities(language string) agentCapabilitiesResponse {
 			{Method: "GET", Path: "/api/v1/agent/sessions/{session_id}", Description: agentText(language, "读取完整 Agent 会话。", "Read the full Agent session.")},
 			{Method: "GET", Path: "/api/v1/agent/sessions/{session_id}/state", Description: agentText(language, "读取可恢复 Agent state：task、todos、tool calls、context refs、next action。", "Read recoverable Agent state: task, todos, tool calls, context refs, and next action.")},
 			{Method: "GET", Path: "/api/v1/agent/sessions/{session_id}/context", Description: agentText(language, "读取轻量工作上下文：context refs、pending changes 和 run summary。", "Read lightweight working context: context refs, pending changes, and run summary.")},
+			{Method: "GET", Path: "/api/v1/agent/sessions/{session_id}/trace", Description: agentText(language, "导出可回放 Agent trace：消息、工具、阶段、状态和上下文。", "Export replayable Agent trace: messages, tools, phases, state, and context.")},
 			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/messages", Description: agentText(language, "发送自然语言消息并触发 Agent 执行循环。", "Send a natural-language message and trigger the Agent execution loop.")},
-			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/control", Description: agentText(language, "通用控制入口：continue、revise、stop、new_task。", "Generic control entrypoint: continue, revise, stop, new_task.")},
+			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/control", Description: agentText(language, "通用控制入口：continue、revise、pause、stop、cancel、new_task。", "Generic control entrypoint: continue, revise, pause, stop, cancel, new_task.")},
 			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/continue", Description: agentText(language, "继续当前任务。", "Continue the current task.")},
-			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/stop", Description: agentText(language, "停止或暂停当前任务。", "Stop or pause the current task.")},
+			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/pause", Description: agentText(language, "暂停当前会话但保留上下文。", "Pause the current session while preserving context.")},
+			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/stop", Description: agentText(language, "停止当前任务并尝试取消活动 daemon job。", "Stop the current task and try to cancel the active daemon job.")},
+			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/cancel", Description: agentText(language, "取消当前任务并保留会话记录。", "Cancel the current task while preserving session history.")},
 			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/new-task", Description: agentText(language, "开启新的任务上下文。", "Start a new task context.")},
 			{Method: "GET", Path: "/api/v1/agent/sessions/{session_id}/stream", Description: agentText(language, "订阅 Agent session/activity 事件流。", "Subscribe to Agent session/activity events.")},
 		},
@@ -616,19 +724,20 @@ func agentSessionSummaryFrom(session *agentSession) agentSessionSummary {
 		}
 	}
 	return agentSessionSummary{
-		SessionID:     session.SessionID,
-		CreatedAt:     session.CreatedAt,
-		UpdatedAt:     session.UpdatedAt,
-		Operator:      session.Operator,
-		Language:      session.Language,
-		Status:        session.Status,
-		ActiveTask:    cloneAgentTask(session.ActiveTask),
-		NextAction:    cloneAgentNextAction(session.NextAction),
-		MemorySummary: cloneAgentMemorySummary(session.MemorySummary),
-		LastMessage:   lastMessage,
-		MessageCount:  len(session.Messages),
-		ToolCallCount: len(session.ToolCalls),
-		ContextCount:  len(session.ContextRefs),
+		SessionID:      session.SessionID,
+		CreatedAt:      session.CreatedAt,
+		UpdatedAt:      session.UpdatedAt,
+		Operator:       session.Operator,
+		Language:       session.Language,
+		OperationLevel: session.OperationLevel,
+		Status:         session.Status,
+		ActiveTask:     cloneAgentTask(session.ActiveTask),
+		NextAction:     cloneAgentNextAction(session.NextAction),
+		MemorySummary:  cloneAgentMemorySummary(session.MemorySummary),
+		LastMessage:    lastMessage,
+		MessageCount:   len(session.Messages),
+		ToolCallCount:  len(session.ToolCalls),
+		ContextCount:   len(session.ContextRefs),
 	}
 }
 
@@ -728,6 +837,7 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 	}
 	language := normalizeAgentLanguage(req.Language)
 	operator := normalizeAgentOperator(req.Operator)
+	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
 	now := time.Now().UTC()
 
 	m.mu.Lock()
@@ -742,6 +852,7 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 	}
 	session.Operator = operator
 	session.Language = language
+	session.OperationLevel = operationLevel
 	previousNextAction := cloneAgentNextAction(session.NextAction)
 
 	var message agentMessage
@@ -826,6 +937,52 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 			}
 		}
 		message = m.newMessageLocked(language, "agent", agentText(language, "收到：我会按你的修订要求更新当前任务计划，并在下一轮继续推进。", "Received: I will update the current task plan according to your revision and continue in the next turn."), nil, nil)
+	case "pause":
+		session.Status = "paused"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.UpdatedAt = now
+		}
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			reason = agentText(language, "用户请求暂停当前 Agent 会话。", "The operator requested pausing the current Agent session.")
+		}
+		for idx := range session.Todos {
+			if session.Todos[idx].Status == "running" {
+				markAgentTodoByIndex(session.Todos, idx, "blocked", now, "", reason)
+			}
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "continue",
+			Reason:          reason,
+			SuggestedPrompt: firstNonEmpty(strings.TrimSpace(req.Prompt), agentSuggestedContinuePrompt(language, session)),
+		}
+		message = m.newMessageLocked(language, "agent", agentText(language, "已暂停当前 Agent 会话；不会清空上下文。发送继续/Resume 可从当前计划恢复。", "Paused the current Agent session without clearing context. Send continue/resume to proceed from the current plan."), nil, nil)
+	case "cancel":
+		session.Status = "cancelled"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.UpdatedAt = now
+		}
+		cancelJobID = strings.TrimSpace(req.JobID)
+		if cancelJobID == "" {
+			cancelJobID = m.findActiveJobIDLocked(session, strings.TrimSpace(req.RunID))
+		}
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			reason = agentText(language, "用户请求取消当前 Agent 任务。", "The operator requested cancelling the current Agent task.")
+		}
+		for idx := range session.Todos {
+			if session.Todos[idx].Status == "running" || session.Todos[idx].Status == "pending" {
+				markAgentTodoByIndex(session.Todos, idx, "skipped", now, "", reason)
+			}
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "wait_user",
+			Reason:          reason,
+			SuggestedPrompt: firstNonEmpty(strings.TrimSpace(req.Prompt), agentText(language, "开启新任务并说明授权目标与 scope", "start a new task and provide the authorized target and scope")),
+		}
+		message = m.newMessageLocked(language, "agent", agentText(language, "已取消当前 Agent 任务；如存在运行中的 daemon job，会尝试取消。", "Cancelled the current Agent task; if a daemon job is running, I will try to cancel it."), nil, nil)
 	case "stop":
 		session.Status = "blocked"
 		if session.ActiveTask != nil {
@@ -881,7 +1038,7 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 	sessionState := cloneAgentSession(session)
 	m.mu.Unlock()
 
-	if action == "stop" && cancelJobID != "" && svc.jobs != nil {
+	if (action == "stop" || action == "cancel") && cancelJobID != "" && svc.jobs != nil {
 		if job, cancelErr := svc.jobs.CancelJob(ctx, cancelJobID); cancelErr == nil {
 			tool := runningAgentToolCall("POST /api/v1/jobs/{job_id}/cancel", shortAgentID(cancelJobID, 22))
 			tool = finishAgentToolCall(tool, nil)
@@ -910,6 +1067,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	}
 	operator := normalizeAgentOperator(req.Operator)
 	language := normalizeAgentLanguage(req.Language)
+	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
 
 	var history []agentMessage
 	var memorySummary *agentMemorySummary
@@ -926,6 +1084,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	}
 	session.Operator = operator
 	session.Language = language
+	session.OperationLevel = operationLevel
 	userMessage = m.newMessageLocked(language, "user", prompt, nil, nil)
 	session.Messages = append(session.Messages, userMessage)
 	session.UpdatedAt = userMessage.Timestamp
@@ -941,6 +1100,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	m.mu.Unlock()
 
 	if controlReq, ok := agentControlRequestFromPrompt(prompt, operator, language); ok {
+		controlReq.OperationLevel = operationLevel
 		controlResp, controlErr := m.ControlSession(ctx, sessionID, controlReq, svc)
 		if controlErr != nil {
 			errMessage := m.message(language, "agent", controlErr.Error(), []agentToolCall{failedAgentToolCall("agent.control", controlErr)}, nil)
@@ -959,7 +1119,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				return buildAgentSendResponse(sessionID, responseMessages, contextToolCalls, sessionState), nil
 			}
 			if autoPrompt := agentExecutableAutoContinuePrompt(controlResp.Session.NextAction); autoPrompt != "" && agentCanAutoRouteContinuePrompt(autoPrompt) {
-				autoMessages, autoToolCalls, routeErr := m.routePrompt(ctx, sessionID, autoPrompt, language, operator, svc)
+				autoMessages, autoToolCalls, routeErr := m.routePrompt(ctx, sessionID, autoPrompt, language, operator, operationLevel, svc)
 				if routeErr != nil {
 					errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.auto_continue", routeErr)}, nil)
 					m.appendMessages(sessionID, errMessage)
@@ -985,40 +1145,9 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				history = cloneAgentMessages(sessionState.Messages)
 				memorySummary = cloneAgentMemorySummary(sessionState.MemorySummary)
 			}
-			messages, toolCalls, plan, err := m.handleAgentLLMChat(ctx, language, req, history, memorySummary)
+			messages, toolCalls, err := m.runAgentLLMToolLoop(ctx, sessionID, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
 			if err == nil {
-				m.appendMessagesWithPlanner(sessionID, plan, messages...)
-				actionMessages, actionToolCalls := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, svc, plan)
-				if len(actionMessages) > 0 {
-					m.appendMessages(sessionID, actionMessages...)
-				}
 				responseMessages := append([]agentMessage{userMessage, controlResp.Message}, messages...)
-				responseMessages = append(responseMessages, actionMessages...)
-				toolCalls = append(toolCalls, actionToolCalls...)
-
-				if len(actionMessages) > 0 {
-					synthesisHistory := append(cloneAgentMessages(history), messages...)
-					synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, synthesisHistory, memorySummary, actionMessages)
-					if synthesisErr != nil {
-						warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
-						warningTool = withAgentToolMetadata(warningTool, map[string]interface{}{"phase": "tool_synthesis"})
-						warningMessage := m.message(
-							language,
-							"tool",
-							agentText(language, "工具已执行，但 AI 结果总结失败："+synthesisErr.Error(), "Tools executed, but AI synthesis failed: "+synthesisErr.Error()),
-							[]agentToolCall{warningTool},
-							nil,
-						)
-						m.appendMessages(sessionID, warningMessage)
-						responseMessages = append(responseMessages, warningMessage)
-						toolCalls = append(toolCalls, warningTool)
-					} else if len(synthesisMessages) > 0 {
-						m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
-						responseMessages = append(responseMessages, synthesisMessages...)
-						toolCalls = append(toolCalls, synthesisToolCalls...)
-					}
-				}
-
 				sessionState, _ = m.GetSession(ctx, sessionID)
 				return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
 			}
@@ -1044,41 +1173,55 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		return buildAgentSendResponse(sessionID, []agentMessage{userMessage, controlResp.Message}, nil, sessionState), nil
 	}
 
-	if agentLLMConfigured(req) && !agentNeedsDaemonTool(prompt) {
-		messages, toolCalls, plan, err := m.handleAgentLLMChat(ctx, language, req, history, memorySummary)
-		if err == nil {
-			m.appendMessagesWithPlanner(sessionID, plan, messages...)
-			actionMessages, actionToolCalls := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, svc, plan)
-			if len(actionMessages) > 0 {
-				m.appendMessages(sessionID, actionMessages...)
-			}
-			responseMessages := append([]agentMessage{userMessage}, messages...)
-			responseMessages = append(responseMessages, actionMessages...)
-			toolCalls = append(toolCalls, actionToolCalls...)
-
-			if len(actionMessages) > 0 {
-				synthesisHistory := append(cloneAgentMessages(history), messages...)
-				synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, synthesisHistory, memorySummary, actionMessages)
-				if synthesisErr != nil {
-					warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
-					warningTool = withAgentToolMetadata(warningTool, map[string]interface{}{"phase": "tool_synthesis"})
-					warningMessage := m.message(
-						language,
-						"tool",
-						agentText(language, "工具已执行，但 AI 结果总结失败："+synthesisErr.Error(), "Tools executed, but AI synthesis failed: "+synthesisErr.Error()),
-						[]agentToolCall{warningTool},
-						nil,
-					)
-					m.appendMessages(sessionID, warningMessage)
-					responseMessages = append(responseMessages, warningMessage)
-					toolCalls = append(toolCalls, warningTool)
-				} else if len(synthesisMessages) > 0 {
-					m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
-					responseMessages = append(responseMessages, synthesisMessages...)
-					toolCalls = append(toolCalls, synthesisToolCalls...)
+	if agentLLMConfigured(req) && agentShouldRouteBeforeLLMSynthesis(prompt) {
+		messages, toolCalls, routeErr := m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		if routeErr != nil {
+			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
+			m.appendMessages(sessionID, errMessage)
+			sessionState, _ := m.GetSession(ctx, sessionID)
+			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, errMessage}, errMessage.ToolCalls, sessionState), nil
+		}
+		messages = agentMessagesWithPhase(messages, "step")
+		toolCalls = agentToolCallsWithPhase(toolCalls, "step")
+		m.appendMessages(sessionID, messages...)
+		responseMessages := append([]agentMessage{userMessage}, messages...)
+		if len(toolCalls) > 0 {
+			synthesisHistory := append(cloneAgentMessages(history), messages...)
+			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, synthesisHistory, memorySummary, messages)
+			if synthesisErr != nil {
+				warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
+				warningTool = withAgentToolMetadata(warningTool, map[string]interface{}{"phase": "tool_synthesis"})
+				warningTool = agentToolCallWithPhase(warningTool, "step_replan")
+				warningMessage := agentMessageWithPhase(m.message(
+					language,
+					"tool",
+					agentText(language, "工具已执行，但 AI 结果总结失败："+synthesisErr.Error(), "Tools executed, but AI synthesis failed: "+synthesisErr.Error()),
+					[]agentToolCall{warningTool},
+					nil,
+				), "step_replan")
+				m.appendMessages(sessionID, warningMessage)
+				responseMessages = append(responseMessages, warningMessage)
+				toolCalls = append(toolCalls, warningTool)
+			} else if len(synthesisMessages) > 0 {
+				m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
+				responseMessages = append(responseMessages, synthesisMessages...)
+				toolCalls = append(toolCalls, synthesisToolCalls...)
+				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
+					loopHistory := append(synthesisHistory, synthesisMessages...)
+					followupMessages, followupToolCalls := m.runAgentReplanActionContinuation(ctx, sessionID, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(req)-1)
+					responseMessages = append(responseMessages, followupMessages...)
+					toolCalls = append(toolCalls, followupToolCalls...)
 				}
 			}
+		}
+		sessionState, _ := m.GetSession(ctx, sessionID)
+		return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
+	}
 
+	if agentLLMConfigured(req) {
+		messages, toolCalls, err := m.runAgentLLMToolLoop(ctx, sessionID, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+		if err == nil {
+			responseMessages := append([]agentMessage{userMessage}, messages...)
 			sessionState, _ := m.GetSession(ctx, sessionID)
 			return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
 		}
@@ -1093,7 +1236,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 			[]agentToolCall{warningTool},
 			nil,
 		)
-		messages, toolCalls, routeErr := m.routePrompt(ctx, sessionID, prompt, language, operator, svc)
+		messages, toolCalls, routeErr := m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 		if routeErr != nil {
 			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
 			m.appendMessages(sessionID, warningMessage, errMessage)
@@ -1108,7 +1251,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
 	}
 
-	messages, toolCalls, err := m.routePrompt(ctx, sessionID, prompt, language, operator, svc)
+	messages, toolCalls, err := m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	if err != nil {
 		errMessage := m.message(language, "agent", err.Error(), []agentToolCall{failedAgentToolCall("agent.route", err)}, nil)
 		m.appendMessages(sessionID, errMessage)
@@ -1190,12 +1333,13 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 		BaseURL: strings.TrimSpace(req.BaseURL),
 		Model:   strings.TrimSpace(req.Model),
 	})
+	instructions := agentInstructionsWithAuthProfiles(language, req.Instructions, req.AuthProfiles, req.DefaultAuthProfileID)
 	tool := runningAgentToolCall("LLM chat", provider.Name())
 	chatCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	response, err := provider.Chat(chatCtx, llm.ChatRequest{
 		Model:       strings.TrimSpace(req.Model),
-		System:      agentPlannerSystemPrompt(language, req.Instructions),
+		System:      agentPlannerSystemPrompt(language, instructions, req.OperationLevel),
 		Messages:    agentLLMHistory(history, memory, language),
 		Tools:       agentLLMToolDefinitions(),
 		MaxTokens:   1600,
@@ -1215,6 +1359,7 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 	content := agentLLMText(response)
 	plan, parseErr := parseAgentPlannerResponse(content)
 	if parseErr == nil && plan != nil {
+		plan.Phase = firstNonEmpty(agentNormalizePhase(plan.Phase), "plan")
 		tool.Result["planner"] = true
 		tool.Result["planner_todos"] = len(plan.Todos)
 		tool.Result["planner_actions"] = len(agentPlannerActions(plan))
@@ -1228,11 +1373,22 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 		if parseErr != nil {
 			tool.Result["planner_parse_error"] = parseErr.Error()
 		}
+		if fallback := agentFallbackPlannerFromPrompt(agentLatestUserPrompt(history), content, language); fallback != nil {
+			plan = fallback
+			content = strings.TrimSpace(fallback.Answer)
+			tool.Result["planner"] = true
+			tool.Result["planner_fallback"] = true
+			tool.Result["planner_todos"] = len(plan.Todos)
+			tool.Result["planner_actions"] = len(agentPlannerActions(plan))
+		}
 	}
 	nativeActions := agentPlannerActionsFromLLMToolUse(response)
 	if len(nativeActions) > 0 {
 		if plan == nil {
-			plan = &agentPlannerResponse{}
+			plan = agentFallbackPlannerFromPrompt(agentLatestUserPrompt(history), content, language)
+			if plan == nil {
+				plan = &agentPlannerResponse{Phase: "plan"}
+			}
 		}
 		plan.ToolCalls = append(plan.ToolCalls, nativeActions...)
 		tool.Result["planner_native_tool_calls"] = len(nativeActions)
@@ -1246,7 +1402,17 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 			content = agentText(language, "AI provider 返回了空内容。", "The AI provider returned empty content.")
 		}
 	}
-	message := m.message(language, "agent", content, []agentToolCall{tool}, nil)
+	messagePhase := "plan"
+	if plan != nil {
+		if normalized := agentNormalizePhase(plan.Phase); normalized != "" {
+			messagePhase = normalized
+		}
+		if len(agentPlannerActions(plan)) > 0 {
+			messagePhase = "plan"
+		}
+	}
+	tool = agentToolCallWithPhase(tool, messagePhase)
+	message := agentMessageWithPhase(m.message(language, "agent", content, []agentToolCall{tool}, nil), messagePhase)
 	if plan != nil {
 		message.Reasoning = trimSummary(plan.Reasoning, 800)
 	}
@@ -1264,6 +1430,7 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, language 
 		BaseURL: strings.TrimSpace(req.BaseURL),
 		Model:   strings.TrimSpace(req.Model),
 	})
+	instructions := agentInstructionsWithAuthProfiles(language, req.Instructions, req.AuthProfiles, req.DefaultAuthProfileID)
 	tool := runningAgentToolCall("LLM synthesis", provider.Name())
 	tool = withAgentToolMetadata(tool, map[string]interface{}{"phase": "tool_synthesis"})
 
@@ -1271,7 +1438,7 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, language 
 	defer cancel()
 	response, err := provider.Chat(chatCtx, llm.ChatRequest{
 		Model:       strings.TrimSpace(req.Model),
-		System:      agentToolSynthesisSystemPrompt(language, req.Instructions),
+		System:      agentToolSynthesisSystemPrompt(language, instructions, req.OperationLevel),
 		Messages:    agentLLMToolSynthesisHistory(history, memory, toolMessages, language),
 		MaxTokens:   1200,
 		Temperature: 0.2,
@@ -1287,19 +1454,16 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, language 
 		"model":         strings.TrimSpace(req.Model),
 		"input_tokens":  response.Usage.InputTokens,
 		"output_tokens": response.Usage.OutputTokens,
-		"phase":         "tool_synthesis",
+		"phase":         "step_replan",
 	}
 
 	content := agentLLMText(response)
 	plan, parseErr := parseAgentPlannerResponse(content)
 	if parseErr == nil && plan != nil {
+		plan.Phase = firstNonEmpty(agentNormalizePhase(plan.Phase), "step_replan")
 		tool.Result["planner"] = true
 		tool.Result["planner_todos"] = len(plan.Todos)
-		if ignored := len(agentPlannerActions(plan)); ignored > 0 {
-			tool.Result["planner_actions_ignored"] = ignored
-			plan.Actions = nil
-			plan.ToolCalls = nil
-		}
+		tool.Result["planner_actions"] = len(agentPlannerActions(plan))
 		if strings.TrimSpace(plan.Answer) != "" {
 			content = strings.TrimSpace(plan.Answer)
 		} else if content != "" {
@@ -1310,19 +1474,177 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, language 
 		if parseErr != nil {
 			tool.Result["planner_parse_error"] = parseErr.Error()
 		}
+		plain := strings.TrimSpace(content)
+		if plain != "" {
+			plan = agentPlannerFromPlainAnswer(plain, "step_replan", language)
+			tool.Result["planner"] = true
+			tool.Result["planner_fallback"] = true
+			tool.Result["planner_todos"] = len(plan.Todos)
+			tool.Result["planner_actions"] = len(agentPlannerActions(plan))
+		}
 	}
 	if strings.TrimSpace(content) == "" {
 		content = agentText(language, "工具执行完成，但 AI provider 返回了空总结。", "Tools executed, but the AI provider returned an empty synthesis.")
+		plan = agentPlannerFromPlainAnswer(content, "final_answer", language)
 	}
 
-	message := m.message(language, "agent", content, []agentToolCall{tool}, nil)
+	phase := "step_replan"
+	if plan == nil || len(agentPlannerActions(plan)) == 0 {
+		phase = "final_answer"
+		if plan != nil && agentNormalizePhase(plan.Phase) == "" {
+			plan.Phase = phase
+		}
+	}
+	tool = agentToolCallWithPhase(tool, phase)
+	message := agentMessageWithPhase(m.message(language, "agent", content, []agentToolCall{tool}, nil), phase)
 	if plan != nil {
 		message.Reasoning = trimSummary(plan.Reasoning, 800)
 	}
 	return []agentMessage{message}, []agentToolCall{tool}, plan, nil
 }
 
-func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID, operatorPrompt, language, operator string, svc routerServices, plan *agentPlannerResponse) ([]agentMessage, []agentToolCall) {
+func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	planMessages, planToolCalls, plan, err := m.handleAgentLLMChat(ctx, language, req, history, memorySummary)
+	if err != nil {
+		return planMessages, planToolCalls, err
+	}
+
+	m.appendMessagesWithPlanner(sessionID, plan, planMessages...)
+	responseMessages := append([]agentMessage{}, planMessages...)
+	toolCalls := append([]agentToolCall{}, planToolCalls...)
+	loopHistory := append(cloneAgentMessages(history), planMessages...)
+
+	maxLoops := reqMaxAgentReplans(req)
+	for step := 0; step < maxLoops; step++ {
+		if len(agentPlannerActions(plan)) == 0 {
+			// Respect a structured model plan that intentionally stops at Plan and
+			// asks the operator/runtime to continue. Fallback actions are only
+			// created when the latest operator prompt clearly asks to execute now
+			// but the provider forgot to emit actions.
+			if step == 0 && agentPromptRequestsImmediateExecution(prompt) {
+				fallback := agentFallbackPlannerFromPrompt(prompt, "", language)
+				if fallback != nil && len(agentPlannerActions(fallback)) > 0 {
+					plan = fallback
+				} else {
+					break
+				}
+			} else {
+				break
+			}
+		}
+
+		actionMessages, actionToolCalls := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
+		actionMessages = agentMessagesWithPhase(actionMessages, "step")
+		actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
+		if len(actionMessages) > 0 {
+			m.appendMessages(sessionID, actionMessages...)
+			responseMessages = append(responseMessages, actionMessages...)
+			loopHistory = append(loopHistory, actionMessages...)
+		}
+		toolCalls = append(toolCalls, actionToolCalls...)
+		if len(actionMessages) == 0 {
+			break
+		}
+
+		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, loopHistory, memorySummary, actionMessages)
+		if synthesisErr != nil {
+			warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
+			warningTool = agentToolCallWithPhase(warningTool, "step_replan")
+			warningMessage := agentMessageWithPhase(m.message(
+				language,
+				"tool",
+				agentText(language, "工具已执行，但 StepReplan 总结失败："+synthesisErr.Error(), "Tools executed, but StepReplan synthesis failed: "+synthesisErr.Error()),
+				[]agentToolCall{warningTool},
+				nil,
+			), "step_replan")
+			m.appendMessages(sessionID, warningMessage)
+			responseMessages = append(responseMessages, warningMessage)
+			toolCalls = append(toolCalls, warningTool)
+			break
+		}
+		if len(synthesisMessages) > 0 {
+			m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
+			responseMessages = append(responseMessages, synthesisMessages...)
+			loopHistory = append(loopHistory, synthesisMessages...)
+			toolCalls = append(toolCalls, synthesisToolCalls...)
+		}
+
+		plan = synthesisPlan
+		if plan == nil || len(agentPlannerActions(plan)) == 0 {
+			break
+		}
+		if plan.NextAction == nil || !plan.NextAction.AutoContinue {
+			break
+		}
+	}
+
+	return responseMessages, toolCalls, nil
+}
+
+func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]agentMessage, []agentToolCall) {
+	if maxLoops <= 0 {
+		return nil, nil
+	}
+	responseMessages := []agentMessage{}
+	toolCalls := []agentToolCall{}
+	loopHistory := cloneAgentMessages(history)
+
+	for step := 0; step < maxLoops; step++ {
+		if plan == nil || len(agentPlannerActions(plan)) == 0 {
+			break
+		}
+		if plan.NextAction == nil || !plan.NextAction.AutoContinue {
+			break
+		}
+
+		actionMessages, actionToolCalls := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
+		actionMessages = agentMessagesWithPhase(actionMessages, "step")
+		actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
+		if len(actionMessages) == 0 {
+			break
+		}
+		m.appendMessages(sessionID, actionMessages...)
+		responseMessages = append(responseMessages, actionMessages...)
+		toolCalls = append(toolCalls, actionToolCalls...)
+		loopHistory = append(loopHistory, actionMessages...)
+
+		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, loopHistory, memorySummary, actionMessages)
+		if synthesisErr != nil {
+			warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
+			warningTool = agentToolCallWithPhase(warningTool, "step_replan")
+			warningMessage := agentMessageWithPhase(m.message(
+				language,
+				"tool",
+				agentText(language, "工具已执行，但 StepReplan 总结失败："+synthesisErr.Error(), "Tools executed, but StepReplan synthesis failed: "+synthesisErr.Error()),
+				[]agentToolCall{warningTool},
+				nil,
+			), "step_replan")
+			m.appendMessages(sessionID, warningMessage)
+			responseMessages = append(responseMessages, warningMessage)
+			toolCalls = append(toolCalls, warningTool)
+			break
+		}
+		if len(synthesisMessages) > 0 {
+			m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
+			responseMessages = append(responseMessages, synthesisMessages...)
+			toolCalls = append(toolCalls, synthesisToolCalls...)
+			loopHistory = append(loopHistory, synthesisMessages...)
+		}
+
+		plan = synthesisPlan
+	}
+	return responseMessages, toolCalls
+}
+
+func reqMaxAgentReplans(req sendAgentMessageRequest) int {
+	// Keep the first implementation conservative: one Plan plus at most three
+	// Step/Replan cycles is enough for health/workspace/run/scan workflows and
+	// prevents a weak provider from looping.
+	_ = req
+	return 3
+}
+
+func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall) {
 	actions := agentPlannerActions(plan)
 	if len(actions) == 0 {
 		return nil, nil
@@ -1354,8 +1676,10 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 				},
 				nil,
 			)
+		} else if requiredLevel := agentOperationLevelRequiredForPlannerAction(actionName, action.Arguments); !agentOperationLevelAtLeast(operationLevel, requiredLevel) {
+			err = agentOperationLevelDeniedError(language, operationLevel, requiredLevel, actionName)
 		} else {
-			actionMessages, actionToolCalls, err = m.executeAgentPlannerAction(ctx, sessionID, language, operator, svc, action)
+			actionMessages, actionToolCalls, err = m.executeAgentPlannerAction(ctx, sessionID, language, operator, svc, action, authProfiles, defaultAuthProfileID)
 		}
 		if err != nil {
 			if actionName == "" {
@@ -1398,7 +1722,7 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 	return messages, toolCalls
 }
 
-func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID, language, operator string, svc routerServices, action agentPlannerAction) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID, language, operator string, svc routerServices, action agentPlannerAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, error) {
 	name := normalizeAgentPlannerActionName(action.Name)
 	args := action.Arguments
 	if args == nil {
@@ -1406,6 +1730,22 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 	}
 
 	switch name {
+	case "scan.web.safe":
+		target := firstNonEmpty(
+			stringFromAny(args["target"]),
+			stringFromAny(args["url"]),
+			stringFromAny(args["input"]),
+		)
+		scope := firstNonEmpty(
+			stringFromAny(args["scope"]),
+			stringFromAny(args["scope_url"]),
+			target,
+		)
+		prompt := "扫描 " + target
+		if scope != "" {
+			prompt += " scope=" + scope
+		}
+		return m.handleAgentScan(ctx, prompt, language, svc)
 	case "workspace.command":
 		cmd := firstNonEmpty(
 			stringFromAny(args["command"]),
@@ -1428,6 +1768,24 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 			".",
 		)
 		return m.handleAgentWorkspaceList(sessionID, "path="+relPath, language)
+	case "workspace.files.tree":
+		relPath := firstNonEmpty(
+			stringFromAny(args["path"]),
+			stringFromAny(args["directory"]),
+			stringFromAny(args["dir"]),
+			stringFromAny(args["input"]),
+			".",
+		)
+		depth := intFromAny(args["depth"])
+		if depth <= 0 {
+			depth = 3
+		}
+		limit := intFromAny(args["limit"])
+		if limit <= 0 {
+			limit = 120
+		}
+		includeHidden := boolFromAny(args["include_hidden"])
+		return m.handleAgentWorkspaceTree(sessionID, relPath, depth, limit, includeHidden, language)
 	case "workspace.files.read":
 		relPath := firstNonEmpty(
 			stringFromAny(args["path"]),
@@ -1439,6 +1797,27 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.read requires path", map[string]any{"action": action.Name}, nil)
 		}
 		return m.handleAgentWorkspaceRead(sessionID, "file="+relPath, language)
+	case "workspace.search":
+		query := firstNonEmpty(
+			stringFromAny(args["query"]),
+			stringFromAny(args["pattern"]),
+			stringFromAny(args["text"]),
+			stringFromAny(args["input"]),
+		)
+		relPath := firstNonEmpty(
+			stringFromAny(args["path"]),
+			stringFromAny(args["directory"]),
+			stringFromAny(args["dir"]),
+			".",
+		)
+		if query == "" {
+			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.search requires query", map[string]any{"action": action.Name}, nil)
+		}
+		limit := intFromAny(args["limit"])
+		if limit <= 0 {
+			limit = 80
+		}
+		return m.handleAgentWorkspaceSearch(sessionID, query, relPath, boolFromAny(args["regex"]), boolFromAny(args["case_sensitive"]), limit, language)
 	case "workspace.files.write":
 		relPath := firstNonEmpty(
 			stringFromAny(args["path"]),
@@ -1557,12 +1936,136 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.discard requires change_id", map[string]any{"action": action.Name}, nil)
 		}
 		return m.handleAgentWorkspaceDiscard(sessionID, changeID, language)
+	case "workspace.files.delete":
+		relPath := firstNonEmpty(
+			stringFromAny(args["path"]),
+			stringFromAny(args["file"]),
+			stringFromAny(args["filename"]),
+			stringFromAny(args["input"]),
+		)
+		if relPath == "" {
+			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.delete requires path", map[string]any{"action": action.Name}, nil)
+		}
+		return m.handleAgentWorkspaceDelete(sessionID, relPath, language)
+	case "workspace.files.move":
+		fromPath := firstNonEmpty(
+			stringFromAny(args["from"]),
+			stringFromAny(args["source"]),
+			stringFromAny(args["old"]),
+			stringFromAny(args["path"]),
+			stringFromAny(args["file"]),
+			stringFromAny(args["filename"]),
+		)
+		toPath := firstNonEmpty(
+			stringFromAny(args["to"]),
+			stringFromAny(args["target"]),
+			stringFromAny(args["new"]),
+			stringFromAny(args["dest"]),
+			stringFromAny(args["destination"]),
+		)
+		if fromPath == "" || toPath == "" {
+			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.move requires from and to", map[string]any{"action": action.Name}, nil)
+		}
+		return m.handleAgentWorkspaceMove(sessionID, fromPath, toPath, language)
+	case "workspace.files.copy":
+		fromPath := firstNonEmpty(
+			stringFromAny(args["from"]),
+			stringFromAny(args["source"]),
+			stringFromAny(args["old"]),
+			stringFromAny(args["path"]),
+			stringFromAny(args["file"]),
+			stringFromAny(args["filename"]),
+		)
+		toPath := firstNonEmpty(
+			stringFromAny(args["to"]),
+			stringFromAny(args["target"]),
+			stringFromAny(args["new"]),
+			stringFromAny(args["dest"]),
+			stringFromAny(args["destination"]),
+		)
+		if fromPath == "" || toPath == "" {
+			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.copy requires from and to", map[string]any{"action": action.Name}, nil)
+		}
+		return m.handleAgentWorkspaceCopy(sessionID, fromPath, toPath, language)
+	case "workspace.files.mkdir":
+		relPath := firstNonEmpty(
+			stringFromAny(args["path"]),
+			stringFromAny(args["directory"]),
+			stringFromAny(args["dir"]),
+			stringFromAny(args["input"]),
+		)
+		if relPath == "" {
+			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.mkdir requires path", map[string]any{"action": action.Name}, nil)
+		}
+		return m.handleAgentWorkspaceMkdir(sessionID, relPath, language)
+	case "http.request":
+		targetURL := firstNonEmpty(
+			stringFromAny(args["url"]),
+			stringFromAny(args["target"]),
+			stringFromAny(args["input"]),
+		)
+		method := firstNonEmpty(stringFromAny(args["method"]), "GET")
+		if targetURL == "" {
+			return nil, nil, services.NewError(services.CodeBadRequest, "http.request requires url", map[string]any{"action": action.Name}, nil)
+		}
+		targetURL = agentNormalizeURLInput(targetURL)
+		headers := stringMapFromAny(args["headers"])
+		if contentType := stringFromAny(args["content_type"]); contentType != "" {
+			headers["Content-Type"] = contentType
+		}
+		authProfileID := firstNonEmpty(
+			stringFromAny(args["auth_profile_id"]),
+			stringFromAny(args["auth_profile"]),
+			stringFromAny(args["profile_id"]),
+			stringFromAny(args["profile"]),
+		)
+		profileHeaders, profileUsage, profileErr := agentResolveHTTPAuthProfileHeaders(authProfiles, authProfileID, defaultAuthProfileID, targetURL)
+		if profileErr != nil {
+			return nil, nil, profileErr
+		}
+		for key, value := range profileHeaders {
+			if _, exists := headers[key]; !exists {
+				headers[key] = value
+			}
+		}
+		body := firstNonEmpty(
+			stringFromAny(args["body"]),
+			stringFromAny(args["content"]),
+			stringFromAny(args["data"]),
+			stringFromAny(args["input_body"]),
+		)
+		return m.handleAgentHTTPRequest(ctx, method, targetURL, headers, body, language, profileUsage)
 	case "daemon.health":
 		return m.handleAgentHealth(ctx, language, svc)
 	case "plugins.list":
 		return m.handleAgentPlugins(ctx, language, svc)
 	case "runs.list":
 		return m.handleAgentRuns(ctx, language, svc)
+	case "runs.context":
+		runID := firstNonEmpty(
+			stringFromAny(args["run_id"]),
+			stringFromAny(args["run"]),
+			stringFromAny(args["id"]),
+		)
+		contextKind := firstNonEmpty(
+			stringFromAny(args["context"]),
+			stringFromAny(args["kind"]),
+			stringFromAny(args["section"]),
+			stringFromAny(args["type"]),
+		)
+		return m.handleAgentRunContextTool(ctx, sessionID, runID, contextKind, language, svc)
+	case "reports.draft":
+		runID := firstNonEmpty(
+			stringFromAny(args["run_id"]),
+			stringFromAny(args["run"]),
+			stringFromAny(args["id"]),
+		)
+		outputPath := firstNonEmpty(
+			stringFromAny(args["path"]),
+			stringFromAny(args["output_path"]),
+			stringFromAny(args["file"]),
+		)
+		return m.handleAgentReportDraft(ctx, sessionID, runID, language, svc, outputPath)
 	case "runs.approvals.list":
 		runID := firstNonEmpty(
 			stringFromAny(args["run_id"]),
@@ -1618,14 +2121,26 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 	}
 }
 
-func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, language, operator string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	requiredLevel := agentOperationLevelRequiredForPrompt(prompt)
+	if !agentOperationLevelAtLeast(operationLevel, requiredLevel) {
+		return []agentMessage{m.message(
+			language,
+			"agent",
+			agentOperationLevelDeniedError(language, operationLevel, requiredLevel, "natural_language_route").Error(),
+			nil,
+			nil,
+		)}, nil, nil
+	}
 	switch {
 	case agentIsResumeApprovedIntent(prompt):
 		return m.handleAgentResumeApproved(ctx, sessionID, prompt, language, operator, svc)
 	case agentIsApprovalDecisionIntent(prompt):
 		return m.handleAgentApprovalDecision(ctx, sessionID, prompt, language, operator, svc)
+	case agentIsReportDraftIntent(prompt):
+		return m.handleAgentReportDraft(ctx, sessionID, agentExtractRunID(prompt), language, svc, "")
 	case agentIsRunContextAnalysisIntent(prompt):
-		return m.handleAgentRunContextAnalysis(ctx, prompt, language, svc)
+		return m.handleAgentRunContextTool(ctx, sessionID, agentExtractRunID(prompt), agentRunContextKind(prompt), language, svc)
 	case agentIsScanIntent(prompt):
 		return m.handleAgentScan(ctx, prompt, language, svc)
 	case agentIsCommandIntent(prompt):
@@ -1638,6 +2153,13 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 		return m.handleAgentPlugins(ctx, language, svc)
 	case agentIsRunIntent(prompt):
 		return m.handleAgentRuns(ctx, language, svc)
+	case agentIsHTTPRequestIntent(prompt):
+		return m.handleAgentHTTPRequest(ctx, agentExtractHTTPMethod(prompt), agentExtractURL(prompt), nil, "", language, nil)
+	case agentIsWorkspaceSearchIntent(prompt):
+		query := agentExtractWorkspaceSearchQuery(prompt)
+		return m.handleAgentWorkspaceSearch(sessionID, query, agentExtractWorkspaceSearchPath(prompt, query), false, false, 80, language)
+	case agentIsWorkspaceTreeIntent(prompt):
+		return m.handleAgentWorkspaceTree(sessionID, agentExtractPath(prompt), 3, 120, false, language)
 	case agentIsWorkspaceIntent(prompt):
 		return m.handleAgentWorkspace(ctx, sessionID, prompt, language)
 	default:
@@ -1690,7 +2212,7 @@ func agentCanAutoRouteContinuePrompt(prompt string) bool {
 		return true
 	}
 	if agentIsWorkspaceIntent(prompt) {
-		return (agentIsWorkspaceListIntent(prompt) || agentIsWorkspaceReadIntent(prompt) || agentIsWorkspacePrepareOnlyIntent(prompt)) &&
+		return (agentIsWorkspaceListIntent(prompt) || agentIsWorkspaceTreeIntent(prompt) || agentIsWorkspaceSearchIntent(prompt) || agentIsWorkspaceReadIntent(prompt) || agentIsWorkspacePrepareOnlyIntent(prompt)) &&
 			!agentIsWorkspaceWriteIntent(prompt) &&
 			!agentIsWorkspacePatchIntent(prompt) &&
 			!agentIsWorkspaceDiffIntent(prompt) &&
@@ -1710,6 +2232,8 @@ func agentCanAutoRouteContinuePrompt(prompt string) bool {
 func agentIsWorkspacePrepareOnlyIntent(prompt string) bool {
 	return regexp.MustCompile(`(?i)(workspace|工作空间)`).MatchString(prompt) &&
 		!agentIsWorkspaceListIntent(prompt) &&
+		!agentIsWorkspaceTreeIntent(prompt) &&
+		!agentIsWorkspaceSearchIntent(prompt) &&
 		!agentIsWorkspaceReadIntent(prompt)
 }
 
@@ -1811,6 +2335,75 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 
 	content := agentBuildRunContextObservation(language, detail, contextKind, tool.Result)
 	message := m.message(language, "tool", content, []agentToolCall{tool}, []agentLink{{To: "/scan/" + runID, Label: agentText(language, "打开运行详情", "Open run detail"), Kind: "run"}})
+	return []agentMessage{message}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentRunContextTool(ctx context.Context, sessionID, runID, contextKind, language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		if session, err := m.GetSession(ctx, sessionID); err == nil && session.ActiveTask != nil {
+			runID = strings.TrimSpace(session.ActiveTask.ActiveRunID)
+		}
+	}
+	if runID == "" {
+		return []agentMessage{m.message(language, "agent", agentText(language, "我需要 run id 或当前活动运行，才能读取运行上下文。", "I need a run ID or an active run to read run context."), nil, nil)}, nil, nil
+	}
+	contextKind = agentNormalizeRunContextKind(contextKind)
+	return m.handleAgentRunContextAnalysis(ctx, fmt.Sprintf("读取运行 %s 的 %s 上下文", runID, contextKind), language, svc)
+}
+
+func (m *agentManager) handleAgentReportDraft(ctx context.Context, sessionID, runID, language string, svc routerServices, outputPath string) ([]agentMessage, []agentToolCall, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		if session, err := m.GetSession(ctx, sessionID); err == nil && session.ActiveTask != nil {
+			runID = strings.TrimSpace(session.ActiveTask.ActiveRunID)
+		}
+	}
+	if runID == "" {
+		return []agentMessage{m.message(language, "agent", agentText(language, "我需要 run id 或当前活动运行，才能生成报告草稿。", "I need a run ID or an active run to generate a report draft."), nil, nil)}, nil, nil
+	}
+
+	tool := runningAgentToolCall("reports.draft", shortAgentID(runID, 22))
+	detail, err := svc.runs.GetRun(ctx, runID)
+	var (
+		ws       *workspace.Workspace
+		snapshot agentRunReportSnapshot
+		content  string
+	)
+	if err == nil {
+		snapshot = m.activeRunReportSnapshot(ctx, runID, detail)
+		content = agentBuildReportDraftMarkdown(language, detail, snapshot, time.Now().UTC())
+		outputPath = agentReportDraftPath(runID, outputPath)
+		ws, err = m.workspace.Create(sessionID)
+	}
+	if err == nil {
+		err = m.workspace.WriteFile(sessionID, outputPath, []byte(content))
+	}
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	tool.Result = map[string]any{
+		"run_id":          runID,
+		"path":            outputPath,
+		"bytes":           len(content),
+		"workspace_path":  ws.Path,
+		"target":          detail.Summary.Target,
+		"status":          string(detail.Summary.Status),
+		"finding_count":   len(snapshot.Findings),
+		"evidence_count":  len(snapshot.Evidence),
+		"artifact_count":  len(snapshot.Artifacts),
+		"context":         "report_draft",
+		"workspace_scope": "agent_workspace",
+		"draft_format":    "markdown",
+		"review_required": true,
+	}
+	message := m.message(language, "tool", agentText(
+		language,
+		fmt.Sprintf("已生成报告草稿：%s（run=%s，findings=%d）。请在工作区预览并人工复核后再对外输出。", outputPath, shortAgentID(runID, 22), len(snapshot.Findings)),
+		fmt.Sprintf("Generated report draft: %s (run=%s, findings=%d). Preview it in the workspace and review before external use.", outputPath, shortAgentID(runID, 22), len(snapshot.Findings)),
+	), []agentToolCall{tool}, []agentLink{{To: "/scan/" + runID, Label: agentText(language, "打开运行详情", "Open run detail"), Kind: "run"}})
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 
@@ -2368,6 +2961,69 @@ func (m *agentManager) newMessageLocked(_ string, role, content string, toolCall
 	}
 }
 
+func agentNormalizePhase(phase string) string {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "plan", "planning":
+		return "plan"
+	case "step", "execute", "executing", "tool", "tool_execution":
+		return "step"
+	case "step_replan", "stepreplan", "replan", "replanning", "step-replan":
+		return "step_replan"
+	case "final_answer", "finalanswer", "final", "answer", "done", "complete":
+		return "final_answer"
+	default:
+		return ""
+	}
+}
+
+func agentMessageWithPhase(message agentMessage, phase string) agentMessage {
+	message.Phase = agentNormalizePhase(phase)
+	for i := range message.ToolCalls {
+		message.ToolCalls[i] = agentToolCallWithPhase(message.ToolCalls[i], message.Phase)
+	}
+	return message
+}
+
+func agentMessagesWithPhase(messages []agentMessage, phase string) []agentMessage {
+	normalized := agentNormalizePhase(phase)
+	if normalized == "" {
+		return messages
+	}
+	out := append([]agentMessage(nil), messages...)
+	for i := range out {
+		out[i] = agentMessageWithPhase(out[i], normalized)
+	}
+	return out
+}
+
+func agentToolCallWithPhase(call agentToolCall, phase string) agentToolCall {
+	normalized := agentNormalizePhase(phase)
+	if normalized == "" {
+		return call
+	}
+	if call.Metadata == nil {
+		call.Metadata = map[string]interface{}{}
+	}
+	if _, exists := call.Metadata["phase"]; exists {
+		call.Metadata["agent_phase"] = normalized
+	} else {
+		call.Metadata["phase"] = normalized
+	}
+	return call
+}
+
+func agentToolCallsWithPhase(calls []agentToolCall, phase string) []agentToolCall {
+	normalized := agentNormalizePhase(phase)
+	if normalized == "" {
+		return calls
+	}
+	out := append([]agentToolCall(nil), calls...)
+	for i := range out {
+		out[i] = agentToolCallWithPhase(out[i], normalized)
+	}
+	return out
+}
+
 func normalizeAgentSessionID(raw string) (string, error) {
 	sessionID := strings.TrimSpace(raw)
 	if sessionID == "" {
@@ -2396,13 +3052,189 @@ func normalizeAgentLanguage(raw string) string {
 	}
 }
 
+func normalizeAgentOperationLevel(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "read_only", "readonly", "read-only", "ro", "只读":
+		return "read_only"
+	case "workspace_write", "workspace-write", "workspace", "write", "工作区写入":
+		return "workspace_write"
+	case "safe_scan", "safe-scan", "scan", "扫描", "安全扫描":
+		return "safe_scan"
+	case "approval_ops", "approval-ops", "approval", "approvals", "approve", "审批":
+		return "approval_ops"
+	case "", "advanced", "full", "高权限", "高级":
+		return "advanced"
+	default:
+		return "advanced"
+	}
+}
+
+func agentOperationLevelLabel(level, language string) string {
+	switch normalizeAgentOperationLevel(level) {
+	case "read_only":
+		return agentText(language, "只读", "Read-only")
+	case "workspace_write":
+		return agentText(language, "工作区写入", "Workspace write")
+	case "safe_scan":
+		return agentText(language, "安全扫描", "Safe scan")
+	case "approval_ops":
+		return agentText(language, "审批操作", "Approval ops")
+	case "advanced":
+		return agentText(language, "高级", "Advanced")
+	default:
+		return agentText(language, "只读", "Read-only")
+	}
+}
+
+func agentOperationLevelDescription(level, language string) string {
+	switch normalizeAgentOperationLevel(level) {
+	case "read_only":
+		return agentText(language,
+			"只能执行 daemon 健康检查、插件/运行/审批读取、工作区列文件/文件树/搜索/读文件和白名单只读命令。",
+			"May only run daemon health checks, plugin/run/approval reads, workspace file listing/tree/search/reading, and allowlisted read-only commands.",
+		)
+	case "workspace_write":
+		return agentText(language,
+			"包含只读能力，并允许写入、生成 diff、patch、应用、丢弃、删除、重命名、复制文件或创建当前 Agent 工作区目录。",
+			"Includes read-only capabilities and permits writing, staging diffs, patching, applying, discarding, deleting, renaming/copying files, or creating directories in the Agent workspace.",
+		)
+	case "safe_scan":
+		return agentText(language,
+			"包含工作区能力，并允许对明确授权目标发起低风险 HTTP 请求或启动 safe profile Web/API 扫描；外部工具默认仍由扫描策略控制。",
+			"Includes workspace capabilities and permits low-risk HTTP requests or safe-profile Web/API scans for explicitly authorized targets; external tools remain controlled by scan policy.",
+		)
+	case "approval_ops":
+		return agentText(language,
+			"包含安全扫描能力，并允许批准/拒绝审批与恢复已批准运行。",
+			"Includes safe-scan capabilities and permits approving/denying approvals and resuming approved runs.",
+		)
+	case "advanced":
+		return agentText(language,
+			"最高内置权限：允许当前 Agent 已实现的工具动作；仍受 scope、白名单命令和显式用户意图约束。",
+			"Highest built-in level: permits implemented Agent tool actions while still enforcing scope, command allowlists, and explicit operator intent.",
+		)
+	default:
+		return agentOperationLevelDescription("read_only", language)
+	}
+}
+
+func agentOperationLevelRank(level string) int {
+	switch normalizeAgentOperationLevel(level) {
+	case "read_only":
+		return 0
+	case "workspace_write":
+		return 1
+	case "safe_scan":
+		return 2
+	case "approval_ops":
+		return 3
+	case "advanced":
+		return 4
+	default:
+		return 0
+	}
+}
+
+func agentOperationLevelAtLeast(level, required string) bool {
+	return agentOperationLevelRank(level) >= agentOperationLevelRank(required)
+}
+
+func agentOperationLevelRequiredForAction(actionName string) string {
+	switch normalizeAgentPlannerActionName(actionName) {
+	case "scan.web.safe", "http.request":
+		return "safe_scan"
+	case "workspace.files.write",
+		"workspace.files.patch",
+		"workspace.files.diff",
+		"workspace.files.diff_many",
+		"workspace.files.rebase",
+		"workspace.files.apply",
+		"workspace.files.discard",
+		"workspace.files.delete",
+		"workspace.files.move",
+		"workspace.files.copy",
+		"workspace.files.mkdir",
+		"reports.draft":
+		return "workspace_write"
+	case "runs.approvals.approve",
+		"runs.approvals.deny",
+		"runs.resume_approved":
+		return "approval_ops"
+	default:
+		return "read_only"
+	}
+}
+
+func agentOperationLevelRequiredForPlannerAction(actionName string, args map[string]any) string {
+	normalized := normalizeAgentPlannerActionName(actionName)
+	if normalized == "http.request" {
+		method := firstNonEmpty(stringFromAny(args["method"]), "GET")
+		if agentHTTPMethodIsSafe(method) {
+			return "safe_scan"
+		}
+		return "advanced"
+	}
+	return agentOperationLevelRequiredForAction(normalized)
+}
+
+func agentOperationLevelRequiredForPrompt(prompt string) string {
+	switch {
+	case agentIsApprovalDecisionIntent(prompt) || agentIsResumeApprovedIntent(prompt):
+		return "approval_ops"
+	case agentIsReportDraftIntent(prompt):
+		return "workspace_write"
+	case agentIsHTTPRequestIntent(prompt) && !agentHTTPMethodIsSafe(agentExtractHTTPMethod(prompt)):
+		return "advanced"
+	case agentIsScanIntent(prompt) || agentIsHTTPRequestIntent(prompt):
+		return "safe_scan"
+	case agentIsWorkspaceWriteIntent(prompt) ||
+		agentIsWorkspacePatchIntent(prompt) ||
+		agentIsWorkspaceDiffIntent(prompt) ||
+		agentIsWorkspaceRebaseIntent(prompt) ||
+		agentIsWorkspaceApplyIntent(prompt) ||
+		agentIsWorkspaceApplyAllIntent(prompt) ||
+		agentIsWorkspaceDiscardIntent(prompt) ||
+		agentIsWorkspaceDiscardAllIntent(prompt) ||
+		agentIsWorkspaceDeleteIntent(prompt) ||
+		agentIsWorkspaceMoveIntent(prompt) ||
+		agentIsWorkspaceCopyIntent(prompt) ||
+		agentIsWorkspaceMkdirIntent(prompt):
+		return "workspace_write"
+	default:
+		return "read_only"
+	}
+}
+
+func agentOperationLevelDeniedError(language, level, required, action string) error {
+	level = normalizeAgentOperationLevel(level)
+	required = normalizeAgentOperationLevel(required)
+	return services.NewError(
+		services.CodePolicyDenied,
+		agentText(
+			language,
+			fmt.Sprintf("当前 Agent 操作权限为「%s」，不足以执行「%s」。请切换到「%s」后重试。", agentOperationLevelLabel(level, language), action, agentOperationLevelLabel(required, language)),
+			fmt.Sprintf("Current Agent operation level is %s, which is not enough to execute %s. Switch to %s and retry.", agentOperationLevelLabel(level, language), action, agentOperationLevelLabel(required, language)),
+		),
+		map[string]any{
+			"operation_level":          level,
+			"required_operation_level": required,
+			"action":                   action,
+		},
+		nil,
+	)
+}
+
 func normalizeAgentControlAction(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "continue", "resume", "next", "next_step", "next-step", "proceed", "继续", "下一步", "继续执行":
 		return "continue"
 	case "revise", "revision", "adjust", "update_plan", "update-plan", "修订", "修改计划", "调整计划", "更新计划":
 		return "revise"
-	case "stop", "pause", "cancel", "停止", "暂停", "取消":
+	case "pause", "暂停", "暂停任务":
+		return "pause"
+	case "cancel", "取消", "取消任务":
+		return "cancel"
+	case "stop", "停止", "停止任务":
 		return "stop"
 	case "new_task", "new-task", "new", "reset", "新任务", "重置", "清空任务":
 		return "new_task"
@@ -2438,7 +3270,7 @@ func agentControlActionFromPrompt(prompt string) string {
 		return ""
 	}
 	switch normalizeAgentControlAction(normalized) {
-	case "continue", "revise", "stop", "new_task":
+	case "continue", "revise", "pause", "stop", "cancel", "new_task":
 		return normalizeAgentControlAction(normalized)
 	}
 	if regexp.MustCompile(`(?i)^\s*/?(continue|resume|next|next[-_ ]step|proceed)\b`).MatchString(prompt) ||
@@ -2450,8 +3282,16 @@ func agentControlActionFromPrompt(prompt string) string {
 		regexp.MustCompile(`^\s*/?(修订计划|修订当前计划|修订|修改计划|调整计划|更新计划)(?:\s|[:：-]|$)`).MatchString(prompt) {
 		return "revise"
 	}
-	if regexp.MustCompile(`(?i)^\s*/?(stop|pause|cancel)\b`).MatchString(prompt) ||
-		regexp.MustCompile(`^\s*/?(停止任务|停止当前任务|停止|暂停任务|暂停|取消任务|取消)(?:\s|[:：-]|$)`).MatchString(prompt) {
+	if regexp.MustCompile(`(?i)^\s*/?pause\b`).MatchString(prompt) ||
+		regexp.MustCompile(`^\s*/?(暂停任务|暂停)(?:\s|[:：-]|$)`).MatchString(prompt) {
+		return "pause"
+	}
+	if regexp.MustCompile(`(?i)^\s*/?cancel\b`).MatchString(prompt) ||
+		regexp.MustCompile(`^\s*/?(取消任务|取消)(?:\s|[:：-]|$)`).MatchString(prompt) {
+		return "cancel"
+	}
+	if regexp.MustCompile(`(?i)^\s*/?stop\b`).MatchString(prompt) ||
+		regexp.MustCompile(`^\s*/?(停止任务|停止当前任务|停止)(?:\s|[:：-]|$)`).MatchString(prompt) {
 		return "stop"
 	}
 	if regexp.MustCompile(`(?i)^\s*/?(new[-_ ]?task|new|reset|clear[-_ ]?task)\b`).MatchString(prompt) ||
@@ -2489,7 +3329,7 @@ func agentControlPromptFromPrompt(prompt, action string) string {
 
 func agentControlReasonFromPrompt(prompt, action, language string) string {
 	remainder := agentControlPromptFromPrompt(prompt, action)
-	if remainder != "" && action == "stop" {
+	if remainder != "" && (action == "stop" || action == "pause" || action == "cancel") {
 		return trimSummary(remainder, 260)
 	}
 	switch action {
@@ -2497,8 +3337,12 @@ func agentControlReasonFromPrompt(prompt, action, language string) string {
 		return agentText(language, "用户通过聊天请求继续当前任务。", "The operator requested continuing the current task from chat.")
 	case "revise":
 		return agentText(language, "用户通过聊天请求修订当前任务计划。", "The operator requested revising the current task plan from chat.")
+	case "pause":
+		return agentText(language, "用户通过聊天请求暂停当前会话。", "The operator requested pausing the current session from chat.")
 	case "stop":
 		return agentText(language, "用户通过聊天请求停止当前任务。", "The operator requested stopping the current task from chat.")
+	case "cancel":
+		return agentText(language, "用户通过聊天请求取消当前任务。", "The operator requested cancelling the current task from chat.")
 	case "new_task":
 		return agentText(language, "用户通过聊天请求开启新的任务上下文。", "The operator requested a new task context from chat.")
 	default:
@@ -2539,15 +3383,66 @@ func agentLLMConfigured(req sendAgentMessageRequest) bool {
 	return strings.TrimSpace(req.APIKey) != "" || strings.TrimSpace(req.BaseURL) != ""
 }
 
+func agentInstructionsWithAuthProfiles(language, instructions string, profiles []agentHTTPAuthProfile, defaultID string) string {
+	hint := agentAuthProfilesPlannerHint(language, profiles, defaultID)
+	instructions = strings.TrimSpace(instructions)
+	if hint == "" {
+		return instructions
+	}
+	if instructions == "" {
+		return hint
+	}
+	return instructions + "\n\n" + hint
+}
+
+func agentAuthProfilesPlannerHint(language string, profiles []agentHTTPAuthProfile, defaultID string) string {
+	items := make([]string, 0, minInt(len(profiles), 8))
+	for _, profile := range profiles {
+		if !agentHTTPAuthProfileEnabled(profile) {
+			continue
+		}
+		id := strings.TrimSpace(profile.ID)
+		if id == "" {
+			continue
+		}
+		label := firstNonEmpty(profile.Name, id)
+		typ := normalizeAgentHTTPAuthProfileType(profile.Type)
+		baseURL := strings.TrimSpace(profile.BaseURL)
+		mark := ""
+		if strings.EqualFold(id, strings.TrimSpace(defaultID)) {
+			mark = " default"
+		}
+		if baseURL != "" {
+			items = append(items, fmt.Sprintf("- %s (%s%s, match=%s)", label, typ, mark, baseURL))
+		} else {
+			items = append(items, fmt.Sprintf("- %s (%s%s)", label, typ, mark))
+		}
+		if len(items) >= 8 {
+			break
+		}
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	if language == "zh" {
+		return "可用 API Auth Profiles（只暴露 ID/名称，不暴露密钥；http.request 需要时在 arguments.auth_profile_id 中填对应 ID，默认 profile 只会在 host 匹配时自动应用）：\n" + strings.Join(items, "\n")
+	}
+	return "Available API auth profiles (IDs/names only, secrets are not exposed; set arguments.auth_profile_id on http.request when needed. The default profile is only auto-applied when the host matches):\n" + strings.Join(items, "\n")
+}
+
 func agentNeedsDaemonTool(prompt string) bool {
 	return agentIsControlIntent(prompt) ||
 		agentIsResumeApprovedIntent(prompt) ||
+		agentIsReportDraftIntent(prompt) ||
 		agentIsRunContextAnalysisIntent(prompt) ||
 		agentIsScanIntent(prompt) ||
 		agentIsApprovalIntent(prompt) ||
 		agentIsHealthIntent(prompt) ||
 		agentIsPluginIntent(prompt) ||
 		agentIsRunIntent(prompt) ||
+		agentIsHTTPRequestIntent(prompt) ||
+		agentIsWorkspaceSearchIntent(prompt) ||
+		agentIsWorkspaceTreeIntent(prompt) ||
 		agentIsWorkspaceIntent(prompt) ||
 		agentIsCommandIntent(prompt)
 }
@@ -2587,7 +3482,16 @@ func buildAgentLLMProvider(name string, cfg llm.ProviderConfig) llm.Provider {
 			provider = llm.NewOpenAI(cfg)
 		}
 	}
-	return llm.WithRetry(provider, llm.DefaultRetryConfig())
+	return llm.WithRetry(provider, agentLLMRetryConfig())
+}
+
+func agentLLMRetryConfig() llm.RetryConfig {
+	return llm.RetryConfig{
+		MaxRetries:     2,
+		BaseDelay:      800 * time.Millisecond,
+		MaxDelay:       5 * time.Second,
+		AttemptTimeout: 25 * time.Second,
+	}
 }
 
 func normalizeAgentProviderBaseURL(provider, raw string) string {
@@ -2648,13 +3552,47 @@ func agentSystemPrompt(language, instructions string) string {
 	return base + "\n\n" + agentText(language, "用户附加指令：", "Additional user instructions:") + "\n" + instructions
 }
 
-func agentPlannerSystemPrompt(language, instructions string) string {
+func agentOperationPermissionPrompt(language, operationLevel string) string {
+	operationLevel = normalizeAgentOperationLevel(operationLevel)
+	switch operationLevel {
+	case "read_only":
+		return agentText(language,
+			"\n\n当前 Agent 操作权限：read_only（只读）。只能请求 daemon.health、plugins.list、runs.list、runs.context、runs.approvals.list、workspace.files.list、workspace.files.tree、workspace.files.read、workspace.search、workspace.command（白名单只读命令）。不要输出会修改文件、发起 HTTP 请求、启动扫描、批准/拒绝审批或恢复运行的 actions；如用户要求这些操作，answer 要明确提示需要切换到对应权限级别。",
+			"\n\nCurrent Agent operation level: read_only. You may only request daemon.health, plugins.list, runs.list, runs.context, runs.approvals.list, workspace.files.list, workspace.files.tree, workspace.files.read, workspace.search, and workspace.command with allowlisted read-only commands. Do not output actions that modify files, make HTTP requests, start scans, approve/deny approvals, or resume runs; if requested, tell the operator which higher level is required.",
+		)
+	case "workspace_write":
+		return agentText(language,
+			"\n\n当前 Agent 操作权限：workspace_write（工作区写入）。可以执行只读动作，并可在 Agent 工作区写入、patch、diff、rebase、apply、discard、delete、move、copy、mkdir。不能启动 Web/API 扫描，不能批准/拒绝审批或恢复运行；如用户要求这些操作，提示切换到 safe_scan 或 approval_ops。",
+			"\n\nCurrent Agent operation level: workspace_write. You may perform read-only actions and workspace write/patch/diff/rebase/apply/discard/delete/move/copy/mkdir actions. You may not start Web/API scans, approve/deny approvals, or resume runs; if requested, ask the operator to switch to safe_scan or approval_ops.",
+		)
+	case "safe_scan":
+		return agentText(language,
+			"\n\n当前 Agent 操作权限：safe_scan（安全扫描）。可以执行工作区能力，并可在用户明确给出授权目标与 scope 时发起低风险 HTTP 请求或通过 Runtime 启动 safe profile Web/API 扫描。不能批准/拒绝审批或恢复运行；如用户要求审批操作，提示切换到 approval_ops。",
+			"\n\nCurrent Agent operation level: safe_scan. You may use workspace capabilities and make low-risk HTTP requests or start safe-profile Web/API scans through the Runtime when the operator clearly provides an authorized target and scope. You may not approve/deny approvals or resume runs; ask for approval_ops when needed.",
+		)
+	case "approval_ops":
+		return agentText(language,
+			"\n\n当前 Agent 操作权限：approval_ops（审批操作）。可以执行 safe_scan 及以下能力，并可在用户明确指令下批准/拒绝审批、恢复已批准运行。仍需遵守授权目标、scope、白名单命令和显式用户意图。",
+			"\n\nCurrent Agent operation level: approval_ops. You may use safe_scan and lower capabilities, and approve/deny approvals or resume approved runs only on explicit operator instruction. Still enforce authorized target, scope, command allowlists, and explicit operator intent.",
+		)
+	case "advanced":
+		return agentText(language,
+			"\n\n当前 Agent 操作权限：advanced（高级）。可请求当前已实现的内置工具动作，但仍要遵守授权目标、scope、白名单命令、审批 gate 和显式用户意图；不要越过尚未实现或未授权的能力。",
+			"\n\nCurrent Agent operation level: advanced. You may request currently implemented built-in tool actions, but must still enforce authorized targets, scope, command allowlists, approval gates, and explicit operator intent; do not bypass unimplemented or unauthorized capabilities.",
+		)
+	default:
+		return agentOperationPermissionPrompt(language, "read_only")
+	}
+}
+
+func agentPlannerSystemPrompt(language, instructions, operationLevel string) string {
 	base := agentText(
 		language,
 		`你是 CyberAgent，一个面向授权目标的 Web/API 安全分析 Agent。你不是普通聊天机器人；你需要像 Claude Code / Codex 一样维护当前任务、计划、上下文和下一步动作。
 
 只输出一个 JSON 对象，不要 Markdown，不要代码围栏，不要在 JSON 前后输出解释文本。JSON schema：
 {
+  "phase": "plan",
   "answer": "给操作者看的简洁回复，说明你理解了什么、计划了什么、还需要什么",
   "task": {
     "goal": "当前任务目标",
@@ -2675,8 +3613,8 @@ func agentPlannerSystemPrompt(language, instructions string) string {
   "context_refs": [],
   "actions": [
     {
-      "name": "workspace.command|workspace.files.list|workspace.files.read|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|daemon.health|plugins.list|runs.list|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
-      "arguments": {"path": ".", "command": "pwd", "content": "notes", "old": "before", "new": "after", "changes": [{"path": "a.md", "old": "before", "new": "after"}], "change_id": "change_xxx", "group_id": "changeset_xxx", "all": true, "run_id": "job_xxx", "approval_id": "approval_xxx", "step_id": "step_xxx", "comment": "operator comment"}
+      "name": "scan.web.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "arguments": {"url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path": ".", "query":"TODO", "command": "pwd", "content": "notes", "old": "before", "new": "after", "changes": [{"path": "a.md", "old": "before", "new": "after"}], "change_id": "change_xxx", "group_id": "changeset_xxx", "all": true, "run_id": "job_xxx", "approval_id": "approval_xxx", "step_id": "step_xxx", "comment": "operator comment"}
     }
   ],
   "tool_calls": [],
@@ -2694,13 +3632,16 @@ func agentPlannerSystemPrompt(language, instructions string) string {
 - 不要声称已经执行未执行的扫描、审批、命令或工具动作。
 - auto_continue：当任务尚未完成、有明确下一步、且不需要人工审批或确认时设为 true；当任务已完成、需要人工输入、或存在不确定风险时设为 false。
 - reasoning：简要说明你的思考过程，包括任务选择理由、规划理由、下一步理由和风险考虑。
-- 可直接请求内置工具：workspace.command、workspace.files.list、workspace.files.read、workspace.files.write、workspace.files.patch、workspace.files.diff、workspace.files.diff_many、workspace.files.rebase、workspace.files.apply、workspace.files.discard、daemon.health、plugins.list、runs.list、runs.approvals.list、runs.approvals.approve、runs.approvals.deny、runs.resume_approved。只有用户明确要求且动作属于这些内置工具时，才写入 actions 或 tool_calls；approval approve/deny 与 resume-approved 必须来自最新用户消息的显式指令；扫描、外部插件和高风险命令不要自动执行，应等待用户确认或建议使用对应 Runtime 指令。
+- 可直接请求内置工具：scan.web.safe、http.request、workspace.command、workspace.files.list、workspace.files.tree、workspace.files.read、workspace.search、workspace.files.write、workspace.files.patch、workspace.files.diff、workspace.files.diff_many、workspace.files.rebase、workspace.files.apply、workspace.files.discard、workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir、daemon.health、plugins.list、runs.list、runs.context、reports.draft、runs.approvals.list、runs.approvals.approve、runs.approvals.deny、runs.resume_approved。只有用户明确要求且动作属于这些内置工具时，才写入 actions 或 tool_calls；approval approve/deny 与 resume-approved 必须来自最新用户消息的显式指令；当用户给出明确授权目标/scope 且当前权限允许 safe_scan 时，可以直接输出 scan.web.safe 或 GET/HEAD/OPTIONS http.request；POST/PUT/PATCH/DELETE http.request 需要 advanced；workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir 和 reports.draft 需要 workspace_write；外部插件和高风险命令不要自动执行，应等待用户确认或建议使用对应 Runtime 指令。
+- 固定执行范式：Plan=分析任务全貌/选择工具/制定顺序；Step=逐步执行工具；StepReplan=每步后根据 observation 评估并调整后续；FinalAnswer=独立评估完成度，若遗漏则回流 Plan。
+- 首次规划 phase 必须是 plan；如需要工具，actions 必须给出明确工具名和参数。
 - todos 要体现 Agent 工作台能力：理解目标、确认 scope、选择安全策略、执行/建议 Runtime 动作、收集证据、总结报告、复测。
 - answer 使用中文。`,
 		`You are CyberAgent, an authorized-target Web/API security analysis Agent. You are not a generic chatbot; maintain the current task, plan, context, and next action like Claude Code / Codex.
 
 Return exactly one JSON object. Do not use Markdown, code fences, or text before/after the JSON. JSON schema:
 {
+  "phase": "plan",
   "answer": "Concise operator-facing reply: what you understood, planned, and still need",
   "task": {
     "goal": "Current task goal",
@@ -2721,8 +3662,8 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
   "context_refs": [],
   "actions": [
     {
-      "name": "workspace.command|workspace.files.list|workspace.files.read|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|daemon.health|plugins.list|runs.list|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
-      "arguments": {"path": ".", "command": "pwd", "content": "notes", "old": "before", "new": "after", "changes": [{"path": "a.md", "old": "before", "new": "after"}], "change_id": "change_xxx", "group_id": "changeset_xxx", "all": true, "run_id": "job_xxx", "approval_id": "approval_xxx", "step_id": "step_xxx", "comment": "operator comment"}
+      "name": "scan.web.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "arguments": {"url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path": ".", "query":"TODO", "command": "pwd", "content": "notes", "old": "before", "new": "after", "changes": [{"path": "a.md", "old": "before", "new": "after"}], "change_id": "change_xxx", "group_id": "changeset_xxx", "all": true, "run_id": "job_xxx", "approval_id": "approval_xxx", "step_id": "step_xxx", "comment": "operator comment"}
     }
   ],
   "tool_calls": [],
@@ -2740,24 +3681,28 @@ Constraints:
 - Do not claim that scans, approvals, commands, or tool actions were executed unless they actually were.
 - auto_continue: set to true when the task is not finished, there is a clear next step, and no human approval or confirmation is needed; set to false when the task is complete, human input is required, or there is uncertain risk.
 - reasoning: briefly explain your thinking process, including task selection reason, planning reason, next step reason, and risk considerations.
-- You may request built-in tools directly: workspace.command, workspace.files.list, workspace.files.read, workspace.files.write, workspace.files.patch, workspace.files.diff, workspace.files.diff_many, workspace.files.rebase, workspace.files.apply, workspace.files.discard, daemon.health, plugins.list, runs.list, runs.approvals.list, runs.approvals.approve, runs.approvals.deny, runs.resume_approved. Only populate actions or tool_calls when the user clearly asks for it and the action is one of these built-ins; approval approve/deny and resume-approved must come from an explicit instruction in the latest user message; do not auto-run scans, external plugins, or high-risk commands.
+- You may request built-in tools directly: scan.web.safe, http.request, workspace.command, workspace.files.list, workspace.files.tree, workspace.files.read, workspace.search, workspace.files.write, workspace.files.patch, workspace.files.diff, workspace.files.diff_many, workspace.files.rebase, workspace.files.apply, workspace.files.discard, workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir, daemon.health, plugins.list, runs.list, runs.context, reports.draft, runs.approvals.list, runs.approvals.approve, runs.approvals.deny, runs.resume_approved. Only populate actions or tool_calls when the user clearly asks for it and the action is one of these built-ins; approval approve/deny and resume-approved must come from an explicit instruction in the latest user message; when the operator provides an explicitly authorized target/scope and the current permission allows safe_scan, you may directly output scan.web.safe or GET/HEAD/OPTIONS http.request; POST/PUT/PATCH/DELETE http.request requires advanced; workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir and reports.draft require workspace_write; do not auto-run external plugins or high-risk commands.
+- Fixed execution pattern: Plan=analyze full task/select tools/order steps; Step=execute tools step by step; StepReplan=after each step, evaluate observations and adjust remaining steps; FinalAnswer=independently evaluate completion, and if something is missing, flow back to Plan.
+- The first planning response phase must be plan; if tools are needed, actions must contain explicit tool names and arguments.
 - todos should make the Agent cockpit useful: understand target, confirm scope, choose safety policy, execute/suggest Runtime action, collect evidence, summarize report, retest.
 - answer must be in English.`,
 	)
 	instructions = strings.TrimSpace(instructions)
+	permission := agentOperationPermissionPrompt(language, operationLevel)
 	if instructions == "" {
-		return base
+		return base + permission
 	}
-	return base + "\n\n" + agentText(language, "操作者附加指令：", "Additional operator instructions:") + "\n" + instructions
+	return base + permission + "\n\n" + agentText(language, "操作者附加指令：", "Additional operator instructions:") + "\n" + instructions
 }
 
-func agentToolSynthesisSystemPrompt(language, instructions string) string {
+func agentToolSynthesisSystemPrompt(language, instructions, operationLevel string) string {
 	base := agentText(
 		language,
 		`你是 CyberAgent，一个面向授权目标的 Web/API 安全分析 Agent。你刚刚请求的低风险内置工具已经执行完毕；现在你要读取 observation，给操作者一个最终总结和下一步建议。
 
 只输出一个 JSON 对象，不要 Markdown，不要代码围栏，不要在 JSON 前后输出解释文本。JSON schema：
 {
+  "phase": "step_replan|final_answer",
   "answer": "简洁总结：执行了哪些工具、关键结果是什么、下一步怎么做",
   "task": {
     "goal": "当前任务目标",
@@ -2776,7 +3721,12 @@ func agentToolSynthesisSystemPrompt(language, instructions string) string {
     }
   ],
   "context_refs": [],
-  "actions": [],
+  "actions": [
+    {
+      "name": "scan.web.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "arguments": {"target":"https://example.com","scope":"https://example.com","url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path":".","query":"TODO","command":"pwd","run_id":"job_xxx"}
+    }
+  ],
   "tool_calls": [],
 	  "next_action": {
 	    "type": "continue|wait_user|approval_required|finished|blocked",
@@ -2788,7 +3738,7 @@ func agentToolSynthesisSystemPrompt(language, instructions string) string {
 	}
 
 约束：
-- 这是工具结果 synthesis 阶段；不要再请求或声明执行新的 actions/tool_calls。即使你输出 actions，系统也会忽略。
+- 这是 StepReplan/FinalAnswer 阶段：必须先基于 observation 判断任务是否完成。若仍需低风险下一步且不需要人工确认，可输出 phase=step_replan 并给出 actions；若已完成，输出 phase=final_answer 且 actions 为空。
 	- 只能基于 observation 总结，不要编造未出现的命令输出、扫描结果或漏洞。
 	- 如工具失败，要说明失败点和可恢复步骤。
 	- auto_continue：当 observation 已给出足够上下文、任务仍未完成、有明确的低风险下一步、且不需要人工确认/审批时可设为 true；如果下一步需要用户补充目标、scope、凭据、授权边界、审批或风险确认，必须设为 false。
@@ -2798,6 +3748,7 @@ func agentToolSynthesisSystemPrompt(language, instructions string) string {
 
 Return exactly one JSON object. Do not use Markdown, code fences, or text before/after the JSON. JSON schema:
 {
+  "phase": "step_replan|final_answer",
   "answer": "Concise synthesis: which tools ran, key results, and what to do next",
   "task": {
     "goal": "Current task goal",
@@ -2816,7 +3767,12 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
     }
   ],
   "context_refs": [],
-  "actions": [],
+  "actions": [
+    {
+      "name": "scan.web.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "arguments": {"target":"https://example.com","scope":"https://example.com","url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path":".","query":"TODO","command":"pwd","run_id":"job_xxx"}
+    }
+  ],
   "tool_calls": [],
 	  "next_action": {
 	    "type": "continue|wait_user|approval_required|finished|blocked",
@@ -2828,7 +3784,7 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
 	}
 
 Constraints:
-- This is the tool-result synthesis phase; do not request or claim new actions/tool_calls. Even if you output actions, the system will ignore them.
+- This is the StepReplan/FinalAnswer phase: first evaluate whether the task is complete from observations. If a low-risk next step is still needed and does not require human confirmation, output phase=step_replan with actions; if complete, output phase=final_answer with empty actions.
 	- Synthesize only from observations; do not invent command output, scan results, or vulnerabilities.
 	- If a tool failed, state the failure and recovery step.
 	- auto_continue: set true only when the observations provide enough context, the task is still unfinished, there is a clear low-risk next step, and no human confirmation/approval is needed. If the next step needs target/scope/credential/authorization input, approval, or risk confirmation, set false.
@@ -2836,14 +3792,25 @@ Constraints:
 	- answer must be in English.`,
 	)
 	instructions = strings.TrimSpace(instructions)
+	permission := agentOperationPermissionPrompt(language, operationLevel)
 	if instructions == "" {
-		return base
+		return base + permission
 	}
-	return base + "\n\n" + agentText(language, "操作者附加指令：", "Additional operator instructions:") + "\n" + instructions
+	return base + permission + "\n\n" + agentText(language, "操作者附加指令：", "Additional operator instructions:") + "\n" + instructions
 }
 
 func agentLLMToolDefinitions() []llm.ToolDef {
 	return []llm.ToolDef{
+		{
+			Name:        "scan.web.safe",
+			Description: "Start a safe-profile Web/API scan for an explicitly authorized http/https target and scope. Requires safe_scan operation level.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"target":{"type":"string","description":"Authorized http/https target URL"},"scope":{"type":"string","description":"Authorization boundary or URL prefix; defaults to target"}},"required":["target"],"additionalProperties":false}`),
+		},
+		{
+			Name:        "http.request",
+			Description: "Make an HTTP request to an explicitly authorized http/https URL and return status, headers, and a truncated body. GET/HEAD/OPTIONS require safe_scan; POST/PUT/PATCH/DELETE require advanced.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"Authorized http/https URL"},"method":{"type":"string","enum":["GET","HEAD","OPTIONS","POST","PUT","PATCH","DELETE"],"description":"HTTP method; defaults to GET"},"auth_profile_id":{"type":"string","description":"Optional configured API auth profile ID/name; secrets are resolved by the daemon and are not exposed to the model"},"headers":{"type":"object","description":"Optional request headers for authorized testing; sensitive values are redacted in stored results","additionalProperties":{"type":"string"}},"body":{"type":"string","description":"Optional request body for POST/PUT/PATCH/DELETE"},"content_type":{"type":"string","description":"Optional Content-Type header when body is provided"}},"required":["url"],"additionalProperties":false}`),
+		},
 		{
 			Name:        "workspace.command",
 			Description: "Run a low-risk allowlisted read-only command in the current Agent workspace. Allowed examples: pwd, ls, cat, head, tail, grep, find, wc, git status.",
@@ -2855,9 +3822,19 @@ func agentLLMToolDefinitions() []llm.ToolDef {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory path","default":"."}},"additionalProperties":false}`),
 		},
 		{
+			Name:        "workspace.files.tree",
+			Description: "Show a recursive workspace file tree with depth and result limits.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory path","default":"."},"depth":{"type":"integer","minimum":1,"maximum":8,"default":3},"limit":{"type":"integer","minimum":1,"maximum":500,"default":120},"include_hidden":{"type":"boolean","default":false}},"additionalProperties":false}`),
+		},
+		{
 			Name:        "workspace.files.read",
 			Description: "Read a workspace-relative file from the current Agent workspace.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"}},"required":["path"],"additionalProperties":false}`),
+		},
+		{
+			Name:        "workspace.search",
+			Description: "Search text in workspace files without modifying files; returns file paths, line numbers, and matching lines.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Text or regex to search for"},"path":{"type":"string","description":"Workspace-relative directory path","default":"."},"regex":{"type":"boolean","default":false},"case_sensitive":{"type":"boolean","default":false},"limit":{"type":"integer","minimum":1,"maximum":300,"default":80}},"required":["query"],"additionalProperties":false}`),
 		},
 		{
 			Name:        "workspace.files.write",
@@ -2895,6 +3872,26 @@ func agentLLMToolDefinitions() []llm.ToolDef {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"change_id":{"type":"string","description":"ID returned by workspace.files.diff"},"group_id":{"type":"string","description":"Group ID returned by workspace.files.diff_many"},"all":{"type":"boolean","description":"Discard all pending/conflict staged changes when explicitly requested"}},"additionalProperties":false}`),
 		},
 		{
+			Name:        "workspace.files.delete",
+			Description: "Delete a workspace-relative file when the operator explicitly requests deletion. Directories are rejected.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"}},"required":["path"],"additionalProperties":false}`),
+		},
+		{
+			Name:        "workspace.files.move",
+			Description: "Move or rename a workspace-relative file when the operator explicitly requests it. Directories are rejected.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"from":{"type":"string","description":"Source workspace-relative file path"},"to":{"type":"string","description":"Destination workspace-relative file path"}},"required":["from","to"],"additionalProperties":false}`),
+		},
+		{
+			Name:        "workspace.files.copy",
+			Description: "Copy a workspace-relative file when the operator explicitly requests it. Directories are rejected and destination must not already exist.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"from":{"type":"string","description":"Source workspace-relative file path"},"to":{"type":"string","description":"Destination workspace-relative file path"}},"required":["from","to"],"additionalProperties":false}`),
+		},
+		{
+			Name:        "workspace.files.mkdir",
+			Description: "Create a workspace-relative directory when the operator explicitly requests it.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory path"}},"required":["path"],"additionalProperties":false}`),
+		},
+		{
 			Name:        "daemon.health",
 			Description: "Check CyberAgent daemon health/version/status.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
@@ -2908,6 +3905,16 @@ func agentLLMToolDefinitions() []llm.ToolDef {
 			Name:        "runs.list",
 			Description: "List recent CyberAgent runs/history.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		},
+		{
+			Name:        "runs.context",
+			Description: "Read structured context for a run: report_json, findings, artifact_index, events, or approvals. Defaults to the active run when run_id is omitted.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"run_id":{"type":"string","description":"Run ID to inspect; defaults to active run when omitted"},"context":{"type":"string","enum":["report_json","findings","artifact_index","events","approvals"],"description":"Context section to read"}},"additionalProperties":false}`),
+		},
+		{
+			Name:        "reports.draft",
+			Description: "Generate a Markdown report draft for a run from runtime report/context and save it into the Agent workspace. Requires workspace_write operation level.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"run_id":{"type":"string","description":"Run ID to draft; defaults to the active run when omitted"},"path":{"type":"string","description":"Optional workspace-relative markdown path"}},"additionalProperties":false}`),
 		},
 		{
 			Name:        "runs.approvals.list",
@@ -2933,18 +3940,301 @@ func agentLLMToolDefinitions() []llm.ToolDef {
 }
 
 func parseAgentPlannerResponse(raw string) (*agentPlannerResponse, error) {
-	candidate := extractJSONObject(raw)
-	if strings.TrimSpace(candidate) == "" {
+	candidates := extractJSONCandidates(raw)
+	if len(candidates) == 0 {
 		return nil, fmt.Errorf("planner response does not contain a JSON object")
 	}
-	var plan agentPlannerResponse
-	if err := json.Unmarshal([]byte(candidate), &plan); err != nil {
-		return nil, fmt.Errorf("decode planner response: %w", err)
+
+	var lastErr error
+	for _, candidate := range candidates {
+		if content, ok := unwrapOpenAIChatCompletionContent(candidate); ok {
+			plan, err := parseAgentPlannerResponse(content)
+			if err == nil {
+				return plan, nil
+			}
+			trimmed := strings.TrimSpace(content)
+			if trimmed != "" {
+				return &agentPlannerResponse{Answer: trimmed}, nil
+			}
+			lastErr = err
+			continue
+		}
+
+		var encodedContent string
+		if err := json.Unmarshal([]byte(candidate), &encodedContent); err == nil {
+			encodedContent = strings.TrimSpace(encodedContent)
+			if encodedContent == "" {
+				lastErr = fmt.Errorf("planner response string is empty")
+				continue
+			}
+			plan, err := parseAgentPlannerResponse(encodedContent)
+			if err == nil {
+				return plan, nil
+			}
+			return &agentPlannerResponse{Answer: encodedContent}, nil
+		}
+
+		var plan agentPlannerResponse
+		if err := json.Unmarshal([]byte(candidate), &plan); err != nil {
+			lastErr = fmt.Errorf("decode planner response: %w", err)
+			continue
+		}
+		if strings.TrimSpace(plan.Answer) == "" && plan.Task == nil && len(plan.Todos) == 0 && plan.NextAction == nil && len(plan.ContextRefs) == 0 && len(agentPlannerActions(&plan)) == 0 {
+			lastErr = fmt.Errorf("planner response is empty")
+			continue
+		}
+		return &plan, nil
 	}
-	if strings.TrimSpace(plan.Answer) == "" && plan.Task == nil && len(plan.Todos) == 0 && plan.NextAction == nil && len(plan.ContextRefs) == 0 && len(agentPlannerActions(&plan)) == 0 {
-		return nil, fmt.Errorf("planner response is empty")
+
+	if lastErr != nil {
+		return nil, lastErr
 	}
-	return &plan, nil
+	return nil, fmt.Errorf("planner response is empty")
+}
+
+func agentLatestUserPrompt(history []agentMessage) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "user" && strings.TrimSpace(history[i].Content) != "" {
+			return strings.TrimSpace(history[i].Content)
+		}
+	}
+	return ""
+}
+
+func agentPlannerFromPlainAnswer(answer, phase, language string) *agentPlannerResponse {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return nil
+	}
+	phase = firstNonEmpty(agentNormalizePhase(phase), "final_answer")
+	status := "done"
+	if phase == "plan" || phase == "step_replan" {
+		status = "running"
+	}
+	return &agentPlannerResponse{
+		Phase:  phase,
+		Answer: answer,
+		Task: &agentPlannerTask{
+			Goal:    agentText(language, "回答并澄清安全任务", "Answer and clarify the security task"),
+			Kind:    "chat",
+			Status:  status,
+			Summary: trimSummary(answer, 220),
+		},
+		Todos: []agentPlannerTodo{
+			{Title: agentText(language, "理解用户意图", "Understand the operator intent"), Status: "done", Priority: 1},
+			{Title: agentText(language, "返回主要结论", "Return the main conclusion"), Status: status, Priority: 2},
+		},
+		NextAction: &agentNextAction{
+			Type:         "finished",
+			Reason:       agentText(language, "模型返回了普通文本，已作为最终回答处理。", "The model returned plain text, so it was treated as the final answer."),
+			AutoContinue: false,
+		},
+	}
+}
+
+func agentFallbackPlannerFromPrompt(prompt, modelAnswer, language string) *agentPlannerResponse {
+	prompt = strings.TrimSpace(prompt)
+	modelAnswer = strings.TrimSpace(modelAnswer)
+	if prompt == "" {
+		return agentPlannerFromPlainAnswer(modelAnswer, "final_answer", language)
+	}
+
+	actions := agentHeuristicActionsFromPrompt(prompt)
+	if len(actions) == 0 {
+		if modelAnswer != "" {
+			return agentPlannerFromPlainAnswer(modelAnswer, "final_answer", language)
+		}
+		return nil
+	}
+
+	answer := agentText(
+		language,
+		"我会按 Agent 执行环处理：先规划任务，再逐步调用内置工具，完成后根据 observation 重规划，最后给出独立总结。",
+		"I will use the Agent execution loop: plan the task, call built-in tools step by step, replan from observations, then provide an independent final answer.",
+	)
+	if modelAnswer != "" {
+		answer = trimSummary(modelAnswer, 360)
+	}
+	kind := agentTaskKind(prompt)
+	return &agentPlannerResponse{
+		Phase:  "plan",
+		Answer: answer,
+		Task: &agentPlannerTask{
+			Goal:    agentTaskGoal(language, kind, prompt),
+			Kind:    kind,
+			Status:  "running",
+			Summary: agentText(language, "已根据用户指令生成可执行工具计划。", "Generated an executable tool plan from the operator instruction."),
+		},
+		Todos: []agentPlannerTodo{
+			{Title: agentText(language, "Plan：分析任务与选择工具", "Plan: analyze task and choose tools"), Status: "done", Priority: 1},
+			{Title: agentText(language, "Step：执行内置工具", "Step: execute built-in tools"), Status: "running", Priority: 2},
+			{Title: agentText(language, "StepReplan：根据 observation 调整后续", "StepReplan: adjust from observations"), Status: "pending", Priority: 3},
+			{Title: agentText(language, "FinalAnswer：独立评估完成度并总结", "FinalAnswer: independently evaluate completion and summarize"), Status: "pending", Priority: 4},
+		},
+		Actions: actions,
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			Reason:       agentText(language, "已有明确低风险工具步骤，可以自动进入执行阶段。", "There are clear low-risk tool steps, so the Agent can enter execution."),
+			AutoContinue: true,
+		},
+		Reasoning: agentText(language,
+			"LLM 输出未形成可执行 JSON 时，系统基于最新用户指令生成保守工具计划，避免 Agent 退化成普通聊天。",
+			"When the LLM output is not executable JSON, the system derives a conservative tool plan from the latest operator instruction so the Agent does not degrade into plain chat.",
+		),
+	}
+}
+
+func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
+	switch {
+	case agentIsScanIntent(prompt):
+		target := agentExtractURL(prompt)
+		if target == "" {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "scan.web.safe", Arguments: map[string]any{
+			"target": target,
+			"scope":  agentExtractScope(prompt, target),
+		}}}
+	case agentIsResumeApprovedIntent(prompt):
+		return []agentPlannerAction{{Name: "runs.resume_approved", Arguments: map[string]any{"run_id": agentExtractRunID(prompt)}}}
+	case agentIsReportDraftIntent(prompt):
+		return []agentPlannerAction{{Name: "reports.draft", Arguments: map[string]any{"run_id": agentExtractRunID(prompt)}}}
+	case agentIsApprovalDecisionIntent(prompt):
+		action := "runs.approvals.approve"
+		if agentApprovalDecisionAction(prompt) == "deny" {
+			action = "runs.approvals.deny"
+		}
+		return []agentPlannerAction{{Name: action, Arguments: map[string]any{
+			"run_id":      agentExtractRunID(prompt),
+			"approval_id": agentExtractApprovalID(prompt),
+		}}}
+	case agentIsRunContextAnalysisIntent(prompt):
+		return []agentPlannerAction{{Name: "runs.context", Arguments: map[string]any{
+			"run_id":  agentExtractRunID(prompt),
+			"context": agentRunContextKind(prompt),
+		}}}
+	case agentIsCommandIntent(prompt):
+		cmd := agentExtractCommand(prompt)
+		if cmd == "" {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.command", Arguments: map[string]any{"command": cmd}}}
+	case agentIsApprovalIntent(prompt):
+		return []agentPlannerAction{{Name: "runs.approvals.list", Arguments: map[string]any{"run_id": agentExtractRunID(prompt)}}}
+	case agentIsHealthIntent(prompt):
+		return []agentPlannerAction{{Name: "daemon.health", Arguments: map[string]any{}}}
+	case agentIsPluginIntent(prompt):
+		return []agentPlannerAction{{Name: "plugins.list", Arguments: map[string]any{}}}
+	case agentIsRunIntent(prompt):
+		return []agentPlannerAction{{Name: "runs.list", Arguments: map[string]any{}}}
+	case agentIsHTTPRequestIntent(prompt):
+		return []agentPlannerAction{{Name: "http.request", Arguments: map[string]any{
+			"url":    agentExtractURL(prompt),
+			"method": agentExtractHTTPMethod(prompt),
+		}}}
+	case agentIsWorkspaceSearchIntent(prompt):
+		query := agentExtractWorkspaceSearchQuery(prompt)
+		if query == "" {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.search", Arguments: map[string]any{
+			"query": query,
+			"path":  agentExtractWorkspaceSearchPath(prompt, query),
+		}}}
+	case agentIsWorkspaceTreeIntent(prompt):
+		path := agentExtractPath(prompt)
+		if path == "" {
+			path = "."
+		}
+		return []agentPlannerAction{{Name: "workspace.files.tree", Arguments: map[string]any{"path": path}}}
+	case agentIsWorkspaceDeleteIntent(prompt):
+		path := agentExtractPath(prompt)
+		if path == "" || path == "." {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.files.delete", Arguments: map[string]any{"path": path}}}
+	case agentIsWorkspaceMoveIntent(prompt):
+		fromPath, toPath := agentExtractWorkspaceMovePaths(prompt)
+		if fromPath == "" || fromPath == "." || toPath == "" || toPath == "." {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.files.move", Arguments: map[string]any{"from": fromPath, "to": toPath}}}
+	case agentIsWorkspaceCopyIntent(prompt):
+		fromPath, toPath := agentExtractWorkspaceMovePaths(prompt)
+		if fromPath == "" || fromPath == "." || toPath == "" || toPath == "." {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.files.copy", Arguments: map[string]any{"from": fromPath, "to": toPath}}}
+	case agentIsWorkspaceMkdirIntent(prompt):
+		path := agentExtractWorkspaceMkdirPath(prompt)
+		if path == "" || path == "." {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.files.mkdir", Arguments: map[string]any{"path": path}}}
+	case agentIsWorkspaceReadIntent(prompt):
+		path := agentExtractPath(prompt)
+		if path == "" {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.files.read", Arguments: map[string]any{"path": path}}}
+	case agentIsWorkspaceListIntent(prompt) || agentIsWorkspaceIntent(prompt):
+		path := agentExtractPath(prompt)
+		if path == "" {
+			path = "."
+		}
+		return []agentPlannerAction{{Name: "workspace.files.list", Arguments: map[string]any{"path": path}}}
+	default:
+		return nil
+	}
+}
+
+func agentPromptRequestsImmediateExecution(prompt string) bool {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" || !agentNeedsDaemonTool(prompt) {
+		return false
+	}
+	// "建立任务/制定计划" should remain at Plan and wait for Continue.
+	if regexp.MustCompile(`(?i)(plan|draft|design|create\s+(?:a\s+)?task|make\s+(?:a\s+)?plan|规划|计划|制定|建立.*任务|创建.*任务)`).MatchString(prompt) &&
+		!regexp.MustCompile(`(?i)(execute|run|start|immediately|right\s+now|now|直接|立即|马上|现在|先执行|先运行|启动|开始|执行|运行)`).MatchString(prompt) {
+		return false
+	}
+	return agentIsCommandIntent(prompt) ||
+		agentIsScanIntent(prompt) ||
+		agentIsResumeApprovedIntent(prompt) ||
+		agentIsApprovalDecisionIntent(prompt) ||
+		agentIsWorkspaceIntent(prompt) ||
+		agentIsRunContextAnalysisIntent(prompt) ||
+		agentIsApprovalIntent(prompt) ||
+		agentIsHealthIntent(prompt) ||
+		agentIsPluginIntent(prompt) ||
+		agentIsRunIntent(prompt) ||
+		agentIsWorkspaceSearchIntent(prompt) ||
+		agentIsWorkspaceTreeIntent(prompt) ||
+		agentIsHTTPRequestIntent(prompt)
+}
+
+func agentShouldRouteBeforeLLMSynthesis(prompt string) bool {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return false
+	}
+	// When the operator explicitly names simple allowlisted shell commands,
+	// execute those exact deterministic steps first and ask the LLM to synthesize
+	// the observations. This prevents weaker providers from "planning" around
+	// direct instructions like "先执行 pwd 和 ls -la" without actually doing them.
+	if !agentIsCommandIntent(prompt) {
+		return false
+	}
+	commands := agentExtractCommands(prompt)
+	if len(commands) == 0 {
+		return false
+	}
+	for _, command := range commands {
+		if !agentPlannerCommandAllowed(command) {
+			return false
+		}
+	}
+	return true
 }
 
 func agentPlannerActionsFromLLMToolUse(resp *llm.ChatResponse) []agentPlannerAction {
@@ -2997,6 +4287,115 @@ func extractJSONObject(raw string) string {
 		return ""
 	}
 	return strings.TrimSpace(raw[start : end+1])
+}
+
+func extractJSONCandidates(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	candidates := []string{}
+	if candidate := extractJSONObject(raw); candidate != "" {
+		candidates = append(candidates, candidate)
+	}
+	for _, candidate := range extractBalancedJSONObjects(raw) {
+		candidates = append(candidates, candidate)
+	}
+	seen := make(map[string]struct{}, len(candidates))
+	out := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func extractBalancedJSONObjects(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	objects := []string{}
+	depth := 0
+	start := -1
+	inString := false
+	escaped := false
+	for idx, r := range raw {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inString = true
+		case '{':
+			if depth == 0 {
+				start = idx
+			}
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+			if depth == 0 && start >= 0 {
+				objects = append(objects, strings.TrimSpace(raw[start:idx+1]))
+				start = -1
+			}
+		}
+	}
+	for left, right := 0, len(objects)-1; left < right; left, right = left+1, right-1 {
+		objects[left], objects[right] = objects[right], objects[left]
+	}
+	return objects
+}
+
+func unwrapOpenAIChatCompletionContent(candidate string) (string, bool) {
+	var envelope struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+			Text string `json:"text"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal([]byte(candidate), &envelope); err != nil {
+		return "", false
+	}
+	if len(envelope.Choices) == 0 {
+		return "", false
+	}
+	for _, choice := range envelope.Choices {
+		if content := strings.TrimSpace(choice.Message.Content); content != "" {
+			return content, true
+		}
+		if content := strings.TrimSpace(choice.Delta.Content); content != "" {
+			return content, true
+		}
+		if content := strings.TrimSpace(choice.Text); content != "" {
+			return content, true
+		}
+	}
+	return "", true
 }
 
 func agentLLMHistory(history []agentMessage, memory *agentMemorySummary, language string) []llm.Message {
@@ -3275,8 +4674,8 @@ func agentToolObservationPrompt(language string, toolMessages []agentMessage) st
 	var builder strings.Builder
 	builder.WriteString(agentText(
 		language,
-		"以下是刚刚执行完成的低风险内置工具 observation。请基于这些结果生成最终总结和下一步建议；不要再请求新的 actions/tool_calls。\n",
-		"Below are the observations from the low-risk built-in tools that just executed. Synthesize the final answer and next step from these results; do not request new actions/tool_calls.\n",
+		"以下是刚刚执行完成的低风险内置工具 observation。请进入 StepReplan：先判断任务是否完成；如仍缺少低风险步骤，可输出新的 actions/tool_calls 和 auto_continue=true；如已完成，请进入 FinalAnswer 且不要再请求工具。\n",
+		"Below are the observations from the low-risk built-in tools that just executed. Enter StepReplan: first decide whether the task is complete; if a low-risk step is still missing, you may output new actions/tool_calls with auto_continue=true; if complete, enter FinalAnswer and do not request more tools.\n",
 	))
 	for i, message := range toolMessages {
 		content := strings.TrimSpace(message.Content)
@@ -3374,9 +4773,95 @@ func agentLLMText(resp *llm.ChatResponse) string {
 }
 
 var agentURLPattern = regexp.MustCompile(`https?://[^\s"'<>，。)]+`)
+var agentBareNetworkTargetPattern = regexp.MustCompile(`(?i)(?:^|[\s（(])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:/[^\s"'<>，。)]*)?)`)
 
 func agentExtractURL(prompt string) string {
-	return agentCleanToken(agentURLPattern.FindString(prompt))
+	if explicit := agentCleanToken(agentURLPattern.FindString(prompt)); explicit != "" {
+		return explicit
+	}
+	return agentNormalizeURLInput(agentExtractBareNetworkTarget(prompt))
+}
+
+func agentNormalizeURLInput(value string) string {
+	value = agentCleanToken(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(value), "http://") || strings.HasPrefix(strings.ToLower(value), "https://") {
+		return value
+	}
+	if agentLooksLikeBareNetworkTarget(value) {
+		return "https://" + value
+	}
+	return value
+}
+
+func agentExtractBareNetworkTarget(prompt string) string {
+	for _, match := range agentBareNetworkTargetPattern.FindAllStringSubmatch(prompt, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		candidate := agentCleanToken(match[1])
+		if agentLooksLikeBareNetworkTarget(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func agentLooksLikeBareNetworkTarget(value string) bool {
+	value = agentCleanToken(value)
+	if value == "" || strings.Contains(value, "://") || strings.ContainsAny(value, " \t\r\n") {
+		return false
+	}
+	host := value
+	if slash := strings.Index(host, "/"); slash >= 0 {
+		host = host[:slash]
+	}
+	if colon := strings.LastIndex(host, ":"); colon > strings.LastIndex(host, "]") {
+		port := host[colon+1:]
+		if port == "" {
+			return false
+		}
+		for _, r := range port {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+		host = host[:colon]
+	}
+	host = strings.Trim(host, "[]")
+	if !strings.Contains(host, ".") || strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
+		return false
+	}
+	lastDot := strings.LastIndex(host, ".")
+	tld := strings.ToLower(host[lastDot+1:])
+	if len(tld) < 2 || len(tld) > 63 {
+		return false
+	}
+	if agentLooksLikeWorkspaceFileExtension(tld) {
+		return false
+	}
+	for _, r := range host {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func agentLooksLikeWorkspaceFileExtension(ext string) bool {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "md", "txt", "log", "json", "yaml", "yml", "toml", "xml", "csv",
+		"go", "py", "js", "jsx", "ts", "tsx", "css", "scss", "html", "htm",
+		"sh", "bash", "zsh", "sql", "rs", "java", "c", "cc", "cpp", "h",
+		"png", "jpg", "jpeg", "gif", "svg", "webp", "pdf", "zip", "gz", "tar",
+		"list", "context", "draft", "safe", "command", "files", "approvals", "plugins", "runs", "web", "request", "health":
+		return true
+	default:
+		return false
+	}
 }
 
 func agentExtractScope(prompt, target string) string {
@@ -3409,8 +4894,16 @@ func agentWantsExternalTools(prompt string) bool {
 }
 
 func agentIsRunContextAnalysisIntent(prompt string) bool {
-	return agentExtractRunID(prompt) != "" &&
+	return (agentExtractRunID(prompt) != "" || agentMentionsActiveRun(prompt)) &&
 		regexp.MustCompile(`(?i)(report|finding|artifact|evidence|events?|timeline|log|approvals?|approve|deny|context|报告|发现|漏洞|证据|工件|产物|事件|时间线|日志|审批|批准|拒绝|上下文|修复建议|误报)`).MatchString(prompt)
+}
+
+func agentMentionsActiveRun(prompt string) bool {
+	return regexp.MustCompile(`(?i)(active\s+run|current\s+run|this\s+run|selected\s+run|active\s+scan|current\s+scan|this\s+scan|当前运行|当前任务|当前扫描|这个运行|这个扫描|本次运行|本次扫描)`).MatchString(prompt)
+}
+
+func agentIsReportDraftIntent(prompt string) bool {
+	return regexp.MustCompile(`(?i)(report\s*draft|draft\s*report|write\s+(?:a\s+)?report|generate\s+(?:a\s+)?report|报告草稿|生成报告|报告初稿|撰写报告|输出报告)`).MatchString(prompt)
 }
 
 func agentIsScanIntent(prompt string) bool {
@@ -3418,6 +4911,38 @@ func agentIsScanIntent(prompt string) bool {
 		return false
 	}
 	return regexp.MustCompile(`(?i)(scan|test|assess|audit|扫描|测试|检测|分析|安全)`).MatchString(prompt)
+}
+
+func agentIsHTTPRequestIntent(prompt string) bool {
+	if agentExtractURL(prompt) == "" {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(http|request|fetch|curl|headers?|status|probe|\bGET\b|\bHEAD\b|\bOPTIONS\b|\bPOST\b|\bPUT\b|\bPATCH\b|\bDELETE\b|访问|请求|抓取|获取|响应|状态码|响应头|探测)`).MatchString(prompt)
+}
+
+func agentExtractHTTPMethod(prompt string) string {
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)\b`),
+		regexp.MustCompile(`(?i)method\s*[:=]\s*(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)`),
+		regexp.MustCompile(`(?i)方法\s*[:：]\s*(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)`),
+	} {
+		if match := re.FindStringSubmatch(prompt); len(match) > 1 {
+			return strings.ToUpper(match[1])
+		}
+	}
+	if regexp.MustCompile(`(?i)(headers?|响应头|只看头)`).MatchString(prompt) {
+		return http.MethodHead
+	}
+	return http.MethodGet
+}
+
+func agentHTTPMethodIsSafe(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
 }
 
 func agentIsHealthIntent(prompt string) bool {
@@ -3646,7 +5171,7 @@ func agentExtractPath(prompt string) string {
 	for _, re := range []*regexp.Regexp{
 		regexp.MustCompile("`([^`]+)`"),
 		regexp.MustCompile(`(?i)(?:path|file|directory|folder)\s*[:=]\s*([^\s,，;；]+)`),
-		regexp.MustCompile(`(?i)(?:read|cat|open|list|ls)\s+(?:path|file|directory|folder|files?)?\s*([A-Za-z0-9._/\-]+)`),
+		regexp.MustCompile(`(?i)(?:read|cat|open|list|ls|delete|remove|unlink|rm)\s+(?:path|file|directory|folder|files?)?\s*([A-Za-z0-9._/\-]+)`),
 		regexp.MustCompile(`(?:路径|文件|目录)\s*[:：]?\s*([^\s,，;；]+)`),
 	} {
 		if match := re.FindStringSubmatch(prompt); len(match) > 1 {
@@ -3654,6 +5179,32 @@ func agentExtractPath(prompt string) string {
 		}
 	}
 	return "."
+}
+
+func agentExtractWorkspaceSearchQuery(prompt string) string {
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile("`([^`]+)`"),
+		regexp.MustCompile(`(?i)(?:query|pattern|text|string)\s*[:=]\s*([^\n]+)$`),
+		regexp.MustCompile(`(?:查询|搜索|查找|检索|关键词|模式)\s*[:：]\s*([^\n]+)$`),
+		regexp.MustCompile(`(?i)(?:search|grep|find\s+text|find\s+string)\s+(?:for\s+)?["“]?([^"”\n]+)["”]?`),
+		regexp.MustCompile(`(?:搜索|查找|检索)\s*["“]?([^"”\n]+)["”]?`),
+	} {
+		if match := re.FindStringSubmatch(prompt); len(match) > 1 {
+			value := strings.TrimSpace(match[1])
+			value = regexp.MustCompile(`(?i)\s+(?:in|under|path|directory|folder|workspace)\b.*$`).ReplaceAllString(value, "")
+			value = regexp.MustCompile(`\s+(?:在|目录|路径|工作空间).*$`).ReplaceAllString(value, "")
+			return agentCleanToken(value)
+		}
+	}
+	return ""
+}
+
+func agentExtractWorkspaceSearchPath(prompt, query string) string {
+	path := agentExtractPath(prompt)
+	if strings.TrimSpace(path) == "" || path == "." || path == query {
+		return "."
+	}
+	return path
 }
 
 func agentExtractWorkspaceWrite(prompt string) (string, string) {
@@ -3745,6 +5296,39 @@ func agentCleanWorkspaceWriteContent(value string) string {
 	return value
 }
 
+func agentExtractWorkspaceMovePaths(prompt string) (string, string) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return "", ""
+	}
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`(?is)(?:from|source|old|path)\s*[:=]\s*([^\s,，;；]+).*?(?:to|target|new|dest|destination)\s*[:=]\s*([^\s,，;；]+)$`),
+		regexp.MustCompile(`(?is)(?:文件|路径)\s*[:：]\s*([^\s,，;；]+).*?(?:到|为|改为|移动到|重命名为)\s*([^\s,，;；]+)$`),
+		regexp.MustCompile(`(?is)(?:move|rename|relocate|copy|duplicate|mv|cp)\s+(?:workspace\s+)?(?:file\s+)?([^\s,;]+)\s+(?:to|as|into)\s+([^\s,;]+)$`),
+		regexp.MustCompile(`(?is)(?:重命名|移动|改名|转移|复制|拷贝)(?:文件|路径)?\s*([^\s,，;；]+)\s*(?:为|成|到|到路径)\s*([^\s,，;；]+)$`),
+	} {
+		if match := re.FindStringSubmatch(prompt); len(match) > 2 {
+			return agentCleanWorkspaceWritePath(match[1]), agentCleanWorkspaceWritePath(match[2])
+		}
+	}
+	return agentExtractWorkspaceWritePath(prompt), ""
+}
+
+func agentExtractWorkspaceMkdirPath(prompt string) string {
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile("`([^`]+)`"),
+		regexp.MustCompile(`(?i)(?:path|directory|dir|folder)\s*[:=]\s*([^\s,，;；]+)`),
+		regexp.MustCompile(`(?:目录|文件夹|路径)\s*[:：]\s*([^\s,，;；]+)`),
+		regexp.MustCompile(`(?i)(?:mkdir|make\s+dir|make\s+directory|create\s+dir|create\s+directory)\s+([^\s,;]+)`),
+		regexp.MustCompile(`(?:创建目录|新建目录|创建文件夹|新建文件夹)\s*([^\s,，;；]+)`),
+	} {
+		if match := re.FindStringSubmatch(prompt); len(match) > 1 {
+			return agentCleanWorkspaceWritePath(match[1])
+		}
+	}
+	return "."
+}
+
 func agentIsWorkspacePatchIntent(prompt string) bool {
 	if !regexp.MustCompile(`(?i)(patch|modify|edit|replace|修改|替换|编辑|修补)`).MatchString(prompt) {
 		return false
@@ -3794,8 +5378,31 @@ func agentIsWorkspaceDiscardAllIntent(prompt string) bool {
 		regexp.MustCompile(`(?i)(all|every|pending|staged|全部|所有|所有待应用|待应用|暂存)`).MatchString(prompt)
 }
 
+func agentIsWorkspaceDeleteIntent(prompt string) bool {
+	return regexp.MustCompile(`(?i)(delete|remove|unlink|rm|删除|移除)`).MatchString(prompt) &&
+		regexp.MustCompile(`(?i)(workspace|工作空间|file|path\s*[:=]|file\s*[:=]|文件|路径|[A-Za-z0-9._/\-]+\.[A-Za-z0-9][A-Za-z0-9._\-]*)`).MatchString(prompt)
+}
+
+func agentIsWorkspaceMoveIntent(prompt string) bool {
+	return regexp.MustCompile(`(?i)(move|rename|relocate|mv|重命名|移动|改名|转移)`).MatchString(prompt) &&
+		regexp.MustCompile(`(?i)(workspace|工作空间|file|path\s*[:=]|file\s*[:=]|文件|路径|[A-Za-z0-9._/\-]+\.[A-Za-z0-9][A-Za-z0-9._\-]*)`).MatchString(prompt)
+}
+
+func agentIsWorkspaceCopyIntent(prompt string) bool {
+	return regexp.MustCompile(`(?i)(copy|duplicate|cp|复制|拷贝|副本)`).MatchString(prompt) &&
+		regexp.MustCompile(`(?i)(workspace|工作空间|file|path\s*[:=]|file\s*[:=]|文件|路径|[A-Za-z0-9._/\-]+\.[A-Za-z0-9][A-Za-z0-9._\-]*)`).MatchString(prompt)
+}
+
+func agentIsWorkspaceMkdirIntent(prompt string) bool {
+	return regexp.MustCompile(`(?i)(mkdir|make\s+dir|make\s+directory|create\s+dir|create\s+directory|创建目录|新建目录|创建文件夹|新建文件夹)`).MatchString(prompt)
+}
+
 func agentPlannerActionAllowedByPrompt(prompt, actionName string) bool {
 	switch normalizeAgentPlannerActionName(actionName) {
+	case "scan.web.safe":
+		return agentIsScanIntent(prompt)
+	case "http.request":
+		return agentIsHTTPRequestIntent(prompt) || agentIsScanIntent(prompt)
 	case "workspace.files.write":
 		return agentIsWorkspaceWriteIntent(prompt)
 	case "workspace.files.patch":
@@ -3808,12 +5415,24 @@ func agentPlannerActionAllowedByPrompt(prompt, actionName string) bool {
 		return agentIsWorkspaceApplyIntent(prompt) || agentIsWorkspaceApplyAllIntent(prompt)
 	case "workspace.files.discard":
 		return agentIsWorkspaceDiscardIntent(prompt) || agentIsWorkspaceDiscardAllIntent(prompt)
+	case "workspace.files.delete":
+		return agentIsWorkspaceDeleteIntent(prompt)
+	case "workspace.files.move":
+		return agentIsWorkspaceMoveIntent(prompt)
+	case "workspace.files.copy":
+		return agentIsWorkspaceCopyIntent(prompt)
+	case "workspace.files.mkdir":
+		return agentIsWorkspaceMkdirIntent(prompt)
 	case "runs.approvals.approve":
 		return agentApprovalDecisionAction(prompt) == "approve" && agentIsApprovalDecisionIntent(prompt)
 	case "runs.approvals.deny":
 		return agentApprovalDecisionAction(prompt) == "deny" && agentIsApprovalDecisionIntent(prompt)
 	case "runs.resume_approved":
 		return agentIsResumeApprovedIntent(prompt)
+	case "runs.context":
+		return agentIsRunContextAnalysisIntent(prompt)
+	case "reports.draft":
+		return agentIsReportDraftIntent(prompt)
 	default:
 		return true
 	}
@@ -3938,6 +5557,23 @@ func agentRunContextKind(prompt string) string {
 	case regexp.MustCompile(`(?i)(findings?|finding|vulnerabilit|issue|发现|漏洞|问题)`).MatchString(prompt):
 		return "findings"
 	case strings.Contains(lower, "report") || strings.Contains(prompt, "报告"):
+		return "report_json"
+	default:
+		return "report_json"
+	}
+}
+
+func agentNormalizeRunContextKind(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "artifact", "artifacts", "artifact_index", "artifact-index", "artifact index", "evidence_index", "evidence-index", "evidence index", "工件", "产物", "证据索引":
+		return "artifact_index"
+	case "event", "events", "timeline", "log", "logs", "trace", "事件", "时间线", "日志", "轨迹":
+		return "events"
+	case "approval", "approvals", "approve", "deny", "human", "hitl", "审批", "批准", "拒绝", "人工":
+		return "approvals"
+	case "finding", "findings", "vulnerability", "vulnerabilities", "issue", "issues", "发现", "漏洞", "问题":
+		return "findings"
+	case "report", "report_json", "report-json", "json", "报告":
 		return "report_json"
 	default:
 		return "report_json"
@@ -4224,6 +5860,11 @@ func agentToolDefaultMetadata(name string) map[string]interface{} {
 		metadata["risk"] = "medium"
 		metadata["auto_run"] = false
 		metadata["approval_policy"] = "explicit_user_instruction"
+	case strings.Contains(normalized, "http.request"):
+		metadata["phase"] = "http_probe"
+		metadata["risk"] = "medium"
+		metadata["auto_run"] = false
+		metadata["approval_policy"] = "explicit_authorized_target"
 	case strings.Contains(normalized, "jobs/{job_id}/cancel"):
 		metadata["phase"] = "control"
 		metadata["risk"] = "medium"
@@ -4389,6 +6030,9 @@ func (m *agentManager) syncTerminalActiveRunLocked(ctx context.Context, session 
 	if !agentRunTerminalStatus(status) {
 		return changed
 	}
+	if session.Status == "paused" || session.Status == "cancelled" {
+		return changed
+	}
 	switch status {
 	case contracts.StatusSucceeded, contracts.StatusPartiallySucceeded:
 		return normalizeCompletedActiveRunSession(session, status) || changed
@@ -4530,6 +6174,142 @@ func parseAgentRunReportSnapshot(data []byte) agentRunReportSnapshot {
 		}
 	}
 	return snapshot
+}
+
+func agentReportDraftPath(runID, outputPath string) string {
+	outputPath = filepath.ToSlash(filepath.Clean(strings.TrimSpace(outputPath)))
+	if outputPath == "" || outputPath == "." || strings.HasPrefix(outputPath, "../") || filepath.IsAbs(outputPath) {
+		return filepath.ToSlash(filepath.Join("reports", agentCleanToken(runID)+"-draft.md"))
+	}
+	if !strings.HasSuffix(strings.ToLower(outputPath), ".md") {
+		outputPath += ".md"
+	}
+	return outputPath
+}
+
+func agentBuildReportDraftMarkdown(language string, detail services.RunDetail, snapshot agentRunReportSnapshot, generatedAt time.Time) string {
+	target := firstNonEmpty(detail.Summary.Target, detail.Summary.Scope)
+	status := string(detail.Summary.Status)
+	if status == "" && detail.Job != nil {
+		status = string(detail.Job.Status)
+	}
+	var b strings.Builder
+	zh := normalizeAgentLanguage(language) == "zh"
+	if zh {
+		fmt.Fprintf(&b, "# CyberAgent 报告草稿\n\n")
+		fmt.Fprintf(&b, "> 草稿由 Agent 基于运行时报告和上下文生成，需要人工复核后再对外输出。\n\n")
+		fmt.Fprintf(&b, "## 概览\n\n")
+	} else {
+		fmt.Fprintf(&b, "# CyberAgent Report Draft\n\n")
+		fmt.Fprintf(&b, "> Draft generated from runtime report/context. Review manually before external use.\n\n")
+		fmt.Fprintf(&b, "## Overview\n\n")
+	}
+	fmt.Fprintf(&b, "- Run ID: `%s`\n", detail.RunID)
+	fmt.Fprintf(&b, "- Target: `%s`\n", emptyDash(target))
+	fmt.Fprintf(&b, "- Scope: `%s`\n", emptyDash(detail.Summary.Scope))
+	fmt.Fprintf(&b, "- Profile: `%s`\n", emptyDash(detail.Summary.Profile))
+	fmt.Fprintf(&b, "- Status: `%s`\n", emptyDash(status))
+	fmt.Fprintf(&b, "- Findings: %d\n", len(snapshot.Findings))
+	fmt.Fprintf(&b, "- Evidence: %d\n", len(snapshot.Evidence))
+	fmt.Fprintf(&b, "- Artifacts: %d\n", len(snapshot.Artifacts))
+	fmt.Fprintf(&b, "- Generated: %s\n\n", generatedAt.Format(time.RFC3339))
+	if zh {
+		fmt.Fprintf(&b, "## 执行摘要\n\n")
+		if len(snapshot.Findings) == 0 {
+			fmt.Fprintf(&b, "本次运行暂未在 report.json 中发现 finding。仍建议结合事件、artifact 和授权范围进行人工复核。\n\n")
+		} else {
+			fmt.Fprintf(&b, "本次运行发现 %d 个 finding。优先按严重度、可复现证据和业务暴露面进行确认，并在修复后对同一 scope 执行复测。\n\n", len(snapshot.Findings))
+		}
+	} else {
+		fmt.Fprintf(&b, "## Executive Summary\n\n")
+		if len(snapshot.Findings) == 0 {
+			fmt.Fprintf(&b, "No findings were present in report.json. Review events, artifacts, and scope before closing the task.\n\n")
+		} else {
+			fmt.Fprintf(&b, "The run produced %d finding(s). Prioritize by severity, reproducible evidence, and exposed business surface; retest the same scope after remediation.\n\n", len(snapshot.Findings))
+		}
+	}
+	fmt.Fprintf(&b, "## Findings\n\n")
+	agentAppendReportDraftFindings(&b, snapshot, language)
+	if zh {
+		fmt.Fprintf(&b, "\n## Evidence 摘要\n\n")
+	} else {
+		fmt.Fprintf(&b, "\n## Evidence Summary\n\n")
+	}
+	agentAppendReportDraftEvidence(&b, snapshot, language)
+	if zh {
+		fmt.Fprintf(&b, "\n## Artifacts 摘要\n\n")
+	} else {
+		fmt.Fprintf(&b, "\n## Artifact Summary\n\n")
+	}
+	agentAppendReportDraftArtifacts(&b, snapshot, language)
+	if zh {
+		fmt.Fprintf(&b, "\n## 修复与复测建议\n\n")
+		fmt.Fprintf(&b, "1. 逐条核对 finding 的 evidence_ids 与原始 artifact，确认不是代理、CDN、开发服务器或测试夹具导致的误报。\n")
+		fmt.Fprintf(&b, "2. 按 finding 的 remediation 或业务配置修复。\n")
+		fmt.Fprintf(&b, "3. 用最小复现命令验证修复，再让 Agent 对相同 scope 重跑 safe profile。\n")
+		fmt.Fprintf(&b, "4. 将复测结果追加到本草稿的 Evidence / Retest Notes 中。\n")
+	} else {
+		fmt.Fprintf(&b, "\n## Remediation and Retest\n\n")
+		fmt.Fprintf(&b, "1. Correlate each finding's evidence_ids with raw artifacts and rule out proxy/CDN/dev-server/test-fixture false positives.\n")
+		fmt.Fprintf(&b, "2. Apply each finding's remediation or the equivalent business configuration change.\n")
+		fmt.Fprintf(&b, "3. Verify with the minimal reproduction command, then rerun the safe profile for the same scope.\n")
+		fmt.Fprintf(&b, "4. Append retest results to this draft's Evidence / Retest Notes.\n")
+	}
+	return b.String()
+}
+
+func agentAppendReportDraftFindings(b *strings.Builder, snapshot agentRunReportSnapshot, language string) {
+	if len(snapshot.Findings) == 0 {
+		fmt.Fprintf(b, "%s\n", agentText(language, "暂无 finding。", "No findings."))
+		return
+	}
+	for idx, finding := range snapshot.Findings {
+		title := firstNonEmpty(finding.Title, finding.ID, fmt.Sprintf("Finding %d", idx+1))
+		fmt.Fprintf(b, "### %d. %s\n\n", idx+1, title)
+		fmt.Fprintf(b, "- Severity: `%s`\n", emptyDash(string(finding.Severity)))
+		fmt.Fprintf(b, "- Category: `%s`\n", emptyDash(finding.Category))
+		if len(finding.EvidenceIDs) > 0 {
+			fmt.Fprintf(b, "- Evidence IDs: `%s`\n", strings.Join(finding.EvidenceIDs, "`, `"))
+		}
+		if finding.Impact != "" {
+			fmt.Fprintf(b, "- Impact: %s\n", finding.Impact)
+		}
+		if finding.Remediation != "" {
+			fmt.Fprintf(b, "- Remediation: %s\n", finding.Remediation)
+		}
+		fmt.Fprintf(b, "\n")
+	}
+}
+
+func agentAppendReportDraftEvidence(b *strings.Builder, snapshot agentRunReportSnapshot, language string) {
+	if len(snapshot.Evidence) == 0 {
+		fmt.Fprintf(b, "%s\n", agentText(language, "暂无 evidence 摘要。", "No evidence summary."))
+		return
+	}
+	for _, evidence := range snapshot.Evidence {
+		fmt.Fprintf(b, "- `%s` · %s · %s", emptyDash(evidence.ID), emptyDash(string(evidence.Type)), emptyDash(evidence.Title))
+		if evidence.Summary != "" {
+			fmt.Fprintf(b, " — %s", evidence.Summary)
+		}
+		if evidence.ArtifactID != "" {
+			fmt.Fprintf(b, " (artifact `%s`)", evidence.ArtifactID)
+		}
+		fmt.Fprintf(b, "\n")
+	}
+}
+
+func agentAppendReportDraftArtifacts(b *strings.Builder, snapshot agentRunReportSnapshot, language string) {
+	if len(snapshot.Artifacts) == 0 {
+		fmt.Fprintf(b, "%s\n", agentText(language, "暂无 artifact 摘要。", "No artifact summary."))
+		return
+	}
+	for _, artifact := range snapshot.Artifacts {
+		fmt.Fprintf(b, "- `%s` · %s · `%s`", emptyDash(artifact.ID), emptyDash(string(artifact.Type)), emptyDash(artifact.Path))
+		if artifact.MIMEType != "" {
+			fmt.Fprintf(b, " · %s", artifact.MIMEType)
+		}
+		fmt.Fprintf(b, "\n")
+	}
 }
 
 func shouldRefreshActiveRunSummary(current string) bool {
@@ -4803,6 +6583,7 @@ func (s *agentSession) normalize() {
 	if s.Status == "" {
 		s.Status = "idle"
 	}
+	s.OperationLevel = normalizeAgentOperationLevel(s.OperationLevel)
 	if s.Messages == nil {
 		s.Messages = []agentMessage{}
 	}
@@ -4966,12 +6747,20 @@ func agentToolCompletesLegacyOneShotTask(name string) bool {
 		strings.Contains(name, "workspace.command"),
 		strings.Contains(name, "workspace.prepare"),
 		strings.Contains(name, "workspace.files.list"),
+		strings.Contains(name, "workspace.files.tree"),
 		strings.Contains(name, "workspace.files.read"),
+		strings.Contains(name, "workspace.search"),
 		strings.Contains(name, "workspace.files.write"),
 		strings.Contains(name, "workspace.files.patch"),
 		strings.Contains(name, "workspace.files.diff"),
+		strings.Contains(name, "workspace.files.rebase"),
 		strings.Contains(name, "workspace.files.apply"),
-		strings.Contains(name, "workspace.files.discard"):
+		strings.Contains(name, "workspace.files.discard"),
+		strings.Contains(name, "workspace.files.delete"),
+		strings.Contains(name, "workspace.files.move"),
+		strings.Contains(name, "workspace.files.copy"),
+		strings.Contains(name, "workspace.files.mkdir"),
+		strings.Contains(name, "http.request"):
 		return true
 	default:
 		return false
@@ -5222,6 +7011,7 @@ func (m *agentManager) applyAgentPlannerLocked(session *agentSession, plan *agen
 			})
 		}
 		if len(todos) > 0 {
+			todos = mergeAgentRecoveryTodos(todos, session.Todos)
 			session.Todos = todos
 			m.updateSessionStatusFromTodosLocked(session)
 		}
@@ -5319,6 +7109,40 @@ func normalizeAgentTodoStatus(raw string) string {
 	default:
 		return "pending"
 	}
+}
+
+func mergeAgentRecoveryTodos(planned, existing []agentTodo) []agentTodo {
+	if len(existing) == 0 {
+		return planned
+	}
+	seen := map[string]struct{}{}
+	for _, todo := range planned {
+		if todo.ID != "" {
+			seen[todo.ID] = struct{}{}
+		}
+		if todo.ToolCallID != "" {
+			seen["tool:"+todo.ToolCallID] = struct{}{}
+		}
+	}
+	out := append([]agentTodo(nil), planned...)
+	for _, todo := range existing {
+		if !strings.HasPrefix(todo.ID, "todo_recover_") {
+			continue
+		}
+		if _, ok := seen[todo.ID]; ok {
+			continue
+		}
+		if todo.ToolCallID != "" {
+			if _, ok := seen["tool:"+todo.ToolCallID]; ok {
+				continue
+			}
+			seen["tool:"+todo.ToolCallID] = struct{}{}
+		}
+		todo.Priority = len(out) + 1
+		out = append(out, todo)
+		seen[todo.ID] = struct{}{}
+	}
+	return out
 }
 
 func sanitizeAgentPlannerContextRef(ref agentContextRef) agentContextRef {
@@ -5419,13 +7243,22 @@ func (m *agentManager) updateTodosForToolLocked(session *agentSession, call agen
 		return
 	}
 	if call.Status == contracts.StatusFailed {
-		markAgentTodoByIndex(session.Todos, len(session.Todos)-1, "blocked", now, call.ID, agentToolError(call))
+		recovery := agentRecoveryForFailedTool(session.Language, call)
+		reason := firstNonEmpty(recovery.Reason, agentToolError(call))
+		markAgentTodoByIndex(session.Todos, len(session.Todos)-1, "blocked", now, call.ID, reason)
+		upsertAgentRecoveryTodo(session, call, recovery, now)
 		if session.ActiveTask != nil {
 			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.Summary = trimSummary(reason, 360)
 			session.ActiveTask.UpdatedAt = now
 		}
 		session.Status = "blocked"
-		session.NextAction = &agentNextAction{Type: "blocked", Reason: agentToolError(call)}
+		session.NextAction = &agentNextAction{
+			Type:            firstNonEmpty(recovery.Type, "blocked"),
+			Reason:          reason,
+			SuggestedPrompt: recovery.SuggestedPrompt,
+			AutoContinue:    recovery.AutoContinue && recovery.Type == "continue",
+		}
 		return
 	}
 
@@ -5682,12 +7515,20 @@ func agentToolCompletesLocalTask(name string) bool {
 		strings.Contains(name, "workspace.command"),
 		strings.Contains(name, "workspace.prepare"),
 		strings.Contains(name, "workspace.files.list"),
+		strings.Contains(name, "workspace.files.tree"),
 		strings.Contains(name, "workspace.files.read"),
+		strings.Contains(name, "workspace.search"),
 		strings.Contains(name, "workspace.files.write"),
 		strings.Contains(name, "workspace.files.patch"),
 		strings.Contains(name, "workspace.files.diff"),
+		strings.Contains(name, "workspace.files.rebase"),
 		strings.Contains(name, "workspace.files.apply"),
 		strings.Contains(name, "workspace.files.discard"),
+		strings.Contains(name, "workspace.files.delete"),
+		strings.Contains(name, "workspace.files.move"),
+		strings.Contains(name, "workspace.files.copy"),
+		strings.Contains(name, "workspace.files.mkdir"),
+		strings.Contains(name, "http.request"),
 		strings.Contains(name, "llm"):
 		return true
 	default:
@@ -6108,6 +7949,11 @@ func agentPlannerActions(plan *agentPlannerResponse) []agentPlannerAction {
 		}
 		keyParts := []string{
 			name,
+			stringFromAny(action.Arguments["url"]),
+			stringFromAny(action.Arguments["target"]),
+			stringFromAny(action.Arguments["method"]),
+			stringFromAny(action.Arguments["query"]),
+			stringFromAny(action.Arguments["pattern"]),
 			stringFromAny(action.Arguments["command"]),
 			stringFromAny(action.Arguments["path"]),
 			stringFromAny(action.Arguments["file"]),
@@ -6141,12 +7987,20 @@ func normalizeAgentPlannerActionName(raw string) string {
 	name = strings.ReplaceAll(name, "_", ".")
 	name = strings.Join(strings.Fields(name), ".")
 	switch name {
+	case "scan.web.safe", "web.scan.safe", "scan.web", "web.scan", "scans.web", "scan", "start.scan", "start.web.scan":
+		return "scan.web.safe"
+	case "http.request", "http", "request", "fetch", "curl", "web.request", "web.fetch", "http.get", "http.head":
+		return "http.request"
 	case "workspace.command", "workspace.commands.run", "workspace.run.command", "command", "commands.run", "shell", "terminal":
 		return "workspace.command"
 	case "workspace.files.list", "workspace.file.list", "workspace.list", "workspace.ls", "files.list", "file.list", "list.files", "list.file", "ls":
 		return "workspace.files.list"
+	case "workspace.files.tree", "workspace.file.tree", "workspace.tree", "files.tree", "file.tree", "tree", "list.tree", "directory.tree":
+		return "workspace.files.tree"
 	case "workspace.files.read", "workspace.file.read", "workspace.read", "files.read", "file.read", "read.file", "cat":
 		return "workspace.files.read"
+	case "workspace.search", "workspace.grep", "workspace.find.text", "files.search", "file.search", "search.files", "grep", "search":
+		return "workspace.search"
 	case "workspace.files.patch", "workspace.file.patch", "workspace.patch", "files.patch", "file.patch", "patch.file", "patch", "edit.file", "modify.file", "replace.in.file":
 		return "workspace.files.patch"
 	case "workspace.files.diff", "workspace.file.diff", "workspace.diff", "files.diff", "file.diff", "diff.file", "diff", "preview.file", "preview.patch", "stage.file", "stage.patch", "staged.diff":
@@ -6159,6 +8013,14 @@ func normalizeAgentPlannerActionName(raw string) string {
 		return "workspace.files.apply"
 	case "workspace.files.discard", "workspace.file.discard", "workspace.discard", "files.discard", "file.discard", "discard.file", "discard.patch", "discard.change", "discard", "drop.patch", "cancel.patch":
 		return "workspace.files.discard"
+	case "workspace.files.delete", "workspace.file.delete", "workspace.delete", "files.delete", "file.delete", "delete.file", "remove.file", "rm.file", "unlink.file", "delete", "remove", "rm":
+		return "workspace.files.delete"
+	case "workspace.files.move", "workspace.file.move", "workspace.move", "files.move", "file.move", "move.file", "rename.file", "mv.file", "move", "rename", "relocate", "mv":
+		return "workspace.files.move"
+	case "workspace.files.copy", "workspace.file.copy", "workspace.copy", "files.copy", "file.copy", "copy.file", "duplicate.file", "cp.file", "copy", "duplicate", "cp":
+		return "workspace.files.copy"
+	case "workspace.files.mkdir", "workspace.file.mkdir", "workspace.mkdir", "files.mkdir", "file.mkdir", "mkdir", "make.dir", "make.directory", "create.dir", "create.directory":
+		return "workspace.files.mkdir"
 	case "workspace.files.write", "workspace.file.write", "workspace.write", "files.write", "file.write", "write.file", "write", "save.file", "create.file", "replace.file":
 		return "workspace.files.write"
 	case "daemon.health", "daemon.doctor", "health", "doctor", "status":
@@ -6167,6 +8029,8 @@ func normalizeAgentPlannerActionName(raw string) string {
 		return "plugins.list"
 	case "runs.list", "run.list", "history.list", "runs", "history":
 		return "runs.list"
+	case "runs.context", "run.context", "runs.get", "run.get", "runs.report", "run.report", "runs.findings", "run.findings", "runs.events", "run.events", "runs.artifacts", "run.artifacts":
+		return "runs.context"
 	case "runs.approvals.list", "run.approvals.list", "approvals.list", "approval.list", "approvals", "approval.queue":
 		return "runs.approvals.list"
 	case "runs.approvals.approve", "run.approvals.approve", "approvals.approve", "approval.approve", "approve.approval":
@@ -6175,6 +8039,8 @@ func normalizeAgentPlannerActionName(raw string) string {
 		return "runs.approvals.deny"
 	case "runs.resume.approved", "run.resume.approved", "resume.approved", "resume.approved.run", "runs.resume.approval":
 		return "runs.resume_approved"
+	case "reports.draft", "report.draft", "draft.report", "report.generate", "reports.generate", "generate.report", "write.report":
+		return "reports.draft"
 	default:
 		return name
 	}
@@ -6350,12 +8216,18 @@ func contextRefsFromToolCall(call agentToolCall) []agentContextRef {
 	}
 	if path := stringFromAny(call.Result["path"]); path != "" && path != "." {
 		name := strings.ToLower(call.Name)
-		if strings.Contains(name, "workspace.files.read") || strings.Contains(name, "workspace.files.write") || strings.Contains(name, "workspace.files.patch") || strings.Contains(name, "workspace.files.diff") || strings.Contains(name, "workspace.files.apply") || strings.Contains(name, "workspace.files.discard") {
+		if strings.Contains(name, "workspace.files.read") || strings.Contains(name, "workspace.files.write") || strings.Contains(name, "workspace.files.patch") || strings.Contains(name, "workspace.files.diff") || strings.Contains(name, "workspace.files.apply") || strings.Contains(name, "workspace.files.discard") || strings.Contains(name, "workspace.files.delete") || strings.Contains(name, "workspace.files.move") || strings.Contains(name, "workspace.files.copy") || strings.Contains(name, "workspace.files.mkdir") || strings.Contains(name, "reports.draft") {
+			kind := "workspace_file"
+			label := "file " + path
+			if strings.Contains(name, "workspace.files.mkdir") {
+				kind = "workspace_dir"
+				label = "dir " + path
+			}
 			refs = append(refs, agentContextRef{
 				ID:      "workspace_file:" + path,
-				Kind:    "workspace_file",
+				Kind:    kind,
 				RefID:   path,
-				Label:   "file " + path,
+				Label:   label,
 				Summary: call.Name,
 			})
 		}
@@ -6424,6 +8296,175 @@ func agentToolError(call agentToolCall) string {
 	return "tool failed"
 }
 
+type agentToolFailureRecovery struct {
+	Type            string
+	Reason          string
+	SuggestedPrompt string
+	TodoTitle       string
+	TodoDetail      string
+	AutoContinue    bool
+}
+
+func agentRecoveryForFailedTool(language string, call agentToolCall) agentToolFailureRecovery {
+	action := firstNonEmpty(stringFromAny(call.Result["action"]), stringFromAny(call.Result["action_name"]), call.Name)
+	code := ""
+	if call.Error != nil {
+		code = string(call.Error.Code)
+	}
+	details := mapFromAny(call.Result["details"])
+	requiredLevel := firstNonEmpty(stringFromAny(call.Result["required_operation_level"]), stringFromAny(details["required_operation_level"]))
+	policy := firstNonEmpty(stringFromAny(call.Result["policy"]), stringFromAny(details["policy"]))
+	reason := agentToolError(call)
+	displayAction := agentRecoveryActionLabel(action, language)
+
+	switch {
+	case requiredLevel != "":
+		return agentToolFailureRecovery{
+			Type:            "wait_user",
+			Reason:          reason,
+			SuggestedPrompt: agentText(language, "切换 Agent 操作权限到 "+requiredLevel+" 后重试："+displayAction, "switch Agent operation level to "+requiredLevel+" and retry: "+displayAction),
+			TodoTitle:       agentText(language, "调整 Agent 操作权限后重试", "Adjust Agent operation level and retry"),
+			TodoDetail:      reason,
+		}
+	case policy == "explicit_operator_intent_required":
+		return agentToolFailureRecovery{
+			Type:            "wait_user",
+			Reason:          reason,
+			SuggestedPrompt: agentText(language, "请明确确认要执行 "+displayAction+"，并重新说明目标、范围和参数", "explicitly confirm "+displayAction+" and restate the target, scope, and parameters"),
+			TodoTitle:       agentText(language, "等待明确的执行确认", "Wait for explicit execution confirmation"),
+			TodoDetail:      reason,
+		}
+	case action == "http.request" && (strings.Contains(reason, "auth profile") || strings.Contains(reason, "Authorization") || strings.Contains(reason, "header")):
+		return agentToolFailureRecovery{
+			Type:            "wait_user",
+			Reason:          reason,
+			SuggestedPrompt: agentText(language, "到设置页修正 API Auth Profile / Base URL 后，重新请求同一授权 URL", "fix the API auth profile / Base URL in Settings, then retry the same authorized URL"),
+			TodoTitle:       agentText(language, "修正 API Auth Profile", "Fix API auth profile"),
+			TodoDetail:      reason,
+		}
+	case code == string(services.CodeConflict) || strings.Contains(strings.ToLower(reason), "conflict"):
+		return agentToolFailureRecovery{
+			Type:            "continue",
+			Reason:          reason,
+			SuggestedPrompt: agentText(language, "重新读取相关文件，使用当前内容 rebase 待应用变更，再预览 diff", "reread the related file, rebase the pending change with current content, then preview the diff"),
+			TodoTitle:       agentText(language, "重新基于当前状态生成变更", "Regenerate change from current state"),
+			TodoDetail:      reason,
+			AutoContinue:    true,
+		}
+	case code == string(services.CodeNotFound):
+		return agentToolFailureRecovery{
+			Type:            "continue",
+			Reason:          reason,
+			SuggestedPrompt: agentText(language, "先列出当前可用资源或工作区文件，再选择正确 ID / 路径重试", "list current resources or workspace files first, then retry with the correct ID/path"),
+			TodoTitle:       agentText(language, "重新定位正确资源", "Relocate the correct resource"),
+			TodoDetail:      reason,
+			AutoContinue:    true,
+		}
+	case code == string(services.CodeToolDependencyMissing):
+		return agentToolFailureRecovery{
+			Type:            "wait_user",
+			Reason:          reason,
+			SuggestedPrompt: agentText(language, "安装或启用缺失工具后重试，或让我改用已有内置工具", "install/enable the missing tool and retry, or ask me to use available built-in tools"),
+			TodoTitle:       agentText(language, "补齐缺失工具依赖", "Install missing tool dependency"),
+			TodoDetail:      reason,
+		}
+	case code == string(services.CodeUnsupported):
+		return agentToolFailureRecovery{
+			Type:            "continue",
+			Reason:          reason,
+			SuggestedPrompt: agentText(language, "列出可用内置工具，并选择一个支持的替代动作", "list available built-in tools and choose a supported alternative"),
+			TodoTitle:       agentText(language, "选择支持的替代工具", "Choose a supported alternative tool"),
+			TodoDetail:      reason,
+			AutoContinue:    true,
+		}
+	default:
+		return agentToolFailureRecovery{
+			Type:            "blocked",
+			Reason:          reason,
+			SuggestedPrompt: agentText(language, "检查失败原因，调整参数后重试："+displayAction, "inspect the failure, adjust arguments, then retry: "+displayAction),
+			TodoTitle:       agentText(language, "分析失败并准备重试", "Analyze failure and prepare retry"),
+			TodoDetail:      reason,
+		}
+	}
+}
+
+func agentRecoveryActionLabel(action, language string) string {
+	normalized := normalizeAgentPlannerActionName(action)
+	switch normalized {
+	case "workspace.files.write":
+		return agentText(language, "写入文件（workspace.files.write）", "write file (workspace.files.write)")
+	case "workspace.files.patch":
+		return agentText(language, "直接修改文件（workspace.files.patch）", "patch file (workspace.files.patch)")
+	case "workspace.files.diff", "workspace.files.diff_many":
+		return agentText(language, "预览工作区变更（"+normalized+"）", "preview workspace change ("+normalized+")")
+	case "workspace.files.apply":
+		return agentText(language, "应用待处理变更（workspace.files.apply）", "apply pending change (workspace.files.apply)")
+	case "workspace.files.discard":
+		return agentText(language, "丢弃待处理变更（workspace.files.discard）", "discard pending change (workspace.files.discard)")
+	case "workspace.files.delete":
+		return agentText(language, "删除工作区文件（workspace.files.delete）", "delete workspace file (workspace.files.delete)")
+	case "workspace.files.move":
+		return agentText(language, "移动/重命名工作区文件（workspace.files.move）", "move/rename workspace file (workspace.files.move)")
+	case "workspace.files.copy":
+		return agentText(language, "复制工作区文件（workspace.files.copy）", "copy workspace file (workspace.files.copy)")
+	case "workspace.files.mkdir":
+		return agentText(language, "创建工作区目录（workspace.files.mkdir）", "create workspace directory (workspace.files.mkdir)")
+	case "http.request":
+		return agentText(language, "HTTP 请求（http.request）", "HTTP request (http.request)")
+	case "scan.web.safe":
+		return agentText(language, "safe Web/API 扫描（scan.web.safe）", "safe Web/API scan (scan.web.safe)")
+	case "runs.context":
+		return agentText(language, "读取运行上下文（runs.context）", "read run context (runs.context)")
+	default:
+		if strings.TrimSpace(action) == "" {
+			return agentText(language, "该动作", "the action")
+		}
+		return action
+	}
+}
+
+func mapFromAny(value any) map[string]any {
+	if value == nil {
+		return nil
+	}
+	switch v := value.(type) {
+	case map[string]any:
+		return v
+	default:
+		return nil
+	}
+}
+
+func upsertAgentRecoveryTodo(session *agentSession, call agentToolCall, recovery agentToolFailureRecovery, now time.Time) {
+	title := strings.TrimSpace(recovery.TodoTitle)
+	if session == nil || title == "" {
+		return
+	}
+	id := "todo_recover_" + agentCleanToken(call.ID)
+	todo := agentTodo{
+		ID:            id,
+		Title:         trimSummary(title, 120),
+		Detail:        trimSummary(recovery.TodoDetail, 220),
+		Status:        "blocked",
+		Priority:      len(session.Todos) + 1,
+		ToolCallID:    call.ID,
+		ContextRefIDs: contextRefIDsFromToolCall(call),
+		BlockedReason: trimSummary(recovery.Reason, 220),
+		UpdatedAt:     now,
+	}
+	if recovery.AutoContinue {
+		todo.Status = "pending"
+		todo.BlockedReason = ""
+	}
+	for idx := range session.Todos {
+		if session.Todos[idx].ID == id {
+			session.Todos[idx] = todo
+			return
+		}
+	}
+	session.Todos = append(session.Todos, todo)
+}
+
 func stringFromAny(value any) string {
 	switch v := value.(type) {
 	case string:
@@ -6431,6 +8472,224 @@ func stringFromAny(value any) string {
 	default:
 		return ""
 	}
+}
+
+func stringMapFromAny(value any) map[string]string {
+	out := map[string]string{}
+	switch v := value.(type) {
+	case map[string]string:
+		for key, val := range v {
+			key = strings.TrimSpace(key)
+			if key != "" && !strings.ContainsAny(key, "\r\n:") && !strings.ContainsAny(val, "\r\n") {
+				out[key] = val
+			}
+		}
+	case map[string]any:
+		for key, val := range v {
+			key = strings.TrimSpace(key)
+			value := stringFromAny(val)
+			if key != "" && value != "" && !strings.ContainsAny(key, "\r\n:") && !strings.ContainsAny(value, "\r\n") {
+				out[key] = value
+			}
+		}
+	}
+	if len(out) > 20 {
+		keys := make([]string, 0, len(out))
+		for key := range out {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		trimmed := map[string]string{}
+		for _, key := range keys[:20] {
+			trimmed[key] = out[key]
+		}
+		return trimmed
+	}
+	return out
+}
+
+func agentRedactHTTPHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for key, value := range headers {
+		lower := strings.ToLower(key)
+		if strings.Contains(lower, "authorization") || strings.Contains(lower, "cookie") || strings.Contains(lower, "token") || strings.Contains(lower, "key") {
+			out[key] = "[redacted]"
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func agentHTTPAuthProfileEnabled(profile agentHTTPAuthProfile) bool {
+	return profile.Enabled == nil || *profile.Enabled
+}
+
+func normalizeAgentHTTPAuthProfileType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "basic":
+		return "basic"
+	case "api_key", "apikey", "api-key":
+		return "api_key"
+	case "cookie":
+		return "cookie"
+	case "custom", "header":
+		return "custom"
+	default:
+		return "bearer"
+	}
+}
+
+func agentResolveHTTPAuthProfileHeaders(profiles []agentHTTPAuthProfile, requestedID, defaultID, targetURL string) (map[string]string, *agentHTTPAuthProfileUsage, error) {
+	requestedID = strings.TrimSpace(requestedID)
+	defaultID = strings.TrimSpace(defaultID)
+	explicit := requestedID != ""
+	profileID := requestedID
+	if profileID == "" {
+		profileID = defaultID
+	}
+	if profileID == "" || len(profiles) == 0 {
+		return nil, nil, nil
+	}
+
+	profile, ok := agentFindHTTPAuthProfile(profiles, profileID)
+	if !ok {
+		if explicit {
+			return nil, nil, services.NewError(services.CodeBadRequest, "http.request auth profile was not found", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		return nil, nil, nil
+	}
+	if !agentHTTPAuthProfileEnabled(profile) {
+		if explicit {
+			return nil, nil, services.NewError(services.CodePolicyDenied, "http.request auth profile is disabled", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		return nil, nil, nil
+	}
+	if !explicit && strings.TrimSpace(profile.BaseURL) == "" {
+		// Default auth profiles must be host-scoped to avoid accidentally
+		// attaching credentials to an unrelated URL selected by the model.
+		return nil, nil, nil
+	}
+	matches, host := agentHTTPAuthProfileMatchesTarget(profile, targetURL)
+	if !matches {
+		if explicit {
+			return nil, nil, services.NewError(
+				services.CodePolicyDenied,
+				"http.request auth profile does not match the request host",
+				map[string]any{"auth_profile_id": firstNonEmpty(profile.ID, profile.Name), "base_url": profile.BaseURL, "url": targetURL},
+				nil,
+			)
+		}
+		return nil, nil, nil
+	}
+	headers, err := agentHTTPAuthProfileHeaders(profile)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(headers) == 0 {
+		return nil, nil, nil
+	}
+	usage := &agentHTTPAuthProfileUsage{
+		ID:      strings.TrimSpace(profile.ID),
+		Name:    strings.TrimSpace(profile.Name),
+		Type:    normalizeAgentHTTPAuthProfileType(profile.Type),
+		BaseURL: strings.TrimSpace(profile.BaseURL),
+		Host:    host,
+		Applied: true,
+	}
+	return headers, usage, nil
+}
+
+func agentFindHTTPAuthProfile(profiles []agentHTTPAuthProfile, id string) (agentHTTPAuthProfile, bool) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	for _, profile := range profiles {
+		if strings.ToLower(strings.TrimSpace(profile.ID)) == id || strings.ToLower(strings.TrimSpace(profile.Name)) == id {
+			return profile, true
+		}
+	}
+	return agentHTTPAuthProfile{}, false
+}
+
+func agentHTTPAuthProfileMatchesTarget(profile agentHTTPAuthProfile, targetURL string) (bool, string) {
+	parsedTarget, err := url.Parse(strings.TrimSpace(targetURL))
+	if err != nil || parsedTarget == nil || parsedTarget.Host == "" {
+		return false, ""
+	}
+	targetHost := strings.ToLower(parsedTarget.Hostname())
+	if strings.TrimSpace(profile.BaseURL) == "" {
+		return true, targetHost
+	}
+	base := strings.TrimSpace(profile.BaseURL)
+	if !strings.Contains(base, "://") {
+		base = "https://" + base
+	}
+	parsedBase, err := url.Parse(base)
+	if err != nil || parsedBase == nil || parsedBase.Host == "" {
+		return false, targetHost
+	}
+	baseHost := strings.ToLower(parsedBase.Hostname())
+	if baseHost == "" || baseHost != targetHost {
+		return false, targetHost
+	}
+	basePort := parsedBase.Port()
+	if basePort != "" && basePort != parsedTarget.Port() {
+		return false, targetHost
+	}
+	return true, targetHost
+}
+
+func agentHTTPAuthProfileHeaders(profile agentHTTPAuthProfile) (map[string]string, error) {
+	headers := map[string]string{}
+	profileID := firstNonEmpty(profile.ID, profile.Name)
+	switch normalizeAgentHTTPAuthProfileType(profile.Type) {
+	case "bearer":
+		token := strings.TrimSpace(profile.Token)
+		if token == "" {
+			token = strings.TrimSpace(profile.HeaderValue)
+		}
+		if token == "" {
+			return nil, services.NewError(services.CodeBadRequest, "bearer auth profile requires token", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers["Authorization"] = "Bearer " + token
+	case "basic":
+		username := strings.TrimSpace(profile.Username)
+		if username == "" {
+			return nil, services.NewError(services.CodeBadRequest, "basic auth profile requires username", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+profile.Password))
+	case "api_key":
+		headerName := firstNonEmpty(profile.HeaderName, "X-API-Key")
+		value := firstNonEmpty(profile.HeaderValue, profile.Token)
+		if value == "" {
+			return nil, services.NewError(services.CodeBadRequest, "api_key auth profile requires header_value or token", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers[headerName] = value
+	case "cookie":
+		cookie := strings.TrimSpace(profile.Cookie)
+		if cookie == "" {
+			cookie = strings.TrimSpace(profile.HeaderValue)
+		}
+		if cookie == "" {
+			return nil, services.NewError(services.CodeBadRequest, "cookie auth profile requires cookie", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers["Cookie"] = cookie
+	case "custom":
+		headerName := strings.TrimSpace(profile.HeaderName)
+		value := strings.TrimSpace(profile.HeaderValue)
+		if headerName == "" || value == "" {
+			return nil, services.NewError(services.CodeBadRequest, "custom auth profile requires header_name and header_value", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers[headerName] = value
+	}
+	for key, value := range headers {
+		if strings.ContainsAny(key, "\r\n:") || strings.ContainsAny(value, "\r\n") {
+			return nil, services.NewError(services.CodeBadRequest, "auth profile contains an invalid header", map[string]any{"auth_profile_id": profileID, "header": key}, nil)
+		}
+	}
+	return headers, nil
 }
 
 func boolFromAny(value any) bool {
@@ -6491,6 +8750,13 @@ func emptyString(value, fallback string) string {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b
@@ -6779,13 +9045,28 @@ func agentSamplePhrase(language string, values []string) string {
 
 func agentIsWorkspaceIntent(prompt string) bool {
 	return regexp.MustCompile(`(?i)(workspace|工作空间|文件|file|目录|directory|folder)`).MatchString(prompt) ||
+		agentIsWorkspaceTreeIntent(prompt) ||
+		agentIsWorkspaceSearchIntent(prompt) ||
 		agentIsWorkspaceWriteIntent(prompt) ||
 		agentIsWorkspaceDiffIntent(prompt) ||
 		agentIsWorkspaceRebaseIntent(prompt) ||
 		agentIsWorkspaceApplyAllIntent(prompt) ||
 		agentIsWorkspaceApplyIntent(prompt) ||
 		agentIsWorkspaceDiscardAllIntent(prompt) ||
-		agentIsWorkspaceDiscardIntent(prompt)
+		agentIsWorkspaceDiscardIntent(prompt) ||
+		agentIsWorkspaceDeleteIntent(prompt) ||
+		agentIsWorkspaceMoveIntent(prompt) ||
+		agentIsWorkspaceCopyIntent(prompt) ||
+		agentIsWorkspaceMkdirIntent(prompt)
+}
+
+func agentIsWorkspaceTreeIntent(prompt string) bool {
+	return regexp.MustCompile(`(?i)(tree|file\s+tree|directory\s+tree|文件树|目录树|结构树|递归列出)`).MatchString(prompt)
+}
+
+func agentIsWorkspaceSearchIntent(prompt string) bool {
+	return regexp.MustCompile(`(?i)(search|grep|find\s+text|find\s+string|查找|搜索|检索|全文搜索)`).MatchString(prompt) &&
+		regexp.MustCompile(`(?i)(workspace|工作空间|file|files|文件|目录|path|路径|内容|text|string|pattern|query)`).MatchString(prompt)
 }
 
 func agentIsWorkspaceListIntent(prompt string) bool {
@@ -6895,10 +9176,99 @@ func agentFormatWorkspaceRead(language, relPath, content string) string {
 	)
 }
 
+func agentFormatWorkspaceTree(language, relPath string, entries []agentWorkspaceTreeEntry, truncated bool) string {
+	if len(entries) == 0 {
+		return agentText(language,
+			fmt.Sprintf("工作空间目录 `%s` 没有可展示的文件树条目。", relPath),
+			fmt.Sprintf("Workspace directory `%s` has no tree entries to show.", relPath),
+		)
+	}
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		prefix := strings.Repeat("  ", maxInt(entry.Depth-1, 0))
+		icon := "📄"
+		if entry.IsDir {
+			icon = "📁"
+		}
+		lines = append(lines, fmt.Sprintf("%s- %s `%s`", prefix, icon, entry.Path))
+	}
+	if truncated {
+		lines = append(lines, agentText(language, "- … 已达到展示上限", "- … display limit reached"))
+	}
+	return agentText(language,
+		fmt.Sprintf("工作空间目录 `%s` 文件树：\n\n%s", relPath, strings.Join(lines, "\n")),
+		fmt.Sprintf("Workspace directory `%s` tree:\n\n%s", relPath, strings.Join(lines, "\n")),
+	)
+}
+
+func agentFormatWorkspaceSearch(language, query string, matches []agentWorkspaceSearchMatch, filesScanned int, truncated bool) string {
+	if len(matches) == 0 {
+		return agentText(language,
+			fmt.Sprintf("工作空间搜索 `%s` 没有命中（扫描文件 %d 个）。", query, filesScanned),
+			fmt.Sprintf("Workspace search `%s` found no matches (%d file(s) scanned).", query, filesScanned),
+		)
+	}
+	limit := minInt(len(matches), 40)
+	lines := make([]string, 0, limit+1)
+	for _, match := range matches[:limit] {
+		lines = append(lines, fmt.Sprintf("- `%s:%d` %s", match.Path, match.Line, match.Text))
+	}
+	if truncated || len(matches) > limit {
+		lines = append(lines, agentText(language, "- … 已达到搜索结果上限", "- … search result limit reached"))
+	}
+	return agentText(language,
+		fmt.Sprintf("工作空间搜索 `%s` 命中 %d 条（扫描文件 %d 个）：\n\n%s", query, len(matches), filesScanned, strings.Join(lines, "\n")),
+		fmt.Sprintf("Workspace search `%s` found %d match(es) (%d file(s) scanned):\n\n%s", query, len(matches), filesScanned, strings.Join(lines, "\n")),
+	)
+}
+
+func agentFormatHTTPRequest(language string, result map[string]any) string {
+	method := stringFromAny(result["method"])
+	targetURL := stringFromAny(result["url"])
+	status := stringFromAny(result["status"])
+	body := stringFromAny(result["body"])
+	truncated := boolFromAny(result["body_truncated"])
+	if truncated {
+		body += agentText(language, "\n…（响应体已截断）", "\n…(response body truncated)")
+	}
+	return agentText(language,
+		fmt.Sprintf("HTTP 请求已完成。\n\n- method: `%s`\n- url: `%s`\n- status: `%s`\n\nbody:\n```text\n%s\n```", method, targetURL, status, agentLimitBlock(body, 8000)),
+		fmt.Sprintf("HTTP request completed.\n\n- method: `%s`\n- url: `%s`\n- status: `%s`\n\nbody:\n```text\n%s\n```", method, targetURL, status, agentLimitBlock(body, 8000)),
+	)
+}
+
 func agentFormatWorkspaceWrite(language, relPath, content string, size int) string {
 	return agentText(language,
 		fmt.Sprintf("已写入工作空间文件 `%s`（%d bytes）。\n\n内容预览：\n```text\n%s\n```", relPath, size, agentLimitBlock(content, 1200)),
 		fmt.Sprintf("Wrote workspace file `%s` (%d bytes).\n\nPreview:\n```text\n%s\n```", relPath, size, agentLimitBlock(content, 1200)),
+	)
+}
+
+func agentFormatWorkspaceDelete(language, relPath string) string {
+	return agentText(language,
+		fmt.Sprintf("已删除工作空间文件 `%s`。", relPath),
+		fmt.Sprintf("Deleted workspace file `%s`.", relPath),
+	)
+}
+
+func agentFormatWorkspaceMove(language, fromPath, toPath string) string {
+	return agentText(language,
+		fmt.Sprintf("已移动工作空间文件 `%s` → `%s`。", fromPath, toPath),
+		fmt.Sprintf("Moved workspace file `%s` → `%s`.", fromPath, toPath),
+	)
+}
+
+func agentFormatWorkspaceCopy(language, fromPath, toPath string) string {
+	return agentText(language,
+		fmt.Sprintf("已复制工作空间文件 `%s` → `%s`。", fromPath, toPath),
+		fmt.Sprintf("Copied workspace file `%s` → `%s`.", fromPath, toPath),
+	)
+}
+
+func agentFormatWorkspaceMkdir(language, relPath string) string {
+	return agentText(language,
+		fmt.Sprintf("已创建工作空间目录 `%s`。", relPath),
+		fmt.Sprintf("Created workspace directory `%s`.", relPath),
 	)
 }
 
@@ -7160,6 +9530,16 @@ func (m *agentManager) handleAgentWorkspace(ctx context.Context, sessionID, prom
 			return m.handleAgentWorkspaceApplyGroup(sessionID, groupID, language)
 		}
 		return m.handleAgentWorkspaceApply(sessionID, agentExtractWorkspaceChangeID(prompt), language)
+	case agentIsWorkspaceDeleteIntent(prompt):
+		return m.handleAgentWorkspaceDelete(sessionID, agentExtractPath(prompt), language)
+	case agentIsWorkspaceMoveIntent(prompt):
+		fromPath, toPath := agentExtractWorkspaceMovePaths(prompt)
+		return m.handleAgentWorkspaceMove(sessionID, fromPath, toPath, language)
+	case agentIsWorkspaceCopyIntent(prompt):
+		fromPath, toPath := agentExtractWorkspaceMovePaths(prompt)
+		return m.handleAgentWorkspaceCopy(sessionID, fromPath, toPath, language)
+	case agentIsWorkspaceMkdirIntent(prompt):
+		return m.handleAgentWorkspaceMkdir(sessionID, agentExtractWorkspaceMkdirPath(prompt), language)
 	case agentIsWorkspaceDiffIntent(prompt):
 		relPath, oldText, newText := agentExtractWorkspacePatch(prompt)
 		return m.handleAgentWorkspaceDiff(sessionID, relPath, oldText, newText, language)
@@ -7169,6 +9549,11 @@ func (m *agentManager) handleAgentWorkspace(ctx context.Context, sessionID, prom
 	case agentIsWorkspaceWriteIntent(prompt):
 		relPath, content := agentExtractWorkspaceWrite(prompt)
 		return m.handleAgentWorkspaceWrite(sessionID, relPath, content, language)
+	case agentIsWorkspaceSearchIntent(prompt):
+		query := agentExtractWorkspaceSearchQuery(prompt)
+		return m.handleAgentWorkspaceSearch(sessionID, query, agentExtractWorkspaceSearchPath(prompt, query), false, false, 80, language)
+	case agentIsWorkspaceTreeIntent(prompt):
+		return m.handleAgentWorkspaceTree(sessionID, agentExtractPath(prompt), 3, 120, false, language)
 	case agentIsWorkspaceReadIntent(prompt):
 		return m.handleAgentWorkspaceRead(sessionID, prompt, language)
 	case agentIsWorkspaceListIntent(prompt):
@@ -7248,6 +9633,362 @@ func (m *agentManager) handleAgentWorkspaceRead(sessionID, prompt, language stri
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 
+type agentWorkspaceTreeEntry struct {
+	Path  string `json:"path"`
+	IsDir bool   `json:"is_dir"`
+	Size  int64  `json:"size,omitempty"`
+	Depth int    `json:"depth"`
+}
+
+type agentWorkspaceSearchMatch struct {
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Text string `json:"text"`
+}
+
+func (m *agentManager) handleAgentWorkspaceTree(sessionID, relPath string, depth, limit int, includeHidden bool, language string) ([]agentMessage, []agentToolCall, error) {
+	relPath = firstNonEmpty(relPath, ".")
+	if depth <= 0 {
+		depth = 3
+	}
+	if depth > 8 {
+		depth = 8
+	}
+	if limit <= 0 {
+		limit = 120
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	tool := runningAgentToolCall("workspace.files.tree", relPath)
+	ws, err := m.workspace.Create(sessionID)
+	if err != nil {
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+
+	root, cleanRel, err := agentWorkspaceResolvePath(ws.Path, relPath)
+	var entries []agentWorkspaceTreeEntry
+	truncated := false
+	if err == nil {
+		stopWalk := errors.New("agent workspace tree limit reached")
+		err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			name := d.Name()
+			if !includeHidden && strings.HasPrefix(name, ".") && path != root {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			entryDepth := 0
+			if rel != "." {
+				entryDepth = len(strings.Split(rel, "/"))
+			}
+			if entryDepth > depth {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if rel != "." {
+				info, _ := d.Info()
+				size := int64(0)
+				if info != nil && !d.IsDir() {
+					size = info.Size()
+				}
+				p := rel
+				if cleanRel != "." {
+					p = filepath.ToSlash(filepath.Join(cleanRel, rel))
+				}
+				entries = append(entries, agentWorkspaceTreeEntry{Path: p, IsDir: d.IsDir(), Size: size, Depth: entryDepth})
+				if len(entries) >= limit {
+					truncated = true
+					return stopWalk
+				}
+			}
+			if d.IsDir() && entryDepth >= depth {
+				return filepath.SkipDir
+			}
+			return nil
+		})
+		if errors.Is(err, stopWalk) {
+			err = nil
+		}
+	}
+
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	tool.Result = map[string]any{
+		"session_id":      sessionID,
+		"path":            cleanRel,
+		"depth":           depth,
+		"limit":           limit,
+		"include_hidden":  includeHidden,
+		"count":           len(entries),
+		"entries":         entries,
+		"truncated":       truncated,
+		"workspace_path":  ws.Path,
+		"workspace_scope": "agent_workspace",
+	}
+	message := m.message(language, "tool", agentFormatWorkspaceTree(language, cleanRel, entries, truncated), []agentToolCall{tool}, nil)
+	return []agentMessage{message}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentWorkspaceSearch(sessionID, query, relPath string, regexMode, caseSensitive bool, limit int, language string) ([]agentMessage, []agentToolCall, error) {
+	query = strings.TrimSpace(query)
+	relPath = firstNonEmpty(relPath, ".")
+	if limit <= 0 {
+		limit = 80
+	}
+	if limit > 300 {
+		limit = 300
+	}
+
+	tool := runningAgentToolCall("workspace.search", query)
+	ws, err := m.workspace.Create(sessionID)
+	if err != nil {
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+
+	root, cleanRel, err := agentWorkspaceResolvePath(ws.Path, relPath)
+	var matcher *regexp.Regexp
+	if err == nil && regexMode {
+		pattern := query
+		if !caseSensitive {
+			pattern = "(?i)" + pattern
+		}
+		matcher, err = regexp.Compile(pattern)
+	}
+
+	matches := make([]agentWorkspaceSearchMatch, 0, minInt(limit, 64))
+	filesScanned := 0
+	truncated := false
+	if err == nil {
+		stopWalk := errors.New("agent workspace search limit reached")
+		err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil || d.IsDir() {
+				if d != nil && d.IsDir() && strings.HasPrefix(d.Name(), ".") && path != root {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasPrefix(d.Name(), ".") {
+				return nil
+			}
+			info, infoErr := d.Info()
+			if infoErr != nil || info.Size() > 1024*1024 {
+				return nil
+			}
+			data, readErr := os.ReadFile(path)
+			if readErr != nil || agentLooksBinary(data) {
+				return nil
+			}
+			filesScanned++
+			lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+			for idx, line := range lines {
+				if agentLineMatches(line, query, matcher, regexMode, caseSensitive) {
+					rel, relErr := filepath.Rel(root, path)
+					if relErr != nil {
+						continue
+					}
+					rel = filepath.ToSlash(rel)
+					if cleanRel != "." {
+						rel = filepath.ToSlash(filepath.Join(cleanRel, rel))
+					}
+					matches = append(matches, agentWorkspaceSearchMatch{
+						Path: rel,
+						Line: idx + 1,
+						Text: agentLimitBlock(strings.TrimSpace(line), 500),
+					})
+					if len(matches) >= limit {
+						truncated = true
+						return stopWalk
+					}
+				}
+			}
+			return nil
+		})
+		if errors.Is(err, stopWalk) {
+			err = nil
+		}
+	}
+
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	tool.Result = map[string]any{
+		"session_id":     sessionID,
+		"path":           cleanRel,
+		"query":          query,
+		"regex":          regexMode,
+		"case_sensitive": caseSensitive,
+		"limit":          limit,
+		"files_scanned":  filesScanned,
+		"count":          len(matches),
+		"matches":        matches,
+		"truncated":      truncated,
+	}
+	message := m.message(language, "tool", agentFormatWorkspaceSearch(language, query, matches, filesScanned, truncated), []agentToolCall{tool}, nil)
+	return []agentMessage{message}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentHTTPRequest(ctx context.Context, method, targetURL string, requestHeaders map[string]string, requestBodyText string, language string, authProfile *agentHTTPAuthProfileUsage) ([]agentMessage, []agentToolCall, error) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == "" {
+		method = http.MethodGet
+	}
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		return nil, nil, services.NewError(
+			services.CodePolicyDenied,
+			"http.request allows only GET, HEAD, OPTIONS, POST, PUT, PATCH, or DELETE",
+			map[string]any{"method": method},
+			nil,
+		)
+	}
+	if agentHTTPMethodIsSafe(method) && strings.TrimSpace(requestBodyText) != "" {
+		return nil, nil, services.NewError(
+			services.CodePolicyDenied,
+			"http.request body is only allowed with POST, PUT, PATCH, or DELETE",
+			map[string]any{"method": method},
+			nil,
+		)
+	}
+	if len(requestBodyText) > 1024*1024 {
+		return nil, nil, services.NewError(services.CodeBadRequest, "http.request body is too large", map[string]any{"max_bytes": 1024 * 1024}, nil)
+	}
+	targetURL = agentNormalizeURLInput(targetURL)
+	parsed, err := url.Parse(strings.TrimSpace(targetURL))
+	if err != nil || parsed == nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, nil, services.NewError(services.CodeBadRequest, "http.request requires an http/https url", map[string]any{"url": targetURL}, err)
+	}
+
+	tool := runningAgentToolCall("http.request", method+" "+parsed.String())
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var requestBody io.Reader
+	if strings.TrimSpace(requestBodyText) != "" {
+		requestBody = strings.NewReader(requestBodyText)
+	}
+	req, err := http.NewRequestWithContext(reqCtx, method, parsed.String(), requestBody)
+	if err == nil {
+		req.Header.Set("User-Agent", "CyberAgent/agent-http-tool")
+		req.Header.Set("Accept", "*/*")
+		for key, value := range requestHeaders {
+			req.Header.Set(key, value)
+		}
+	}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+	var result map[string]any
+	if err == nil {
+		var resp *http.Response
+		resp, err = client.Do(req)
+		if resp != nil {
+			defer resp.Body.Close()
+			limited := io.LimitReader(resp.Body, 64*1024+1)
+			body, readErr := io.ReadAll(limited)
+			if readErr != nil && err == nil {
+				err = readErr
+			}
+			truncated := len(body) > 64*1024
+			if truncated {
+				body = body[:64*1024]
+			}
+			headers := map[string]string{}
+			for key, values := range resp.Header {
+				headers[key] = strings.Join(values, ", ")
+			}
+			result = map[string]any{
+				"method":             method,
+				"url":                parsed.String(),
+				"status":             resp.Status,
+				"status_code":        resp.StatusCode,
+				"headers":            headers,
+				"request_headers":    agentRedactHTTPHeaders(requestHeaders),
+				"request_body_bytes": len(requestBodyText),
+				"body":               string(body),
+				"body_bytes":         len(body),
+				"body_truncated":     truncated,
+			}
+			if authProfile != nil && authProfile.Applied {
+				result["auth_profile"] = authProfile
+			}
+		}
+	}
+	tool = finishAgentToolCall(tool, err)
+	if result != nil {
+		tool.Result = result
+	}
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	message := m.message(language, "tool", agentFormatHTTPRequest(language, result), []agentToolCall{tool}, nil)
+	return []agentMessage{message}, []agentToolCall{tool}, nil
+}
+
+func agentWorkspaceResolvePath(wsPath, relPath string) (string, string, error) {
+	cleanRel := filepath.Clean(strings.TrimSpace(relPath))
+	if cleanRel == "" || cleanRel == string(filepath.Separator) {
+		cleanRel = "."
+	}
+	if filepath.IsAbs(cleanRel) {
+		return "", cleanRel, fmt.Errorf("absolute workspace paths are not allowed")
+	}
+	wsClean := filepath.Clean(wsPath)
+	absPath := filepath.Clean(filepath.Join(wsClean, cleanRel))
+	if absPath != wsClean && !strings.HasPrefix(absPath, wsClean+string(os.PathSeparator)) {
+		return "", cleanRel, fmt.Errorf("path traversal not allowed")
+	}
+	return absPath, filepath.ToSlash(cleanRel), nil
+}
+
+func agentLooksBinary(data []byte) bool {
+	limit := minInt(len(data), 8000)
+	for i := 0; i < limit; i++ {
+		if data[i] == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func agentLineMatches(line, query string, matcher *regexp.Regexp, regexMode, caseSensitive bool) bool {
+	if regexMode {
+		return matcher != nil && matcher.MatchString(line)
+	}
+	if caseSensitive {
+		return strings.Contains(line, query)
+	}
+	return strings.Contains(strings.ToLower(line), strings.ToLower(query))
+}
+
 func (m *agentManager) handleAgentWorkspaceWrite(sessionID, relPath, content, language string) ([]agentMessage, []agentToolCall, error) {
 	relPath = agentCleanWorkspaceWritePath(relPath)
 	content = agentCleanWorkspaceWriteContent(content)
@@ -7288,6 +10029,156 @@ func (m *agentManager) handleAgentWorkspaceWrite(sessionID, relPath, content, la
 	}
 
 	message := m.message(language, "tool", agentFormatWorkspaceWrite(language, relPath, content, len(data)), []agentToolCall{tool}, nil)
+	return []agentMessage{message}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentWorkspaceDelete(sessionID, relPath, language string) ([]agentMessage, []agentToolCall, error) {
+	relPath = agentCleanWorkspaceWritePath(relPath)
+	if relPath == "" || relPath == "." {
+		return []agentMessage{m.message(language, "agent", agentText(
+			language,
+			"请告诉我要删除的工作空间文件路径，例如：删除文件 notes.md。",
+			"Please provide the workspace file path to delete, for example: delete file notes.md.",
+		), nil, nil)}, nil, nil
+	}
+
+	tool := runningAgentToolCall("workspace.files.delete", relPath)
+	if _, err := m.workspace.Create(sessionID); err != nil {
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+
+	err := m.workspace.DeleteFile(sessionID, relPath)
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	tool.Result = map[string]any{
+		"session_id": sessionID,
+		"path":       relPath,
+		"status":     "deleted",
+	}
+
+	message := m.message(language, "tool", agentFormatWorkspaceDelete(language, relPath), []agentToolCall{tool}, nil)
+	return []agentMessage{message}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentWorkspaceMove(sessionID, fromPath, toPath, language string) ([]agentMessage, []agentToolCall, error) {
+	fromPath = agentCleanWorkspaceWritePath(fromPath)
+	toPath = agentCleanWorkspaceWritePath(toPath)
+	if fromPath == "" || fromPath == "." {
+		return []agentMessage{m.message(language, "agent", agentText(
+			language,
+			"请告诉我要移动的源文件路径，例如：重命名文件 notes.md 为 archive/notes.md。",
+			"Please provide the source file path to move, for example: rename file notes.md to archive/notes.md.",
+		), nil, nil)}, nil, nil
+	}
+	if toPath == "" || toPath == "." {
+		return []agentMessage{m.message(language, "agent", agentText(
+			language,
+			"请告诉我要移动到的目标文件路径，例如：重命名文件 notes.md 为 archive/notes.md。",
+			"Please provide the destination file path to move to, for example: rename file notes.md to archive/notes.md.",
+		), nil, nil)}, nil, nil
+	}
+
+	tool := runningAgentToolCall("workspace.files.move", fromPath+" -> "+toPath)
+	if _, err := m.workspace.Create(sessionID); err != nil {
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+
+	err := m.workspace.MoveFile(sessionID, fromPath, toPath)
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	tool.Result = map[string]any{
+		"session_id": sessionID,
+		"from":       fromPath,
+		"path":       toPath,
+		"status":     "moved",
+	}
+
+	message := m.message(language, "tool", agentFormatWorkspaceMove(language, fromPath, toPath), []agentToolCall{tool}, nil)
+	return []agentMessage{message}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentWorkspaceCopy(sessionID, fromPath, toPath, language string) ([]agentMessage, []agentToolCall, error) {
+	fromPath = agentCleanWorkspaceWritePath(fromPath)
+	toPath = agentCleanWorkspaceWritePath(toPath)
+	if fromPath == "" || fromPath == "." {
+		return []agentMessage{m.message(language, "agent", agentText(
+			language,
+			"请告诉我要复制的源文件路径，例如：复制文件 notes.md 到 archive/notes-copy.md。",
+			"Please provide the source file path to copy, for example: copy file notes.md to archive/notes-copy.md.",
+		), nil, nil)}, nil, nil
+	}
+	if toPath == "" || toPath == "." {
+		return []agentMessage{m.message(language, "agent", agentText(
+			language,
+			"请告诉我要复制到的目标文件路径，例如：复制文件 notes.md 到 archive/notes-copy.md。",
+			"Please provide the destination file path to copy to, for example: copy file notes.md to archive/notes-copy.md.",
+		), nil, nil)}, nil, nil
+	}
+
+	tool := runningAgentToolCall("workspace.files.copy", fromPath+" -> "+toPath)
+	if _, err := m.workspace.Create(sessionID); err != nil {
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+
+	err := m.workspace.CopyFile(sessionID, fromPath, toPath)
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	tool.Result = map[string]any{
+		"session_id": sessionID,
+		"from":       fromPath,
+		"path":       toPath,
+		"status":     "copied",
+	}
+
+	message := m.message(language, "tool", agentFormatWorkspaceCopy(language, fromPath, toPath), []agentToolCall{tool}, nil)
+	return []agentMessage{message}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentWorkspaceMkdir(sessionID, relPath, language string) ([]agentMessage, []agentToolCall, error) {
+	relPath = agentCleanWorkspaceWritePath(relPath)
+	if relPath == "" || relPath == "." {
+		return []agentMessage{m.message(language, "agent", agentText(
+			language,
+			"请告诉我要创建的工作空间目录路径，例如：创建目录 reports。",
+			"Please provide the workspace directory path to create, for example: mkdir reports.",
+		), nil, nil)}, nil, nil
+	}
+
+	tool := runningAgentToolCall("workspace.files.mkdir", relPath)
+	if _, err := m.workspace.Create(sessionID); err != nil {
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+
+	err := m.workspace.MakeDir(sessionID, relPath)
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	tool.Result = map[string]any{
+		"session_id": sessionID,
+		"path":       relPath,
+		"status":     "created",
+	}
+
+	message := m.message(language, "tool", agentFormatWorkspaceMkdir(language, relPath), []agentToolCall{tool}, nil)
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 

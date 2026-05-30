@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,6 +55,52 @@ func TestNewServerCreatesTokenFileAndNormalizesDefaults(t *testing.T) {
 		if got := info.Mode().Perm(); got != 0o600 {
 			t.Fatalf("token file permissions = %o, want 600", got)
 		}
+	}
+}
+
+func TestParseAgentPlannerResponseUnwrapsOpenAIChatCompletions(t *testing.T) {
+	raw := `{
+		"id":"chatcmpl-test",
+		"object":"chat.completion",
+		"choices":[{
+			"index":0,
+			"message":{
+				"role":"assistant",
+				"content":"{\"answer\":\"只展示给用户的主要内容\",\"task\":{\"goal\":\"整理输出\",\"kind\":\"chat\",\"status\":\"done\",\"summary\":\"已解析 OpenAI envelope\"},\"todos\":[],\"next_action\":{\"type\":\"finished\",\"reason\":\"done\",\"auto_continue\":false}}"
+			},
+			"finish_reason":"stop"
+		}]
+	}`
+
+	plan, err := parseAgentPlannerResponse(raw)
+	if err != nil {
+		t.Fatalf("parseAgentPlannerResponse() error = %v", err)
+	}
+	if plan.Answer != "只展示给用户的主要内容" {
+		t.Fatalf("Answer = %q", plan.Answer)
+	}
+	if plan.Task == nil || plan.Task.Goal != "整理输出" {
+		t.Fatalf("Task = %#v", plan.Task)
+	}
+	if plan.NextAction == nil || plan.NextAction.Type != "finished" {
+		t.Fatalf("NextAction = %#v", plan.NextAction)
+	}
+}
+
+func TestParseAgentPlannerResponseFindsPlannerJSONAfterOperatorText(t *testing.T) {
+	raw := "我先说明一下。\n```bash\npwd\n```\n\n" + `{
+		"answer":"已提取主要 answer，不展示整段 JSON。",
+		"task":{"goal":"解析混合输出","kind":"chat","status":"done","summary":"ok"},
+		"todos":[],
+		"next_action":{"type":"finished","reason":"ok","auto_continue":false}
+	}`
+
+	plan, err := parseAgentPlannerResponse(raw)
+	if err != nil {
+		t.Fatalf("parseAgentPlannerResponse() error = %v", err)
+	}
+	if plan.Answer != "已提取主要 answer，不展示整段 JSON。" {
+		t.Fatalf("Answer = %q", plan.Answer)
 	}
 }
 
@@ -413,6 +460,24 @@ func TestHTTPAgentSessionAndMessageAPIs(t *testing.T) {
 		t.Fatalf("agent context alias should not duplicate full chat history: %#v", contextAlias.Body.Data)
 	}
 
+	trace := doDaemonRequest(t, api.URL+"/api/v1/agent/sessions/"+sessionID+"/trace", "test-token")
+	if trace.StatusCode != http.StatusOK || !trace.Body.OK {
+		t.Fatalf("unexpected agent trace response: status=%d body=%#v", trace.StatusCode, trace.Body)
+	}
+	if trace.Body.Data["trace_version"] != "agent.trace.v1" || trace.Body.Data["session_id"] != sessionID {
+		t.Fatalf("agent trace missing metadata: %#v", trace.Body.Data)
+	}
+	traceMessages := asList(t, trace.Body.Data["messages"])
+	traceTools := asList(t, trace.Body.Data["tool_calls"])
+	traceTimeline := asList(t, trace.Body.Data["timeline"])
+	if len(traceMessages) == 0 || len(traceTools) == 0 || len(traceTimeline) < len(traceMessages)+len(traceTools) {
+		t.Fatalf("agent trace should include messages, tool calls, and combined timeline: messages=%#v tools=%#v timeline=%#v", traceMessages, traceTools, traceTimeline)
+	}
+	traceSummary := asMap(t, trace.Body.Data["summary"])
+	if int(traceSummary["message_count"].(float64)) != len(traceMessages) || int(traceSummary["tool_call_count"].(float64)) != len(traceTools) {
+		t.Fatalf("agent trace summary counts mismatch: %#v", traceSummary)
+	}
+
 	continueControl := doDaemonRequestWithBody(
 		t,
 		http.MethodPost,
@@ -450,6 +515,38 @@ func TestHTTPAgentSessionAndMessageAPIs(t *testing.T) {
 	continueAliasNext := asMap(t, continueAliasSession["next_action"])
 	if continueAliasSession["status"] != "running" || continueAliasNext["type"] != "continue" || continueAliasNext["suggested_prompt"] != "alias continue prompt" {
 		t.Fatalf("continue alias should force continue action from path: session=%#v next=%#v", continueAliasSession, continueAliasNext)
+	}
+
+	pauseAlias := doDaemonRequestWithBody(
+		t,
+		http.MethodPost,
+		api.URL+"/api/v1/agent/sessions/"+sessionID+"/pause",
+		"test-token",
+		`{"operator":"tester","language":"zh","action":"continue","reason":"operator pause without cancel"}`,
+	)
+	if pauseAlias.StatusCode != http.StatusOK || !pauseAlias.Body.OK {
+		t.Fatalf("unexpected pause alias response: status=%d body=%#v", pauseAlias.StatusCode, pauseAlias.Body)
+	}
+	pauseSession := asMap(t, pauseAlias.Body.Data["session"])
+	pauseNext := asMap(t, pauseSession["next_action"])
+	if pauseSession["status"] != "paused" || pauseNext["type"] != "continue" || pauseNext["reason"] != "operator pause without cancel" {
+		t.Fatalf("pause alias should pause but keep resumable next action: session=%#v next=%#v", pauseSession, pauseNext)
+	}
+
+	resumeAlias := doDaemonRequestWithBody(
+		t,
+		http.MethodPost,
+		api.URL+"/api/v1/agent/sessions/"+sessionID+"/resume",
+		"test-token",
+		`{"operator":"tester","language":"zh","action":"pause","prompt":"resume prompt"}`,
+	)
+	if resumeAlias.StatusCode != http.StatusOK || !resumeAlias.Body.OK {
+		t.Fatalf("unexpected resume alias response: status=%d body=%#v", resumeAlias.StatusCode, resumeAlias.Body)
+	}
+	resumeSession := asMap(t, resumeAlias.Body.Data["session"])
+	resumeNext := asMap(t, resumeSession["next_action"])
+	if resumeSession["status"] != "running" || resumeNext["type"] != "continue" || resumeNext["suggested_prompt"] != "resume prompt" {
+		t.Fatalf("resume alias should force continue action from path: session=%#v next=%#v", resumeSession, resumeNext)
 	}
 
 	revisePrompt := "修订计划：优先分析认证与越权风险，暂缓低风险安全头说明"
@@ -497,6 +594,22 @@ func TestHTTPAgentSessionAndMessageAPIs(t *testing.T) {
 	stopNextAction := asMap(t, stopSession["next_action"])
 	if stopNextAction["type"] != "blocked" || stopNextAction["reason"] != "operator pause" {
 		t.Fatalf("stop alias did not set blocked next action: %#v", stopNextAction)
+	}
+
+	cancelAlias := doDaemonRequestWithBody(
+		t,
+		http.MethodPost,
+		api.URL+"/api/v1/agent/sessions/"+sessionID+"/cancel",
+		"test-token",
+		`{"operator":"tester","language":"zh","action":"continue","reason":"operator cancel"}`,
+	)
+	if cancelAlias.StatusCode != http.StatusOK || !cancelAlias.Body.OK {
+		t.Fatalf("unexpected cancel alias response: status=%d body=%#v", cancelAlias.StatusCode, cancelAlias.Body)
+	}
+	cancelSession := asMap(t, cancelAlias.Body.Data["session"])
+	cancelNext := asMap(t, cancelSession["next_action"])
+	if cancelSession["status"] != "cancelled" || cancelNext["type"] != "wait_user" || cancelNext["reason"] != "operator cancel" {
+		t.Fatalf("cancel alias should mark session cancelled and wait for next task: session=%#v next=%#v", cancelSession, cancelNext)
 	}
 
 	newTaskControl := doDaemonRequestWithBody(
@@ -1040,6 +1153,43 @@ func TestHTTPAgentNaturalLanguageRunWorkspaceContext(t *testing.T) {
 		if !listOfMapsContains(t, refs, "id", id) {
 			t.Fatalf("persisted context refs missing %s: %#v", id, refs)
 		}
+	}
+
+	draftPayload, err := json.Marshal(map[string]string{
+		"operator":        "tester",
+		"language":        "zh",
+		"operation_level": "workspace_write",
+		"message":         "生成报告草稿 " + runID,
+	})
+	if err != nil {
+		t.Fatalf("marshal report draft payload: %v", err)
+	}
+	draft := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/messages", "test-token", string(draftPayload))
+	if draft.StatusCode != http.StatusOK || !draft.Body.OK {
+		t.Fatalf("unexpected report draft response: status=%d body=%#v", draft.StatusCode, draft.Body)
+	}
+	draftTools := asList(t, draft.Body.Data["tool_calls"])
+	if len(draftTools) != 1 {
+		t.Fatalf("expected one report draft tool call: %#v", draftTools)
+	}
+	draftTool := asMap(t, draftTools[0])
+	if draftTool["name"] != "reports.draft" || draftTool["status"] != string(contracts.StatusSucceeded) {
+		t.Fatalf("unexpected report draft tool: %#v", draftTool)
+	}
+	draftResult := asMap(t, draftTool["result"])
+	draftPath := stringValue(t, draftResult["path"])
+	if draftResult["run_id"] != runID || draftPath == "" || draftResult["draft_format"] != "markdown" {
+		t.Fatalf("unexpected report draft result: %#v", draftResult)
+	}
+	draftBytes, err := os.ReadFile(filepath.Join(runsDir, ".agent", "workspaces", sessionID, "workspace", filepath.FromSlash(draftPath)))
+	if err != nil {
+		t.Fatalf("read generated report draft: %v", err)
+	}
+	draftContent := string(draftBytes)
+	if !strings.Contains(draftContent, "CyberAgent 报告草稿") ||
+		!strings.Contains(draftContent, "Missing CSP") ||
+		!strings.Contains(draftContent, "Add a CSP header") {
+		t.Fatalf("report draft content missing expected finding/remediation: %s", draftContent)
 	}
 }
 
@@ -2199,7 +2349,9 @@ func TestHTTPAgentCapabilitiesAPI(t *testing.T) {
 		"/api/v1/agent/sessions/{session_id}/messages",
 		"/api/v1/agent/sessions/{session_id}/control",
 		"/api/v1/agent/sessions/{session_id}/continue",
+		"/api/v1/agent/sessions/{session_id}/pause",
 		"/api/v1/agent/sessions/{session_id}/stop",
+		"/api/v1/agent/sessions/{session_id}/cancel",
 		"/api/v1/agent/sessions/{session_id}/new-task",
 		"/api/v1/agent/sessions/{session_id}/stream",
 	} {
@@ -2230,10 +2382,15 @@ func TestHTTPAgentCapabilitiesAPI(t *testing.T) {
 		!listOfMapsContains(t, tools, "name", "workspace.files.rebase") ||
 		!listOfMapsContains(t, tools, "name", "workspace.files.apply") ||
 		!listOfMapsContains(t, tools, "name", "workspace.files.discard") ||
+		!listOfMapsContains(t, tools, "name", "workspace.files.delete") ||
+		!listOfMapsContains(t, tools, "name", "workspace.files.move") ||
+		!listOfMapsContains(t, tools, "name", "workspace.files.copy") ||
+		!listOfMapsContains(t, tools, "name", "workspace.files.mkdir") ||
 		!listOfMapsContains(t, tools, "name", "runs.approvals.list") ||
 		!listOfMapsContains(t, tools, "name", "runs.approvals.approve") ||
 		!listOfMapsContains(t, tools, "name", "runs.approvals.deny") ||
 		!listOfMapsContains(t, tools, "name", "runs.resume_approved") ||
+		!listOfMapsContains(t, tools, "name", "runs.context") ||
 		!listOfMapsContains(t, tools, "name", "daemon.health") {
 		t.Fatalf("agent builtin tools missing required tools: %#v", tools)
 	}
@@ -2983,6 +3140,116 @@ func TestHTTPAgentLLMPlannerInvokesStructuredToolActions(t *testing.T) {
 	}
 }
 
+func TestHTTPAgentLLMPlannerInvokesRunContextTool(t *testing.T) {
+	root := t.TempDir()
+	runsDir := filepath.Join(root, "runs")
+	runID := "job_planner_context_001"
+	now := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
+	writeDaemonRunJob(t, runsDir, runID, contracts.StatusSucceeded, now, now.Add(time.Minute))
+	writeDaemonRunReport(t, runsDir, runID, now)
+
+	var llmRequests atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber := llmRequests.Add(1)
+		if r.Method != http.MethodPost {
+			t.Errorf("LLM method = %s, want POST", r.Method)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode LLM request: %v", err)
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		encoded, _ := json.Marshal(body)
+		if requestNumber == 1 && !strings.Contains(string(encoded), "runs.context") {
+			t.Errorf("planner request should advertise runs.context tool: %s", encoded)
+		}
+		responseContent := fmt.Sprintf(`{
+			"phase":"plan",
+			"answer":"我会读取该运行的 findings 上下文，再基于证据总结。",
+			"task":{"goal":"读取运行上下文","kind":"analysis","status":"running","summary":"读取 findings 上下文。"},
+			"todos":[{"title":"读取 findings 上下文","status":"running","priority":1}],
+			"actions":[{"name":"runs.context","arguments":{"run_id":%q,"context":"findings"}}],
+			"next_action":{"type":"continue","reason":"需要先读取运行上下文","auto_continue":true}
+		}`, runID)
+		if requestNumber == 2 {
+			encodedMessages, _ := json.Marshal(body["messages"])
+			if !strings.Contains(string(encodedMessages), "Observation 1") || !strings.Contains(string(encodedMessages), "Missing CSP") {
+				t.Errorf("synthesis request missing run context observation: %s", encodedMessages)
+			}
+			responseContent = `{
+				"phase":"final_answer",
+				"answer":"已读取 findings 上下文，关键发现是 Missing CSP，并可按修复建议补充 CSP 后复测。",
+				"task":{"goal":"读取运行上下文","kind":"analysis","status":"done","summary":"已完成 findings 分析。"},
+				"todos":[{"title":"读取 findings 上下文","status":"done","priority":1}],
+				"actions":[],
+				"next_action":{"type":"wait_user","reason":"等待用户要求生成报告或复测。"}
+			}`
+		}
+		encodedContent, err := json.Marshal(responseContent)
+		if err != nil {
+			t.Errorf("marshal planner content: %v", err)
+			http.Error(w, "bad json", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"chatcmpl-run-context",
+			"choices":[{"message":{"role":"assistant","content":` + string(encodedContent) + `},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":20,"completion_tokens":30}
+		}`))
+	}))
+	defer llmServer.Close()
+
+	handler := newRouter(routerServices{
+		version:   services.NewVersionService(services.BuildInfo{Name: "CyberAgent", Version: "vagent-run-context"}),
+		plugins:   services.NewPluginService(filepath.Join(root, "plugins")),
+		runs:      services.NewRunService(runsDir),
+		approvals: services.NewApprovalService(runsDir),
+	}, "test-token")
+	api := httptest.NewServer(handler)
+	defer api.Close()
+
+	create := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions", "test-token", `{"operator":"tester","language":"zh"}`)
+	if create.StatusCode != http.StatusCreated || !create.Body.OK {
+		t.Fatalf("unexpected create agent session response: status=%d body=%#v", create.StatusCode, create.Body)
+	}
+	sessionID := stringValue(t, asMap(t, create.Body.Data["session"])["session_id"])
+	payload, err := json.Marshal(map[string]any{
+		"operator": "tester",
+		"language": "zh",
+		"message":  "请读取运行 " + runID + " 的 findings 上下文并总结",
+		"provider": "openai",
+		"model":    "planner-run-context-test",
+		"api_key":  "planner-run-context-key",
+		"base_url": llmServer.URL,
+	})
+	if err != nil {
+		t.Fatalf("marshal run context planner payload: %v", err)
+	}
+	send := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/messages", "test-token", string(payload))
+	if send.StatusCode != http.StatusOK || !send.Body.OK {
+		t.Fatalf("unexpected run context planner response: status=%d body=%#v", send.StatusCode, send.Body)
+	}
+	if llmRequests.Load() != 2 {
+		t.Fatalf("LLM server received %d requests, want 2", llmRequests.Load())
+	}
+	toolCalls := asList(t, send.Body.Data["tool_calls"])
+	contextTool := findMapByKey(t, toolCalls, "name", "GET /api/v1/runs/{run_id}/context")
+	if contextTool["status"] != string(contracts.StatusSucceeded) {
+		t.Fatalf("runs.context action should execute run context tool: %#v", contextTool)
+	}
+	result := asMap(t, contextTool["result"])
+	if result["run_id"] != runID || result["context"] != "findings" || int(result["finding_count"].(float64)) < 1 {
+		t.Fatalf("unexpected run context result: %#v", result)
+	}
+	messages := asList(t, send.Body.Data["messages"])
+	last := asMap(t, messages[len(messages)-1])
+	if last["phase"] != "final_answer" || !strings.Contains(stringValue(t, last["content"]), "Missing CSP") {
+		t.Fatalf("unexpected run context final answer: %#v", last)
+	}
+}
+
 func TestHTTPAgentLLMNativeToolCallsAreExecutedAndSynthesized(t *testing.T) {
 	var llmRequests atomic.Int32
 	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3290,6 +3557,20 @@ func TestHTTPAgentLLMPlannerMutatingWorkspaceActionRequiresExplicitIntent(t *tes
 	if nextAction["type"] != "wait_user" || !strings.Contains(stringValue(t, nextAction["suggested_prompt"]), "写入") {
 		t.Fatalf("policy denial should converge to wait_user next action: %#v", nextAction)
 	}
+	todos := asList(t, send.Body.Data["todos"])
+	hasRecoveryTodo := false
+	for _, raw := range todos {
+		todo := asMap(t, raw)
+		if strings.Contains(stringValue(t, todo["id"]), "todo_recover_") &&
+			strings.Contains(stringValue(t, todo["title"]), "确认") &&
+			stringValue(t, todo["status"]) == "blocked" {
+			hasRecoveryTodo = true
+			break
+		}
+	}
+	if !hasRecoveryTodo {
+		t.Fatalf("policy denial should add a blocked recovery TODO: %#v", todos)
+	}
 
 	writtenPath := filepath.Join(runsDir, ".agent", "workspaces", sessionID, "workspace", "llm-auto.md")
 	if _, err := os.Stat(writtenPath); !os.IsNotExist(err) {
@@ -3432,6 +3713,145 @@ func TestHTTPAgentRoutedToolsAreSynthesizedWhenProviderConfigured(t *testing.T) 
 		nextAction["suggested_prompt"] != "读取关键工作区文件并总结下一步" ||
 		!boolValue(t, nextAction["auto_continue"]) {
 		t.Fatalf("routed synthesis should persist auto-continue next action: %#v", nextAction)
+	}
+}
+
+func TestHTTPAgentHTTPRequestUsesAuthProfileWithoutLeakingSecret(t *testing.T) {
+	const secretToken = "secret-token-for-api-profile"
+	var targetRequests atomic.Int32
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetRequests.Add(1)
+		if r.Header.Get("Authorization") != "Bearer "+secretToken {
+			t.Errorf("Authorization header = %q, want bearer profile", r.Header.Get("Authorization"))
+			http.Error(w, "missing auth", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer targetServer.Close()
+
+	var llmRequests atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := llmRequests.Add(1)
+		rawBody, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read LLM body: %v", err)
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		if strings.Contains(string(rawBody), secretToken) {
+			t.Errorf("LLM request leaked auth secret: %s", rawBody)
+		}
+		var content string
+		if count == 1 {
+			content = fmt.Sprintf(`{
+				"phase":"plan",
+				"answer":"我将使用配置好的 API auth profile 对授权目标发起 GET 请求。",
+				"task":{"goal":"验证 API 授权请求","kind":"ops","status":"running","summary":"准备调用 http.request。"},
+				"actions":[{"name":"http.request","arguments":{"url":%q,"method":"GET","auth_profile_id":"api-auth"}}],
+				"next_action":{"type":"continue","reason":"请求执行后需要总结响应。","suggested_prompt":"总结 API 响应","auto_continue":true}
+			}`, targetServer.URL+"/api/me")
+		} else {
+			content = `{
+				"phase":"final_answer",
+				"answer":"已完成授权 API 请求，响应为 200 OK，且请求头中的凭据已脱敏保存。",
+				"task":{"goal":"验证 API 授权请求","kind":"ops","status":"done","summary":"http.request 已成功使用 auth profile。"},
+				"todos":[{"title":"执行授权 GET 请求","status":"done","priority":1}],
+				"next_action":{"type":"finished","reason":"目标请求已完成。","auto_continue":false}
+			}`
+		}
+		encodedContent, err := json.Marshal(content)
+		if err != nil {
+			t.Errorf("marshal LLM content: %v", err)
+			http.Error(w, "bad json", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"chatcmpl-auth-profile",
+			"choices":[{"message":{"role":"assistant","content":` + string(encodedContent) + `},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":24,"completion_tokens":18}
+		}`))
+	}))
+	defer llmServer.Close()
+
+	root := t.TempDir()
+	runsDir := filepath.Join(root, "runs")
+	handler := newRouter(routerServices{
+		version:   services.NewVersionService(services.BuildInfo{Name: "CyberAgent", Version: "vagent-auth-profile"}),
+		plugins:   services.NewPluginService(filepath.Join(root, "plugins")),
+		runs:      services.NewRunService(runsDir),
+		approvals: services.NewApprovalService(runsDir),
+		jobs: newJobManager(jobManagerConfig{
+			RunsDir:           runsDir,
+			Build:             services.BuildInfo{Name: "CyberAgent", Version: "vagent-auth-profile"},
+			MaxConcurrentJobs: 1,
+		}),
+	}, "test-token")
+	api := httptest.NewServer(handler)
+	defer api.Close()
+
+	create := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions", "test-token", `{"operator":"tester","language":"zh","operation_level":"safe_scan"}`)
+	if create.StatusCode != http.StatusCreated || !create.Body.OK {
+		t.Fatalf("unexpected create agent session response: status=%d body=%#v", create.StatusCode, create.Body)
+	}
+	sessionID := stringValue(t, asMap(t, create.Body.Data["session"])["session_id"])
+
+	payload, err := json.Marshal(map[string]any{
+		"operator":        "tester",
+		"language":        "zh",
+		"operation_level": "safe_scan",
+		"message":         "请 GET 请求授权目标 " + targetServer.URL + "/api/me，并使用 api-auth 授权 profile",
+		"provider":        "openai",
+		"model":           "auth-profile-test",
+		"api_key":         "auth-profile-key",
+		"base_url":        llmServer.URL,
+		"auth_profiles": []map[string]any{
+			{
+				"id":       "api-auth",
+				"name":     "Demo API",
+				"type":     "bearer",
+				"base_url": targetServer.URL,
+				"token":    secretToken,
+				"enabled":  true,
+			},
+		},
+		"default_auth_profile_id": "api-auth",
+	})
+	if err != nil {
+		t.Fatalf("marshal auth profile payload: %v", err)
+	}
+	send := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/messages", "test-token", string(payload))
+	if send.StatusCode != http.StatusOK || !send.Body.OK {
+		t.Fatalf("unexpected auth profile response: status=%d body=%#v", send.StatusCode, send.Body)
+	}
+	if targetRequests.Load() != 1 {
+		t.Fatalf("target server received %d requests, want 1", targetRequests.Load())
+	}
+	if llmRequests.Load() != 2 {
+		t.Fatalf("LLM server received %d requests, want 2", llmRequests.Load())
+	}
+	encodedResponse, _ := json.Marshal(send.Body.Data)
+	if strings.Contains(string(encodedResponse), secretToken) {
+		t.Fatalf("agent response leaked auth secret: %s", encodedResponse)
+	}
+	toolCalls := asList(t, send.Body.Data["tool_calls"])
+	httpTool := findMapByKey(t, toolCalls, "name", "http.request")
+	if httpTool["status"] != string(contracts.StatusSucceeded) {
+		t.Fatalf("http.request should succeed: %#v", httpTool)
+	}
+	result := asMap(t, httpTool["result"])
+	if int(result["status_code"].(float64)) != http.StatusOK {
+		t.Fatalf("unexpected http status result: %#v", result)
+	}
+	requestHeaders := asMap(t, result["request_headers"])
+	if requestHeaders["Authorization"] != "[redacted]" {
+		t.Fatalf("authorization request header should be redacted: %#v", requestHeaders)
+	}
+	authProfile := asMap(t, result["auth_profile"])
+	if authProfile["id"] != "api-auth" || authProfile["type"] != "bearer" || authProfile["applied"] != true {
+		t.Fatalf("auth profile metadata missing or wrong: %#v", authProfile)
 	}
 }
 
@@ -4382,6 +4802,37 @@ func TestHTTPAgentNaturalLanguageInvokesWorkspaceTools(t *testing.T) {
 		t.Fatalf("unexpected workspace read result: %#v", readResult)
 	}
 
+	deleteFile := doDaemonRequestWithBody(
+		t,
+		http.MethodPost,
+		api.URL+"/api/v1/agent/sessions/"+sessionID+"/messages",
+		"test-token",
+		`{"operator":"tester","language":"zh","message":"删除文件 notes.md"}`,
+	)
+	if deleteFile.StatusCode != http.StatusOK || !deleteFile.Body.OK {
+		t.Fatalf("unexpected delete agent message response: status=%d body=%#v", deleteFile.StatusCode, deleteFile.Body)
+	}
+	deleteTools := asList(t, deleteFile.Body.Data["tool_calls"])
+	if len(deleteTools) != 1 {
+		t.Fatalf("expected workspace delete tool call: %#v", deleteFile.Body.Data["tool_calls"])
+	}
+	deleteTool := asMap(t, deleteTools[0])
+	if deleteTool["name"] != "workspace.files.delete" || deleteTool["status"] != string(contracts.StatusSucceeded) {
+		t.Fatalf("unexpected workspace delete tool call: %#v", deleteTool)
+	}
+	deleteResult := asMap(t, deleteTool["result"])
+	if deleteResult["path"] != "notes.md" || deleteResult["status"] != "deleted" {
+		t.Fatalf("unexpected workspace delete result: %#v", deleteResult)
+	}
+	deleteMessages := asList(t, deleteFile.Body.Data["messages"])
+	if !strings.Contains(stringValue(t, asMap(t, deleteMessages[len(deleteMessages)-1])["content"]), "已删除工作空间文件") {
+		t.Fatalf("delete response should summarize file delete: %#v", deleteMessages)
+	}
+	readDeleted := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/workspace/files/read", "test-token", `{"path":"notes.md"}`)
+	if readDeleted.StatusCode == http.StatusOK && readDeleted.Body.OK {
+		t.Fatalf("deleted workspace file should not be readable: %#v", readDeleted.Body)
+	}
+
 	persisted := doDaemonRequest(t, api.URL+"/api/v1/agent/sessions/"+sessionID, "test-token")
 	if persisted.StatusCode != http.StatusOK || !persisted.Body.OK {
 		t.Fatalf("unexpected persisted session response: status=%d body=%#v", persisted.StatusCode, persisted.Body)
@@ -4407,6 +4858,9 @@ func TestHTTPAgentNaturalLanguageInvokesWorkspaceTools(t *testing.T) {
 	if !listOfMapsContains(t, persistedToolCalls, "name", "workspace.files.discard") {
 		t.Fatalf("persisted session should keep workspace discard tool call: %#v", persistedToolCalls)
 	}
+	if !listOfMapsContains(t, persistedToolCalls, "name", "workspace.files.delete") {
+		t.Fatalf("persisted session should keep workspace delete tool call: %#v", persistedToolCalls)
+	}
 	persistedPending := asList(t, persistedSession["pending_changes"])
 	if !listOfMapsContains(t, persistedPending, "id", changeID) || !listOfMapsContains(t, persistedPending, "status", "applied") {
 		t.Fatalf("persisted session should keep applied staged change: %#v", persistedPending)
@@ -4417,6 +4871,110 @@ func TestHTTPAgentNaturalLanguageInvokesWorkspaceTools(t *testing.T) {
 	contextRefs := asList(t, persistedSession["context_refs"])
 	if !listOfMapsContains(t, contextRefs, "ref_id", "notes.md") {
 		t.Fatalf("persisted session should keep workspace file context ref: %#v", contextRefs)
+	}
+}
+
+func TestHTTPAgentNaturalLanguageMovesWorkspaceFiles(t *testing.T) {
+	root := t.TempDir()
+	runsDir := filepath.Join(root, "runs")
+	handler := newRouter(routerServices{
+		version:   services.NewVersionService(services.BuildInfo{Name: "CyberAgent", Version: "vagent-move"}),
+		plugins:   services.NewPluginService(filepath.Join(root, "plugins")),
+		runs:      services.NewRunService(runsDir),
+		approvals: services.NewApprovalService(runsDir),
+	}, "test-token")
+	api := httptest.NewServer(handler)
+	defer api.Close()
+
+	create := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions", "test-token", `{"operator":"tester","language":"zh"}`)
+	if create.StatusCode != http.StatusCreated || !create.Body.OK {
+		t.Fatalf("unexpected create agent session response: status=%d body=%#v", create.StatusCode, create.Body)
+	}
+	sessionID := stringValue(t, asMap(t, create.Body.Data["session"])["session_id"])
+
+	write := doDaemonRequestWithBody(
+		t,
+		http.MethodPost,
+		api.URL+"/api/v1/agent/sessions/"+sessionID+"/workspace/files/write",
+		"test-token",
+		`{"path":"notes.md","content":"move me"}`,
+	)
+	if write.StatusCode != http.StatusOK || !write.Body.OK {
+		t.Fatalf("unexpected write response: status=%d body=%#v", write.StatusCode, write.Body)
+	}
+
+	mkdir := doDaemonRequestWithBody(
+		t,
+		http.MethodPost,
+		api.URL+"/api/v1/agent/sessions/"+sessionID+"/messages",
+		"test-token",
+		`{"operator":"tester","language":"zh","message":"创建目录 archive"}`,
+	)
+	if mkdir.StatusCode != http.StatusOK || !mkdir.Body.OK {
+		t.Fatalf("unexpected mkdir agent message response: status=%d body=%#v", mkdir.StatusCode, mkdir.Body)
+	}
+	mkdirTool := asMap(t, asList(t, mkdir.Body.Data["tool_calls"])[0])
+	if mkdirTool["name"] != "workspace.files.mkdir" || mkdirTool["status"] != string(contracts.StatusSucceeded) {
+		t.Fatalf("unexpected workspace mkdir tool call: %#v", mkdirTool)
+	}
+
+	copyFile := doDaemonRequestWithBody(
+		t,
+		http.MethodPost,
+		api.URL+"/api/v1/agent/sessions/"+sessionID+"/messages",
+		"test-token",
+		`{"operator":"tester","language":"zh","message":"复制文件 notes.md 到 archive/notes-copy.md"}`,
+	)
+	if copyFile.StatusCode != http.StatusOK || !copyFile.Body.OK {
+		t.Fatalf("unexpected copy agent message response: status=%d body=%#v", copyFile.StatusCode, copyFile.Body)
+	}
+	copyTool := asMap(t, asList(t, copyFile.Body.Data["tool_calls"])[0])
+	if copyTool["name"] != "workspace.files.copy" || copyTool["status"] != string(contracts.StatusSucceeded) {
+		t.Fatalf("unexpected workspace copy tool call: %#v", copyTool)
+	}
+	copyResult := asMap(t, copyTool["result"])
+	if copyResult["from"] != "notes.md" || copyResult["path"] != "archive/notes-copy.md" || copyResult["status"] != "copied" {
+		t.Fatalf("unexpected workspace copy result: %#v", copyResult)
+	}
+	copyRead := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/workspace/files/read", "test-token", `{"path":"archive/notes-copy.md"}`)
+	if copyRead.StatusCode != http.StatusOK || !copyRead.Body.OK || !strings.Contains(stringValue(t, copyRead.Body.Data["content"]), "move me") {
+		t.Fatalf("copied file should be readable at destination: status=%d body=%#v", copyRead.StatusCode, copyRead.Body)
+	}
+
+	move := doDaemonRequestWithBody(
+		t,
+		http.MethodPost,
+		api.URL+"/api/v1/agent/sessions/"+sessionID+"/messages",
+		"test-token",
+		`{"operator":"tester","language":"zh","message":"重命名文件 notes.md 为 archive/notes-renamed.md"}`,
+	)
+	if move.StatusCode != http.StatusOK || !move.Body.OK {
+		t.Fatalf("unexpected move agent message response: status=%d body=%#v", move.StatusCode, move.Body)
+	}
+	moveTools := asList(t, move.Body.Data["tool_calls"])
+	if len(moveTools) != 1 {
+		t.Fatalf("expected workspace move tool call: %#v", move.Body.Data["tool_calls"])
+	}
+	moveTool := asMap(t, moveTools[0])
+	if moveTool["name"] != "workspace.files.move" || moveTool["status"] != string(contracts.StatusSucceeded) {
+		t.Fatalf("unexpected workspace move tool call: %#v", moveTool)
+	}
+	moveResult := asMap(t, moveTool["result"])
+	if moveResult["from"] != "notes.md" || moveResult["path"] != "archive/notes-renamed.md" || moveResult["status"] != "moved" {
+		t.Fatalf("unexpected workspace move result: %#v", moveResult)
+	}
+	moveMessages := asList(t, move.Body.Data["messages"])
+	if !strings.Contains(stringValue(t, asMap(t, moveMessages[len(moveMessages)-1])["content"]), "已移动工作空间文件") {
+		t.Fatalf("move response should summarize file move: %#v", moveMessages)
+	}
+
+	movedRead := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/workspace/files/read", "test-token", `{"path":"archive/notes-renamed.md"}`)
+	if movedRead.StatusCode != http.StatusOK || !movedRead.Body.OK || !strings.Contains(stringValue(t, movedRead.Body.Data["content"]), "move me") {
+		t.Fatalf("moved file should be readable at destination: status=%d body=%#v", movedRead.StatusCode, movedRead.Body)
+	}
+	oldRead := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/workspace/files/read", "test-token", `{"path":"notes.md"}`)
+	if oldRead.StatusCode == http.StatusOK && oldRead.Body.OK {
+		t.Fatalf("old path should no longer exist after move: %#v", oldRead.Body)
 	}
 }
 
@@ -4599,6 +5157,36 @@ func TestHTTPAgentWorkspacePatchAPI(t *testing.T) {
 	read := doDaemonRequestWithBody(t, http.MethodPost, workspaceURL+"/files/read", "test-token", `{"path":"notes.md"}`)
 	if read.StatusCode != http.StatusOK || !read.Body.OK || !strings.Contains(stringValue(t, read.Body.Data["content"]), "alpha delta gamma") {
 		t.Fatalf("unexpected post-patch read response: status=%d body=%#v", read.StatusCode, read.Body)
+	}
+
+	mkdir := doDaemonRequestWithBody(t, http.MethodPost, workspaceURL+"/files/mkdir", "test-token", `{"path":"reports"}`)
+	if mkdir.StatusCode != http.StatusOK || !mkdir.Body.OK || mkdir.Body.Data["status"] != "created" {
+		t.Fatalf("unexpected workspace mkdir response: status=%d body=%#v", mkdir.StatusCode, mkdir.Body)
+	}
+	copyFile := doDaemonRequestWithBody(t, http.MethodPost, workspaceURL+"/files/copy", "test-token", `{"from":"notes.md","to":"reports/notes-copy.md"}`)
+	if copyFile.StatusCode != http.StatusOK || !copyFile.Body.OK {
+		t.Fatalf("unexpected workspace copy response: status=%d body=%#v", copyFile.StatusCode, copyFile.Body)
+	}
+	copyResult := asMap(t, copyFile.Body.Data)
+	if copyResult["from"] != "notes.md" || copyResult["path"] != "reports/notes-copy.md" || copyResult["status"] != "copied" {
+		t.Fatalf("unexpected workspace copy result metadata: %#v", copyResult)
+	}
+	copiedRead := doDaemonRequestWithBody(t, http.MethodPost, workspaceURL+"/files/read", "test-token", `{"path":"reports/notes-copy.md"}`)
+	if copiedRead.StatusCode != http.StatusOK || !copiedRead.Body.OK || !strings.Contains(stringValue(t, copiedRead.Body.Data["content"]), "alpha delta gamma") {
+		t.Fatalf("unexpected copied-file read response: status=%d body=%#v", copiedRead.StatusCode, copiedRead.Body)
+	}
+
+	move := doDaemonRequestWithBody(t, http.MethodPost, workspaceURL+"/files/move", "test-token", `{"from":"notes.md","to":"archive/notes-renamed.md"}`)
+	if move.StatusCode != http.StatusOK || !move.Body.OK {
+		t.Fatalf("unexpected workspace move response: status=%d body=%#v", move.StatusCode, move.Body)
+	}
+	moveResult := asMap(t, move.Body.Data)
+	if moveResult["from"] != "notes.md" || moveResult["path"] != "archive/notes-renamed.md" || moveResult["status"] != "moved" {
+		t.Fatalf("unexpected workspace move result metadata: %#v", moveResult)
+	}
+	movedRead := doDaemonRequestWithBody(t, http.MethodPost, workspaceURL+"/files/read", "test-token", `{"path":"archive/notes-renamed.md"}`)
+	if movedRead.StatusCode != http.StatusOK || !movedRead.Body.OK || !strings.Contains(stringValue(t, movedRead.Body.Data["content"]), "alpha delta gamma") {
+		t.Fatalf("unexpected moved-file read response: status=%d body=%#v", movedRead.StatusCode, movedRead.Body)
 	}
 }
 

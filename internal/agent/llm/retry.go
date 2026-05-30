@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -9,16 +10,18 @@ import (
 )
 
 type RetryConfig struct {
-	MaxRetries int
-	BaseDelay  time.Duration
-	MaxDelay   time.Duration
+	MaxRetries     int
+	BaseDelay      time.Duration
+	MaxDelay       time.Duration
+	AttemptTimeout time.Duration
 }
 
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{
-		MaxRetries: 3,
-		BaseDelay:  1 * time.Second,
-		MaxDelay:   30 * time.Second,
+		MaxRetries:     3,
+		BaseDelay:      1 * time.Second,
+		MaxDelay:       30 * time.Second,
+		AttemptTimeout: 45 * time.Second,
 	}
 }
 
@@ -37,6 +40,9 @@ func WithRetry(provider Provider, config RetryConfig) *RetryProvider {
 	if config.MaxDelay <= 0 {
 		config.MaxDelay = 30 * time.Second
 	}
+	if config.AttemptTimeout < 0 {
+		config.AttemptTimeout = 0
+	}
 	return &RetryProvider{inner: provider, config: config}
 }
 
@@ -45,9 +51,14 @@ func (r *RetryProvider) Name() string { return r.inner.Name() }
 func (r *RetryProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	var lastErr error
 	for attempt := 0; attempt <= r.config.MaxRetries; attempt++ {
-		resp, err := r.inner.Chat(ctx, req)
+		attemptCtx, cancel := r.attemptContext(ctx)
+		resp, err := r.inner.Chat(attemptCtx, req)
+		cancel()
 		if err == nil {
 			return resp, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		if !isRetryable(err) {
 			return nil, err
@@ -63,6 +74,13 @@ func (r *RetryProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespons
 		}
 	}
 	return nil, fmt.Errorf("max retries exceeded: %w", lastErr)
+}
+
+func (r *RetryProvider) attemptContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.config.AttemptTimeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, r.config.AttemptTimeout)
 }
 
 func (r *RetryProvider) StreamChat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
@@ -105,6 +123,9 @@ func isRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
 	msg := err.Error()
 	for _, code := range []string{"429", "500", "502", "503", "529"} {
 		if strings.Contains(msg, code) {
@@ -114,6 +135,7 @@ func isRetryable(err error) bool {
 	if strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "context deadline exceeded") ||
 		strings.Contains(msg, "EOF") {
 		return true
 	}

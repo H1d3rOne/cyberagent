@@ -8,6 +8,20 @@ export type RunStatus = 'created' | 'planning' | 'queued' | 'running' | 'succeed
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | string
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'modified' | 'expired' | 'cancelled' | string
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info' | string
+export type AgentOperationLevel = 'read_only' | 'workspace' | 'workspace_write' | 'safe_scan' | 'approval_ops' | 'advanced'
+export type ApiAuthProfileType = 'bearer' | 'basic' | 'api_key' | 'cookie' | 'custom'
+export type AgentProviderType = 'openai' | 'anthropic'
+
+export interface AgentProviderProfile {
+  id: string
+  name: string
+  type: AgentProviderType
+  model: string
+  apiKey: string
+  baseUrl: string
+  instructions: string
+  maxTurns: number
+}
 
 export interface AgentProviderSettings {
   provider: string
@@ -25,12 +39,31 @@ export interface ScanDraft {
   interactive: boolean
 }
 
+export interface ApiAuthProfile {
+  id: string
+  name: string
+  type: ApiAuthProfileType
+  baseUrl: string
+  token: string
+  username: string
+  password: string
+  headerName: string
+  headerValue: string
+  cookie: string
+  enabled: boolean
+}
+
 export interface ConsoleSettings {
   baseUrl: string
   token: string
   operator: string
   language: 'zh' | 'en'
+  operationLevel: AgentOperationLevel
   agentProvider: AgentProviderSettings
+  aiProviders: AgentProviderProfile[]
+  activeAiProviderId: string
+  apiAuthProfiles: ApiAuthProfile[]
+  defaultApiAuthProfileId: string
   scanDraft: ScanDraft
   autoContinueLimit: number
 }
@@ -44,10 +77,21 @@ export interface LocalDaemonBootstrap {
 }
 
 export const defaultAgentProvider: AgentProviderSettings = {
-  provider: 'anthropic',
-  model: '',
+  provider: 'openai',
+  model: 'gpt-4o',
   apiKey: '',
   providerBaseUrl: '',
+  instructions: '',
+  maxTurns: 50,
+}
+
+export const defaultAgentProviderProfile: AgentProviderProfile = {
+  id: 'openai-default',
+  name: 'OpenAI Compatible',
+  type: 'openai',
+  model: 'gpt-4o',
+  apiKey: '',
+  baseUrl: '',
   instructions: '',
   maxTurns: 50,
 }
@@ -59,12 +103,31 @@ export const defaultScanDraft: ScanDraft = {
   interactive: false,
 }
 
+export const defaultApiAuthProfile: ApiAuthProfile = {
+  id: '',
+  name: '',
+  type: 'bearer',
+  baseUrl: '',
+  token: '',
+  username: '',
+  password: '',
+  headerName: '',
+  headerValue: '',
+  cookie: '',
+  enabled: true,
+}
+
 export const defaultSettings: ConsoleSettings = {
   baseUrl: 'http://127.0.0.1:8787',
   token: '',
   operator: 'local-user',
   language: 'zh',
+  operationLevel: 'read_only',
   agentProvider: defaultAgentProvider,
+  aiProviders: [defaultAgentProviderProfile],
+  activeAiProviderId: defaultAgentProviderProfile.id,
+  apiAuthProfiles: [],
+  defaultApiAuthProfileId: '',
   scanDraft: defaultScanDraft,
   autoContinueLimit: 3,
 }
@@ -89,6 +152,107 @@ function normalizeAutoContinueLimit(value: unknown) {
   return Math.min(10, Math.max(0, Math.round(parsed)))
 }
 
+function normalizeAgentProviderType(value: unknown): AgentProviderType {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized.includes('anthropic') || normalized.includes('claude') ? 'anthropic' : 'openai'
+}
+
+function normalizeAgentProviderProfiles(value: unknown, fallback: AgentProviderSettings): AgentProviderProfile[] {
+  if (Array.isArray(value)) {
+    const profiles = value.slice(0, 20).map((raw, index) => {
+      const item = (raw && typeof raw === 'object' ? raw : {}) as Partial<AgentProviderProfile> & Record<string, unknown>
+      const type = normalizeAgentProviderType(item.type ?? item.provider)
+      const id = stringOrDefault(item.id, `ai_provider_${index + 1}`).trim() || `ai_provider_${index + 1}`
+      const name = stringOrDefault(item.name, type === 'anthropic' ? 'Anthropic Compatible' : 'OpenAI Compatible')
+      return {
+        id,
+        name,
+        type,
+        model: stringOrDefault(item.model, type === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-4o'),
+        apiKey: stringOrDefault(item.apiKey ?? item.api_key, ''),
+        baseUrl: stringOrDefault(item.baseUrl ?? item.base_url ?? item.providerBaseUrl, ''),
+        instructions: stringOrDefault(item.instructions, ''),
+        maxTurns: normalizeMaxTurns(item.maxTurns ?? item.max_turns),
+      }
+    }).filter((profile) => profile.id.trim())
+    if (profiles.length) return profiles
+  }
+  const legacyType = normalizeAgentProviderType(fallback.provider)
+  return [{
+    id: `legacy-${legacyType}`,
+    name: legacyType === 'anthropic' ? 'Anthropic Compatible' : 'OpenAI Compatible',
+    type: legacyType,
+    model: fallback.model || (legacyType === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-4o'),
+    apiKey: fallback.apiKey,
+    baseUrl: fallback.providerBaseUrl,
+    instructions: fallback.instructions,
+    maxTurns: fallback.maxTurns,
+  }]
+}
+
+function agentProviderSettingsFromProfile(profile: AgentProviderProfile): AgentProviderSettings {
+  return {
+    provider: profile.type,
+    model: profile.model,
+    apiKey: profile.apiKey,
+    providerBaseUrl: profile.baseUrl,
+    instructions: profile.instructions,
+    maxTurns: profile.maxTurns,
+  }
+}
+
+export function normalizeAgentOperationLevel(value: unknown): AgentOperationLevel {
+  switch (String(value || '').trim()) {
+    case 'workspace':
+    case 'workspace_write':
+    case 'safe_scan':
+    case 'approval_ops':
+    case 'advanced':
+      return String(value).trim() as AgentOperationLevel
+    default:
+      return 'read_only'
+  }
+}
+
+function normalizeApiAuthProfileType(value: unknown): ApiAuthProfileType {
+  switch (String(value || '').trim()) {
+    case 'basic':
+      return 'basic'
+    case 'api_key':
+    case 'apikey':
+    case 'api-key':
+      return 'api_key'
+    case 'cookie':
+      return 'cookie'
+    case 'custom':
+    case 'header':
+      return 'custom'
+    default:
+      return 'bearer'
+  }
+}
+
+function normalizeApiAuthProfiles(value: unknown): ApiAuthProfile[] {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, 12).map((raw, index) => {
+    const item = (raw && typeof raw === 'object' ? raw : {}) as Partial<ApiAuthProfile> & Record<string, unknown>
+    const id = stringOrDefault(item.id, `api_auth_${index + 1}`)
+    return {
+      id,
+      name: stringOrDefault(item.name, id),
+      type: normalizeApiAuthProfileType(item.type),
+      baseUrl: stringOrDefault(item.baseUrl ?? item.base_url, ''),
+      token: stringOrDefault(item.token, ''),
+      username: stringOrDefault(item.username, ''),
+      password: stringOrDefault(item.password, ''),
+      headerName: stringOrDefault(item.headerName ?? item.header_name, ''),
+      headerValue: stringOrDefault(item.headerValue ?? item.header_value, ''),
+      cookie: stringOrDefault(item.cookie, ''),
+      enabled: item.enabled !== false,
+    }
+  }).filter((profile) => profile.id.trim())
+}
+
 function normalizeSettings(raw: unknown): ConsoleSettings {
   const value = (raw && typeof raw === 'object' ? raw : {}) as Partial<ConsoleSettings> & {
     scanDefaults?: Partial<AgentProviderSettings & ScanDraft>
@@ -99,25 +263,34 @@ function normalizeSettings(raw: unknown): ConsoleSettings {
     value.agentProvider && typeof value.agentProvider === 'object' ? value.agentProvider : {}
   const scanDraft: Partial<ScanDraft> =
     value.scanDraft && typeof value.scanDraft === 'object' ? value.scanDraft : {}
+  const legacyAgentProvider: AgentProviderSettings = {
+    provider: stringOrDefault(agentProvider.provider, stringOrDefault(legacyScanDefaults.provider, defaultAgentProvider.provider)),
+    model: stringOrDefault(agentProvider.model, stringOrDefault(legacyScanDefaults.model, defaultAgentProvider.model)),
+    apiKey: stringOrDefault(agentProvider.apiKey, stringOrDefault(legacyScanDefaults.apiKey, defaultAgentProvider.apiKey)),
+    providerBaseUrl: stringOrDefault(
+      agentProvider.providerBaseUrl,
+      stringOrDefault(legacyScanDefaults.providerBaseUrl, defaultAgentProvider.providerBaseUrl),
+    ),
+    instructions: stringOrDefault(
+      agentProvider.instructions,
+      stringOrDefault(legacyScanDefaults.instructions, defaultAgentProvider.instructions),
+    ),
+    maxTurns: normalizeMaxTurns(agentProvider.maxTurns ?? legacyScanDefaults.maxTurns),
+  }
+  const aiProviders = normalizeAgentProviderProfiles(value.aiProviders, legacyAgentProvider)
+  const activeAiProviderId = stringOrDefault(value.activeAiProviderId, aiProviders[0]?.id || defaultAgentProviderProfile.id)
+  const activeAiProvider = aiProviders.find((profile) => profile.id === activeAiProviderId) || aiProviders[0] || defaultAgentProviderProfile
   return {
     baseUrl: nonEmptyStringOrDefault(value.baseUrl, defaultSettings.baseUrl),
     token: stringOrDefault(value.token, defaultSettings.token),
     operator: stringOrDefault(value.operator, defaultSettings.operator),
     language: value.language === 'en' ? 'en' : 'zh',
-    agentProvider: {
-      provider: stringOrDefault(agentProvider.provider, stringOrDefault(legacyScanDefaults.provider, defaultAgentProvider.provider)),
-      model: stringOrDefault(agentProvider.model, stringOrDefault(legacyScanDefaults.model, defaultAgentProvider.model)),
-      apiKey: stringOrDefault(agentProvider.apiKey, stringOrDefault(legacyScanDefaults.apiKey, defaultAgentProvider.apiKey)),
-      providerBaseUrl: stringOrDefault(
-        agentProvider.providerBaseUrl,
-        stringOrDefault(legacyScanDefaults.providerBaseUrl, defaultAgentProvider.providerBaseUrl),
-      ),
-      instructions: stringOrDefault(
-        agentProvider.instructions,
-        stringOrDefault(legacyScanDefaults.instructions, defaultAgentProvider.instructions),
-      ),
-      maxTurns: normalizeMaxTurns(agentProvider.maxTurns ?? legacyScanDefaults.maxTurns),
-    },
+    operationLevel: normalizeAgentOperationLevel(value.operationLevel),
+    agentProvider: agentProviderSettingsFromProfile(activeAiProvider),
+    aiProviders,
+    activeAiProviderId: activeAiProvider.id,
+    apiAuthProfiles: normalizeApiAuthProfiles(value.apiAuthProfiles),
+    defaultApiAuthProfileId: stringOrDefault(value.defaultApiAuthProfileId, ''),
     scanDraft: {
       target: stringOrDefault(scanDraft.target, stringOrDefault(legacyScanDefaults.target, defaultScanDraft.target)),
       scope: stringOrDefault(scanDraft.scope, stringOrDefault(legacyScanDefaults.scope, defaultScanDraft.scope)),
@@ -148,7 +321,7 @@ function shouldSkipLocalDaemonBootstrap() {
   // `/api/local/daemon-config` only exists on the bundled Go dashboard. Vite
   // dev/preview runs the frontend standalone, so probing this endpoint creates
   // noisy 500/404 console errors before the user has configured a daemon.
-  return port === '5173' || port === '4173'
+  return port === '5173' || port === '5174' || port === '5175' || port === '4173'
 }
 
 export async function loadLocalDaemonBootstrap(): Promise<LocalDaemonBootstrap | null> {
@@ -493,6 +666,7 @@ export interface AgentMessage {
   role: 'agent' | 'user' | 'tool' | string
   content: string
   timestamp: string
+  phase?: 'plan' | 'step' | 'step_replan' | 'final_answer' | string
   tool_calls?: AgentToolCall[]
   links?: AgentLink[]
   reasoning?: string
@@ -570,6 +744,7 @@ export interface AgentSession {
   updated_at: string
   operator: string
   language: 'zh' | 'en' | string
+  operation_level?: AgentOperationLevel | string
   status?: string
   messages: AgentMessage[]
   active_task?: AgentTask
@@ -587,6 +762,7 @@ export interface AgentSessionSummary {
   updated_at: string
   operator: string
   language: 'zh' | 'en' | string
+  operation_level?: AgentOperationLevel | string
   status: string
   active_task?: AgentTask
   next_action?: AgentNextAction
@@ -624,6 +800,11 @@ export interface ListAgentSessionsResponse {
   limit: number
 }
 
+export interface DeleteAgentSessionResponse {
+  session_id: string
+  status: string
+}
+
 export interface SendAgentMessageResponse {
   session_id: string
   messages: AgentMessage[]
@@ -657,6 +838,30 @@ export interface AgentSessionContextResponse {
   pending_changes?: AgentWorkspaceChange[]
   memory_summary?: AgentMemorySummary
   run_summary?: AgentSessionRunSummary
+}
+
+export interface AgentTraceResponse {
+  trace_version: string
+  generated_at: string
+  session_id: string
+  operator: string
+  language: string
+  operation_level?: AgentOperationLevel | string
+  status?: string
+  created_at: string
+  updated_at: string
+  active_task?: AgentTask
+  todos?: AgentTodo[]
+  context_refs?: AgentContextRef[]
+  pending_changes?: AgentWorkspaceChange[]
+  memory_summary?: AgentMemorySummary
+  next_action?: AgentNextAction
+  run_summary?: AgentSessionRunSummary
+  messages: AgentMessage[]
+  tool_calls: AgentToolCall[]
+  timeline: Array<Record<string, unknown>>
+  summary?: Record<string, unknown>
+  replay_hints?: string[]
 }
 
 export interface AgentCapability {
@@ -769,12 +974,13 @@ export interface WorkspaceFileEntry {
   size?: number
 }
 
-export type AgentControlAction = 'continue' | 'revise' | 'stop' | 'new_task'
+export type AgentControlAction = 'continue' | 'revise' | 'pause' | 'stop' | 'cancel' | 'new_task'
 
 export interface AgentControlRequest {
   action: AgentControlAction
   operator: string
   language: 'zh' | 'en'
+  operation_level?: AgentOperationLevel
   reason?: string
   prompt?: string
   run_id?: string
@@ -814,12 +1020,42 @@ export interface AgentProviderConfig {
   api_key: string
   base_url: string
   instructions: string
+  operation_level: AgentOperationLevel
+  auth_profiles: Array<{
+    id: string
+    name?: string
+    type?: ApiAuthProfileType
+    base_url?: string
+    token?: string
+    username?: string
+    password?: string
+    header_name?: string
+    header_value?: string
+    cookie?: string
+    enabled?: boolean
+  }>
+  default_auth_profile_id: string
 }
 
 export interface Provider {
   id: string
   name: string
   default_model: string
+}
+
+export interface AgentProviderTestRequest {
+  type: AgentProviderType
+  model: string
+  api_key: string
+  base_url?: string
+}
+
+export interface AgentProviderTestResponse {
+  ok: boolean
+  provider: string
+  model: string
+  latency_ms: number
+  output?: string
 }
 
 export interface ToolDef {
@@ -1122,10 +1358,10 @@ export class ApiClient {
     return this.request<AgentCapabilitiesResponse>(`/api/v1/agent/capabilities?${params}`)
   }
 
-  createAgentSession(operator: string, language: 'zh' | 'en') {
+  createAgentSession(operator: string, language: 'zh' | 'en', operationLevel: AgentOperationLevel = 'read_only') {
     return this.request<CreateAgentSessionResponse>('/api/v1/agent/sessions', {
       method: 'POST',
-      body: JSON.stringify({ operator, language }),
+      body: JSON.stringify({ operator, language, operation_level: operationLevel }),
     })
   }
 
@@ -1139,12 +1375,22 @@ export class ApiClient {
     return this.request<{ session: AgentSession }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}`)
   }
 
+  deleteAgentSession(sessionId: string) {
+    return this.request<DeleteAgentSessionResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    })
+  }
+
   getAgentSessionState(sessionId: string) {
     return this.request<AgentSessionStateResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/state`)
   }
 
   getAgentSessionContext(sessionId: string) {
     return this.request<AgentSessionContextResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/context`)
+  }
+
+  getAgentSessionTrace(sessionId: string) {
+    return this.request<AgentTraceResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/trace`)
   }
 
   sendAgentMessage(
@@ -1176,6 +1422,20 @@ export class ApiClient {
 
   stopAgentSession(sessionId: string, request: Omit<AgentControlRequest, 'action'>) {
     return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/stop`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  }
+
+  pauseAgentSession(sessionId: string, request: Omit<AgentControlRequest, 'action'>) {
+    return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/pause`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  }
+
+  cancelAgentSession(sessionId: string, request: Omit<AgentControlRequest, 'action'>) {
+    return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/cancel`, {
       method: 'POST',
       body: JSON.stringify(request),
     })
@@ -1274,6 +1534,27 @@ export class ApiClient {
 
   agentWorkspaceDeleteFile(sessionId: string, path: string) {
     return this.request<{ path: string; status: string }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    })
+  }
+
+  agentWorkspaceMoveFile(sessionId: string, from: string, to: string) {
+    return this.request<{ from: string; path: string; status: string }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/move`, {
+      method: 'POST',
+      body: JSON.stringify({ from, to }),
+    })
+  }
+
+  agentWorkspaceCopyFile(sessionId: string, from: string, to: string) {
+    return this.request<{ from: string; path: string; status: string }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/copy`, {
+      method: 'POST',
+      body: JSON.stringify({ from, to }),
+    })
+  }
+
+  agentWorkspaceMkdir(sessionId: string, path: string) {
+    return this.request<{ path: string; status: string }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/workspace/files/mkdir`, {
       method: 'POST',
       body: JSON.stringify({ path }),
     })

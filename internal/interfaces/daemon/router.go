@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,13 +18,13 @@ import (
 )
 
 type routerServices struct {
-	version      services.VersionService
-	plugins      services.PluginService
-	runs         services.RunService
-	approvals    services.ApprovalService
-	jobs         *jobManager
-	agent        *agentManager
-	scanManager  *web.ScanManager
+	version     services.VersionService
+	plugins     services.PluginService
+	runs        services.RunService
+	approvals   services.ApprovalService
+	jobs        *jobManager
+	agent       *agentManager
+	scanManager *web.ScanManager
 }
 
 func newRouter(svc routerServices, token string) http.Handler {
@@ -196,9 +197,22 @@ func handleAgentSessionsRoute(w http.ResponseWriter, r *http.Request, svc router
 			writeOK(w, http.StatusOK, agentSessionStatePayload(r, svc, session))
 		case "context":
 			writeOK(w, http.StatusOK, agentSessionContextPayload(r, svc, session))
+		case "trace":
+			writeOK(w, http.StatusOK, agentSessionTracePayload(r, svc, session))
 		default:
 			writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
 		}
+	case http.MethodDelete:
+		if resource != "" {
+			writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+			return
+		}
+		response, err := svc.agent.DeleteSession(r.Context(), sessionID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, response)
 	case http.MethodPost:
 		switch resource {
 		case "messages":
@@ -225,7 +239,7 @@ func handleAgentSessionsRoute(w http.ResponseWriter, r *http.Request, svc router
 				return
 			}
 			writeOK(w, http.StatusOK, response)
-		case "continue", "stop", "new-task", "new_task":
+		case "continue", "resume", "pause", "stop", "cancel", "new-task", "new_task":
 			var body agentControlRequest
 			if err := decodeJSONBody(r, &body); err != nil {
 				writeServiceError(w, err)
@@ -273,6 +287,106 @@ func agentSessionContextPayload(r *http.Request, svc routerServices, session age
 		"memory_summary":  cloneAgentMemorySummary(session.MemorySummary),
 		"run_summary":     svc.agent.agentSessionRunSummary(r.Context(), &session),
 	}
+}
+
+func agentSessionTracePayload(r *http.Request, svc routerServices, session agentSession) map[string]any {
+	timeline := agentSessionTraceTimeline(session)
+	phaseCounts := map[string]int{}
+	for _, item := range timeline {
+		if phase, ok := item["phase"].(string); ok && strings.TrimSpace(phase) != "" {
+			phaseCounts[phase]++
+		}
+	}
+	return map[string]any{
+		"trace_version":   "agent.trace.v1",
+		"generated_at":    time.Now().UTC(),
+		"session_id":      session.SessionID,
+		"operator":        session.Operator,
+		"language":        session.Language,
+		"operation_level": session.OperationLevel,
+		"status":          session.Status,
+		"created_at":      session.CreatedAt,
+		"updated_at":      session.UpdatedAt,
+		"active_task":     cloneAgentTask(session.ActiveTask),
+		"todos":           cloneAgentTodos(session.Todos),
+		"context_refs":    cloneAgentContextRefs(session.ContextRefs),
+		"pending_changes": cloneAgentWorkspaceChanges(session.PendingChanges),
+		"memory_summary":  cloneAgentMemorySummary(session.MemorySummary),
+		"next_action":     cloneAgentNextAction(session.NextAction),
+		"run_summary":     svc.agent.agentSessionRunSummary(r.Context(), &session),
+		"messages":        cloneAgentMessages(session.Messages),
+		"tool_calls":      cloneAgentToolCalls(session.ToolCalls),
+		"timeline":        timeline,
+		"summary": map[string]any{
+			"message_count":        len(session.Messages),
+			"tool_call_count":      len(session.ToolCalls),
+			"context_ref_count":    len(session.ContextRefs),
+			"pending_change_count": len(session.PendingChanges),
+			"phase_counts":         phaseCounts,
+		},
+		"replay_hints": []string{
+			"Replay timeline items in timestamp order.",
+			"Message items contain the user/agent/tool chat stream.",
+			"Tool items contain tool name, status, metadata, result, and errors.",
+			"Use active_task, todos, context_refs, pending_changes, and next_action to restore cockpit state.",
+		},
+	}
+}
+
+func agentSessionTraceTimeline(session agentSession) []map[string]any {
+	items := make([]map[string]any, 0, len(session.Messages)+len(session.ToolCalls))
+	for _, message := range session.Messages {
+		item := map[string]any{
+			"kind":       "message",
+			"id":         message.ID,
+			"role":       message.Role,
+			"phase":      message.Phase,
+			"content":    message.Content,
+			"timestamp":  message.Timestamp,
+			"tool_calls": cloneAgentToolCalls(message.ToolCalls),
+			"links":      cloneAgentLinks(message.Links),
+		}
+		if strings.TrimSpace(message.Reasoning) != "" {
+			item["reasoning"] = message.Reasoning
+		}
+		items = append(items, item)
+	}
+	for _, call := range session.ToolCalls {
+		phase := ""
+		if call.Metadata != nil {
+			phase = firstNonEmpty(stringFromAny(call.Metadata["agent_phase"]), stringFromAny(call.Metadata["phase"]))
+		}
+		item := map[string]any{
+			"kind":      "tool_call",
+			"id":        call.ID,
+			"name":      call.Name,
+			"status":    call.Status,
+			"detail":    call.Detail,
+			"phase":     phase,
+			"timestamp": call.StartedAt,
+			"tool_call": cloneAgentToolCalls([]agentToolCall{call})[0],
+		}
+		if call.FinishedAt != nil {
+			item["finished_at"] = *call.FinishedAt
+		}
+		items = append(items, item)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return agentTraceTimestamp(items[i]).Before(agentTraceTimestamp(items[j]))
+	})
+	return items
+}
+
+func agentTraceTimestamp(item map[string]any) time.Time {
+	switch value := item["timestamp"].(type) {
+	case time.Time:
+		return value
+	case string:
+		if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }
 
 func handleAgentSessionStream(w http.ResponseWriter, r *http.Request, svc routerServices, sessionID string) {
@@ -906,6 +1020,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 	prefix := "/api/v1/agent/sessions/" + sessionID + "/workspace/"
 	action := strings.TrimPrefix(path, prefix)
 	action = strings.TrimSuffix(action, "/")
+	operationLevel := normalizeAgentOperationLevel(r.URL.Query().Get("operation_level"))
+	if headerLevel := strings.TrimSpace(r.Header.Get("X-Agent-Operation-Level")); headerLevel != "" {
+		operationLevel = normalizeAgentOperationLevel(headerLevel)
+	}
 
 	switch action {
 	case "files/read":
@@ -936,6 +1054,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		})
 
 	case "files/write":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.write"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -963,6 +1085,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		})
 
 	case "files/patch":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.patch"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -984,6 +1110,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		writeOK(w, http.StatusOK, result)
 
 	case "files/diff":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.diff"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -1005,6 +1135,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		writeOK(w, http.StatusOK, result)
 
 	case "files/diff-many":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.diff_many"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -1024,6 +1158,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		writeOK(w, http.StatusOK, result)
 
 	case "files/rebase":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.rebase"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -1045,6 +1183,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		writeOK(w, http.StatusOK, result)
 
 	case "files/apply":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.apply"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -1064,6 +1206,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		writeOK(w, http.StatusOK, result)
 
 	case "files/apply-group":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.apply"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -1083,6 +1229,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		writeOK(w, http.StatusOK, result)
 
 	case "files/discard":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.discard"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -1102,6 +1252,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		writeOK(w, http.StatusOK, result)
 
 	case "files/discard-group":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.discard"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -1148,6 +1302,10 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		})
 
 	case "files/delete":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.delete"))
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
 			return
@@ -1170,6 +1328,97 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 		writeOK(w, http.StatusOK, map[string]any{
 			"path":   body.Path,
 			"status": "deleted",
+		})
+
+	case "files/move":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.move"))
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if _, err := svc.agent.workspace.Create(sessionID); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if err := svc.agent.workspace.MoveFile(sessionID, body.From, body.To); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{
+			"from":   body.From,
+			"path":   body.To,
+			"status": "moved",
+		})
+
+	case "files/copy":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.copy"))
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if _, err := svc.agent.workspace.Create(sessionID); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if err := svc.agent.workspace.CopyFile(sessionID, body.From, body.To); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{
+			"from":   body.From,
+			"path":   body.To,
+			"status": "copied",
+		})
+
+	case "files/mkdir":
+		if !agentOperationLevelAtLeast(operationLevel, "workspace_write") {
+			writeServiceError(w, agentOperationLevelDeniedError(normalizeAgentLanguage(r.URL.Query().Get("language")), operationLevel, "workspace_write", "workspace.files.mkdir"))
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if _, err := svc.agent.workspace.Create(sessionID); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if err := svc.agent.workspace.MakeDir(sessionID, body.Path); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{
+			"path":   body.Path,
+			"status": "created",
 		})
 
 	case "command":

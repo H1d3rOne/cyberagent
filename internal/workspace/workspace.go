@@ -12,7 +12,7 @@ import (
 const (
 	DefaultWorkspaceRoot = ".cyberagent/workspaces"
 	DefaultMaxSize       = 100 * 1024 * 1024 // 100MB
-	DefaultMaxFileSize   = 10 * 1024 * 1024   // 10MB
+	DefaultMaxFileSize   = 10 * 1024 * 1024  // 10MB
 )
 
 // Manager manages agent workspaces.
@@ -47,12 +47,12 @@ type Workspace struct {
 
 // FileInfo represents a file in the workspace.
 type FileInfo struct {
-	Name     string    `json:"name"`
-	Path     string    `json:"path"`
-	Size     int64     `json:"size"`
-	IsDir    bool      `json:"is_dir"`
-	ModTime  time.Time `json:"mod_time"`
-	Mode     string    `json:"mode"`
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	Size    int64     `json:"size"`
+	IsDir   bool      `json:"is_dir"`
+	ModTime time.Time `json:"mod_time"`
+	Mode    string    `json:"mode"`
 }
 
 // Create creates a new workspace for a session.
@@ -135,10 +135,9 @@ func (m *Manager) ListFiles(sessionID, relPath string) ([]FileInfo, error) {
 		return nil, err
 	}
 
-	// Resolve path
-	absPath := filepath.Join(ws.Path, relPath)
-	if !strings.HasPrefix(absPath, ws.Path) {
-		return nil, fmt.Errorf("path traversal not allowed")
+	absPath, err := resolveWorkspacePath(ws, relPath)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check if directory exists
@@ -183,10 +182,9 @@ func (m *Manager) ReadFile(sessionID, relPath string) ([]byte, error) {
 		return nil, err
 	}
 
-	// Resolve path
-	absPath := filepath.Join(ws.Path, relPath)
-	if !strings.HasPrefix(absPath, ws.Path) {
-		return nil, fmt.Errorf("path traversal not allowed")
+	absPath, err := resolveWorkspacePath(ws, relPath)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check file size
@@ -219,10 +217,9 @@ func (m *Manager) WriteFile(sessionID, relPath string, data []byte) error {
 		return err
 	}
 
-	// Resolve path
-	absPath := filepath.Join(ws.Path, relPath)
-	if !strings.HasPrefix(absPath, ws.Path) {
-		return fmt.Errorf("path traversal not allowed")
+	absPath, err := resolveWorkspacePath(ws, relPath)
+	if err != nil {
+		return err
 	}
 
 	// Check data size
@@ -251,16 +248,18 @@ func (m *Manager) DeleteFile(sessionID, relPath string) error {
 		return err
 	}
 
-	// Resolve path
-	absPath := filepath.Join(ws.Path, relPath)
-	if !strings.HasPrefix(absPath, ws.Path) {
-		return fmt.Errorf("path traversal not allowed")
+	absPath, err := resolveWorkspacePath(ws, relPath)
+	if err != nil {
+		return err
 	}
 
 	// Check if file exists
-	_, err = os.Stat(absPath)
+	info, err := os.Stat(absPath)
 	if err != nil {
 		return fmt.Errorf("check file: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("path is a directory")
 	}
 
 	// Delete file
@@ -268,6 +267,111 @@ func (m *Manager) DeleteFile(sessionID, relPath string) error {
 		return fmt.Errorf("delete file: %w", err)
 	}
 
+	return nil
+}
+
+// MoveFile moves or renames a file within the workspace.
+func (m *Manager) MoveFile(sessionID, oldRelPath, newRelPath string) error {
+	ws, err := m.Get(sessionID)
+	if err != nil {
+		return err
+	}
+
+	oldAbs, err := resolveWorkspacePath(ws, oldRelPath)
+	if err != nil {
+		return err
+	}
+	newAbs, err := resolveWorkspacePath(ws, newRelPath)
+	if err != nil {
+		return err
+	}
+	if oldAbs == newAbs {
+		return nil
+	}
+
+	info, err := os.Stat(oldAbs)
+	if err != nil {
+		return fmt.Errorf("check file: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("path is a directory")
+	}
+	if _, err := os.Stat(newAbs); err == nil {
+		return fmt.Errorf("destination already exists")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("check destination: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
+	if err := os.Rename(oldAbs, newAbs); err != nil {
+		return fmt.Errorf("rename file: %w", err)
+	}
+	return nil
+}
+
+// CopyFile copies a file within the workspace.
+func (m *Manager) CopyFile(sessionID, sourceRelPath, destRelPath string) error {
+	ws, err := m.Get(sessionID)
+	if err != nil {
+		return err
+	}
+
+	sourceAbs, err := resolveWorkspacePath(ws, sourceRelPath)
+	if err != nil {
+		return err
+	}
+	destAbs, err := resolveWorkspacePath(ws, destRelPath)
+	if err != nil {
+		return err
+	}
+	if sourceAbs == destAbs {
+		return fmt.Errorf("source and destination are the same")
+	}
+
+	info, err := os.Stat(sourceAbs)
+	if err != nil {
+		return fmt.Errorf("check file: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("path is a directory")
+	}
+	if info.Size() > DefaultMaxFileSize {
+		return fmt.Errorf("file too large: %d bytes (max %d)", info.Size(), DefaultMaxFileSize)
+	}
+	if _, err := os.Stat(destAbs); err == nil {
+		return fmt.Errorf("destination already exists")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("check destination: %w", err)
+	}
+
+	data, err := os.ReadFile(sourceAbs)
+	if err != nil {
+		return fmt.Errorf("read source file: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(destAbs), 0o755); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
+	if err := os.WriteFile(destAbs, data, 0o644); err != nil {
+		return fmt.Errorf("write destination file: %w", err)
+	}
+	return nil
+}
+
+// MakeDir creates a directory within the workspace.
+func (m *Manager) MakeDir(sessionID, relPath string) error {
+	ws, err := m.Get(sessionID)
+	if err != nil {
+		return err
+	}
+	absPath, err := resolveWorkspacePath(ws, relPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(absPath, 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
 	return nil
 }
 
@@ -279,4 +383,34 @@ func sanitizePath(path string) string {
 	path = strings.ReplaceAll(path, "..", "_")
 	path = strings.ReplaceAll(path, " ", "_")
 	return path
+}
+
+func resolveWorkspacePath(ws *Workspace, relPath string) (string, error) {
+	if ws == nil || strings.TrimSpace(ws.Path) == "" {
+		return "", fmt.Errorf("workspace path is required")
+	}
+	relPath = strings.TrimSpace(relPath)
+	if relPath == "" {
+		relPath = "."
+	}
+	if filepath.IsAbs(relPath) {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+
+	base, err := filepath.Abs(ws.Path)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace path: %w", err)
+	}
+	target, err := filepath.Abs(filepath.Join(base, relPath))
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	relative, err := filepath.Rel(base, target)
+	if err != nil {
+		return "", fmt.Errorf("resolve relative path: %w", err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) || filepath.IsAbs(relative) {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+	return target, nil
 }
