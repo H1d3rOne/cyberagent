@@ -1,0 +1,18 @@
+{
+  "name": "python-js-route-analyzer",
+  "source": "plugin",
+  "plugin_path": "plugins/python-js-route-analyzer/plugin.yaml",
+  "intent_tags": ["js_route_analysis", "frontend_routes", "api_endpoint_extraction"],
+  "risk": "low",
+  "required_level": "read_only",
+  "auto_run": true,
+  "can_do": [
+    "extract routes, API endpoints, and path-like strings from JavaScript assets"
+  ],
+  "cannot_do": [
+    "crawl a browser-rendered app",
+    "execute browser automation",
+    "perform auth workflow testing"
+  ]
+}
+

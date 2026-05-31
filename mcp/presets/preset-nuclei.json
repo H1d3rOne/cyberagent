@@ -1,0 +1,23 @@
+{
+  "id": "preset-nuclei",
+  "name": "Nuclei MCP",
+  "transport": "stdio",
+  "command": "mcp-nuclei",
+  "enabled": false,
+  "preset": true,
+  "status": "preset_unverified",
+  "description": "Preset for template-based vulnerability checks through a Nuclei-compatible MCP server.",
+  "tools": [
+    {
+      "name": "template_scan",
+      "description": "Run selected nuclei templates against authorized targets.",
+      "intent_tags": ["web_vulnerability_scan", "template_scan", "nuclei"],
+      "can_do": ["run selected safe templates", "return findings/evidence"],
+      "cannot_do": ["run unreviewed destructive templates", "replace CyberAgent safe profile"],
+      "risk": "high",
+      "required_level": "advanced",
+      "enabled": true
+    }
+  ]
+}
+

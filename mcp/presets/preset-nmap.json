@@ -1,0 +1,23 @@
+{
+  "id": "preset-nmap",
+  "name": "Nmap MCP",
+  "transport": "stdio",
+  "command": "mcp-nmap",
+  "enabled": false,
+  "preset": true,
+  "status": "preset_unverified",
+  "description": "Preset for bounded nmap/TCP service discovery tools. Disabled until installed and verified locally.",
+  "tools": [
+    {
+      "name": "port_scan",
+      "description": "Run authorized nmap-style TCP port scan/service discovery through MCP.",
+      "intent_tags": ["port_scan", "service_discovery", "nmap"],
+      "can_do": ["TCP port scanning", "optional service/version fingerprinting when explicitly authorized"],
+      "cannot_do": ["scan without authorization", "bypass CyberAgent policy"],
+      "risk": "medium",
+      "required_level": "safe_scan",
+      "enabled": true
+    }
+  ]
+}
+

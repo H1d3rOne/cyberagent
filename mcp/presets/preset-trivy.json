@@ -1,0 +1,23 @@
+{
+  "id": "preset-trivy",
+  "name": "Trivy MCP",
+  "transport": "stdio",
+  "command": "mcp-trivy",
+  "enabled": false,
+  "preset": true,
+  "status": "preset_unverified",
+  "description": "Preset for dependency/container/IaC scanning with Trivy-compatible MCP tooling.",
+  "tools": [
+    {
+      "name": "supply_chain_scan",
+      "description": "Run dependency/container/IaC vulnerability scanning.",
+      "intent_tags": ["supply_chain", "dependency_scan", "container_scan", "trivy"],
+      "can_do": ["dependency vulnerability scan", "container image scan", "IaC misconfiguration scan"],
+      "cannot_do": ["exploit vulnerabilities", "modify images"],
+      "risk": "low",
+      "required_level": "read_only",
+      "enabled": true
+    }
+  ]
+}
+

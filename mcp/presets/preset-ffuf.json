@@ -1,0 +1,23 @@
+{
+  "id": "preset-ffuf",
+  "name": "ffuf MCP",
+  "transport": "stdio",
+  "command": "mcp-ffuf",
+  "enabled": false,
+  "preset": true,
+  "status": "preset_unverified",
+  "description": "Preset for content discovery/path fuzzing with ffuf-compatible MCP tooling.",
+  "tools": [
+    {
+      "name": "content_discovery",
+      "description": "Run bounded authorized content discovery with a supplied wordlist/profile.",
+      "intent_tags": ["content_discovery", "directory_enum", "path_fuzzing", "ffuf"],
+      "can_do": ["discover hidden paths", "test wordlist entries against authorized HTTP targets"],
+      "cannot_do": ["port_scan", "unbounded brute force"],
+      "risk": "medium",
+      "required_level": "safe_scan",
+      "enabled": true
+    }
+  ]
+}
+

@@ -1,0 +1,32 @@
+{
+  "name": "scan.web.safe",
+  "source": "builtin",
+  "intent_tags": ["web_vulnerability_scan", "security_scan", "evidence_scan"],
+  "risk": "medium",
+  "required_level": "safe_scan",
+  "auto_run": false,
+  "can_do": [
+    "start safe profile Web/API vulnerability evidence scan",
+    "collect runtime events, artifacts, findings, and report context"
+  ],
+  "cannot_do": [
+    "port_scan",
+    "content_discovery",
+    "js_route_analysis",
+    "full auth matrix",
+    "destructive exploitation"
+  ],
+  "input_schema": {
+    "type": "object",
+    "required": ["target", "scope"],
+    "properties": {
+      "target": { "type": "string" },
+      "scope": { "type": "string" },
+      "enabled_plugins": { "type": "array", "items": { "type": "string" } }
+    }
+  },
+  "examples": [
+    "对授权目标 https://example.com 做 safe Web/API 扫描，scope=example.com"
+  ]
+}
+

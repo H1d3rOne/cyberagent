@@ -1,0 +1,31 @@
+{
+  "name": "ports.scan.safe",
+  "source": "builtin",
+  "intent_tags": ["port_scan", "open_ports", "tcp_connect_probe"],
+  "risk": "medium",
+  "required_level": "safe_scan",
+  "auto_run": false,
+  "can_do": [
+    "bounded TCP connect open-port probe",
+    "scan common ports or a limited explicit port list/range"
+  ],
+  "cannot_do": [
+    "UDP scan",
+    "nmap service/version fingerprinting",
+    "very large ranges",
+    "scan without authorized target/scope"
+  ],
+  "input_schema": {
+    "type": "object",
+    "required": ["target"],
+    "properties": {
+      "target": { "type": "string" },
+      "ports": { "type": "string", "description": "Comma/range list, e.g. 80,443,8000-8010" },
+      "timeout_ms": { "type": "integer" }
+    }
+  },
+  "examples": [
+    "扫描 example.com 开放端口 ports=80,443,8080"
+  ]
+}
+

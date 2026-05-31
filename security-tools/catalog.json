@@ -1,0 +1,42 @@
+{
+  "schema_version": "security-tools.catalog.v1",
+  "description": "CyberAgent security tool catalog. Runtime still uses Go registry until file-based loading is wired.",
+  "sources": {
+    "builtin": "security-tools/builtin",
+    "plugin": "security-tools/plugins",
+    "mcp": "mcp/presets"
+  },
+  "tools": [
+    {
+      "name": "scan.web.safe",
+      "source": "builtin",
+      "path": "security-tools/builtin/scan.web.safe.json"
+    },
+    {
+      "name": "ports.scan.safe",
+      "source": "builtin",
+      "path": "security-tools/builtin/ports.scan.safe.json"
+    },
+    {
+      "name": "http.request",
+      "source": "builtin",
+      "path": "security-tools/builtin/http.request.json"
+    },
+    {
+      "name": "ffuf-low-rate",
+      "source": "plugin",
+      "path": "security-tools/plugins/ffuf-low-rate.json"
+    },
+    {
+      "name": "nuclei-safe",
+      "source": "plugin",
+      "path": "security-tools/plugins/nuclei-safe.json"
+    },
+    {
+      "name": "python-js-route-analyzer",
+      "source": "plugin",
+      "path": "security-tools/plugins/python-js-route-analyzer.json"
+    }
+  ]
+}
+

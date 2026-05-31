@@ -1,0 +1,18 @@
+{
+  "name": "nuclei-safe",
+  "source": "plugin",
+  "plugin_path": "plugins/nuclei-safe/plugin.yaml",
+  "intent_tags": ["web_vulnerability_scan", "template_scan", "nuclei"],
+  "risk": "high",
+  "required_level": "advanced",
+  "auto_run": false,
+  "can_do": [
+    "run selected safe nuclei templates against authorized targets"
+  ],
+  "cannot_do": [
+    "run unreviewed destructive templates",
+    "replace CyberAgent safe profile",
+    "scan without explicit operator intent"
+  ]
+}
+

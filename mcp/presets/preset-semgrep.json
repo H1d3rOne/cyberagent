@@ -1,0 +1,23 @@
+{
+  "id": "preset-semgrep",
+  "name": "Semgrep MCP",
+  "transport": "stdio",
+  "command": "mcp-semgrep",
+  "enabled": false,
+  "preset": true,
+  "status": "preset_unverified",
+  "description": "Preset for static code analysis in the Agent workspace with Semgrep-compatible MCP tooling.",
+  "tools": [
+    {
+      "name": "code_scan",
+      "description": "Run Semgrep rules against workspace code.",
+      "intent_tags": ["workspace", "code_analysis", "sast", "semgrep"],
+      "can_do": ["static code scan", "return rule findings with file locations"],
+      "cannot_do": ["modify files"],
+      "risk": "low",
+      "required_level": "read_only",
+      "enabled": true
+    }
+  ]
+}
+

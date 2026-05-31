@@ -1,0 +1,18 @@
+{
+  "name": "ffuf-low-rate",
+  "source": "plugin",
+  "plugin_path": "plugins/ffuf-low-rate/plugin.yaml",
+  "intent_tags": ["content_discovery", "directory_enum", "path_fuzzing", "ffuf"],
+  "risk": "medium",
+  "required_level": "safe_scan",
+  "auto_run": false,
+  "can_do": [
+    "bounded low-rate content discovery against authorized HTTP targets"
+  ],
+  "cannot_do": [
+    "unbounded brute force",
+    "port_scan",
+    "scan outside declared scope"
+  ]
+}
+
