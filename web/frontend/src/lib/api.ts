@@ -8,7 +8,7 @@ export type RunStatus = 'created' | 'planning' | 'queued' | 'running' | 'succeed
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | string
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'modified' | 'expired' | 'cancelled' | string
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info' | string
-export type AgentOperationLevel = 'read_only' | 'workspace' | 'workspace_write' | 'safe_scan' | 'approval_ops' | 'advanced'
+export type AgentOperationLevel = 'read_only' | 'workspace' | 'workspace_write' | 'safe_scan' | 'approval_ops' | 'advanced' | 'bypass'
 export type ApiAuthProfileType = 'bearer' | 'basic' | 'api_key' | 'cookie' | 'custom'
 export type AgentProviderType = 'openai' | 'anthropic'
 
@@ -30,6 +30,19 @@ export interface AgentProviderSettings {
   providerBaseUrl: string
   instructions: string
   maxTurns: number
+}
+
+export interface AgentAuthorizationRequest {
+  id: string
+  action_name: string
+  arguments?: Record<string, unknown>
+  required_level?: AgentOperationLevel | string
+  policy?: string
+  reason?: string
+  original_prompt?: string
+  status: 'pending' | 'approved' | 'denied' | string
+  created_at: string
+  updated_at: string
 }
 
 export interface ScanDraft {
@@ -208,6 +221,7 @@ export function normalizeAgentOperationLevel(value: unknown): AgentOperationLeve
     case 'safe_scan':
     case 'approval_ops':
     case 'advanced':
+    case 'bypass':
       return String(value).trim() as AgentOperationLevel
     default:
       return 'read_only'
@@ -708,6 +722,7 @@ export interface AgentNextAction {
   type: 'continue' | 'wait_user' | 'approval_required' | 'finished' | 'blocked' | string
   reason?: string
   suggested_prompt?: string
+  suggest_prompt?: string
   auto_continue?: boolean
 }
 
@@ -752,8 +767,10 @@ export interface AgentSession {
   tool_calls?: AgentToolCall[]
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
+  pending_authorization?: AgentAuthorizationRequest
   memory_summary?: AgentMemorySummary
   next_action?: AgentNextAction
+  run_summary?: AgentSessionRunSummary
 }
 
 export interface AgentSessionSummary {
@@ -766,6 +783,7 @@ export interface AgentSessionSummary {
   status: string
   active_task?: AgentTask
   next_action?: AgentNextAction
+  pending_authorization?: AgentAuthorizationRequest
   memory_summary?: AgentMemorySummary
   run_summary?: AgentSessionRunSummary
   last_message?: string
@@ -813,6 +831,7 @@ export interface SendAgentMessageResponse {
   todos?: AgentTodo[]
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
+  pending_authorization?: AgentAuthorizationRequest
   memory_summary?: AgentMemorySummary
   next_action?: AgentNextAction
 }
@@ -826,6 +845,7 @@ export interface AgentSessionStateResponse {
   tool_calls?: AgentToolCall[]
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
+  pending_authorization?: AgentAuthorizationRequest
   memory_summary?: AgentMemorySummary
   next_action?: AgentNextAction
   run_summary?: AgentSessionRunSummary
@@ -836,6 +856,7 @@ export interface AgentSessionContextResponse {
   active_task?: AgentTask
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
+  pending_authorization?: AgentAuthorizationRequest
   memory_summary?: AgentMemorySummary
   run_summary?: AgentSessionRunSummary
 }
@@ -854,6 +875,7 @@ export interface AgentTraceResponse {
   todos?: AgentTodo[]
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
+  pending_authorization?: AgentAuthorizationRequest
   memory_summary?: AgentMemorySummary
   next_action?: AgentNextAction
   run_summary?: AgentSessionRunSummary
@@ -913,8 +935,105 @@ export interface AgentCapabilitiesResponse {
   capabilities: AgentCapability[]
   stages: AgentCapabilityStage[]
   builtin_tools: AgentCapabilityTool[]
+  skills?: AgentSkillSpec[]
+  tool_capabilities?: AgentToolCapabilitySpec[]
+  security_tools?: AgentSecurityToolSpec[]
+  mcp?: AgentMcpIntegrationSpec
   safety: AgentCapabilitySafety
   integrations: AgentCapabilityItem[]
+}
+
+export interface AgentSkillSpec {
+  id: string
+  source?: string
+  path?: string
+  label: string
+  description: string
+  intent_tags: string[]
+  required_tools?: string[]
+  optional_tools?: string[]
+  fallback_prompts?: string[]
+  risk: string
+  examples?: string[]
+}
+
+export interface AgentToolCapabilitySpec {
+  name: string
+  source: string
+  catalog_path?: string
+  intent_tags: string[]
+  can_do: string[]
+  cannot_do?: string[]
+  risk: string
+  required_level: string
+  auto_run: boolean
+  description: string
+  input_schema?: Record<string, unknown>
+  examples?: string[]
+}
+
+export interface AgentSecurityToolSpec {
+  name: string
+  source: string
+  path?: string
+  plugin_path?: string
+  intent_tags?: string[]
+  can_do?: string[]
+  cannot_do?: string[]
+  risk?: string
+  required_level?: string
+  auto_run?: boolean
+  input_schema?: Record<string, unknown>
+  examples?: string[]
+}
+
+export interface AgentMcpIntegrationSpec {
+  status: string
+  description: string
+  next_steps: string[]
+}
+
+export interface AgentSkillRegistryResponse {
+  skills: AgentSkillSpec[]
+  tool_capabilities: AgentToolCapabilitySpec[]
+  security_tools?: AgentSecurityToolSpec[]
+  mcp: AgentMcpIntegrationSpec
+}
+
+export interface AgentMcpToolConfig {
+  name: string
+  description?: string
+  intent_tags?: string[]
+  can_do?: string[]
+  cannot_do?: string[]
+  risk?: string
+  required_level?: string
+  enabled: boolean
+}
+
+export interface AgentMcpServerConfig {
+  id: string
+  name: string
+  transport: string
+  command?: string
+  args?: string[]
+  url?: string
+  enabled: boolean
+  preset?: boolean
+  status?: string
+  last_error?: string
+  last_sync_at?: string
+  created_at?: string
+  updated_at?: string
+  description?: string
+  tools?: AgentMcpToolConfig[]
+}
+
+export interface AgentMcpRegistryView {
+  servers: AgentMcpServerConfig[]
+  tool_capabilities: AgentToolCapabilitySpec[]
+  count: number
+  enabled_count: number
 }
 
 export interface WorkspaceCommandResult {
@@ -993,6 +1112,16 @@ export interface AgentControlResponse {
   message: AgentMessage
 }
 
+export interface AgentAuthorizationDecisionRequest extends Partial<AgentProviderConfig> {
+  action: 'approve' | 'deny'
+  authorization_id?: string
+  operator: string
+  language: 'zh' | 'en'
+  operation_level?: AgentOperationLevel
+  reason?: string
+  skip_synthesis?: boolean
+}
+
 export interface AgentSessionStreamEvent {
   session: AgentSession
 }
@@ -1056,6 +1185,8 @@ export interface AgentProviderTestResponse {
   model: string
   latency_ms: number
   output?: string
+  error?: string
+  request_url?: string
 }
 
 export interface ToolDef {
@@ -1358,6 +1489,22 @@ export class ApiClient {
     return this.request<AgentCapabilitiesResponse>(`/api/v1/agent/capabilities?${params}`)
   }
 
+  getAgentSkills(language: 'zh' | 'en') {
+    const params = new URLSearchParams()
+    params.set('language', language)
+    return this.request<AgentSkillRegistryResponse>(`/api/v1/agent/skills?${params}`)
+  }
+
+  getAgentMcpRegistry() {
+    return this.request<AgentMcpRegistryView>('/api/v1/agent/mcp')
+  }
+
+  setAgentMcpServerEnabled(serverId: string, enabled: boolean) {
+    return this.request<{ server: AgentMcpServerConfig }>(`/api/v1/agent/mcp/servers/${encodeURIComponent(serverId)}/${enabled ? 'enable' : 'disable'}`, {
+      method: 'POST',
+    })
+  }
+
   createAgentSession(operator: string, language: 'zh' | 'en', operationLevel: AgentOperationLevel = 'read_only') {
     return this.request<CreateAgentSessionResponse>('/api/v1/agent/sessions', {
       method: 'POST',
@@ -1417,6 +1564,20 @@ export class ApiClient {
     return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/continue`, {
       method: 'POST',
       body: JSON.stringify(request),
+    })
+  }
+
+  approveAgentAuthorization(sessionId: string, request: Omit<AgentAuthorizationDecisionRequest, 'action'>) {
+    return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/authorization/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ ...request, action: 'approve' }),
+    })
+  }
+
+  denyAgentAuthorization(sessionId: string, request: Omit<AgentAuthorizationDecisionRequest, 'action'>) {
+    return this.request<AgentControlResponse>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/authorization/deny`, {
+      method: 'POST',
+      body: JSON.stringify({ ...request, action: 'deny' }),
     })
   }
 

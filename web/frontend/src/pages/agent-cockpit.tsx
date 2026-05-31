@@ -7,7 +7,6 @@ import {
   ClipboardList,
   Code2,
   Download,
-  Link as LinkIcon,
   Loader2,
   MessageSquare,
   Pause,
@@ -17,7 +16,6 @@ import {
   Plus,
   RefreshCcw,
   Send,
-  Shield,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -28,17 +26,17 @@ import {
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import type {
-  AgentCapabilitiesResponse,
+  AgentAuthorizationRequest,
   AgentMessage,
   AgentNextAction,
   AgentOperationLevel,
   AgentProviderConfig,
   AgentSession,
+  AgentSessionRunSummary,
   AgentSessionSummary,
   AgentTodo,
   AgentToolCall,
   AgentTraceResponse,
-  AgentWorkspaceChange,
 } from '@/lib/api'
 import { ApiError, normalizeAgentOperationLevel } from '@/lib/api'
 import { consumeAgentDraft } from '@/lib/agent-draft'
@@ -49,6 +47,14 @@ type StreamStatus = 'offline' | 'connecting' | 'online' | 'error'
 
 interface PlannerPayload {
   answer?: string
+  suggest_prompt?: string
+  suggested_prompt?: string
+  suggested_prompts?: string[]
+  suggestions?: string[]
+  recommendation_options?: unknown[]
+  recommendationOptions?: unknown[]
+  recommendations?: unknown[]
+  options?: unknown[]
   task?: {
     goal?: string
     kind?: string
@@ -64,7 +70,17 @@ interface DisplayContent {
   text: string
   planner?: PlannerPayload
   command?: CommandSummary
+  suggestions?: string[]
+  recommendationOptions?: RecommendationOption[]
   raw?: string
+}
+
+interface RecommendationOption {
+  id: string
+  title: string
+  detail: string
+  prompt: string
+  command?: string
 }
 
 interface CommandSummary {
@@ -77,12 +93,17 @@ interface CommandSummary {
 }
 
 interface AuthorizationGate {
+  id: string
   action: string
-  prompt: string
+  prompt?: string
   target?: string
   scope?: string
+  policy?: string
+  reason?: string
+  arguments?: Record<string, unknown>
   requiredLevel: AgentOperationLevel
-  messageIndex: number
+  source: 'pending' | 'legacy'
+  messageIndex?: number
 }
 
 const QUICK_PROMPTS = {
@@ -102,14 +123,13 @@ const QUICK_PROMPTS = {
   ],
 } as const
 
-const OPERATION_LEVELS: AgentOperationLevel[] = ['read_only', 'workspace', 'safe_scan', 'approval_ops', 'advanced']
+const OPERATION_LEVELS: AgentOperationLevel[] = ['read_only', 'workspace', 'safe_scan', 'approval_ops', 'advanced', 'bypass']
 
 export function AgentCockpitPage() {
   const { client, settings, updateSettings, language, t } = useConsole()
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string>('')
   const [session, setSession] = useState<AgentSession | null>(null)
-  const [capabilities, setCapabilities] = useState<AgentCapabilitiesResponse | null>(null)
   const [loadingSessions, setLoadingSessions] = useState(false)
   const [loadingSession, setLoadingSession] = useState(false)
   const [sending, setSending] = useState(false)
@@ -120,11 +140,12 @@ export function AgentCockpitPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [quickOpen, setQuickOpen] = useState(false)
   const [taskOpen, setTaskOpen] = useState(false)
+  const [permissionOpen, setPermissionOpen] = useState(false)
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('offline')
-  const [changeBusyId, setChangeBusyId] = useState('')
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceData, setTraceData] = useState<AgentTraceResponse | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const draftConsumedRef = useRef(false)
 
@@ -214,10 +235,6 @@ export function AgentCockpitPage() {
   }, [activeSessionId, loadSession, refreshSessions])
 
   useEffect(() => {
-    client.getAgentCapabilities(language).then(setCapabilities).catch(() => setCapabilities(null))
-  }, [client, language])
-
-  useEffect(() => {
     if (draftConsumedRef.current) return
     draftConsumedRef.current = true
     const draft = consumeAgentDraft()
@@ -259,19 +276,22 @@ export function AgentCockpitPage() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [session?.messages?.length, sending])
 
-  const currentOperationLevel = normalizeAgentOperationLevel(session?.operation_level || settings.operationLevel)
+  const currentOperationLevel = normalizeAgentOperationLevel(settings.operationLevel || session?.operation_level)
   const messages = session?.messages || []
   const activeTask = session?.active_task
   const todos = session?.todos || []
+  const plannedTodos = useMemo(() => todos.filter((todo) => isPlannedTodoStatus(todo.status)), [todos])
   const nextAction = session?.next_action
-  const pendingChanges = session?.pending_changes || []
-  const recentToolCalls = (session?.tool_calls || []).slice(0, 8)
+  const suggestedNextPrompt = nextActionSuggestedPrompt(nextAction)
+  const runSummary = session?.run_summary || sessions.find((item) => item.session_id === activeSessionId)?.run_summary
   const phases = useMemo(() => buildPhaseProgress(messages), [messages])
   const authorizationGate = useMemo(() => {
+    const pendingGate = buildPendingAuthorizationGate(session?.pending_authorization, language)
+    if (pendingGate) return pendingGate
     const gate = buildAuthorizationGate(messages, language)
     if (!gate) return null
     return dismissedAuthorizationGates.includes(authorizationGateKey(gate)) ? null : gate
-  }, [dismissedAuthorizationGates, language, messages])
+  }, [dismissedAuthorizationGates, language, messages, session?.pending_authorization])
 
   const sendMessage = useCallback(async (
     override?: string,
@@ -391,39 +411,15 @@ export function AgentCockpitPage() {
     }
   }, [client, language, session, traceData])
 
-  const applyWorkspaceChange = useCallback(async (changeId: string) => {
-    if (!session || !changeId) return
-    setChangeBusyId(`apply:${changeId}`)
-    setError('')
-    try {
-      await client.agentWorkspaceApplyChange(session.session_id, changeId)
-      await loadSession(session.session_id)
-      await refreshSessions()
-    } catch (err) {
-      setError(formatError(err, language))
-    } finally {
-      setChangeBusyId('')
-    }
-  }, [client, language, loadSession, refreshSessions, session])
-
-  const discardWorkspaceChange = useCallback(async (changeId: string) => {
-    if (!session || !changeId) return
-    setChangeBusyId(`discard:${changeId}`)
-    setError('')
-    try {
-      await client.agentWorkspaceDiscardChange(session.session_id, changeId)
-      await loadSession(session.session_id)
-      await refreshSessions()
-    } catch (err) {
-      setError(formatError(err, language))
-    } finally {
-      setChangeBusyId('')
-    }
-  }, [client, language, loadSession, refreshSessions, session])
+  const fillInputAndFocus = (value?: string) => {
+    if (!value) return
+    setInput(value)
+    window.requestAnimationFrame(() => inputRef.current?.focus())
+  }
 
   const applySuggestedPrompt = (prompt?: string) => {
     if (!prompt) return
-    setInput(prompt)
+    fillInputAndFocus(prompt)
     setTaskOpen(false)
   }
 
@@ -437,17 +433,51 @@ export function AgentCockpitPage() {
       if (nextLevel !== settings.operationLevel) {
         updateSettings({ operationLevel: nextLevel })
       }
-      setDismissedAuthorizationGates((items) => Array.from(new Set([...items, gateKey])))
-      await sendMessage(gate.prompt, { operation_level: nextLevel }, { force: true })
+      if (session && gate.source === 'pending') {
+        await client.approveAgentAuthorization(session.session_id, {
+          authorization_id: gate.id,
+          operator: settings.operator,
+          language,
+          ...providerConfig,
+          operation_level: nextLevel,
+        })
+        await loadSession(session.session_id)
+        await refreshSessions()
+      } else if (gate.prompt) {
+        setDismissedAuthorizationGates((items) => Array.from(new Set([...items, gateKey])))
+        await sendMessage(gate.prompt, { operation_level: nextLevel }, { force: true })
+      }
+    } catch (err) {
+      setError(formatError(err, language))
     } finally {
       setAuthBusy(false)
     }
-  }, [sendMessage, settings.operationLevel, updateSettings])
+  }, [client, language, loadSession, providerConfig, refreshSessions, sendMessage, session, settings.operationLevel, settings.operator, updateSettings])
 
-  const denyAuthorizationGate = useCallback((gate: AuthorizationGate) => {
-    setDismissedAuthorizationGates((items) => Array.from(new Set([...items, authorizationGateKey(gate)])))
-    setInput(text(language, `拒绝执行 ${gate.action}。请换一个低风险方案。`, `Deny ${gate.action}. Please choose a lower-risk alternative.`))
-  }, [language])
+  const denyAuthorizationGate = useCallback(async (gate: AuthorizationGate) => {
+    setAuthBusy(true)
+    setError('')
+    try {
+      if (session && gate.source === 'pending') {
+        await client.denyAgentAuthorization(session.session_id, {
+          authorization_id: gate.id,
+          operator: settings.operator,
+          language,
+          operation_level: settings.operationLevel,
+          reason: text(language, `拒绝执行 ${gate.action}`, `Deny ${gate.action}`),
+        })
+        await loadSession(session.session_id)
+        await refreshSessions()
+      } else {
+        setDismissedAuthorizationGates((items) => Array.from(new Set([...items, authorizationGateKey(gate)])))
+        setInput(text(language, `拒绝执行 ${gate.action}。请换一个低风险方案。`, `Deny ${gate.action}. Please choose a lower-risk alternative.`))
+      }
+    } catch (err) {
+      setError(formatError(err, language))
+    } finally {
+      setAuthBusy(false)
+    }
+  }, [client, language, loadSession, refreshSessions, session, settings.operationLevel, settings.operator])
 
   return (
     <div className="grid h-[calc(100dvh-6.5rem)] min-h-0 gap-3 xl:grid-cols-[auto_minmax(0,1fr)_320px]">
@@ -579,7 +609,7 @@ export function AgentCockpitPage() {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => runControl('continue', nextAction?.suggested_prompt || '')}
+              onClick={() => runControl('continue', suggestedNextPrompt || '')}
               disabled={!session || sending}
               className="h-8 rounded-xl bg-transparent px-2.5"
               title={text(language, '继续', 'Continue')}
@@ -619,6 +649,10 @@ export function AgentCockpitPage() {
           </div>
         )}
 
+        {runSummary && (
+          <ActiveRunStatusBanner summary={runSummary} language={language} />
+        )}
+
         <div className="agent-scroll-area min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
           {!session && !loadingSession ? (
             <EmptyAgentState language={language} onCreate={createSession} />
@@ -629,7 +663,14 @@ export function AgentCockpitPage() {
           ) : (
             <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-end">
               {messages.map((message) => (
-                <MessageBubble key={message.id} message={message} language={language} />
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  language={language}
+                  disabled={sending}
+                  onFillPrompt={(prompt) => fillInputAndFocus(prompt)}
+                  onExecutePrompt={(prompt) => sendMessage(prompt, undefined, { force: true, keepInput: true })}
+                />
               ))}
               {sending && (
                 <div className="mb-3 flex justify-start">
@@ -652,46 +693,10 @@ export function AgentCockpitPage() {
               busy={authBusy}
               running={sending}
               onAuthorize={() => authorizeAndRetry(authorizationGate)}
-              onFill={() => setInput(authorizationGate.prompt)}
+              onFill={() => authorizationGate.prompt && fillInputAndFocus(authorizationGate.prompt)}
               onDeny={() => denyAuthorizationGate(authorizationGate)}
             />
           )}
-
-          <div className="mb-2 flex h-9 items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-2">
-            <button
-              type="button"
-              onClick={() => {
-                setQuickOpen((value) => !value)
-                setTaskOpen(false)
-              }}
-              className={cn(
-                'inline-flex h-7 items-center gap-1.5 rounded-xl px-2 text-xs transition',
-                quickOpen ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground',
-              )}
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              {text(language, '快捷指令', 'Quick')}
-              <ChevronDown className={cn('h-3 w-3 transition', quickOpen && 'rotate-180')} />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setTaskOpen((value) => !value)
-                setQuickOpen(false)
-              }}
-              className={cn(
-                'inline-flex h-7 items-center gap-1.5 rounded-xl px-2 text-xs transition',
-                taskOpen ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground',
-              )}
-            >
-              <ClipboardList className="h-3.5 w-3.5" />
-              Task
-              <ChevronDown className={cn('h-3 w-3 transition', taskOpen && 'rotate-180')} />
-            </button>
-            <div className="min-w-0 flex-1 truncate text-right font-mono text-[10px] text-muted-foreground">
-              {nextAction?.type ? `${statusLabel(nextAction.type, language)} · ${nextAction.reason || ''}` : text(language, '等待指令', 'Waiting for instruction')}
-            </div>
-          </div>
 
           {quickOpen && (
             <div className="mb-2 flex flex-wrap gap-1.5 rounded-2xl border border-white/10 bg-white/[0.025] p-2">
@@ -700,7 +705,7 @@ export function AgentCockpitPage() {
                   key={prompt}
                   type="button"
                   onClick={() => {
-                    setInput(prompt)
+                    fillInputAndFocus(prompt)
                     setQuickOpen(false)
                   }}
                   className="rounded-xl border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-xs text-muted-foreground hover:border-primary/30 hover:text-foreground"
@@ -718,8 +723,8 @@ export function AgentCockpitPage() {
                 <div className="mt-1 truncate text-muted-foreground">{activeTask?.summary || nextAction?.reason || text(language, '发送自然语言指令即可创建任务。', 'Send a natural-language instruction to create a task.')}</div>
               </div>
               <div className="flex items-center gap-1.5">
-                {nextAction?.suggested_prompt && (
-                  <Button type="button" variant="outline" size="sm" onClick={() => applySuggestedPrompt(nextAction.suggested_prompt)} className="h-8 rounded-xl bg-transparent">
+                {suggestedNextPrompt && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => applySuggestedPrompt(suggestedNextPrompt)} className="h-8 rounded-xl bg-transparent">
                     <Zap className="mr-1.5 h-3.5 w-3.5" />
                     {text(language, '填入下一步', 'Use next')}
                   </Button>
@@ -732,9 +737,128 @@ export function AgentCockpitPage() {
             </div>
           )}
 
+          <div className="mb-2 flex h-9 items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-2">
+            <button
+              type="button"
+              onClick={() => {
+                setQuickOpen((value) => !value)
+                setTaskOpen(false)
+                setPermissionOpen(false)
+              }}
+              className={cn(
+                'inline-flex h-7 items-center gap-1.5 rounded-xl px-2 text-xs transition',
+                quickOpen ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground',
+              )}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {text(language, '快捷指令', 'Quick')}
+              <ChevronDown className={cn('h-3 w-3 transition', quickOpen && 'rotate-180')} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTaskOpen((value) => !value)
+                setQuickOpen(false)
+                setPermissionOpen(false)
+              }}
+              className={cn(
+                'inline-flex h-7 items-center gap-1.5 rounded-xl px-2 text-xs transition',
+                taskOpen ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground',
+              )}
+            >
+              <ClipboardList className="h-3.5 w-3.5" />
+              Task
+              <ChevronDown className={cn('h-3 w-3 transition', taskOpen && 'rotate-180')} />
+            </button>
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setPermissionOpen((value) => !value)
+                  setQuickOpen(false)
+                  setTaskOpen(false)
+                }}
+                className={cn(
+                  'inline-flex h-7 items-center gap-1.5 rounded-xl px-2 text-xs transition',
+                  permissionOpen || currentOperationLevel === 'bypass'
+                    ? currentOperationLevel === 'bypass'
+                      ? 'bg-amber-300/15 text-amber-100'
+                      : 'bg-primary/15 text-primary'
+                    : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground',
+                )}
+                title={text(language, '权限模式', 'Permission mode')}
+              >
+                <ShieldCheck className="h-3.5 w-3.5" />
+                <span>{operationLevelLabel(currentOperationLevel, language)}</span>
+                <ChevronDown className={cn('h-3 w-3 transition', permissionOpen && 'rotate-180')} />
+              </button>
+              {permissionOpen && (
+                <div className="absolute bottom-full left-0 z-30 mb-2 w-60 overflow-hidden rounded-2xl border border-white/10 bg-[#050816] p-1.5 shadow-2xl shadow-black/40">
+                  <div className="mb-1 px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                    {text(language, '权限模式', 'Permission mode')}
+                  </div>
+                  <div className="grid gap-1">
+                    {OPERATION_LEVELS.map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        title={permissionModeDetail(level, language)}
+                        onClick={() => {
+                          updateSettings({ operationLevel: level })
+                          setSession((current) => current ? { ...current, operation_level: level } : current)
+                          setPermissionOpen(false)
+                        }}
+                        className={cn(
+                          'flex h-8 w-full items-center gap-2 rounded-xl border px-2 text-left text-xs transition',
+                          currentOperationLevel === level
+                            ? 'border-primary/35 bg-primary/10 text-foreground'
+                            : 'border-transparent text-muted-foreground hover:bg-white/[0.055] hover:text-foreground',
+                          level === 'bypass' && currentOperationLevel === level && 'border-amber-300/35 bg-amber-300/10',
+                        )}
+                      >
+                        <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-lg border', level === 'bypass' ? 'border-amber-300/25 bg-amber-300/10 text-amber-100' : 'border-white/10 bg-white/[0.04]')}>
+                          <ShieldCheck className="h-3 w-3" />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate font-medium">{operationLevelLabel(level, language)}</span>
+                        {currentOperationLevel === level && <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            {suggestedNextPrompt && (
+              <div className="hidden items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 px-1.5 py-1 sm:flex">
+                <button
+                  type="button"
+                  onClick={() => fillInputAndFocus(suggestedNextPrompt)}
+                  disabled={sending}
+                  className="rounded-lg px-1.5 py-0.5 text-[11px] text-primary hover:bg-primary/10 disabled:opacity-50"
+                  title={suggestedNextPrompt}
+                >
+                  {text(language, '填入建议', 'Fill suggestion')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => sendMessage(suggestedNextPrompt, undefined, { force: true, keepInput: true })}
+                  disabled={sending}
+                  className="inline-flex items-center gap-1 rounded-lg bg-primary px-1.5 py-0.5 text-[11px] text-primary-foreground disabled:opacity-50"
+                  title={suggestedNextPrompt}
+                >
+                  <Play className="h-3 w-3" />
+                  {text(language, '执行', 'Run')}
+                </button>
+              </div>
+            )}
+            <div className="min-w-0 flex-1 truncate text-right font-mono text-[10px] text-muted-foreground">
+              {nextAction?.type ? `${statusLabel(nextAction.type, language)} · ${nextAction.reason || ''}` : text(language, '等待指令', 'Waiting for instruction')}
+            </div>
+          </div>
+
           <div className="flex items-end gap-2">
             <textarea
               value={input}
+              ref={inputRef}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -742,9 +866,8 @@ export function AgentCockpitPage() {
                   void sendMessage()
                 }
               }}
-              placeholder={text(language, '用自然语言指挥 Agent：检查目标、列文件、读报告、继续任务、发起 safe scan...', 'Direct the Agent in natural language: inspect targets, list files, read reports, continue tasks, start safe scans...')}
               rows={1}
-              className="command-input max-h-28 min-h-11 flex-1 resize-none rounded-2xl px-3 py-3 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="command-input max-h-28 min-h-11 flex-1 resize-none rounded-2xl px-3 py-3 text-sm leading-5 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
             <Button type="button" onClick={() => sendMessage()} disabled={sending || !input.trim()} className="h-11 rounded-2xl px-4">
               {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -756,10 +879,10 @@ export function AgentCockpitPage() {
       <aside className="glass-panel hidden min-h-0 flex-col overflow-hidden xl:flex">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
           <div className="flex items-center gap-2 text-sm font-medium">
-            <Shield className="h-4 w-4 text-primary" />
-            {text(language, '任务上下文', 'Task context')}
+            <ClipboardList className="h-4 w-4 text-primary" />
+            Track List
           </div>
-          <div className="flex items-center gap-2">
+          <div className="hidden items-center gap-2">
             <button type="button" onClick={openTraceViewer} disabled={!session || traceLoading} className="text-muted-foreground hover:text-foreground disabled:opacity-40" title={text(language, '查看 trace', 'View trace')}>
               {traceLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Code2 className="h-4 w-4" />}
             </button>
@@ -772,102 +895,20 @@ export function AgentCockpitPage() {
           </div>
         </div>
         <div className="agent-scroll-area min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-          <InspectorBlock icon={ClipboardList} title={text(language, '当前任务', 'Active task')}>
-            <KeyValue label={text(language, '目标', 'Goal')} value={activeTask?.goal || '—'} />
-            <KeyValue label={text(language, '类型', 'Kind')} value={activeTask?.kind || '—'} />
-            <KeyValue label={text(language, '状态', 'Status')} value={activeTask?.status ? statusLabel(activeTask.status, language) : '—'} />
-            {activeTask?.active_run_id && (
-              <Link to={`/scan/${activeTask.active_run_id}`} className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                <LinkIcon className="h-3 w-3" />
-                {activeTask.active_run_id}
-              </Link>
-            )}
-          </InspectorBlock>
-
           <InspectorBlock icon={Sparkles} title={text(language, '执行阶段', 'Agent phases')}>
             <PhaseTimeline phases={phases} language={language} />
           </InspectorBlock>
 
-          <InspectorBlock icon={ShieldCheck} title={text(language, '权限', 'Permission')}>
-            <div className="mb-2 rounded-xl border border-primary/20 bg-primary/10 px-3 py-2 text-xs text-primary">
-              {operationLevelLabel(currentOperationLevel, language)}
-            </div>
-            <div className="grid gap-1.5">
-              {OPERATION_LEVELS.map((level) => (
-                <button
-                  key={level}
-                  type="button"
-                  onClick={() => updateSettings({ operationLevel: level })}
-                  className={cn(
-                    'rounded-lg border px-2 py-1.5 text-left text-[11px] transition',
-                    currentOperationLevel === level
-                      ? 'border-primary/30 bg-primary/10 text-primary'
-                      : 'border-white/10 bg-white/[0.03] text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {operationLevelLabel(level, language)}
-                </button>
-              ))}
-            </div>
-          </InspectorBlock>
-
-          <InspectorBlock icon={ClipboardList} title={`TODO · ${todos.length}`}>
-            {todos.length ? (
+          <InspectorBlock icon={ClipboardList} title={`TODO List · ${plannedTodos.length}`}>
+            {plannedTodos.length ? (
               <div className="space-y-2">
-                {todos.slice(0, 8).map((todo) => (
+                {plannedTodos.slice(0, 8).map((todo) => (
                   <TodoItem key={todo.id || todo.title} todo={todo} language={language} />
                 ))}
               </div>
             ) : (
-              <div className="text-xs text-muted-foreground">{text(language, '暂无 TODO。', 'No TODOs yet.')}</div>
+              <div className="text-xs text-muted-foreground">{text(language, '暂无待执行 TODO。', 'No planned TODOs.')}</div>
             )}
-          </InspectorBlock>
-
-          <InspectorBlock icon={Zap} title={text(language, '下一步', 'Next action')}>
-            <KeyValue label={text(language, '状态', 'Type')} value={nextAction?.type ? statusLabel(nextAction.type, language) : '—'} />
-            <KeyValue label={text(language, '原因', 'Reason')} value={nextAction?.reason || '—'} />
-            {nextAction?.suggested_prompt && (
-              <button
-                type="button"
-                onClick={() => applySuggestedPrompt(nextAction.suggested_prompt)}
-                className="mt-2 w-full rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-left text-xs text-primary hover:bg-primary/15"
-              >
-                {nextAction.suggested_prompt}
-              </button>
-            )}
-          </InspectorBlock>
-
-          <InspectorBlock icon={Code2} title={`${text(language, '待应用变更', 'Pending changes')} · ${pendingChanges.length}`}>
-            {pendingChanges.length ? (
-              <PendingChangesPanel
-                changes={pendingChanges.slice(0, 6)}
-                language={language}
-                busyId={changeBusyId}
-                onApply={applyWorkspaceChange}
-                onDiscard={discardWorkspaceChange}
-              />
-            ) : (
-              <div className="text-xs text-muted-foreground">{text(language, '暂无待应用 diff。', 'No pending diffs.')}</div>
-            )}
-          </InspectorBlock>
-
-          <InspectorBlock icon={Wrench} title={`${t('tools')} · ${recentToolCalls.length}`}>
-            {recentToolCalls.length ? (
-              <ToolTimeline calls={recentToolCalls} language={language} />
-            ) : (
-              <div className="text-xs text-muted-foreground">{text(language, '暂无工具调用。', 'No tool calls yet.')}</div>
-            )}
-          </InspectorBlock>
-
-          <InspectorBlock icon={Code2} title={text(language, '内置能力', 'Built-ins')}>
-            <div className="flex flex-wrap gap-1.5">
-              {(capabilities?.builtin_tools || []).slice(0, 12).map((tool) => (
-                <span key={tool.name} title={tool.description} className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 font-mono text-[10px] text-muted-foreground">
-                  {tool.name}
-                </span>
-              ))}
-              {!capabilities?.builtin_tools?.length && <span className="text-xs text-muted-foreground">—</span>}
-            </div>
           </InspectorBlock>
         </div>
       </aside>
@@ -945,22 +986,30 @@ function AuthorizationGateBanner({
           <Button type="button" variant="ghost" size="sm" onClick={onDeny} disabled={busy} className="h-7 rounded-xl px-2 text-amber-100/80 hover:bg-red-300/10 hover:text-red-100">
             {text(language, '拒绝', 'Deny')}
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={onFill} disabled={busy} className="h-7 rounded-xl px-2 text-amber-100 hover:bg-amber-300/10">
-            {text(language, '填入声明', 'Fill')}
-          </Button>
+          {gate.source === 'legacy' && gate.prompt && (
+            <Button type="button" variant="ghost" size="sm" onClick={onFill} disabled={busy} className="h-7 rounded-xl px-2 text-amber-100 hover:bg-amber-300/10">
+              {text(language, '填入声明', 'Fill')}
+            </Button>
+          )}
           <Button type="button" size="sm" onClick={onAuthorize} disabled={busy} className="h-7 rounded-xl bg-amber-300 px-2 text-black hover:bg-amber-200">
             {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}
             {text(language, '允许并继续', 'Allow & continue')}
           </Button>
         </div>
       </div>
-      <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-amber-100/75">
+      <div className="mt-1 line-clamp-3 text-[11px] leading-5 text-amber-100/75">
         {text(
           language,
-          `类似 Claude Code / Codex 的工具授权门：先展示动作与范围，操作者点击允许后才继续执行；本次需要「${operationLevelLabel(gate.requiredLevel, language)}」权限。`,
-          `A Claude Code / Codex-style tool permission gate: action and scope are shown first, then execution continues only after operator approval. Required: ${operationLevelLabel(gate.requiredLevel, language)}.`,
+          `${gate.reason || 'Agent 已暂停执行，等待操作者确认。'} 本次需要「${operationLevelLabel(gate.requiredLevel, language)}」权限。`,
+          `${gate.reason || 'The Agent paused execution and is waiting for operator approval.'} Required: ${operationLevelLabel(gate.requiredLevel, language)}.`,
         )}
       </div>
+      {gate.arguments && (
+        <details className="mt-1.5 rounded-xl border border-amber-200/15 bg-black/10 px-2 py-1.5 text-[11px]">
+          <summary className="cursor-pointer text-amber-100/75">{text(language, '动作参数', 'Action args')}</summary>
+          <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap font-mono text-amber-50/80">{safeJson(gate.arguments)}</pre>
+        </details>
+      )}
     </div>
   )
 }
@@ -1124,7 +1173,57 @@ function traceItemDetail(item: Record<string, unknown>) {
   return ''
 }
 
-function MessageBubble({ message, language }: { message: AgentMessage; language: 'zh' | 'en' }) {
+function ActiveRunStatusBanner({ summary, language }: { summary: AgentSessionRunSummary; language: 'zh' | 'en' }) {
+  const status = String(summary.status || 'running')
+  const running = isRunActiveStatus(status)
+  const terminal = isRunTerminalStatus(status)
+  const reportReady = Boolean(summary.report_json)
+  const summaryText = runSummaryLine(summary, language)
+  return (
+    <div className="shrink-0 border-b border-white/10 bg-[#050816]/75 px-3 py-2 sm:px-4">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.035] px-3 py-2 text-xs">
+        <span className={cn('relative grid h-7 w-7 shrink-0 place-items-center rounded-xl border', running ? 'border-cyan-300/30 bg-cyan-400/10' : terminal ? 'border-emerald-300/25 bg-emerald-400/10' : 'border-amber-300/25 bg-amber-400/10')}>
+          {running ? <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-200" /> : terminal ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-200" /> : <AlertTriangle className="h-3.5 w-3.5 text-amber-200" />}
+          {running && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-cyan-300" />}
+        </span>
+        <div className="min-w-[180px] flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{text(language, '当前任务', 'Active run')}</span>
+            <span className={cn('rounded-full border px-2 py-0.5 font-mono text-[10px]', runStatusPillClass(status))}>
+              {statusLabel(status, language)}
+            </span>
+            <Link to={`/scan/${summary.run_id}`} className="font-mono text-[10px] text-primary hover:underline">
+              {shortId(summary.run_id)}
+            </Link>
+          </div>
+          <div className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{summaryText}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+          <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1">events {summary.events || 0}</span>
+          <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1">artifacts {summary.artifacts || 0}</span>
+          <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1">findings {summary.findings || 0}</span>
+          <span className={cn('rounded-full border px-2 py-1', reportReady ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100' : 'border-amber-300/20 bg-amber-400/10 text-amber-100')}>
+            {reportReady ? text(language, '报告已生成', 'Report ready') : text(language, '报告生成中', 'Report pending')}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MessageBubble({
+  message,
+  language,
+  disabled,
+  onFillPrompt,
+  onExecutePrompt,
+}: {
+  message: AgentMessage
+  language: 'zh' | 'en'
+  disabled?: boolean
+  onFillPrompt?: (prompt: string) => void
+  onExecutePrompt?: (prompt: string) => void
+}) {
   const display = useMemo(() => normalizeDisplayContent(message.content), [message.content])
   const isUser = message.role === 'user'
   const isTool = message.role === 'tool'
@@ -1179,6 +1278,25 @@ function MessageBubble({ message, language }: { message: AgentMessage; language:
           <PlannerSummary payload={display.planner} language={language} />
         )}
 
+        {isAgent && display.suggestions?.length ? (
+          <SuggestedPromptActions
+            prompts={display.suggestions}
+            language={language}
+            disabled={Boolean(disabled)}
+            onFill={onFillPrompt}
+            onExecute={onExecutePrompt}
+          />
+        ) : null}
+
+        {isAgent && display.recommendationOptions?.length ? (
+          <RecommendationOptionsCard
+            options={display.recommendationOptions}
+            language={language}
+            disabled={Boolean(disabled)}
+            onFill={onFillPrompt}
+          />
+        ) : null}
+
         {message.reasoning && (
           <details className="mt-2 rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-xs">
             <summary className="cursor-pointer text-muted-foreground">{text(language, '推理摘要', 'Reasoning')}</summary>
@@ -1200,6 +1318,7 @@ function MessageBubble({ message, language }: { message: AgentMessage; language:
 
 function PlannerSummary({ payload, language }: { payload: PlannerPayload; language: 'zh' | 'en' }) {
   const todos = payload.todos || []
+  const suggestedPrompt = extractSuggestedPrompts(payload)[0]
   if (!payload.task && !todos.length && !payload.next_action) return null
   return (
     <details className="mt-2 rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-xs" open={false}>
@@ -1220,13 +1339,153 @@ function PlannerSummary({ payload, language }: { payload: PlannerPayload; langua
             </div>
           </div>
         ))}
-        {payload.next_action?.suggested_prompt && (
+        {suggestedPrompt && (
           <div className="rounded-lg border border-primary/20 bg-primary/10 p-2 text-primary">
-            {payload.next_action.suggested_prompt}
+            {suggestedPrompt}
           </div>
         )}
       </div>
     </details>
+  )
+}
+
+function SuggestedPromptActions({
+  prompts,
+  language,
+  disabled,
+  onFill,
+  onExecute,
+}: {
+  prompts: string[]
+  language: 'zh' | 'en'
+  disabled: boolean
+  onFill?: (prompt: string) => void
+  onExecute?: (prompt: string) => void
+}) {
+  const items = prompts.map((prompt) => prompt.trim()).filter(Boolean).slice(0, 4)
+  if (!items.length) return null
+  return (
+    <div className="mt-2 rounded-2xl border border-primary/20 bg-primary/10 p-2 text-xs shadow-[0_0_24px_rgba(34,211,238,0.05)]">
+      <div className="mb-1.5 flex items-center gap-2 text-primary">
+        <Sparkles className="h-3.5 w-3.5" />
+        <span className="font-medium">{text(language, 'Agent 建议执行', 'Agent suggested prompts')}</span>
+      </div>
+      <div className="space-y-1.5">
+        {items.map((prompt, index) => (
+          <div key={`${prompt}_${index}`} className="group rounded-xl border border-white/10 bg-black/15 p-2">
+            <button
+              type="button"
+              onClick={() => onFill?.(prompt)}
+              disabled={disabled || !onFill}
+              className="w-full cursor-pointer text-left text-[11px] leading-5 text-foreground/90 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+              title={prompt}
+            >
+              {prompt}
+            </button>
+            <div className="mt-1.5 flex items-center justify-end gap-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={disabled || !onFill}
+                onClick={() => onFill?.(prompt)}
+                className="h-7 rounded-lg px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                {text(language, '填入', 'Fill')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={disabled || !onExecute}
+                onClick={() => onExecute?.(prompt)}
+                className="h-7 rounded-lg px-2 text-[11px]"
+              >
+                <Play className="mr-1 h-3 w-3" />
+                {text(language, '执行', 'Run')}
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function RecommendationOptionsCard({
+  options,
+  language,
+  disabled,
+  onFill,
+}: {
+  options: RecommendationOption[]
+  language: 'zh' | 'en'
+  disabled: boolean
+  onFill?: (prompt: string) => void
+}) {
+  const [selectedId, setSelectedId] = useState('')
+  const items = options.slice(0, 6)
+  if (!items.length) return null
+  return (
+    <div className="mt-2 rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-2 text-xs shadow-[0_0_24px_rgba(34,211,238,0.06)]">
+      <div className="mb-1.5 flex items-center gap-2 text-cyan-50">
+        <ClipboardList className="h-3.5 w-3.5 text-cyan-200" />
+        <span className="font-medium">{text(language, '可选建议', 'Recommendation options')}</span>
+        <span className="ml-auto text-[10px] text-cyan-100/60">
+          {text(language, '点击选择，回车发送编号', 'Click to select, Enter sends number')}
+        </span>
+      </div>
+      <div className="space-y-1.5">
+        {items.map((item, index) => {
+          const selected = selectedId === item.id
+          return (
+            <button
+              key={item.id}
+              type="button"
+              disabled={disabled || !onFill}
+              onClick={() => {
+                setSelectedId(item.id)
+                onFill?.(String(index + 1))
+              }}
+              title={`${index + 1}. ${item.detail}`}
+              className={cn(
+                'group w-full rounded-xl border px-2.5 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-60',
+                selected
+                  ? 'border-primary/45 bg-primary/15 text-foreground shadow-[0_0_18px_rgba(34,211,238,0.08)]'
+                  : 'border-white/10 bg-black/15 text-muted-foreground hover:border-primary/25 hover:bg-white/[0.055] hover:text-foreground',
+              )}
+            >
+              <div className="flex items-start gap-2">
+                <span className={cn(
+                  'mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border font-mono text-[10px]',
+                  selected ? 'border-primary/45 bg-primary/20 text-primary' : 'border-white/10 text-cyan-100/70',
+                )}>
+                  {index + 1}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[11px] font-medium leading-5">{item.title}</span>
+                  <span className="mt-0.5 line-clamp-2 block text-[10px] leading-4 opacity-75">{item.detail}</span>
+                  {item.command && (
+                    <code className="mt-1.5 block truncate rounded-lg bg-black/25 px-2 py-1 font-mono text-[10px] text-cyan-100">
+                      {item.command}
+                    </code>
+                  )}
+                </span>
+                {selected && (
+                  <span className="shrink-0 rounded-full border border-primary/30 bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">
+                    {text(language, '已选择', 'Selected')}
+                  </span>
+                )}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+      {selectedId && (
+        <div className="mt-1.5 rounded-xl border border-primary/15 bg-primary/10 px-2 py-1.5 text-[10px] text-primary">
+          {text(language, '已填入选择编号，按 Enter 发送给 Agent。', 'Selection number filled. Press Enter to send it to the Agent.')}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1252,7 +1511,6 @@ function CommandResultView({ command, language }: { command: CommandSummary; lan
     </div>
   )
 }
-
 function ToolCallDetails({ call, language }: { call: AgentToolCall; language: 'zh' | 'en' }) {
   const command = commandFromToolCall(call)
   const explicitIntentDenied = isExplicitOperatorIntentDenied(call)
@@ -1282,37 +1540,9 @@ function ToolCallDetails({ call, language }: { call: AgentToolCall; language: 'z
   )
 }
 
-function ToolTimeline({ calls, language }: { calls: AgentToolCall[]; language: 'zh' | 'en' }) {
-  return (
-    <div className="relative space-y-2 pl-3 before:absolute before:left-[7px] before:top-2 before:h-[calc(100%-1rem)] before:w-px before:bg-white/10">
-      {calls.map((call) => (
-        <ToolCallCompact key={call.id} call={call} language={language} />
-      ))}
-    </div>
-  )
-}
-
-function ToolCallCompact({ call, language }: { call: AgentToolCall; language: 'zh' | 'en' }) {
-  const phase = String(call.metadata?.agent_phase || call.metadata?.phase || '').trim()
-  const risk = String(call.metadata?.risk || '').trim()
-  const summary = toolCallSummary(call, language)
-  const duration = toolDuration(call)
-  return (
-    <div className="relative rounded-xl border border-white/10 bg-white/[0.035] p-2">
-      <span className={cn('absolute -left-[9px] top-3 h-3.5 w-3.5 rounded-full border', toolStatusClass(String(call.status)))} />
-      <div className="flex items-center gap-2">
-        <Wrench className="h-3.5 w-3.5 shrink-0 text-primary" />
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{call.name}</span>
-        <span className={cn('rounded-full border px-1.5 py-0.5 text-[10px]', toolStatusClass(String(call.status)))}>{call.status}</span>
-      </div>
-      <div className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
-        {phase && <span className={cn('rounded-full border px-1.5 py-0.5', phaseClass(phase))}>{toolPhaseLabel(phase, language)}</span>}
-        {risk && <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5">{risk}</span>}
-        {duration && <span>{duration}</span>}
-      </div>
-      <div className="mt-1 line-clamp-3 text-[11px] text-muted-foreground">{summary || call.detail || '—'}</div>
-    </div>
-  )
+function isPlannedTodoStatus(status: string) {
+  const normalized = String(status || '').trim().toLowerCase()
+  return ['pending', 'todo', 'planned', 'running', 'in_progress', 'blocked', 'waiting', 'approval_required'].includes(normalized)
 }
 
 function TodoItem({ todo, language }: { todo: AgentTodo; language: 'zh' | 'en' }) {
@@ -1365,77 +1595,6 @@ function PhaseTimeline({ phases, language }: { phases: PhaseProgress[]; language
   )
 }
 
-function PendingChangesPanel({
-  changes,
-  language,
-  busyId,
-  onApply,
-  onDiscard,
-}: {
-  changes: AgentWorkspaceChange[]
-  language: 'zh' | 'en'
-  busyId: string
-  onApply: (changeId: string) => void
-  onDiscard: (changeId: string) => void
-}) {
-  return (
-    <div className="space-y-2">
-      {changes.map((change) => {
-        const isApplyBusy = busyId === `apply:${change.id}`
-        const isDiscardBusy = busyId === `discard:${change.id}`
-        const canAct = ['pending', 'conflict'].includes(String(change.status || '').toLowerCase())
-        return (
-          <div key={change.id} className="rounded-xl border border-white/10 bg-white/[0.035] p-2">
-            <div className="flex items-start gap-2">
-              <Code2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-mono text-[11px] text-foreground">{change.path}</div>
-                <div className="mt-1 flex flex-wrap gap-1.5 font-mono text-[10px] text-muted-foreground">
-                  <span className={cn('rounded-full border px-1.5 py-0.5', toolStatusClass(change.status))}>{change.status}</span>
-                  <span>{change.replacements} repl</span>
-                  {change.group_id && <span>group:{shortId(change.group_id)}</span>}
-                </div>
-              </div>
-            </div>
-
-            {change.diff_preview && (
-              <details className="mt-2 rounded-lg border border-white/10 bg-black/15 px-2 py-1.5">
-                <summary className="cursor-pointer text-[11px] text-muted-foreground">{text(language, '预览 diff', 'Preview diff')}</summary>
-                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-4 text-foreground/80">{change.diff_preview}</pre>
-              </details>
-            )}
-
-            <div className="mt-2 grid grid-cols-2 gap-1.5">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!canAct || Boolean(busyId)}
-                onClick={() => onApply(change.id)}
-                className="h-7 rounded-lg bg-transparent px-2 text-[11px]"
-              >
-                {isApplyBusy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <CheckCircle2 className="mr-1 h-3 w-3" />}
-                {text(language, '应用', 'Apply')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={!canAct || Boolean(busyId)}
-                onClick={() => onDiscard(change.id)}
-                className="h-7 rounded-lg px-2 text-[11px] text-muted-foreground"
-              >
-                {isDiscardBusy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Trash2 className="mr-1 h-3 w-3" />}
-                {text(language, '丢弃', 'Discard')}
-              </Button>
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 function InspectorBlock({ icon: Icon, title, children }: { icon: React.ElementType; title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">
@@ -1468,18 +1627,33 @@ function OutputBlock({ label, value }: { label: string; value: string }) {
 
 function normalizeDisplayContent(content: string): DisplayContent {
   const raw = String(content || '').trim()
+  const envelopeSuggestions = extractEnvelopeSuggestedPrompts(raw)
   const command = parseCommandSummary(raw)
   if (command) {
-    return { text: `${command.command} executed`, command, raw }
+    const recommendationOptions = collectRecommendationOptions(raw)
+    return { text: `${command.command} executed`, command, suggestions: envelopeSuggestions, recommendationOptions, raw }
+  }
+
+  const unwrapped = unwrapChatCompletionContent(raw)
+  if (unwrapped && unwrapped.trim() && unwrapped.trim() !== raw) {
+    const nested = normalizeDisplayContent(unwrapped)
+    return {
+      ...nested,
+      suggestions: mergeStringLists(nested.suggestions || [], envelopeSuggestions),
+      raw,
+    }
   }
 
   const planner = parsePlannerPayload(raw)
   if (planner) {
-    const textValue = (planner.answer || '').trim() || stripJsonObjects(raw).trim() || raw
-    return { text: textValue, planner, raw }
+    const suggestions = mergeStringLists(extractSuggestedPrompts(planner), envelopeSuggestions)
+    const textValue = (planner.answer || '').trim() || stripJsonObjects(raw).trim() || (suggestions.length ? '建议下一步操作' : raw)
+    const recommendationOptions = collectRecommendationOptions(raw, planner)
+    return { text: textValue, planner, suggestions, recommendationOptions, raw }
   }
 
-  return { text: raw, raw }
+  const recommendationOptions = collectRecommendationOptions(raw)
+  return { text: raw, suggestions: envelopeSuggestions, recommendationOptions, raw }
 }
 
 function parsePlannerPayload(raw: string): PlannerPayload | null {
@@ -1504,8 +1678,65 @@ function unwrapOpenAIChatCompletion(value: unknown): string | null {
   const choices = (value as { choices?: unknown }).choices
   if (!Array.isArray(choices) || !choices.length) return null
   const first = choices[0] as { message?: { content?: unknown }; delta?: { content?: unknown }; text?: unknown }
-  const content = first?.message?.content ?? first?.delta?.content ?? first?.text
-  return typeof content === 'string' ? content : null
+  return chatContentToText(first?.message?.content ?? first?.delta?.content ?? first?.text)
+}
+
+function unwrapChatCompletionContent(raw: string): string | null {
+  for (const candidate of extractJsonCandidates(raw)) {
+    const parsed = parseJson(candidate)
+    const unwrapped = unwrapOpenAIChatCompletion(parsed)
+    if (unwrapped) return unwrapped
+  }
+  return null
+}
+
+function chatContentToText(content: unknown): string | null {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return null
+  const parts = content.map((part) => {
+    if (typeof part === 'string') return part
+    if (!part || typeof part !== 'object') return ''
+    const record = part as Record<string, unknown>
+    const value = record.text ?? record.content
+    return typeof value === 'string' ? value : ''
+  }).map((part) => part.trim()).filter(Boolean)
+  return parts.length ? parts.join('\n') : null
+}
+
+function extractEnvelopeSuggestedPrompts(raw: string): string[] {
+  const prompts: string[] = []
+  const add = (value: unknown) => {
+    if (typeof value === 'string' && value.trim()) prompts.push(value.trim())
+  }
+  const addList = (value: unknown) => {
+    if (Array.isArray(value)) value.forEach(add)
+  }
+  const addFromRecord = (record: Record<string, unknown>) => {
+    add(record.suggest_prompt)
+    add(record.suggested_prompt)
+    add(record.prompt)
+    addList(record.suggested_prompts)
+    addList(record.suggestions)
+  }
+
+  for (const candidate of extractJsonCandidates(raw)) {
+    const parsed = parseJson(candidate)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+    const root = parsed as Record<string, unknown>
+    addFromRecord(root)
+    const choices = root.choices
+    if (!Array.isArray(choices)) continue
+    choices.forEach((choice) => {
+      if (!choice || typeof choice !== 'object' || Array.isArray(choice)) return
+      const choiceRecord = choice as Record<string, unknown>
+      addFromRecord(choiceRecord)
+      const message = choiceRecord.message
+      if (message && typeof message === 'object' && !Array.isArray(message)) addFromRecord(message as Record<string, unknown>)
+      const delta = choiceRecord.delta
+      if (delta && typeof delta === 'object' && !Array.isArray(delta)) addFromRecord(delta as Record<string, unknown>)
+    })
+  }
+  return mergeStringLists(prompts)
 }
 
 function isPlannerPayload(value: unknown): value is PlannerPayload {
@@ -1513,11 +1744,330 @@ function isPlannerPayload(value: unknown): value is PlannerPayload {
   const payload = value as PlannerPayload
   return Boolean(
     typeof payload.answer === 'string' ||
+    typeof payload.suggest_prompt === 'string' ||
+    typeof payload.suggested_prompt === 'string' ||
+    Array.isArray(payload.suggested_prompts) ||
+    Array.isArray(payload.suggestions) ||
+    Array.isArray(payload.recommendation_options) ||
+    Array.isArray(payload.recommendationOptions) ||
+    Array.isArray(payload.recommendations) ||
+    Array.isArray(payload.options) ||
     payload.task ||
     Array.isArray(payload.todos) ||
     payload.next_action ||
     typeof payload.reasoning === 'string',
   )
+}
+
+function extractSuggestedPrompts(payload: PlannerPayload): string[] {
+  const prompts: string[] = []
+  const add = (value: unknown) => {
+    if (typeof value === 'string' && value.trim()) prompts.push(value.trim())
+  }
+  const addList = (value: unknown) => {
+    if (!Array.isArray(value)) return
+    value.forEach((item) => {
+      if (typeof item === 'string') {
+        add(item)
+      } else if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>
+        add(record.prompt ?? record.suggest_prompt ?? record.suggested_prompt ?? record.title)
+      }
+    })
+  }
+
+  const root = payload as Record<string, unknown>
+  add(root.suggest_prompt)
+  add(root.suggested_prompt)
+  addList(root.suggested_prompts)
+  addList(root.suggestions)
+
+  const nextAction = recordFromUnknown(root.next_action)
+  add(nextAction.suggested_prompt)
+  add(nextAction.suggest_prompt)
+  add(nextAction.prompt)
+  addList(nextAction.suggested_prompts)
+  addList(nextAction.suggestions)
+
+  return Array.from(new Set(prompts.map((prompt) => prompt.trim()).filter(Boolean))).slice(0, 6)
+}
+
+function mergeStringLists(...lists: string[][]): string[] {
+  const values = lists.flat().map((value) => String(value || '').trim()).filter(Boolean)
+  return Array.from(new Set(values)).slice(0, 6)
+}
+
+function collectRecommendationOptions(raw: string, planner?: PlannerPayload): RecommendationOption[] {
+  const options: RecommendationOption[] = []
+  if (planner) collectRecommendationOptionsFromRecord(planner as Record<string, unknown>, options)
+
+  for (const candidate of extractJsonCandidates(raw)) {
+    const parsed = parseJson(candidate)
+    collectRecommendationOptionsFromUnknown(parsed, options)
+  }
+
+  return dedupeRecommendationOptions(options).slice(0, 6)
+}
+
+function collectRecommendationOptionsFromUnknown(value: unknown, options: RecommendationOption[]) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return
+  const record = value as Record<string, unknown>
+  collectRecommendationOptionsFromRecord(record, options)
+  const choices = record.choices
+  if (!Array.isArray(choices)) return
+  choices.forEach((choice) => {
+    if (!choice || typeof choice !== 'object' || Array.isArray(choice)) return
+    const choiceRecord = choice as Record<string, unknown>
+    collectRecommendationOptionsFromRecord(choiceRecord, options)
+    collectRecommendationOptionsFromUnknown(choiceRecord.message, options)
+    collectRecommendationOptionsFromUnknown(choiceRecord.delta, options)
+  })
+}
+
+function collectRecommendationOptionsFromRecord(record: Record<string, unknown>, options: RecommendationOption[]) {
+  addStructuredRecommendationList(record.recommendation_options, options)
+  addStructuredRecommendationList(record.recommendationOptions, options)
+  addStructuredRecommendationList(record.recommendations, options)
+  addStructuredRecommendationList(record.options, options)
+  addStructuredRecommendationList(record.choices, options)
+  const nextAction = recordFromUnknown(record.next_action)
+  addStructuredRecommendationList(nextAction.recommendation_options, options)
+  addStructuredRecommendationList(nextAction.recommendationOptions, options)
+  addStructuredRecommendationList(nextAction.recommendations, options)
+  addStructuredRecommendationList(nextAction.options, options)
+}
+
+function addStructuredRecommendationList(value: unknown, options: RecommendationOption[]) {
+  if (!Array.isArray(value)) return
+  value.forEach((item, index) => addStructuredRecommendationOption(item, options, index))
+}
+
+function addStructuredRecommendationOption(value: unknown, options: RecommendationOption[], index: number) {
+  if (typeof value === 'string') {
+    const nested = extractRecommendationOptions(value)
+    if (nested.length > 1) {
+      options.push(...nested)
+      return
+    }
+    const detail = cleanRecommendationText(value)
+    if (!detail || looksLikePassiveKeyValue(detail)) return
+    const command = extractCommandFromRecommendation(detail)
+    options.push({
+      id: `recommendation_${index + 1}_${hashString(detail)}`,
+      title: recommendationTitle(detail, command),
+      detail,
+      prompt: command ? buildRecommendationPrompt(detail, command) : detail,
+      command,
+    })
+    return
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return
+  const record = value as Record<string, unknown>
+  const prompt = firstStringField(record.prompt, record.suggest_prompt, record.suggested_prompt, record.command, record.action)
+  const detail = cleanRecommendationText(firstStringField(
+    record.detail,
+    record.description,
+    record.text,
+    record.content,
+    record.title,
+    record.label,
+    prompt,
+  ))
+  if (!detail || looksLikePassiveKeyValue(detail)) return
+  const command = firstStringField(record.command, extractCommandFromRecommendation(detail))
+  const title = firstStringField(record.title, record.label, record.name, recommendationTitle(detail, command))
+  options.push({
+    id: firstStringField(record.id, `recommendation_${index + 1}_${hashString(detail)}`),
+    title: truncate(title, 42),
+    detail,
+    prompt: prompt || buildRecommendationPrompt(detail, command),
+    command,
+  })
+}
+
+function firstStringField(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function extractRecommendationOptions(raw: string): RecommendationOption[] {
+  const textValue = decodeEscapedRecommendationText(String(raw || '').trim())
+  if (!textValue) return []
+  if (!hasRecommendationIntent(textValue)) return []
+  const source = recommendationSourceText(textValue)
+  const markerPattern = /(?:^|[\s:：;；,，。.\n])(?:(?:方法|方案|选项|建议|Option|Method|Choice)\s*)?((?:\d{1,2}|[一二三四五六七八九十]|[①②③④⑤⑥⑦⑧⑨⑩]))\s*[)）.、:：]\s*/gi
+  let matches = Array.from(source.matchAll(markerPattern))
+  if (matches.length < 2) {
+    matches = Array.from(source.matchAll(/(?:^|\n)\s*[-*•]\s+/g))
+  }
+  if (matches.length < 2) return []
+
+  const options: RecommendationOption[] = []
+  for (let i = 0; i < matches.length; i += 1) {
+    const marker = matches[i]
+    const start = (marker.index || 0) + marker[0].length
+    const end = i + 1 < matches.length ? matches[i + 1].index || source.length : source.length
+    const detail = cleanRecommendationText(source.slice(start, end))
+    if (!detail || detail.length < 4) continue
+    if (!isActionableRecommendationDetail(detail)) continue
+    const command = extractCommandFromRecommendation(detail)
+    const prompt = buildRecommendationPrompt(detail, command)
+    options.push({
+      id: `recommendation_${i + 1}_${hashString(detail)}`,
+      title: recommendationTitle(detail, command),
+      detail,
+      prompt,
+      command,
+    })
+  }
+  return dedupeRecommendationOptions(options).slice(0, 6)
+}
+
+function isActionableRecommendationDetail(detail: string) {
+  const normalized = detail
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!normalized) return false
+  if (looksLikePassiveKeyValue(normalized)) return false
+  if (/^(?:curl|nmap|ffuf|nuclei|go|npm|pnpm|yarn|python|python3|uv|docker|kubectl)\b/i.test(normalized)) return true
+  if (/^(?:GET|POST|HEAD|OPTIONS|PUT|PATCH|DELETE)\s+https?:\/\//i.test(normalized)) return true
+  if (extractCommandFromRecommendation(detail)) return true
+  return /执行|运行|使用|安装|启用|打开|选择|查询|检查|继续|重试|修复|分析|总结|确认|配置|切换|授权|扫描|枚举|读取|列出|生成|发送|补充|更新|恢复|apply|run|execute|use|install|enable|open|choose|query|check|continue|retry|fix|scan|read|list|send|configure|update|resume/i.test(normalized)
+}
+
+function looksLikePassiveKeyValue(value: string) {
+  const match = value.match(/^([a-zA-Z][a-zA-Z0-9_-]{1,48}|[\u4e00-\u9fa5A-Za-z0-9_-]{1,30})\s*[:：]\s*(.+)$/)
+  if (!match) return false
+  const key = match[1].trim().toLowerCase()
+  const rest = match[2].trim()
+  const passiveKeys = new Set([
+    'target',
+    'url',
+    'host',
+    'hostname',
+    'domain',
+    'method',
+    'status',
+    'status_code',
+    'code',
+    'server',
+    'content-type',
+    'content_type',
+    'content-length',
+    'content_length',
+    'x-cache',
+    'cache-control',
+    'etag',
+    'date',
+    'via',
+    'location',
+    'scheme',
+    'protocol',
+    'ip',
+    'port',
+    'title',
+    'body',
+    'headers',
+    'stdout',
+    'stderr',
+    'exit_code',
+    'workdir',
+    'duration',
+  ])
+  if (passiveKeys.has(key)) return true
+  return !/执行|运行|使用|安装|启用|打开|选择|查询|检查|继续|重试|修复|分析|总结|确认|配置|切换|授权|扫描|枚举|读取|列出|生成|发送|补充|更新|恢复|apply|run|execute|use|install|enable|open|choose|query|check|continue|retry|fix|scan|read|list|send|configure|update|resume/i.test(rest)
+}
+
+function decodeEscapedRecommendationText(value: string) {
+  return String(value || '')
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, ' ')
+    .replace(/\\"/g, '"')
+}
+
+function recommendationSourceText(raw: string) {
+  const markers = [
+    '建议操作者',
+    '建议用户',
+    '建议你',
+    '建议',
+    '建议：',
+    '可选方案',
+    '选项',
+    '下一步建议',
+    'Recommended options',
+    'Recommendations',
+  ]
+  const lower = raw.toLowerCase()
+  for (const marker of markers) {
+    const index = lower.indexOf(marker.toLowerCase())
+    if (index >= 0) return raw.slice(index)
+  }
+  return raw
+}
+
+function hasRecommendationIntent(raw: string) {
+  return /建议|可选方案|方案|选项|方法|可选步骤|可执行步骤|下一步建议|请选择|可选择|recommended options?|recommendations?|suggested options?|options?|choices?|methods?/i.test(raw)
+}
+
+function cleanRecommendationText(value: string) {
+  return String(value || '')
+    .replace(/^[：:，,；;\s-]+/, '')
+    .replace(/[；;]\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function extractCommandFromRecommendation(detail: string) {
+  const fenced = detail.match(/```(?:bash|shell|sh)?\s*([\s\S]+?)```/i)?.[1]?.trim()
+  if (fenced) return fenced.split('\n').map((line) => line.trim()).filter(Boolean)[0] || fenced
+  const inline = detail.match(/`([^`]+)`/)?.[1]?.trim()
+  if (inline) return inline
+  const nmap = detail.match(/\bnmap\s+[^\n；;。)）]+/i)?.[0]?.trim()
+  if (nmap) return nmap
+  const commandAfterLike = detail.match(/(?:如|例如|example:?)\s*([a-z0-9_./-]+(?:\s+-{1,2}[^\s；;。)）]+|\s+[^\s；;。)）]+){1,12})/i)?.[1]?.trim()
+  return commandAfterLike || ''
+}
+
+function buildRecommendationPrompt(detail: string, command: string) {
+  if (command) return `请按以下建议执行或给出可执行步骤：${command}`
+  return `请按以下建议继续处理：${detail}`
+}
+
+function recommendationTitle(detail: string, command: string) {
+  const clean = detail
+    .replace(/（[^）]*）/g, '')
+    .replace(/\([^)]*\)/g, '')
+    .replace(/^(或|或者|and|or)\s*/i, '')
+    .trim()
+  if (command) {
+    const beforeCommand = clean.split(command)[0]?.trim()
+    if (beforeCommand) return truncate(beforeCommand, 42)
+    return truncate(command, 42)
+  }
+  return truncate(clean.split(/[，,。.;；]/)[0] || clean, 42)
+}
+
+function dedupeRecommendationOptions(options: RecommendationOption[]) {
+  const seen = new Set<string>()
+  return options.filter((item) => {
+    const key = item.detail.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function hashString(value: string) {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash).toString(36)
 }
 
 function extractJsonCandidates(raw: string): string[] {
@@ -1634,6 +2184,51 @@ function sessionTitle(item: AgentSessionSummary | AgentSession, language: 'zh' |
   return text(language, `会话 ${label}`, `Session ${label}`)
 }
 
+function buildPendingAuthorizationGate(auth: AgentAuthorizationRequest | undefined, language: 'zh' | 'en'): AuthorizationGate | null {
+  if (!auth || String(auth.status || '').toLowerCase() !== 'pending') return null
+  const args = recordFromUnknown(auth.arguments)
+  const action = String(auth.action_name || 'agent.action')
+  const target = agentAuthorizationTargetFromArgs(args)
+  const scope = String(args.scope || args.scope_url || '').trim()
+  return {
+    id: auth.id,
+    action,
+    target,
+    scope,
+    policy: auth.policy,
+    reason: auth.reason,
+    arguments: args,
+    requiredLevel: normalizeAgentOperationLevel(auth.required_level || requiredLevelForDeniedAction(action)),
+    prompt: auth.original_prompt || buildAuthorizationRetryPrompt('', action, target, scope, language),
+    source: 'pending',
+  }
+}
+
+function agentAuthorizationTargetFromArgs(args: Record<string, unknown>) {
+  const values = [
+    args.target,
+    args.url,
+    args.input,
+    args.path,
+    args.file,
+    args.command,
+    args.run_id,
+  ]
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function nextActionSuggestedPrompt(nextAction: AgentNextAction | undefined) {
+  if (!nextAction) return ''
+  const record = nextAction as AgentNextAction & { suggest_prompt?: unknown; prompt?: unknown }
+  for (const value of [record.suggested_prompt, record.suggest_prompt, record.prompt]) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
 function buildAuthorizationGate(messages: AgentMessage[], language: 'zh' | 'en'): AuthorizationGate | null {
   let latestUserIndex = -1
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -1654,21 +2249,24 @@ function buildAuthorizationGate(messages: AgentMessage[], language: 'zh' | 'en')
       const action = toolCallAction(call)
       const target = inferNetworkTargetForPrompt(originalPrompt)
       const scope = inferScopeForPrompt(originalPrompt, target)
-      return {
+      const legacyGate: AuthorizationGate = {
+        id: ['legacy', i, action, target || '', scope || ''].join('|'),
         action,
         target,
         scope,
         requiredLevel: requiredLevelForDeniedAction(action),
         prompt: buildAuthorizationRetryPrompt(originalPrompt, action, target, scope, language),
+        source: 'legacy',
         messageIndex: i,
       }
+      return legacyGate
     }
   }
   return null
 }
 
 function authorizationGateKey(gate: AuthorizationGate) {
-  return [gate.messageIndex, gate.action, gate.target || '', gate.scope || ''].join('|')
+  return gate.id || [gate.source, gate.messageIndex ?? '', gate.action, gate.target || '', gate.scope || ''].join('|')
 }
 
 function isExplicitOperatorIntentDenied(call: AgentToolCall) {
@@ -1786,6 +2384,7 @@ function agentOperationLevelRank(level: AgentOperationLevel) {
     safe_scan: 2,
     approval_ops: 3,
     advanced: 4,
+    bypass: 5,
   }
   return ranks[normalized] ?? 0
 }
@@ -1801,12 +2400,17 @@ function statusLabel(status: string, language: 'zh' | 'en') {
     running: '运行中',
     pending: '待处理',
     done: '完成',
+    completed: '完成',
+    succeeded: '成功',
+    partially_succeeded: '部分成功',
     finished: '完成',
     blocked: '阻塞',
     skipped: '跳过',
     wait_user: '等输入',
     continue: '可继续',
     approval_required: '待审批',
+    authorization_required: '待授权',
+    waiting_authorization: '待授权',
     paused: '已暂停',
     cancelled: '已取消',
     stopped: '已停止',
@@ -1817,18 +2421,59 @@ function statusLabel(status: string, language: 'zh' | 'en') {
     running: 'Running',
     pending: 'Pending',
     done: 'Done',
+    completed: 'Completed',
+    succeeded: 'Succeeded',
+    partially_succeeded: 'Partial',
     finished: 'Finished',
     blocked: 'Blocked',
     skipped: 'Skipped',
     wait_user: 'Waiting',
     continue: 'Ready',
     approval_required: 'Approval',
+    authorization_required: 'Authorization',
+    waiting_authorization: 'Waiting auth',
     paused: 'Paused',
     cancelled: 'Cancelled',
     stopped: 'Stopped',
     failed: 'Failed',
   }
   return language === 'zh' ? zh[normalized] || status : en[normalized] || status
+}
+
+function isRunActiveStatus(status: string) {
+  const normalized = String(status || '').toLowerCase()
+  return ['running', 'pending', 'queued', 'starting'].includes(normalized)
+}
+
+function isRunTerminalStatus(status: string) {
+  const normalized = String(status || '').toLowerCase()
+  return ['succeeded', 'partially_succeeded', 'completed', 'done', 'finished'].includes(normalized)
+}
+
+function runStatusPillClass(status: string) {
+  const normalized = String(status || '').toLowerCase()
+  if (isRunActiveStatus(normalized)) return 'border-cyan-300/25 bg-cyan-400/10 text-cyan-100'
+  if (isRunTerminalStatus(normalized)) return 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100'
+  if (['failed', 'error', 'cancelled', 'stopped'].includes(normalized)) return 'border-red-300/25 bg-red-400/10 text-red-100'
+  return 'border-amber-300/25 bg-amber-400/10 text-amber-100'
+}
+
+function runSummaryLine(summary: AgentSessionRunSummary, language: 'zh' | 'en') {
+  if (summary.summary?.trim()) return summary.summary.trim()
+  const target = summary.target || '—'
+  const status = statusLabel(String(summary.status || 'running'), language)
+  if (isRunTerminalStatus(String(summary.status || ''))) {
+    return text(
+      language,
+      `任务已完成：target=${target}，发现 ${summary.findings || 0}，证据 ${summary.artifacts || 0}，事件 ${summary.events || 0}。`,
+      `Task completed: target=${target}, findings=${summary.findings || 0}, artifacts=${summary.artifacts || 0}, events=${summary.events || 0}.`,
+    )
+  }
+  return text(
+    language,
+    `任务${status}：target=${target}，正在收集事件、证据与报告。`,
+    `Task ${status}: target=${target}, collecting events, evidence, and report.`,
+  )
 }
 
 function roleLabel(role: string, language: 'zh' | 'en') {
@@ -1910,96 +2555,6 @@ function toolPhaseLabel(phase: string, language: 'zh' | 'en') {
   return language === 'zh' ? zh[normalized] || phase : en[normalized] || phase
 }
 
-function toolDuration(call: AgentToolCall) {
-  const started = Date.parse(call.started_at)
-  const finished = call.finished_at ? Date.parse(call.finished_at) : NaN
-  if (!Number.isFinite(started) || !Number.isFinite(finished) || finished < started) return ''
-  const ms = finished - started
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
-}
-
-function toolCallSummary(call: AgentToolCall, language: 'zh' | 'en') {
-  const result = call.result || {}
-  const name = call.name.toLowerCase()
-  if (isExplicitOperatorIntentDenied(call)) {
-    return text(language, '需要明确授权确认，可在聊天输入区授权并重试', 'Explicit authorization required; authorize and retry in chat')
-  }
-  if (name === 'http.request') {
-    const method = resultText(result, 'method')
-    const url = resultText(result, 'url')
-    const status = resultText(result, 'status') || resultText(result, 'status_code')
-    return [method, url, status ? `→ ${status}` : ''].filter(Boolean).join(' ')
-  }
-  if (name === 'workspace.search') {
-    return text(
-      language,
-      `搜索 ${resultText(result, 'query') || call.detail || ''}，命中 ${resultText(result, 'count') || '0'} 条`,
-      `Search ${resultText(result, 'query') || call.detail || ''}, ${resultText(result, 'count') || '0'} match(es)`,
-    )
-  }
-  if (name === 'workspace.files.tree') {
-    return text(language, `文件树：${resultText(result, 'count') || '0'} 项`, `File tree: ${resultText(result, 'count') || '0'} item(s)`)
-  }
-  if (name === 'workspace.files.list') {
-    return text(language, `目录 ${resultText(result, 'path') || call.detail || '.'}，${resultText(result, 'count') || '0'} 项`, `Directory ${resultText(result, 'path') || call.detail || '.'}, ${resultText(result, 'count') || '0'} item(s)`)
-  }
-  if (name === 'workspace.files.read') {
-    return text(language, `读取 ${resultText(result, 'path') || call.detail || ''}`, `Read ${resultText(result, 'path') || call.detail || ''}`)
-  }
-  if (name === 'workspace.files.delete') {
-    return text(language, `删除 ${resultText(result, 'path') || call.detail || ''}`, `Delete ${resultText(result, 'path') || call.detail || ''}`)
-  }
-  if (name === 'workspace.files.move') {
-    return text(
-      language,
-      `移动 ${resultText(result, 'from') || ''} → ${resultText(result, 'path') || ''}`,
-      `Move ${resultText(result, 'from') || ''} → ${resultText(result, 'path') || ''}`,
-    )
-  }
-  if (name === 'workspace.files.copy') {
-    return text(
-      language,
-      `复制 ${resultText(result, 'from') || ''} → ${resultText(result, 'path') || ''}`,
-      `Copy ${resultText(result, 'from') || ''} → ${resultText(result, 'path') || ''}`,
-    )
-  }
-  if (name === 'workspace.files.mkdir') {
-    return text(language, `创建目录 ${resultText(result, 'path') || call.detail || ''}`, `Mkdir ${resultText(result, 'path') || call.detail || ''}`)
-  }
-  if (name === 'runs.context' || name === 'get /api/v1/runs/{run_id}/context') {
-    return text(
-      language,
-      `运行上下文 ${resultText(result, 'run_id') || call.detail || ''} · ${resultText(result, 'context') || 'report_json'}`,
-      `Run context ${resultText(result, 'run_id') || call.detail || ''} · ${resultText(result, 'context') || 'report_json'}`,
-    )
-  }
-  if (name === 'workspace.command') {
-    const command = resultText(result, 'command') || call.detail
-    const exitCode = resultText(result, 'exit_code')
-    return [command, exitCode ? `exit=${exitCode}` : ''].filter(Boolean).join(' ')
-  }
-  if (name.includes('scans/web')) {
-    return text(language, `扫描任务 ${resultText(result, 'run_id') || resultText(result, 'job_id') || ''}`, `Scan job ${resultText(result, 'run_id') || resultText(result, 'job_id') || ''}`)
-  }
-  if (name === 'reports.draft') {
-    return text(
-      language,
-      `报告草稿 ${resultText(result, 'path') || ''} · findings=${resultText(result, 'finding_count') || '0'}`,
-      `Report draft ${resultText(result, 'path') || ''} · findings=${resultText(result, 'finding_count') || '0'}`,
-    )
-  }
-  return call.detail || resultText(result, 'summary') || resultText(result, 'message')
-}
-
-function resultText(result: Record<string, unknown>, key: string) {
-  const value = result[key]
-  if (value === undefined || value === null) return ''
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  return ''
-}
-
 function operationLevelLabel(level: string, language: 'zh' | 'en') {
   const normalized = normalizeAgentOperationLevel(level)
   const labels: Record<AgentOperationLevel, { zh: string; en: string }> = {
@@ -2009,8 +2564,23 @@ function operationLevelLabel(level: string, language: 'zh' | 'en') {
     safe_scan: { zh: '安全扫描', en: 'Safe scan' },
     approval_ops: { zh: '审批操作', en: 'Approval ops' },
     advanced: { zh: '高级', en: 'Advanced' },
+    bypass: { zh: 'Bypass 权限', en: 'Bypass' },
   }
   return labels[normalized][language]
+}
+
+function permissionModeDetail(level: string, language: 'zh' | 'en') {
+  const normalized = normalizeAgentOperationLevel(level)
+  const details: Record<AgentOperationLevel, { zh: string; en: string }> = {
+    read_only: { zh: '只读分析，不执行网络、扫描、写入或审批动作。', en: 'Read-only analysis; no network, scan, write, or approval actions.' },
+    workspace: { zh: '允许工作区读写、diff、apply 等本地能力。', en: 'Allow workspace read/write, diff, apply, and local workspace actions.' },
+    workspace_write: { zh: '允许工作区读写、diff、apply 等本地能力。', en: 'Allow workspace read/write, diff, apply, and local workspace actions.' },
+    safe_scan: { zh: '允许授权目标内的低风险 HTTP 请求与 safe scan。', en: 'Allow low-risk HTTP requests and safe scans for authorized targets.' },
+    approval_ops: { zh: '允许处理审批、恢复已批准运行。', en: 'Allow approval handling and resuming approved runs.' },
+    advanced: { zh: '高级能力，仍会触发必要授权确认。', en: 'Advanced capabilities; still prompts for required authorization.' },
+    bypass: { zh: '本地沙箱模式，跳过权限确认弹窗直接执行内置工具。', en: 'Local sandbox mode; skip permission prompts for built-in tools.' },
+  }
+  return details[normalized][language]
 }
 
 function streamLabel(status: StreamStatus, language: 'zh' | 'en') {

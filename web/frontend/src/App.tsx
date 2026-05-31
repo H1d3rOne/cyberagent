@@ -2,6 +2,8 @@ import { Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout'
 import { AgentCockpitPage } from './pages/agent-cockpit'
 import { DashboardPage } from './pages/dashboard'
+import { SkillsPage } from './pages/skills'
+import { McpPage } from './pages/mcp'
 import { NewScanPage } from './pages/new-scan'
 import { ScanDetailPage } from './pages/scan-detail'
 import { HistoryPage } from './pages/history'
@@ -13,6 +15,8 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/agent" element={<AgentCockpitPage />} />
+        <Route path="/skills" element={<SkillsPage />} />
+        <Route path="/mcp" element={<McpPage />} />
         <Route path="/ops" element={<DashboardPage />} />
         <Route path="/tasks" element={<NewScanPage />} />
         <Route path="/scan/new" element={<NewScanPage />} />

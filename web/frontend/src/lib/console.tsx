@@ -7,6 +7,7 @@ import {
   saveSettings,
   type ConsoleSettings,
   type AgentProviderSettings,
+  type AgentProviderProfile,
   type ScanDraft,
 } from '@/lib/api'
 
@@ -56,6 +57,8 @@ const messages = {
     scope: '范围',
     send: '发送',
     settings: '设置',
+    skills: 'Skills',
+    mcp: 'MCP',
     start: '启动',
     stop: '停止',
     stopped: '已停止',
@@ -113,6 +116,8 @@ const messages = {
     scope: 'Scope',
     send: 'Send',
     settings: 'Settings',
+    skills: 'Skills',
+    mcp: 'MCP',
     start: 'Start',
     stop: 'Stop',
     stopped: 'Stopped',
@@ -184,7 +189,7 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
   }, [settings])
 
   const updateSettings = useCallback((patch: ConsoleSettingsPatch) => {
-    setSettings((current) => ({
+    setSettings((current) => reconcileActiveProvider({
       ...current,
       ...patch,
       agentProvider: {
@@ -244,6 +249,28 @@ function isLocalDaemonBaseUrl(value: string) {
     return ['127.0.0.1', 'localhost', '::1'].includes(url.hostname)
   } catch {
     return false
+  }
+}
+
+function reconcileActiveProvider(settings: ConsoleSettings): ConsoleSettings {
+  const profiles = settings.aiProviders || []
+  const active = profiles.find((profile) => profile.id === settings.activeAiProviderId) || profiles[0]
+  if (!active) return settings
+  return {
+    ...settings,
+    activeAiProviderId: active.id,
+    agentProvider: agentProviderSettingsFromProfile(active),
+  }
+}
+
+function agentProviderSettingsFromProfile(profile: AgentProviderProfile): AgentProviderSettings {
+  return {
+    provider: profile.type,
+    model: profile.model,
+    apiKey: profile.apiKey,
+    providerBaseUrl: profile.baseUrl,
+    instructions: profile.instructions,
+    maxTurns: profile.maxTurns,
   }
 }
 

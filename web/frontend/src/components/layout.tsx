@@ -3,10 +3,12 @@ import { Link, NavLink, Outlet } from 'react-router-dom'
 import {
   Activity,
   Bot,
+  BrainCircuit,
   Crosshair,
   History,
   KeyRound,
   Languages,
+  Network,
   Radar,
   Settings,
   ShieldCheck,
@@ -20,6 +22,8 @@ import { cn } from '@/lib/utils'
 const navItems = [
   { to: '/', icon: Radar, labelKey: 'overview' as const },
   { to: '/agent', icon: Bot, labelKey: 'agent' as const },
+  { to: '/skills', icon: BrainCircuit, labelKey: 'skills' as const },
+  { to: '/mcp', icon: Network, labelKey: 'mcp' as const },
   { to: '/tasks', icon: Crosshair, labelKey: 'tasks' as const },
   { to: '/history', icon: History, labelKey: 'history' as const },
   { to: '/settings', icon: Settings, labelKey: 'settings' as const },

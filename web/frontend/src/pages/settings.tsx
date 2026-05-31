@@ -33,7 +33,7 @@ const PROVIDER_TYPES: { id: AgentProviderType; name: string; defaultModel: strin
   { id: 'anthropic', name: 'Anthropic', defaultModel: 'claude-sonnet-4-20250514', detail: 'Claude Messages / compatible' },
 ]
 
-const OPERATION_LEVELS: AgentOperationLevel[] = ['read_only', 'workspace', 'safe_scan', 'approval_ops', 'advanced']
+const OPERATION_LEVELS: AgentOperationLevel[] = ['read_only', 'workspace', 'safe_scan', 'approval_ops', 'advanced', 'bypass']
 const AUTH_PROFILE_TYPES: ApiAuthProfileType[] = ['bearer', 'basic', 'api_key', 'cookie', 'custom']
 
 function operationLevelLabel(level: string, language: 'zh' | 'en') {
@@ -44,6 +44,7 @@ function operationLevelLabel(level: string, language: 'zh' | 'en') {
     safe_scan: { zh: '安全扫描', en: 'Safe scan' },
     approval_ops: { zh: '审批操作', en: 'Approval ops' },
     advanced: { zh: '高级', en: 'Advanced' },
+    bypass: { zh: 'Bypass 权限', en: 'Bypass permissions' },
   }
   const normalized = normalizeAgentOperationLevel(level)
   return labels[normalized][language]
@@ -57,6 +58,7 @@ function operationLevelDetail(level: string, language: 'zh' | 'en') {
     safe_scan: { zh: '允许在明确授权目标与 scope 后发起 safe Web/API 任务。', en: 'Allow safe Web/API tasks after explicit target and scope.' },
     approval_ops: { zh: '允许按用户显式指令处理审批与恢复运行。', en: 'Allow approval handling and resume on explicit instruction.' },
     advanced: { zh: '开放当前已实现的高级内置动作，仍受策略和授权约束。', en: 'Enable implemented advanced actions under policy and scope.' },
+    bypass: { zh: '本地沙箱模式：跳过权限确认弹窗，直接执行已规划的内置工具动作。', en: 'Local sandbox mode: skip permission prompts and directly execute planned built-in tool actions.' },
   }
   const normalized = normalizeAgentOperationLevel(level)
   return details[normalized][language]
@@ -73,6 +75,14 @@ function authProfileTypeLabel(type: ApiAuthProfileType, language: 'zh' | 'en') {
   return labels[type][language]
 }
 
+function shouldHydrateProviderProfiles(profiles: AgentProviderProfile[]) {
+  if (!profiles.length) return true
+  if (profiles.length > 1) return false
+  const only = profiles[0]
+  const emptySecret = !only.apiKey?.trim() && !only.baseUrl?.trim()
+  return emptySecret && (only.id === 'openai-default' || !only.model?.trim())
+}
+
 export function SettingsPage() {
   const { client, language, setLanguage, settings, updateSettings, resetSettings, t } = useConsole()
   const [saved, setSaved] = useState(false)
@@ -82,7 +92,7 @@ export function SettingsPage() {
   const [providers, setProviders] = useState<Provider[]>([])
   const [savingProviders, setSavingProviders] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestUrl?: string } | null>(null)
 
   const aiProviders = settings.aiProviders || []
   const activeProvider = aiProviders.find((p) => p.id === settings.activeAiProviderId) || aiProviders[0]
@@ -98,7 +108,7 @@ export function SettingsPage() {
       setConnected(true)
       try {
         const remote = await client.getProviderProfiles()
-        if (remote.providers.length) {
+        if (remote.providers.length && shouldHydrateProviderProfiles(settings.aiProviders || [])) {
           updateSettings({ aiProviders: remote.providers, activeAiProviderId: remote.activeId || remote.providers[0].id })
         }
       } catch {
@@ -111,7 +121,7 @@ export function SettingsPage() {
     } finally {
       setChecking(false)
     }
-  }, [client, updateSettings])
+  }, [client, settings.aiProviders, updateSettings])
 
   useEffect(() => {
     check()
@@ -125,6 +135,7 @@ export function SettingsPage() {
 
   const updateActiveProvider = (patch: Partial<AgentProviderProfile>) => {
     if (!activeProvider) return
+    setTestResult(null)
     updateSettings({
       aiProviders: aiProviders.map((p) => (p.id === activeProvider.id ? { ...p, ...patch } : p)),
     })
@@ -185,8 +196,8 @@ export function SettingsPage() {
       })
       setTestResult(
         res.ok
-          ? { ok: true, message: `${res.provider} · ${res.latency_ms}ms` }
-          : { ok: false, message: (res as { error?: string }).error || text(language, '连接失败', 'connection failed') },
+          ? { ok: true, message: `${res.provider} · ${res.latency_ms}ms`, requestUrl: res.request_url }
+          : { ok: false, message: res.error || text(language, '连接失败', 'connection failed'), requestUrl: res.request_url },
       )
     } catch (err) {
       setTestResult({ ok: false, message: err instanceof Error ? err.message : 'test failed' })
@@ -405,9 +416,14 @@ export function SettingsPage() {
                   id="provider-base-url"
                   value={activeProvider?.baseUrl || ''}
                   onChange={(event) => updateActiveProvider({ baseUrl: event.target.value })}
-                  placeholder={text(language, '可选', 'Optional')}
+                  placeholder={activeProvider?.type === 'anthropic' ? 'https://api.example.com/v1/messages' : 'https://api.example.com/v1/chat/completions'}
                   className="h-10 rounded-xl font-mono"
                 />
+                <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                  {activeProvider?.type === 'anthropic'
+                    ? text(language, 'Anthropic 实际请求应为 /v1/messages；可填 /v1 或完整 endpoint，测试会显示实际请求 URL。', 'Anthropic requests should use /v1/messages; /v1 or the full endpoint are supported, and test shows the actual request URL.')
+                    : text(language, 'OpenAI 实际请求应为 /v1/chat/completions；可填 /v1、/api/v1 或完整 endpoint。', 'OpenAI requests should use /v1/chat/completions; /v1, /api/v1 or the full endpoint are supported.')}
+                </div>
               </Field>
 
               <Field icon={SlidersHorizontal} label={t('turns')} htmlFor="provider-max-turns">
@@ -462,8 +478,13 @@ export function SettingsPage() {
                 </Button>
               )}
               {testResult && (
-                <span className={cn('font-mono text-xs', testResult.ok ? 'text-emerald-300' : 'text-red-300')}>
+                <span className={cn('max-w-full break-all font-mono text-xs', testResult.ok ? 'text-emerald-300' : 'text-red-300')}>
                   {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
+                  {testResult.requestUrl ? (
+                    <span className="ml-2 text-muted-foreground">
+                      {text(language, '实际请求', 'request')}: {testResult.requestUrl}
+                    </span>
+                  ) : null}
                 </span>
               )}
             </div>
