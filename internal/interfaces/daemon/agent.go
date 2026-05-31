@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,21 +43,23 @@ type agentManager struct {
 }
 
 type agentSession struct {
-	SessionID      string                 `json:"session_id"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
-	Operator       string                 `json:"operator"`
-	Language       string                 `json:"language"`
-	OperationLevel string                 `json:"operation_level,omitempty"`
-	Status         string                 `json:"status"`
-	Messages       []agentMessage         `json:"messages"`
-	ActiveTask     *agentTask             `json:"active_task,omitempty"`
-	Todos          []agentTodo            `json:"todos,omitempty"`
-	ToolCalls      []agentToolCall        `json:"tool_calls,omitempty"`
-	ContextRefs    []agentContextRef      `json:"context_refs,omitempty"`
-	PendingChanges []agentWorkspaceChange `json:"pending_changes,omitempty"`
-	MemorySummary  *agentMemorySummary    `json:"memory_summary,omitempty"`
-	NextAction     *agentNextAction       `json:"next_action,omitempty"`
+	SessionID            string                     `json:"session_id"`
+	CreatedAt            time.Time                  `json:"created_at"`
+	UpdatedAt            time.Time                  `json:"updated_at"`
+	Operator             string                     `json:"operator"`
+	Language             string                     `json:"language"`
+	OperationLevel       string                     `json:"operation_level,omitempty"`
+	Status               string                     `json:"status"`
+	Messages             []agentMessage             `json:"messages"`
+	ActiveTask           *agentTask                 `json:"active_task,omitempty"`
+	Todos                []agentTodo                `json:"todos,omitempty"`
+	ToolCalls            []agentToolCall            `json:"tool_calls,omitempty"`
+	ContextRefs          []agentContextRef          `json:"context_refs,omitempty"`
+	PendingChanges       []agentWorkspaceChange     `json:"pending_changes,omitempty"`
+	PendingAuthorization *agentAuthorizationRequest `json:"pending_authorization,omitempty"`
+	MemorySummary        *agentMemorySummary        `json:"memory_summary,omitempty"`
+	NextAction           *agentNextAction           `json:"next_action,omitempty"`
+	RunSummary           *agentSessionRunSummary    `json:"run_summary,omitempty"`
 }
 
 type agentMessage struct {
@@ -165,6 +169,25 @@ type agentNextAction struct {
 	AutoContinue    bool   `json:"auto_continue,omitempty"`
 }
 
+func (a *agentNextAction) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type            string `json:"type"`
+		Reason          string `json:"reason"`
+		SuggestedPrompt string `json:"suggested_prompt"`
+		SuggestPrompt   string `json:"suggest_prompt"`
+		Prompt          string `json:"prompt"`
+		AutoContinue    bool   `json:"auto_continue"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	a.Type = raw.Type
+	a.Reason = raw.Reason
+	a.SuggestedPrompt = firstNonEmpty(raw.SuggestedPrompt, raw.SuggestPrompt, raw.Prompt)
+	a.AutoContinue = raw.AutoContinue
+	return nil
+}
+
 type agentWorkspaceChange struct {
 	ID             string     `json:"id"`
 	GroupID        string     `json:"group_id,omitempty"`
@@ -190,6 +213,19 @@ type agentWorkspaceChangeInput struct {
 	New  string `json:"new"`
 }
 
+type agentAuthorizationRequest struct {
+	ID             string         `json:"id"`
+	ActionName     string         `json:"action_name"`
+	Arguments      map[string]any `json:"arguments,omitempty"`
+	RequiredLevel  string         `json:"required_level,omitempty"`
+	Policy         string         `json:"policy,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
+	OriginalPrompt string         `json:"original_prompt,omitempty"`
+	Status         string         `json:"status"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
 type preparedWorkspaceApply struct {
 	Change agentWorkspaceChange
 	Before string
@@ -207,21 +243,22 @@ type createAgentSessionResponse struct {
 }
 
 type agentSessionSummary struct {
-	SessionID      string                  `json:"session_id"`
-	CreatedAt      time.Time               `json:"created_at"`
-	UpdatedAt      time.Time               `json:"updated_at"`
-	Operator       string                  `json:"operator"`
-	Language       string                  `json:"language"`
-	OperationLevel string                  `json:"operation_level,omitempty"`
-	Status         string                  `json:"status"`
-	ActiveTask     *agentTask              `json:"active_task,omitempty"`
-	NextAction     *agentNextAction        `json:"next_action,omitempty"`
-	RunSummary     *agentSessionRunSummary `json:"run_summary,omitempty"`
-	MemorySummary  *agentMemorySummary     `json:"memory_summary,omitempty"`
-	LastMessage    string                  `json:"last_message,omitempty"`
-	MessageCount   int                     `json:"message_count"`
-	ToolCallCount  int                     `json:"tool_call_count"`
-	ContextCount   int                     `json:"context_count"`
+	SessionID            string                     `json:"session_id"`
+	CreatedAt            time.Time                  `json:"created_at"`
+	UpdatedAt            time.Time                  `json:"updated_at"`
+	Operator             string                     `json:"operator"`
+	Language             string                     `json:"language"`
+	OperationLevel       string                     `json:"operation_level,omitempty"`
+	Status               string                     `json:"status"`
+	ActiveTask           *agentTask                 `json:"active_task,omitempty"`
+	NextAction           *agentNextAction           `json:"next_action,omitempty"`
+	PendingAuthorization *agentAuthorizationRequest `json:"pending_authorization,omitempty"`
+	RunSummary           *agentSessionRunSummary    `json:"run_summary,omitempty"`
+	MemorySummary        *agentMemorySummary        `json:"memory_summary,omitempty"`
+	LastMessage          string                     `json:"last_message,omitempty"`
+	MessageCount         int                        `json:"message_count"`
+	ToolCallCount        int                        `json:"tool_call_count"`
+	ContextCount         int                        `json:"context_count"`
 }
 
 type agentTraceResponse struct {
@@ -341,29 +378,51 @@ type agentControlResponse struct {
 	Message agentMessage `json:"message"`
 }
 
+type agentAuthorizationDecisionRequest struct {
+	Action               string                 `json:"action"`
+	AuthorizationID      string                 `json:"authorization_id,omitempty"`
+	Operator             string                 `json:"operator"`
+	Language             string                 `json:"language"`
+	OperationLevel       string                 `json:"operation_level,omitempty"`
+	Reason               string                 `json:"reason,omitempty"`
+	Provider             string                 `json:"provider,omitempty"`
+	Model                string                 `json:"model,omitempty"`
+	APIKey               string                 `json:"api_key,omitempty"`
+	BaseURL              string                 `json:"base_url,omitempty"`
+	Instructions         string                 `json:"instructions,omitempty"`
+	AuthProfiles         []agentHTTPAuthProfile `json:"auth_profiles,omitempty"`
+	DefaultAuthProfileID string                 `json:"default_auth_profile_id,omitempty"`
+	SkipSynthesis        bool                   `json:"skip_synthesis,omitempty"`
+}
+
 type sendAgentMessageResponse struct {
-	SessionID      string                 `json:"session_id"`
-	Messages       []agentMessage         `json:"messages"`
-	ToolCalls      []agentToolCall        `json:"tool_calls,omitempty"`
-	ActiveTask     *agentTask             `json:"active_task,omitempty"`
-	Todos          []agentTodo            `json:"todos,omitempty"`
-	ContextRefs    []agentContextRef      `json:"context_refs,omitempty"`
-	PendingChanges []agentWorkspaceChange `json:"pending_changes,omitempty"`
-	MemorySummary  *agentMemorySummary    `json:"memory_summary,omitempty"`
-	NextAction     *agentNextAction       `json:"next_action,omitempty"`
+	SessionID            string                     `json:"session_id"`
+	Messages             []agentMessage             `json:"messages"`
+	ToolCalls            []agentToolCall            `json:"tool_calls,omitempty"`
+	ActiveTask           *agentTask                 `json:"active_task,omitempty"`
+	Todos                []agentTodo                `json:"todos,omitempty"`
+	ContextRefs          []agentContextRef          `json:"context_refs,omitempty"`
+	PendingChanges       []agentWorkspaceChange     `json:"pending_changes,omitempty"`
+	PendingAuthorization *agentAuthorizationRequest `json:"pending_authorization,omitempty"`
+	MemorySummary        *agentMemorySummary        `json:"memory_summary,omitempty"`
+	NextAction           *agentNextAction           `json:"next_action,omitempty"`
 }
 
 type agentCapabilitiesResponse struct {
-	APIVersion   string                    `json:"api_version"`
-	Name         string                    `json:"name"`
-	Description  string                    `json:"description"`
-	EntryPoint   string                    `json:"entry_point"`
-	Endpoints    []agentCapabilityEndpoint `json:"endpoints"`
-	Capabilities []agentCapability         `json:"capabilities"`
-	Stages       []agentCapabilityStage    `json:"stages"`
-	BuiltinTools []agentCapabilityTool     `json:"builtin_tools"`
-	Safety       agentCapabilitySafety     `json:"safety"`
-	Integrations []agentCapabilityItem     `json:"integrations"`
+	APIVersion    string                    `json:"api_version"`
+	Name          string                    `json:"name"`
+	Description   string                    `json:"description"`
+	EntryPoint    string                    `json:"entry_point"`
+	Endpoints     []agentCapabilityEndpoint `json:"endpoints"`
+	Capabilities  []agentCapability         `json:"capabilities"`
+	Stages        []agentCapabilityStage    `json:"stages"`
+	BuiltinTools  []agentCapabilityTool     `json:"builtin_tools"`
+	Skills        []agentSkillSpec          `json:"skills,omitempty"`
+	ToolCaps      []agentToolCapabilitySpec `json:"tool_capabilities,omitempty"`
+	SecurityTools []agentSecurityToolSpec   `json:"security_tools,omitempty"`
+	MCP           agentMCPIntegrationSpec   `json:"mcp,omitempty"`
+	Safety        agentCapabilitySafety     `json:"safety"`
+	Integrations  []agentCapabilityItem     `json:"integrations"`
 }
 
 type agentCapability struct {
@@ -407,15 +466,18 @@ type agentCapabilityItem struct {
 }
 
 type agentPlannerResponse struct {
-	Phase       string               `json:"phase,omitempty"`
-	Answer      string               `json:"answer"`
-	Task        *agentPlannerTask    `json:"task,omitempty"`
-	Todos       []agentPlannerTodo   `json:"todos,omitempty"`
-	ContextRefs []agentContextRef    `json:"context_refs,omitempty"`
-	NextAction  *agentNextAction     `json:"next_action,omitempty"`
-	Reasoning   string               `json:"reasoning,omitempty"`
-	Actions     []agentPlannerAction `json:"actions,omitempty"`
-	ToolCalls   []agentPlannerAction `json:"tool_calls,omitempty"`
+	Phase            string               `json:"phase,omitempty"`
+	Answer           string               `json:"answer"`
+	SuggestedPrompt  string               `json:"suggested_prompt,omitempty"`
+	SuggestPrompt    string               `json:"suggest_prompt,omitempty"`
+	SuggestedPrompts []string             `json:"suggested_prompts,omitempty"`
+	Task             *agentPlannerTask    `json:"task,omitempty"`
+	Todos            []agentPlannerTodo   `json:"todos,omitempty"`
+	ContextRefs      []agentContextRef    `json:"context_refs,omitempty"`
+	NextAction       *agentNextAction     `json:"next_action,omitempty"`
+	Reasoning        string               `json:"reasoning,omitempty"`
+	Actions          []agentPlannerAction `json:"actions,omitempty"`
+	ToolCalls        []agentPlannerAction `json:"tool_calls,omitempty"`
 }
 
 type agentPlannerAction struct {
@@ -593,6 +655,7 @@ func (m *agentManager) DeleteSession(ctx context.Context, sessionID string) (del
 
 func agentCapabilities(language string) agentCapabilitiesResponse {
 	language = normalizeAgentLanguage(language)
+	registry := agentSkillRegistry(language)
 	tools := make([]agentCapabilityTool, 0, len(agentLLMToolDefinitions()))
 	for _, tool := range agentLLMToolDefinitions() {
 		risk, autoRun := agentCapabilityToolPolicy(tool.Name)
@@ -624,6 +687,8 @@ func agentCapabilities(language string) agentCapabilitiesResponse {
 			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/messages", Description: agentText(language, "发送自然语言消息并触发 Agent 执行循环。", "Send a natural-language message and trigger the Agent execution loop.")},
 			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/control", Description: agentText(language, "通用控制入口：continue、revise、pause、stop、cancel、new_task。", "Generic control entrypoint: continue, revise, pause, stop, cancel, new_task.")},
 			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/continue", Description: agentText(language, "继续当前任务。", "Continue the current task.")},
+			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/authorization/approve", Description: agentText(language, "批准当前挂起的 Agent 工具授权，并恢复执行原动作。", "Approve the pending Agent tool authorization and resume the original action.")},
+			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/authorization/deny", Description: agentText(language, "拒绝当前挂起的 Agent 工具授权，并停止该动作。", "Deny the pending Agent tool authorization and stop that action.")},
 			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/pause", Description: agentText(language, "暂停当前会话但保留上下文。", "Pause the current session while preserving context.")},
 			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/stop", Description: agentText(language, "停止当前任务并尝试取消活动 daemon job。", "Stop the current task and try to cancel the active daemon job.")},
 			{Method: "POST", Path: "/api/v1/agent/sessions/{session_id}/cancel", Description: agentText(language, "取消当前任务并保留会话记录。", "Cancel the current task while preserving session history.")},
@@ -651,6 +716,16 @@ func agentCapabilities(language string) agentCapabilitiesResponse {
 				Description: agentText(language, "支持 JSON actions 与模型原生 tool_calls，执行低风险工具后回灌 observation 并生成最终总结。", "Supports JSON actions and native LLM tool_calls; after low-risk tool execution, observations are fed back for final synthesis."),
 			},
 			{
+				ID:          "intent_capability_matching",
+				Label:       agentText(language, "意图→能力匹配", "Intent→capability matching"),
+				Description: agentText(language, "在执行前区分 Web 漏洞扫描、端口枚举、HTTP 探测、内容发现、JS 路由分析、认证/鉴权测试等意图；缺少等价工具时停在 Plan，不用相似工具替代。", "Distinguishes Web vulnerability scan, port enumeration, HTTP probe, content discovery, JS route analysis, auth/authorization testing, and other intents before execution; when no equivalent tool exists, stops at Plan instead of substituting a similar tool."),
+				Examples: []string{
+					agentText(language, "扫描目标有哪些开放端口 → port_scan，等待 nmap/masscan 插件或 HTTP fallback", "which ports are open → port_scan, wait for nmap/masscan plugin or HTTP fallback"),
+					agentText(language, "找隐藏目录 → content_discovery，等待 ffuf/gobuster/dirsearch 等价工具", "find hidden directories → content_discovery, wait for ffuf/gobuster/dirsearch equivalent"),
+					agentText(language, "获取响应头/状态码 → http_probe，调用 http.request", "fetch headers/status → http_probe, call http.request"),
+				},
+			},
+			{
 				ID:          "auto_continue_stepper",
 				Label:       agentText(language, "自动续行步进器", "Auto-continue stepper"),
 				Description: agentText(language, "当 next_action 标记为 auto_continue 且下一步是低风险只读动作时，“继续”会直接执行下一步工具并写回 observation。", "When next_action is marked auto_continue and the next step is a low-risk read-only action, Continue directly executes the next tool and persists the observation."),
@@ -673,7 +748,11 @@ func agentCapabilities(language string) agentCapabilitiesResponse {
 			{ID: "observation", Label: agentText(language, "观测", "Observation"), Description: agentText(language, "把工具结果沉淀为消息、工具轨迹和上下文引用。", "Persist tool results as messages, tool traces, and context references.")},
 			{ID: "synthesis", Label: agentText(language, "总结", "Synthesis"), Description: agentText(language, "把 observation 回灌给 LLM，生成最终结论和下一步。", "Feed observations back to the LLM to produce final conclusions and next steps.")},
 		},
-		BuiltinTools: tools,
+		BuiltinTools:  tools,
+		Skills:        registry.Skills,
+		ToolCaps:      registry.ToolCapabilities,
+		SecurityTools: registry.SecurityTools,
+		MCP:           registry.MCP,
 		Safety: agentCapabilitySafety{
 			ScopePolicy: agentText(
 				language,
@@ -704,6 +783,8 @@ func agentCapabilities(language string) agentCapabilitiesResponse {
 
 func agentCapabilityToolPolicy(name string) (string, bool) {
 	switch normalizeAgentPlannerActionName(name) {
+	case "ports.scan.safe":
+		return "medium", false
 	case "runs.approvals.approve", "runs.approvals.deny", "runs.resume_approved":
 		return "medium", false
 	default:
@@ -724,20 +805,21 @@ func agentSessionSummaryFrom(session *agentSession) agentSessionSummary {
 		}
 	}
 	return agentSessionSummary{
-		SessionID:      session.SessionID,
-		CreatedAt:      session.CreatedAt,
-		UpdatedAt:      session.UpdatedAt,
-		Operator:       session.Operator,
-		Language:       session.Language,
-		OperationLevel: session.OperationLevel,
-		Status:         session.Status,
-		ActiveTask:     cloneAgentTask(session.ActiveTask),
-		NextAction:     cloneAgentNextAction(session.NextAction),
-		MemorySummary:  cloneAgentMemorySummary(session.MemorySummary),
-		LastMessage:    lastMessage,
-		MessageCount:   len(session.Messages),
-		ToolCallCount:  len(session.ToolCalls),
-		ContextCount:   len(session.ContextRefs),
+		SessionID:            session.SessionID,
+		CreatedAt:            session.CreatedAt,
+		UpdatedAt:            session.UpdatedAt,
+		Operator:             session.Operator,
+		Language:             session.Language,
+		OperationLevel:       session.OperationLevel,
+		Status:               session.Status,
+		ActiveTask:           cloneAgentTask(session.ActiveTask),
+		NextAction:           cloneAgentNextAction(session.NextAction),
+		PendingAuthorization: cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		MemorySummary:        cloneAgentMemorySummary(session.MemorySummary),
+		LastMessage:          lastMessage,
+		MessageCount:         len(session.Messages),
+		ToolCallCount:        len(session.ToolCalls),
+		ContextCount:         len(session.ContextRefs),
 	}
 }
 
@@ -820,7 +902,9 @@ func (m *agentManager) GetSession(ctx context.Context, sessionID string) (agentS
 	if m.syncTerminalActiveRunLocked(ctx, session) {
 		_ = m.persistSessionLocked(session)
 	}
-	return cloneAgentSession(session), nil
+	cloned := cloneAgentSession(session)
+	cloned.RunSummary = m.agentSessionRunSummary(ctx, session)
+	return cloned, nil
 }
 
 func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req agentControlRequest, svc routerServices) (agentControlResponse, error) {
@@ -854,6 +938,33 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 	session.Language = language
 	session.OperationLevel = operationLevel
 	previousNextAction := cloneAgentNextAction(session.NextAction)
+
+	if session.PendingAuthorization != nil &&
+		strings.EqualFold(session.PendingAuthorization.Status, "pending") &&
+		(action == "continue" || action == "revise") {
+		session.Status = "waiting_authorization"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.UpdatedAt = now
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "authorization_required",
+			Reason:          session.PendingAuthorization.Reason,
+			SuggestedPrompt: agentAuthorizationSuggestedPrompt(language, session.PendingAuthorization),
+			AutoContinue:    false,
+		}
+		message := agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, "当前有挂起的工具授权，请先点击允许或拒绝；在此之前不会继续执行任务。", "A tool authorization is pending. Approve or deny it first; the task will not continue before that."), nil, nil), "step")
+		session.Messages = append(session.Messages, message)
+		session.UpdatedAt = now
+		compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+		if err := m.persistSessionLocked(session); err != nil {
+			m.mu.Unlock()
+			return agentControlResponse{}, err
+		}
+		sessionState := cloneAgentSession(session)
+		m.mu.Unlock()
+		return agentControlResponse{Session: sessionState, Message: message}, nil
+	}
 
 	var message agentMessage
 	var cancelJobID string
@@ -959,6 +1070,7 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 		}
 		message = m.newMessageLocked(language, "agent", agentText(language, "已暂停当前 Agent 会话；不会清空上下文。发送继续/Resume 可从当前计划恢复。", "Paused the current Agent session without clearing context. Send continue/resume to proceed from the current plan."), nil, nil)
 	case "cancel":
+		session.PendingAuthorization = nil
 		session.Status = "cancelled"
 		if session.ActiveTask != nil {
 			session.ActiveTask.Status = "blocked"
@@ -984,6 +1096,7 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 		}
 		message = m.newMessageLocked(language, "agent", agentText(language, "已取消当前 Agent 任务；如存在运行中的 daemon job，会尝试取消。", "Cancelled the current Agent task; if a daemon job is running, I will try to cancel it."), nil, nil)
 	case "stop":
+		session.PendingAuthorization = nil
 		session.Status = "blocked"
 		if session.ActiveTask != nil {
 			session.ActiveTask.Status = "blocked"
@@ -1015,6 +1128,7 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 		session.ToolCalls = []agentToolCall{}
 		session.ContextRefs = []agentContextRef{}
 		session.PendingChanges = []agentWorkspaceChange{}
+		session.PendingAuthorization = nil
 		session.MemorySummary = nil
 		session.NextAction = &agentNextAction{
 			Type:   "wait_user",
@@ -1050,6 +1164,197 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 		}
 	}
 
+	return agentControlResponse{Session: sessionState, Message: message}, nil
+}
+
+func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID string, req agentAuthorizationDecisionRequest, svc routerServices) (agentControlResponse, error) {
+	if err := contextError(ctx); err != nil {
+		return agentControlResponse{}, err
+	}
+	sessionID, err := normalizeAgentSessionID(sessionID)
+	if err != nil {
+		return agentControlResponse{}, err
+	}
+	decision := normalizeAgentAuthorizationDecision(req.Action)
+	if decision == "" {
+		return agentControlResponse{}, services.NewError(services.CodeBadRequest, "unsupported authorization decision", map[string]any{"action": req.Action}, nil)
+	}
+	language := normalizeAgentLanguage(req.Language)
+	operator := normalizeAgentOperator(req.Operator)
+	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
+	now := time.Now().UTC()
+
+	m.mu.Lock()
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		loaded, loadErr := m.loadSessionLocked(sessionID)
+		if loadErr != nil {
+			m.mu.Unlock()
+			return agentControlResponse{}, loadErr
+		}
+		session = loaded
+	}
+	pending := cloneAgentAuthorizationRequest(session.PendingAuthorization)
+	if pending == nil || !strings.EqualFold(pending.Status, "pending") {
+		m.mu.Unlock()
+		return agentControlResponse{}, services.NewError(services.CodeConflict, "no pending agent authorization", map[string]any{"session_id": sessionID}, nil)
+	}
+	if requestedID := strings.TrimSpace(req.AuthorizationID); requestedID != "" && requestedID != pending.ID {
+		m.mu.Unlock()
+		return agentControlResponse{}, services.NewError(services.CodeConflict, "authorization id does not match pending request", map[string]any{"authorization_id": requestedID, "pending_authorization_id": pending.ID}, nil)
+	}
+	session.Operator = operator
+	session.Language = language
+	if strings.TrimSpace(req.OperationLevel) == "" {
+		operationLevel = normalizeAgentOperationLevel(session.OperationLevel)
+	}
+	if decision == "approve" && !agentOperationLevelAtLeast(operationLevel, pending.RequiredLevel) {
+		operationLevel = normalizeAgentOperationLevel(pending.RequiredLevel)
+	}
+	session.OperationLevel = operationLevel
+
+	var message agentMessage
+	switch decision {
+	case "deny":
+		pending.Status = "denied"
+		pending.UpdatedAt = now
+		session.PendingAuthorization = nil
+		session.Status = "blocked"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.UpdatedAt = now
+		}
+		for idx := range session.Todos {
+			if session.Todos[idx].Status == "running" || session.Todos[idx].Status == "pending" {
+				markAgentTodoByIndex(session.Todos, idx, "blocked", now, "", agentText(language, "操作者拒绝授权该工具动作。", "Operator denied authorization for this tool action."))
+			}
+		}
+		reason := firstNonEmpty(strings.TrimSpace(req.Reason), agentText(language, "操作者拒绝授权，挂起动作未执行。", "Operator denied authorization; the pending action was not executed."))
+		session.NextAction = &agentNextAction{
+			Type:            "blocked",
+			Reason:          reason,
+			SuggestedPrompt: agentText(language, "换一个低风险方案或重新说明授权边界。", "Choose a lower-risk alternative or restate the authorization boundary."),
+		}
+		message = agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, fmt.Sprintf("已拒绝授权：`%s` 未执行。", pending.ActionName), fmt.Sprintf("Authorization denied: `%s` was not executed.", pending.ActionName)), nil, nil), "step")
+		session.Messages = append(session.Messages, message)
+		session.UpdatedAt = now
+		compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+		if err := m.persistSessionLocked(session); err != nil {
+			m.mu.Unlock()
+			return agentControlResponse{}, err
+		}
+		sessionState := cloneAgentSession(session)
+		m.mu.Unlock()
+		return agentControlResponse{Session: sessionState, Message: message}, nil
+	case "approve":
+		pending.Status = "approved"
+		pending.UpdatedAt = now
+		session.PendingAuthorization = nil
+		session.Status = "running"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "running"
+			session.ActiveTask.UpdatedAt = now
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "continue",
+			Reason:          agentText(language, "授权已通过，继续执行挂起工具动作。", "Authorization approved; continuing the pending tool action."),
+			SuggestedPrompt: pending.OriginalPrompt,
+			AutoContinue:    true,
+		}
+		message = agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, fmt.Sprintf("已授权，继续执行挂起动作：`%s`。", pending.ActionName), fmt.Sprintf("Authorized. Continuing pending action: `%s`.", pending.ActionName)), nil, nil), "step")
+		session.Messages = append(session.Messages, message)
+		session.UpdatedAt = now
+		compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+		if err := m.persistSessionLocked(session); err != nil {
+			m.mu.Unlock()
+			return agentControlResponse{}, err
+		}
+		m.mu.Unlock()
+	default:
+		m.mu.Unlock()
+		return agentControlResponse{}, services.NewError(services.CodeBadRequest, "unsupported authorization decision", map[string]any{"action": req.Action}, nil)
+	}
+
+	action := agentPlannerAction{Name: pending.ActionName, Arguments: cloneMapStringAny(pending.Arguments)}
+	actionMessages, actionToolCalls, execErr := m.executeAgentPlannerAction(ctx, sessionID, language, operator, svc, action, req.AuthProfiles, req.DefaultAuthProfileID)
+	if execErr != nil {
+		tool := failedAgentToolCall(pending.ActionName, execErr)
+		tool.Result = map[string]any{"action": pending.ActionName, "authorization_id": pending.ID}
+		actionMessages = []agentMessage{m.message(language, "tool", execErr.Error(), []agentToolCall{tool}, nil)}
+		actionToolCalls = []agentToolCall{tool}
+	}
+	actionMessages = agentMessagesWithPhase(actionMessages, "step")
+	actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
+	authorizationMetadata := map[string]interface{}{
+		"authorization_id":     pending.ID,
+		"authorization_status": "approved",
+		"action_name":          pending.ActionName,
+	}
+	for i := range actionToolCalls {
+		actionToolCalls[i] = withAgentToolMetadata(actionToolCalls[i], authorizationMetadata)
+	}
+	for i := range actionMessages {
+		for j := range actionMessages[i].ToolCalls {
+			actionMessages[i].ToolCalls[j] = withAgentToolMetadata(actionMessages[i].ToolCalls[j], authorizationMetadata)
+		}
+	}
+	if len(actionMessages) > 0 {
+		m.appendMessages(sessionID, actionMessages...)
+	}
+	responseMessages := append([]agentMessage{message}, actionMessages...)
+	responseToolCalls := append([]agentToolCall{}, actionToolCalls...)
+
+	llmReq := sendAgentMessageRequest{
+		Operator:             operator,
+		Language:             language,
+		OperationLevel:       operationLevel,
+		Provider:             req.Provider,
+		Model:                req.Model,
+		APIKey:               req.APIKey,
+		BaseURL:              req.BaseURL,
+		Instructions:         req.Instructions,
+		AuthProfiles:         req.AuthProfiles,
+		DefaultAuthProfileID: req.DefaultAuthProfileID,
+	}
+	if execErr == nil && !req.SkipSynthesis && agentLLMConfigured(llmReq) && len(actionMessages) > 0 {
+		sessionState, getErr := m.GetSession(ctx, sessionID)
+		if getErr == nil {
+			history := cloneAgentMessages(sessionState.Messages)
+			memorySummary := cloneAgentMemorySummary(sessionState.MemorySummary)
+			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, llmReq, history, memorySummary, actionMessages)
+			if synthesisErr != nil {
+				warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
+				warningTool = agentToolCallWithPhase(warningTool, "step_replan")
+				warningMessage := agentMessageWithPhase(m.message(
+					language,
+					"tool",
+					agentText(language, "授权动作已执行，但 StepReplan 总结失败："+synthesisErr.Error(), "Authorized action executed, but StepReplan synthesis failed: "+synthesisErr.Error()),
+					[]agentToolCall{warningTool},
+					nil,
+				), "step_replan")
+				m.appendMessages(sessionID, warningMessage)
+				responseMessages = append(responseMessages, warningMessage)
+				responseToolCalls = append(responseToolCalls, warningTool)
+			} else if len(synthesisMessages) > 0 {
+				m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
+				responseMessages = append(responseMessages, synthesisMessages...)
+				responseToolCalls = append(responseToolCalls, synthesisToolCalls...)
+				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
+					nextState, _ := m.GetSession(ctx, sessionID)
+					loopHistory := cloneAgentMessages(nextState.Messages)
+					followupMessages, followupToolCalls := m.runAgentReplanActionContinuation(ctx, sessionID, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(llmReq)-1)
+					responseMessages = append(responseMessages, followupMessages...)
+					responseToolCalls = append(responseToolCalls, followupToolCalls...)
+				}
+			}
+		}
+	}
+
+	sessionState, getErr := m.GetSession(ctx, sessionID)
+	if getErr != nil {
+		return agentControlResponse{}, getErr
+	}
+	_ = responseToolCalls
 	return agentControlResponse{Session: sessionState, Message: message}, nil
 }
 
@@ -1173,6 +1478,15 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		return buildAgentSendResponse(sessionID, []agentMessage{userMessage, controlResp.Message}, nil, sessionState), nil
 	}
 
+	if sessionState, getErr := m.GetSession(ctx, sessionID); getErr == nil &&
+		sessionState.PendingAuthorization != nil &&
+		strings.EqualFold(sessionState.PendingAuthorization.Status, "pending") {
+		blockMessage := agentMessageWithPhase(m.message(language, "agent", agentText(language, "当前任务已暂停在工具授权门。请先在授权卡片中点击“允许并继续”或“拒绝”；我不会在授权前执行新的步骤。", "The current task is paused at a tool authorization gate. Approve or deny the authorization card first; I will not execute new steps before authorization."), nil, nil), "step")
+		m.appendMessages(sessionID, blockMessage)
+		latestState, _ := m.GetSession(ctx, sessionID)
+		return buildAgentSendResponse(sessionID, []agentMessage{userMessage, blockMessage}, nil, latestState), nil
+	}
+
 	if agentLLMConfigured(req) && agentShouldRouteBeforeLLMSynthesis(prompt) {
 		messages, toolCalls, routeErr := m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 		if routeErr != nil {
@@ -1236,6 +1550,27 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 			[]agentToolCall{warningTool},
 			nil,
 		)
+		if action, ok := agentManualAuthorizationActionFromPrompt(prompt); ok {
+			actionName := normalizeAgentPlannerActionName(action.Name)
+			requiredLevel := agentOperationLevelRequiredForPlannerAction(actionName, action.Arguments)
+			authMessage := m.requestAgentAuthorization(
+				sessionID,
+				language,
+				prompt,
+				action,
+				actionName,
+				requiredLevel,
+				"manual_tool_authorization_required",
+				agentText(
+					language,
+					fmt.Sprintf("AI provider 失败后检测到 %s 需要人工确认；已暂停执行，等待授权。", actionName),
+					fmt.Sprintf("After the AI provider failed, %s was detected as requiring human confirmation; execution is paused until authorization.", actionName),
+				),
+			)
+			m.appendMessages(sessionID, warningMessage, authMessage)
+			sessionState, _ := m.GetSession(ctx, sessionID)
+			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, warningMessage, authMessage}, []agentToolCall{warningTool}, sessionState), nil
+		}
 		messages, toolCalls, routeErr := m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 		if routeErr != nil {
 			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
@@ -1334,6 +1669,7 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 		Model:   strings.TrimSpace(req.Model),
 	})
 	instructions := agentInstructionsWithAuthProfiles(language, req.Instructions, req.AuthProfiles, req.DefaultAuthProfileID)
+	instructions = appendAgentInstructionBlock(instructions, m.agentMCPRegistryPrompt(language))
 	tool := runningAgentToolCall("LLM chat", provider.Name())
 	chatCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
@@ -1431,6 +1767,7 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, language 
 		Model:   strings.TrimSpace(req.Model),
 	})
 	instructions := agentInstructionsWithAuthProfiles(language, req.Instructions, req.AuthProfiles, req.DefaultAuthProfileID)
+	instructions = appendAgentInstructionBlock(instructions, m.agentMCPRegistryPrompt(language))
 	tool := runningAgentToolCall("LLM synthesis", provider.Name())
 	tool = withAgentToolMetadata(tool, map[string]interface{}{"phase": "tool_synthesis"})
 
@@ -1533,7 +1870,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID, promp
 			}
 		}
 
-		actionMessages, actionToolCalls := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
+		actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
 		actionMessages = agentMessagesWithPhase(actionMessages, "step")
 		actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
 		if len(actionMessages) > 0 {
@@ -1542,6 +1879,9 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID, promp
 			loopHistory = append(loopHistory, actionMessages...)
 		}
 		toolCalls = append(toolCalls, actionToolCalls...)
+		if authorizationRequired {
+			break
+		}
 		if len(actionMessages) == 0 {
 			break
 		}
@@ -1597,7 +1937,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			break
 		}
 
-		actionMessages, actionToolCalls := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
+		actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
 		actionMessages = agentMessagesWithPhase(actionMessages, "step")
 		actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
 		if len(actionMessages) == 0 {
@@ -1607,6 +1947,9 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 		responseMessages = append(responseMessages, actionMessages...)
 		toolCalls = append(toolCalls, actionToolCalls...)
 		loopHistory = append(loopHistory, actionMessages...)
+		if authorizationRequired {
+			break
+		}
 
 		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, loopHistory, memorySummary, actionMessages)
 		if synthesisErr != nil {
@@ -1644,10 +1987,10 @@ func reqMaxAgentReplans(req sendAgentMessageRequest) int {
 	return 3
 }
 
-func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall) {
+func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
 	actions := agentPlannerActions(plan)
 	if len(actions) == 0 {
-		return nil, nil
+		return nil, nil, false
 	}
 	if len(actions) > 6 {
 		actions = actions[:6]
@@ -1663,21 +2006,79 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 		if actionName == "" {
 			actionName = strings.TrimSpace(action.Name)
 		}
+		bypassPermissions := agentOperationBypassPermissions(operationLevel)
 		var actionMessages []agentMessage
 		var actionToolCalls []agentToolCall
 		var err error
-		if !agentPlannerActionAllowedByPrompt(operatorPrompt, actionName) {
-			err = services.NewError(
-				services.CodePolicyDenied,
-				"planner action requires explicit operator intent in the latest user message",
-				map[string]any{
-					"action": actionName,
-					"policy": "explicit_operator_intent_required",
-				},
-				nil,
+		requiredLevel := agentOperationLevelRequiredForPlannerAction(actionName, action.Arguments)
+		if mismatchReason, suggestedPrompt, mismatch := agentPlannerActionCapabilityMismatch(operatorPrompt, actionName, language); mismatch {
+			policyErr := services.NewError(services.CodePolicyDenied, "non-equivalent tool action blocked", map[string]any{
+				"intent":              agentClassifyCapabilityIntent(operatorPrompt).ID,
+				"action":              actionName,
+				"suggested_prompt":    suggestedPrompt,
+				"capability_mismatch": true,
+			}, nil)
+			tool := failedAgentToolCall("agent.capability_match", policyErr)
+			tool.Result = map[string]any{
+				"intent":           agentClassifyCapabilityIntent(operatorPrompt).ID,
+				"action":           actionName,
+				"suggested_prompt": suggestedPrompt,
+			}
+			m.markAgentCapabilityBlocked(sessionID, language, mismatchReason, suggestedPrompt)
+			message := agentMessageWithPhase(m.message(language, "agent", mismatchReason, []agentToolCall{tool}, nil), "step_replan")
+			messages = append(messages, message)
+			toolCalls = append(toolCalls, agentToolCallWithPhase(tool, "step_replan"))
+			return messages, toolCalls, true
+		} else if !bypassPermissions && !agentPlannerActionAllowedByPrompt(operatorPrompt, actionName) {
+			authMessage := m.requestAgentAuthorization(
+				sessionID,
+				language,
+				operatorPrompt,
+				action,
+				actionName,
+				requiredLevel,
+				"explicit_operator_intent_required",
+				agentText(language, "模型计划了一个需要操作者明确确认的动作；已暂停执行，等待授权。", "The model planned an action that requires explicit operator confirmation; execution is paused until authorization."),
 			)
-		} else if requiredLevel := agentOperationLevelRequiredForPlannerAction(actionName, action.Arguments); !agentOperationLevelAtLeast(operationLevel, requiredLevel) {
-			err = agentOperationLevelDeniedError(language, operationLevel, requiredLevel, actionName)
+			authMessage = agentMessageWithPhase(authMessage, "step")
+			messages = append(messages, authMessage)
+			return messages, toolCalls, true
+		} else if !bypassPermissions && !agentOperationLevelAtLeast(operationLevel, requiredLevel) {
+			authMessage := m.requestAgentAuthorization(
+				sessionID,
+				language,
+				operatorPrompt,
+				action,
+				actionName,
+				requiredLevel,
+				"operation_level_required",
+				agentText(
+					language,
+					fmt.Sprintf("当前权限级别为 %s，执行 %s 需要 %s；已暂停执行，等待授权升级。", operationLevel, actionName, requiredLevel),
+					fmt.Sprintf("Current operation level is %s; executing %s requires %s. Execution is paused until authorization is granted.", operationLevel, actionName, requiredLevel),
+				),
+			)
+			authMessage = agentMessageWithPhase(authMessage, "step")
+			messages = append(messages, authMessage)
+			return messages, toolCalls, true
+		} else if !bypassPermissions && agentPlannerActionRequiresManualAuthorization(actionName) {
+			authMessage := m.requestAgentAuthorization(
+				sessionID,
+				language,
+				operatorPrompt,
+				action,
+				actionName,
+				requiredLevel,
+				"manual_tool_authorization_required",
+				agentText(
+					language,
+					fmt.Sprintf("%s 属于需要人工确认的工具动作；已暂停执行，等待授权。", actionName),
+					fmt.Sprintf("%s is a tool action that requires human confirmation; execution is paused until authorization.", actionName),
+				),
+			)
+			authMessage = agentMessageWithPhase(authMessage, "step")
+			messages = append(messages, authMessage)
+			return messages, toolCalls, true
 		} else {
 			actionMessages, actionToolCalls, err = m.executeAgentPlannerAction(ctx, sessionID, language, operator, svc, action, authProfiles, defaultAuthProfileID)
 		}
@@ -1719,7 +2120,160 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 		messages = append(messages, actionMessages...)
 		toolCalls = append(toolCalls, actionToolCalls...)
 	}
-	return messages, toolCalls
+	return messages, toolCalls, false
+}
+
+func (m *agentManager) requestAgentAuthorization(sessionID, language, operatorPrompt string, action agentPlannerAction, actionName, requiredLevel, policy, reason string) agentMessage {
+	language = normalizeAgentLanguage(language)
+	actionName = firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(action.Name), "agent.action")
+	requiredLevel = normalizeAgentOperationLevel(firstNonEmpty(requiredLevel, "read_only"))
+	policy = firstNonEmpty(strings.TrimSpace(policy), "authorization_required")
+	now := time.Now().UTC()
+	auth := &agentAuthorizationRequest{
+		ID:             strings.Replace(runs.NewJobID(now), "job_", "auth_", 1),
+		ActionName:     actionName,
+		Arguments:      cloneMapStringAny(action.Arguments),
+		RequiredLevel:  requiredLevel,
+		Policy:         policy,
+		Reason:         trimSummary(reason, 360),
+		OriginalPrompt: trimSummary(operatorPrompt, 1000),
+		Status:         "pending",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if auth.Arguments == nil {
+		auth.Arguments = map[string]any{}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		loaded, loadErr := m.loadSessionLocked(sessionID)
+		if loadErr == nil {
+			session = loaded
+			ok = true
+		}
+	}
+	if ok && session != nil {
+		session.PendingAuthorization = cloneAgentAuthorizationRequest(auth)
+		session.Status = "waiting_authorization"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.UpdatedAt = now
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "authorization_required",
+			Reason:          auth.Reason,
+			SuggestedPrompt: agentAuthorizationSuggestedPrompt(language, auth),
+			AutoContinue:    false,
+		}
+		session.UpdatedAt = now
+		_ = m.persistSessionLocked(session)
+	}
+
+	return agentMessageWithPhase(m.newMessageLocked(language, "agent", agentAuthorizationPromptMessage(language, auth), nil, nil), "step")
+}
+
+func (m *agentManager) markAgentCapabilityBlocked(sessionID, language, reason, suggestedPrompt string) {
+	now := time.Now().UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		loaded, loadErr := m.loadSessionLocked(sessionID)
+		if loadErr == nil {
+			session = loaded
+			ok = true
+		}
+	}
+	if !ok || session == nil {
+		return
+	}
+	session.Status = "blocked"
+	if session.ActiveTask != nil {
+		session.ActiveTask.Status = "blocked"
+		session.ActiveTask.UpdatedAt = now
+	}
+	for idx := range session.Todos {
+		if session.Todos[idx].Status == "running" || session.Todos[idx].Status == "pending" {
+			markAgentTodoByIndex(session.Todos, idx, "blocked", now, "", reason)
+		}
+	}
+	session.NextAction = &agentNextAction{
+		Type:            "blocked",
+		Reason:          trimSummary(reason, 360),
+		SuggestedPrompt: suggestedPrompt,
+		AutoContinue:    false,
+	}
+	session.UpdatedAt = now
+	_ = m.persistSessionLocked(session)
+}
+
+func agentAuthorizationPromptMessage(language string, auth *agentAuthorizationRequest) string {
+	if auth == nil {
+		return agentText(language, "需要授权确认：Agent 已暂停执行，等待操作者确认后继续。", "Authorization required: the Agent paused execution and is waiting for operator approval.")
+	}
+	target := agentAuthorizationTargetSummary(auth)
+	if target == "" {
+		target = agentText(language, "未识别到单独目标；请检查动作参数。", "No standalone target detected; review the action arguments.")
+	}
+	if normalizeAgentLanguage(language) == "en" {
+		return fmt.Sprintf(
+			"Authorization required. I paused before executing `%s`.\n\n- required level: `%s`\n- policy: `%s`\n- target/scope: %s\n\nApprove to run this exact pending action, or deny to stop it.",
+			auth.ActionName,
+			auth.RequiredLevel,
+			auth.Policy,
+			target,
+		)
+	}
+	return fmt.Sprintf(
+		"需要授权确认。我已在执行 `%s` 前暂停。\n\n- 所需权限：`%s`\n- 策略：`%s`\n- 目标/范围：%s\n\n点击允许后会继续执行这一个已挂起动作；点击拒绝则停止该动作。",
+		auth.ActionName,
+		auth.RequiredLevel,
+		auth.Policy,
+		target,
+	)
+}
+
+func agentAuthorizationSuggestedPrompt(language string, auth *agentAuthorizationRequest) string {
+	if auth == nil {
+		return ""
+	}
+	target := agentAuthorizationTargetSummary(auth)
+	if normalizeAgentLanguage(language) == "en" {
+		return fmt.Sprintf("Review and approve pending action `%s`%s", auth.ActionName, suffixIfNotEmpty(" for ", target))
+	}
+	return fmt.Sprintf("确认是否允许执行挂起动作 `%s`%s", auth.ActionName, suffixIfNotEmpty("：", target))
+}
+
+func agentAuthorizationTargetSummary(auth *agentAuthorizationRequest) string {
+	if auth == nil {
+		return ""
+	}
+	args := auth.Arguments
+	if args == nil {
+		return ""
+	}
+	values := []string{}
+	for _, key := range []string{"target", "url", "scope", "scope_url", "path", "file", "command", "run_id", "approval_id"} {
+		value := strings.TrimSpace(stringFromAny(args[key]))
+		if value != "" {
+			values = append(values, key+"="+trimSummary(value, 120))
+		}
+	}
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.Join(values, " ")
+}
+
+func suffixIfNotEmpty(prefix, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return prefix + value
 }
 
 func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID, language, operator string, svc routerServices, action agentPlannerAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, error) {
@@ -1746,6 +2300,21 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 			prompt += " scope=" + scope
 		}
 		return m.handleAgentScan(ctx, prompt, language, svc)
+	case "ports.scan.safe":
+		target := firstNonEmpty(
+			stringFromAny(args["target"]),
+			stringFromAny(args["host"]),
+			stringFromAny(args["url"]),
+			stringFromAny(args["input"]),
+		)
+		if target == "" {
+			return nil, nil, services.NewError(services.CodeBadRequest, "ports.scan.safe requires target or host", map[string]any{"action": action.Name}, nil)
+		}
+		prompt := "扫描 " + target + " 开放端口"
+		if portsSpec := agentPortSpecFromPlannerArgument(args["ports"]); portsSpec != "" {
+			prompt += " ports=" + portsSpec
+		}
+		return m.handleAgentPortScan(ctx, prompt, language)
 	case "workspace.command":
 		cmd := firstNonEmpty(
 			stringFromAny(args["command"]),
@@ -2141,6 +2710,17 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 		return m.handleAgentReportDraft(ctx, sessionID, agentExtractRunID(prompt), language, svc, "")
 	case agentIsRunContextAnalysisIntent(prompt):
 		return m.handleAgentRunContextTool(ctx, sessionID, agentExtractRunID(prompt), agentRunContextKind(prompt), language, svc)
+	case agentIsPortScanIntent(prompt):
+		return m.handleAgentPortScan(ctx, prompt, language)
+	case agentHasCapabilityGapIntent(prompt):
+		plan := agentCapabilityGapPlannerFromPrompt(prompt, "", language)
+		if plan != nil {
+			message := agentMessageWithPhase(m.message(language, "agent", plan.Answer, nil, nil), "plan")
+			message.Reasoning = trimSummary(plan.Reasoning, 800)
+			m.appendMessagesWithPlanner(sessionID, plan)
+			return []agentMessage{message}, nil, nil
+		}
+		return []agentMessage{m.message(language, "agent", agentExplain(language), nil, nil)}, nil, nil
 	case agentIsScanIntent(prompt):
 		return m.handleAgentScan(ctx, prompt, language, svc)
 	case agentIsCommandIntent(prompt):
@@ -2153,7 +2733,7 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 		return m.handleAgentPlugins(ctx, language, svc)
 	case agentIsRunIntent(prompt):
 		return m.handleAgentRuns(ctx, language, svc)
-	case agentIsHTTPRequestIntent(prompt):
+	case agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt):
 		return m.handleAgentHTTPRequest(ctx, agentExtractHTTPMethod(prompt), agentExtractURL(prompt), nil, "", language, nil)
 	case agentIsWorkspaceSearchIntent(prompt):
 		query := agentExtractWorkspaceSearchQuery(prompt)
@@ -2191,7 +2771,7 @@ func agentCanAutoRouteContinuePrompt(prompt string) bool {
 	if prompt == "" {
 		return false
 	}
-	if agentIsControlIntent(prompt) || agentIsScanIntent(prompt) || agentIsResumeApprovedIntent(prompt) || agentIsApprovalDecisionIntent(prompt) {
+	if agentIsControlIntent(prompt) || agentIsScanIntent(prompt) || agentIsPortScanIntent(prompt) || agentIsResumeApprovedIntent(prompt) || agentIsApprovalDecisionIntent(prompt) {
 		return false
 	}
 	if agentIsCommandIntent(prompt) {
@@ -2308,6 +2888,17 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 				base["evidence_count"] = evidence
 				base["artifact_count"] = artifacts
 				base["sample_findings"] = agentReportJSONFindingSamples(report.Bytes, 5)
+			} else if services.ErrorCodeOf(err) == services.CodeNotFound {
+				err = nil
+				base["report_available"] = false
+				base["report_status"] = "pending"
+				base["finding_count"] = 0
+				base["evidence_count"] = 0
+				base["artifact_count"] = detail.Summary.Counts.Artifacts
+				if page, pageErr := svc.runs.GetEvents(ctx, runID, "", 8); pageErr == nil {
+					base["event_count"] = len(page.Items)
+					base["sample_events"] = agentEventPageSamples(page, 5)
+				}
 			}
 		default:
 			contextKind = "report_json"
@@ -2323,6 +2914,17 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 				base["evidence_count"] = evidence
 				base["artifact_count"] = artifacts
 				base["sample_findings"] = agentReportJSONFindingSamples(report.Bytes, 5)
+			} else if services.ErrorCodeOf(err) == services.CodeNotFound {
+				err = nil
+				base["report_available"] = false
+				base["report_status"] = "pending"
+				base["finding_count"] = detail.Summary.Counts.Findings
+				base["evidence_count"] = 0
+				base["artifact_count"] = detail.Summary.Counts.Artifacts
+				if page, pageErr := svc.runs.GetEvents(ctx, runID, "", 8); pageErr == nil {
+					base["event_count"] = len(page.Items)
+					base["sample_events"] = agentEventPageSamples(page, 5)
+				}
 			}
 		}
 		tool.Result = base
@@ -2450,6 +3052,74 @@ func (m *agentManager) handleAgentScan(ctx context.Context, prompt, language str
 		fmt.Sprintf("Task handed to daemon: job=%s, run=%s. The run detail will keep syncing events, evidence, approvals and reports.", shortAgentID(response.JobID, 22), shortAgentID(response.RunID, 22)),
 	), []agentToolCall{tool}, []agentLink{{To: "/scan/" + response.RunID, Label: agentText(language, "打开运行", "Open run"), Kind: "run"}})
 	return []agentMessage{plan, done}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentPortScan(ctx context.Context, prompt, language string) ([]agentMessage, []agentToolCall, error) {
+	target := agentExtractURL(prompt)
+	host := agentExtractPortScanHostFromPrompt(prompt)
+	if host == "" {
+		return []agentMessage{m.message(language, "agent", agentText(language, "我需要一个授权目标主机，才能执行端口探测。", "I need an authorized target host to run a port probe."), nil, nil)}, nil, nil
+	}
+	if target == "" {
+		target = host
+	}
+	ports, portLabel, err := agentExtractSafePortScanPorts(prompt)
+	if err != nil {
+		tool := failedAgentToolCall("ports.scan.safe", err)
+		return []agentMessage{m.message(language, "agent", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	plan := m.message(language, "agent", agentText(
+		language,
+		fmt.Sprintf("已生成端口探测计划：目标=%s → 端口集=%s → TCP connect 安全探测 → 汇总开放端口与限制。", host, portLabel),
+		fmt.Sprintf("Port probe plan generated: target=%s → port set=%s → safe TCP connect probe → summarize open ports and limitations.", host, portLabel),
+	), nil, nil)
+
+	timeout := 750 * time.Millisecond
+	tool := runningAgentToolCall("ports.scan.safe", host)
+	results := agentScanTCPPorts(ctx, host, ports, timeout)
+	openPorts := make([]int, 0)
+	closedCount := 0
+	errorSamples := make([]string, 0, 3)
+	for _, result := range results {
+		if result.Open {
+			openPorts = append(openPorts, result.Port)
+			continue
+		}
+		closedCount++
+		if result.Error != "" && len(errorSamples) < 3 {
+			errorSamples = append(errorSamples, fmt.Sprintf("%d/tcp: %s", result.Port, result.Error))
+		}
+	}
+	sort.Ints(openPorts)
+	tool = finishAgentToolCall(tool, nil)
+	tool.Result = map[string]any{
+		"target":        target,
+		"host":          host,
+		"profile":       "safe_tcp_connect",
+		"port_profile":  portLabel,
+		"scanned_ports": ports,
+		"scanned_count": len(ports),
+		"open_ports":    openPorts,
+		"open_count":    len(openPorts),
+		"closed_count":  closedCount,
+		"timeout_ms":    timeout.Milliseconds(),
+		"error_samples": errorSamples,
+		"limitations":   "TCP connect probe only; filtered UDP services and deep service fingerprints are out of scope for this built-in.",
+	}
+	openText := agentText(language, "未发现开放端口", "No open ports detected")
+	if len(openPorts) > 0 {
+		parts := make([]string, 0, len(openPorts))
+		for _, port := range openPorts {
+			parts = append(parts, fmt.Sprintf("%d/tcp", port))
+		}
+		openText = strings.Join(parts, ", ")
+	}
+	message := m.message(language, "tool", agentText(
+		language,
+		fmt.Sprintf("端口探测已完成。\n\n- target: `%s`\n- profile: `safe_tcp_connect`\n- scanned: `%d` ports (%s)\n- open: %s\n\n限制：这是 TCP connect 安全探测，不等同于 nmap 全量服务识别；UDP、被过滤端口和深度指纹需要专用插件。", host, len(ports), portLabel, openText),
+		fmt.Sprintf("Port probe completed.\n\n- target: `%s`\n- profile: `safe_tcp_connect`\n- scanned: `%d` ports (%s)\n- open: %s\n\nLimitations: this is a safe TCP connect probe, not full nmap service fingerprinting; UDP, filtered ports, and deep fingerprints need a dedicated plugin.", host, len(ports), portLabel, openText),
+	), []agentToolCall{tool}, nil)
+	return []agentMessage{plan, message}, []agentToolCall{tool}, nil
 }
 
 func (m *agentManager) handleAgentHealth(ctx context.Context, language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
@@ -3062,6 +3732,8 @@ func normalizeAgentOperationLevel(raw string) string {
 		return "safe_scan"
 	case "approval_ops", "approval-ops", "approval", "approvals", "approve", "审批":
 		return "approval_ops"
+	case "bypass", "bypass_permissions", "bypass-permissions", "danger_full_access", "danger-full-access", "绕过权限", "跳过权限":
+		return "bypass"
 	case "", "advanced", "full", "高权限", "高级":
 		return "advanced"
 	default:
@@ -3081,6 +3753,8 @@ func agentOperationLevelLabel(level, language string) string {
 		return agentText(language, "审批操作", "Approval ops")
 	case "advanced":
 		return agentText(language, "高级", "Advanced")
+	case "bypass":
+		return agentText(language, "Bypass 权限", "Bypass permissions")
 	default:
 		return agentText(language, "只读", "Read-only")
 	}
@@ -3130,9 +3804,15 @@ func agentOperationLevelRank(level string) int {
 		return 3
 	case "advanced":
 		return 4
+	case "bypass":
+		return 5
 	default:
 		return 0
 	}
+}
+
+func agentOperationBypassPermissions(level string) bool {
+	return normalizeAgentOperationLevel(level) == "bypass"
 }
 
 func agentOperationLevelAtLeast(level, required string) bool {
@@ -3141,7 +3821,7 @@ func agentOperationLevelAtLeast(level, required string) bool {
 
 func agentOperationLevelRequiredForAction(actionName string) string {
 	switch normalizeAgentPlannerActionName(actionName) {
-	case "scan.web.safe", "http.request":
+	case "scan.web.safe", "ports.scan.safe", "http.request":
 		return "safe_scan"
 	case "workspace.files.write",
 		"workspace.files.patch",
@@ -3177,15 +3857,40 @@ func agentOperationLevelRequiredForPlannerAction(actionName string, args map[str
 	return agentOperationLevelRequiredForAction(normalized)
 }
 
+func agentPlannerActionRequiresManualAuthorization(actionName string) bool {
+	switch normalizeAgentPlannerActionName(actionName) {
+	case "scan.web.safe",
+		"ports.scan.safe",
+		"http.request",
+		"workspace.files.write",
+		"workspace.files.patch",
+		"workspace.files.diff_many",
+		"workspace.files.rebase",
+		"workspace.files.apply",
+		"workspace.files.discard",
+		"workspace.files.delete",
+		"workspace.files.move",
+		"workspace.files.copy",
+		"workspace.files.mkdir",
+		"reports.draft",
+		"runs.approvals.approve",
+		"runs.approvals.deny",
+		"runs.resume_approved":
+		return true
+	default:
+		return false
+	}
+}
+
 func agentOperationLevelRequiredForPrompt(prompt string) string {
 	switch {
 	case agentIsApprovalDecisionIntent(prompt) || agentIsResumeApprovedIntent(prompt):
 		return "approval_ops"
 	case agentIsReportDraftIntent(prompt):
 		return "workspace_write"
-	case agentIsHTTPRequestIntent(prompt) && !agentHTTPMethodIsSafe(agentExtractHTTPMethod(prompt)):
+	case (agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt)) && !agentHTTPMethodIsSafe(agentExtractHTTPMethod(prompt)):
 		return "advanced"
-	case agentIsScanIntent(prompt) || agentIsHTTPRequestIntent(prompt):
+	case agentIsScanIntent(prompt) || agentIsPortScanIntent(prompt) || agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt):
 		return "safe_scan"
 	case agentIsWorkspaceWriteIntent(prompt) ||
 		agentIsWorkspacePatchIntent(prompt) ||
@@ -3238,6 +3943,17 @@ func normalizeAgentControlAction(raw string) string {
 		return "stop"
 	case "new_task", "new-task", "new", "reset", "新任务", "重置", "清空任务":
 		return "new_task"
+	default:
+		return ""
+	}
+}
+
+func normalizeAgentAuthorizationDecision(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "approve", "allow", "yes", "grant", "授权", "允许", "同意", "确认":
+		return "approve"
+	case "deny", "reject", "no", "block", "拒绝", "不允许", "阻止":
+		return "deny"
 	default:
 		return ""
 	}
@@ -3434,6 +4150,7 @@ func agentNeedsDaemonTool(prompt string) bool {
 	return agentIsControlIntent(prompt) ||
 		agentIsResumeApprovedIntent(prompt) ||
 		agentIsReportDraftIntent(prompt) ||
+		agentIsPortScanIntent(prompt) ||
 		agentIsRunContextAnalysisIntent(prompt) ||
 		agentIsScanIntent(prompt) ||
 		agentIsApprovalIntent(prompt) ||
@@ -3441,6 +4158,8 @@ func agentNeedsDaemonTool(prompt string) bool {
 		agentIsPluginIntent(prompt) ||
 		agentIsRunIntent(prompt) ||
 		agentIsHTTPRequestIntent(prompt) ||
+		agentIsAPIFunctionalTestIntent(prompt) ||
+		agentHasCapabilityGapIntent(prompt) ||
 		agentIsWorkspaceSearchIntent(prompt) ||
 		agentIsWorkspaceTreeIntent(prompt) ||
 		agentIsWorkspaceIntent(prompt) ||
@@ -3503,37 +4222,12 @@ func normalizeAgentProviderBaseURL(provider, raw string) string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return raw
 	}
-	trimmedPath := strings.TrimRight(parsed.Path, "/")
 
 	switch normalizeAgentProvider(provider) {
 	case "openai", "ollama":
-		if strings.HasSuffix(strings.ToLower(trimmedPath), "/chat/completions") {
-			return raw
-		}
-		switch trimmedPath {
-		case "":
-			parsed.Path = "/v1/chat/completions"
-			return parsed.String()
-		case "/v1":
-			parsed.Path = "/v1/chat/completions"
-			return parsed.String()
-		default:
-			return raw
-		}
+		return llm.NormalizeOpenAIBaseURL(raw)
 	case "anthropic":
-		if strings.HasSuffix(strings.ToLower(trimmedPath), "/messages") {
-			return raw
-		}
-		switch trimmedPath {
-		case "":
-			parsed.Path = "/v1/messages"
-			return parsed.String()
-		case "/v1":
-			parsed.Path = "/v1/messages"
-			return parsed.String()
-		default:
-			return raw
-		}
+		return llm.NormalizeAnthropicBaseURL(raw)
 	default:
 		return raw
 	}
@@ -3567,8 +4261,8 @@ func agentOperationPermissionPrompt(language, operationLevel string) string {
 		)
 	case "safe_scan":
 		return agentText(language,
-			"\n\n当前 Agent 操作权限：safe_scan（安全扫描）。可以执行工作区能力，并可在用户明确给出授权目标与 scope 时发起低风险 HTTP 请求或通过 Runtime 启动 safe profile Web/API 扫描。不能批准/拒绝审批或恢复运行；如用户要求审批操作，提示切换到 approval_ops。",
-			"\n\nCurrent Agent operation level: safe_scan. You may use workspace capabilities and make low-risk HTTP requests or start safe-profile Web/API scans through the Runtime when the operator clearly provides an authorized target and scope. You may not approve/deny approvals or resume runs; ask for approval_ops when needed.",
+			"\n\n当前 Agent 操作权限：safe_scan（安全扫描）。可以执行工作区能力，并可在用户明确给出授权目标与 scope 时发起低风险 HTTP 请求、执行有界 TCP 端口探测或通过 Runtime 启动 safe profile Web/API 扫描。不能批准/拒绝审批或恢复运行；如用户要求审批操作，提示切换到 approval_ops。",
+			"\n\nCurrent Agent operation level: safe_scan. You may use workspace capabilities and make low-risk HTTP requests, run bounded TCP port probes, or start safe-profile Web/API scans through the Runtime when the operator clearly provides an authorized target and scope. You may not approve/deny approvals or resume runs; ask for approval_ops when needed.",
 		)
 	case "approval_ops":
 		return agentText(language,
@@ -3579,6 +4273,11 @@ func agentOperationPermissionPrompt(language, operationLevel string) string {
 		return agentText(language,
 			"\n\n当前 Agent 操作权限：advanced（高级）。可请求当前已实现的内置工具动作，但仍要遵守授权目标、scope、白名单命令、审批 gate 和显式用户意图；不要越过尚未实现或未授权的能力。",
 			"\n\nCurrent Agent operation level: advanced. You may request currently implemented built-in tool actions, but must still enforce authorized targets, scope, command allowlists, approval gates, and explicit operator intent; do not bypass unimplemented or unauthorized capabilities.",
+		)
+	case "bypass":
+		return agentText(language,
+			"\n\n当前 Agent 操作权限：bypass（跳过权限确认）。这是类似 Claude Code bypass permissions 的本地沙箱模式：在当前会话中，已授权范围内的内置工具动作可跳过前置人工确认和权限升级弹窗，直接执行。仍需保持目标/scope 语义清晰，并只处理操作者授权目标。",
+			"\n\nCurrent Agent operation level: bypass. This is a local sandbox mode similar to Claude Code bypass permissions: built-in tool actions within the authorized scope may skip pre-execution manual confirmation and operation-level upgrade prompts. Keep target/scope semantics clear and only handle operator-authorized targets.",
 		)
 	default:
 		return agentOperationPermissionPrompt(language, "read_only")
@@ -3596,7 +4295,7 @@ func agentPlannerSystemPrompt(language, instructions, operationLevel string) str
   "answer": "给操作者看的简洁回复，说明你理解了什么、计划了什么、还需要什么",
   "task": {
     "goal": "当前任务目标",
-    "kind": "chat|triage|planning|ops|scan|context_analysis|approval|tools|runs|health",
+    "kind": "chat|triage|planning|ops|scan|port_scan|context_analysis|approval|tools|runs|health",
     "status": "running|blocked|done|idle",
     "summary": "一句话任务摘要"
   },
@@ -3613,7 +4312,7 @@ func agentPlannerSystemPrompt(language, instructions, operationLevel string) str
   "context_refs": [],
   "actions": [
     {
-      "name": "scan.web.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "name": "scan.web.safe|ports.scan.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
       "arguments": {"url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path": ".", "query":"TODO", "command": "pwd", "content": "notes", "old": "before", "new": "after", "changes": [{"path": "a.md", "old": "before", "new": "after"}], "change_id": "change_xxx", "group_id": "changeset_xxx", "all": true, "run_id": "job_xxx", "approval_id": "approval_xxx", "step_id": "step_xxx", "comment": "operator comment"}
     }
   ],
@@ -3630,9 +4329,12 @@ func agentPlannerSystemPrompt(language, instructions, operationLevel string) str
 约束：
 - 默认只讨论和处理已授权目标；如 scope、授权边界或目标不清晰，应把下一步设为 wait_user。
 - 不要声称已经执行未执行的扫描、审批、命令或工具动作。
+- 工具选择前必须先做“任务意图 → 能力匹配”：区分 web_vulnerability_scan、port_scan、http_probe、content_discovery、js_route_analysis、api_auth_test、api_functional_test、run_context、workspace、approval、report、health、plugins、general_chat。只有当用户目标与工具能力等价时才调用工具；如果没有等价工具，必须说明能力缺口并给出选项，不允许用相似但不等价的工具替代。
 - auto_continue：当任务尚未完成、有明确下一步、且不需要人工审批或确认时设为 true；当任务已完成、需要人工输入、或存在不确定风险时设为 false。
 - reasoning：简要说明你的思考过程，包括任务选择理由、规划理由、下一步理由和风险考虑。
-- 可直接请求内置工具：scan.web.safe、http.request、workspace.command、workspace.files.list、workspace.files.tree、workspace.files.read、workspace.search、workspace.files.write、workspace.files.patch、workspace.files.diff、workspace.files.diff_many、workspace.files.rebase、workspace.files.apply、workspace.files.discard、workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir、daemon.health、plugins.list、runs.list、runs.context、reports.draft、runs.approvals.list、runs.approvals.approve、runs.approvals.deny、runs.resume_approved。只有用户明确要求且动作属于这些内置工具时，才写入 actions 或 tool_calls；approval approve/deny 与 resume-approved 必须来自最新用户消息的显式指令；当用户给出明确授权目标/scope 且当前权限允许 safe_scan 时，可以直接输出 scan.web.safe 或 GET/HEAD/OPTIONS http.request；POST/PUT/PATCH/DELETE http.request 需要 advanced；workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir 和 reports.draft 需要 workspace_write；外部插件和高风险命令不要自动执行，应等待用户确认或建议使用对应 Runtime 指令。
+- 可直接请求内置工具：scan.web.safe、ports.scan.safe、http.request、workspace.command、workspace.files.list、workspace.files.tree、workspace.files.read、workspace.search、workspace.files.write、workspace.files.patch、workspace.files.diff、workspace.files.diff_many、workspace.files.rebase、workspace.files.apply、workspace.files.discard、workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir、daemon.health、plugins.list、runs.list、runs.context、reports.draft、runs.approvals.list、runs.approvals.approve、runs.approvals.deny、runs.resume_approved。只有用户明确要求且动作属于这些内置工具时，才写入 actions 或 tool_calls；approval approve/deny 与 resume-approved 必须来自最新用户消息的显式指令；当用户给出明确授权目标/scope 且当前权限允许 safe_scan 时，可以直接输出 scan.web.safe、ports.scan.safe 或 GET/HEAD/OPTIONS http.request；POST/PUT/PATCH/DELETE http.request 需要 advanced；workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir 和 reports.draft 需要 workspace_write；外部插件和高风险命令不要自动执行，应等待用户确认或建议使用对应 Runtime 指令。
+- 端口枚举/开放端口查询（如“开了哪些端口”“open ports”“nmap”）必须归类为 port_scan，不要用 scan.web.safe 代替。可用 ports.scan.safe 做有界 TCP connect 安全探测；如果用户要求 nmap 全量服务识别、UDP 或超大范围扫描，必须说明内置工具限制并建议接入 nmap/masscan 插件。
+- 内容发现/目录枚举（ffuf/gobuster/dirsearch/隐藏目录/路径爆破）、JS 路由提取、认证/鉴权矩阵测试都不是 scan.web.safe 的等价能力；缺少对应插件或具体 endpoint/method/Auth Profile 时必须停在 Plan/wait_user，不要申请授权去执行错误工具。
 - 固定执行范式：Plan=分析任务全貌/选择工具/制定顺序；Step=逐步执行工具；StepReplan=每步后根据 observation 评估并调整后续；FinalAnswer=独立评估完成度，若遗漏则回流 Plan。
 - 首次规划 phase 必须是 plan；如需要工具，actions 必须给出明确工具名和参数。
 - todos 要体现 Agent 工作台能力：理解目标、确认 scope、选择安全策略、执行/建议 Runtime 动作、收集证据、总结报告、复测。
@@ -3645,7 +4347,7 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
   "answer": "Concise operator-facing reply: what you understood, planned, and still need",
   "task": {
     "goal": "Current task goal",
-    "kind": "chat|triage|planning|ops|scan|context_analysis|approval|tools|runs|health",
+    "kind": "chat|triage|planning|ops|scan|port_scan|context_analysis|approval|tools|runs|health",
     "status": "running|blocked|done|idle",
     "summary": "One-sentence task summary"
   },
@@ -3662,7 +4364,7 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
   "context_refs": [],
   "actions": [
     {
-      "name": "scan.web.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "name": "scan.web.safe|ports.scan.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
       "arguments": {"url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path": ".", "query":"TODO", "command": "pwd", "content": "notes", "old": "before", "new": "after", "changes": [{"path": "a.md", "old": "before", "new": "after"}], "change_id": "change_xxx", "group_id": "changeset_xxx", "all": true, "run_id": "job_xxx", "approval_id": "approval_xxx", "step_id": "step_xxx", "comment": "operator comment"}
     }
   ],
@@ -3679,14 +4381,18 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
 Constraints:
 - Only discuss and handle authorized targets by default; if scope, authorization boundaries, or target are unclear, set next_action.type to wait_user.
 - Do not claim that scans, approvals, commands, or tool actions were executed unless they actually were.
+- Before choosing tools, perform "task intent → capability matching": distinguish web_vulnerability_scan, port_scan, http_probe, content_discovery, js_route_analysis, api_auth_test, api_functional_test, run_context, workspace, approval, report, health, plugins, and general_chat. Only call a tool when the operator goal is equivalent to that tool's capability; if no equivalent tool exists, explain the capability gap and offer options. Never substitute a similar but non-equivalent tool.
 - auto_continue: set to true when the task is not finished, there is a clear next step, and no human approval or confirmation is needed; set to false when the task is complete, human input is required, or there is uncertain risk.
 - reasoning: briefly explain your thinking process, including task selection reason, planning reason, next step reason, and risk considerations.
-- You may request built-in tools directly: scan.web.safe, http.request, workspace.command, workspace.files.list, workspace.files.tree, workspace.files.read, workspace.search, workspace.files.write, workspace.files.patch, workspace.files.diff, workspace.files.diff_many, workspace.files.rebase, workspace.files.apply, workspace.files.discard, workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir, daemon.health, plugins.list, runs.list, runs.context, reports.draft, runs.approvals.list, runs.approvals.approve, runs.approvals.deny, runs.resume_approved. Only populate actions or tool_calls when the user clearly asks for it and the action is one of these built-ins; approval approve/deny and resume-approved must come from an explicit instruction in the latest user message; when the operator provides an explicitly authorized target/scope and the current permission allows safe_scan, you may directly output scan.web.safe or GET/HEAD/OPTIONS http.request; POST/PUT/PATCH/DELETE http.request requires advanced; workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir and reports.draft require workspace_write; do not auto-run external plugins or high-risk commands.
+- You may request built-in tools directly: scan.web.safe, ports.scan.safe, http.request, workspace.command, workspace.files.list, workspace.files.tree, workspace.files.read, workspace.search, workspace.files.write, workspace.files.patch, workspace.files.diff, workspace.files.diff_many, workspace.files.rebase, workspace.files.apply, workspace.files.discard, workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir, daemon.health, plugins.list, runs.list, runs.context, reports.draft, runs.approvals.list, runs.approvals.approve, runs.approvals.deny, runs.resume_approved. Only populate actions or tool_calls when the user clearly asks for it and the action is one of these built-ins; approval approve/deny and resume-approved must come from an explicit instruction in the latest user message; when the operator provides an explicitly authorized target/scope and the current permission allows safe_scan, you may directly output scan.web.safe, ports.scan.safe, or GET/HEAD/OPTIONS http.request; POST/PUT/PATCH/DELETE http.request requires advanced; workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir and reports.draft require workspace_write; do not auto-run external plugins or high-risk commands.
+- Port enumeration / open-port requests (for example "open ports", "which ports", "nmap") must be classified as port_scan and must not be substituted with scan.web.safe. Use ports.scan.safe for bounded TCP connect safe probes; if the operator asks for full nmap service fingerprinting, UDP, or very large ranges, state the built-in limitation and suggest an nmap/masscan plugin.
+- Content discovery/directory enumeration (ffuf/gobuster/dirsearch/hidden directories/path brute force), JS route extraction, and auth/authorization matrix testing are not equivalent to scan.web.safe; without the matching plugin or exact endpoint/method/Auth Profile, stop at Plan/wait_user instead of asking approval for the wrong tool.
 - Fixed execution pattern: Plan=analyze full task/select tools/order steps; Step=execute tools step by step; StepReplan=after each step, evaluate observations and adjust remaining steps; FinalAnswer=independently evaluate completion, and if something is missing, flow back to Plan.
 - The first planning response phase must be plan; if tools are needed, actions must contain explicit tool names and arguments.
 - todos should make the Agent cockpit useful: understand target, confirm scope, choose safety policy, execute/suggest Runtime action, collect evidence, summarize report, retest.
 - answer must be in English.`,
 	)
+	base = base + "\n\n" + agentCapabilityRegistryPrompt(language)
 	instructions = strings.TrimSpace(instructions)
 	permission := agentOperationPermissionPrompt(language, operationLevel)
 	if instructions == "" {
@@ -3706,7 +4412,7 @@ func agentToolSynthesisSystemPrompt(language, instructions, operationLevel strin
   "answer": "简洁总结：执行了哪些工具、关键结果是什么、下一步怎么做",
   "task": {
     "goal": "当前任务目标",
-    "kind": "chat|triage|planning|ops|scan|context_analysis|approval|tools|runs|health",
+    "kind": "chat|triage|planning|ops|scan|port_scan|context_analysis|approval|tools|runs|health",
     "status": "running|blocked|done|idle",
     "summary": "一句话任务摘要"
   },
@@ -3723,7 +4429,7 @@ func agentToolSynthesisSystemPrompt(language, instructions, operationLevel strin
   "context_refs": [],
   "actions": [
     {
-      "name": "scan.web.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "name": "scan.web.safe|ports.scan.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
       "arguments": {"target":"https://example.com","scope":"https://example.com","url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path":".","query":"TODO","command":"pwd","run_id":"job_xxx"}
     }
   ],
@@ -3741,8 +4447,11 @@ func agentToolSynthesisSystemPrompt(language, instructions, operationLevel strin
 - 这是 StepReplan/FinalAnswer 阶段：必须先基于 observation 判断任务是否完成。若仍需低风险下一步且不需要人工确认，可输出 phase=step_replan 并给出 actions；若已完成，输出 phase=final_answer 且 actions 为空。
 	- 只能基于 observation 总结，不要编造未出现的命令输出、扫描结果或漏洞。
 	- 如工具失败，要说明失败点和可恢复步骤。
+	- 重新规划时必须检查“用户目标是否与已执行工具能力等价”；如果 observation 来自相近但不等价工具，必须说明覆盖范围和缺口，不要把部分结果包装成完整完成。
 	- auto_continue：当 observation 已给出足够上下文、任务仍未完成、有明确的低风险下一步、且不需要人工确认/审批时可设为 true；如果下一步需要用户补充目标、scope、凭据、授权边界、审批或风险确认，必须设为 false。
 	- 默认只讨论和处理已授权目标。
+	- 如果用户目标是端口枚举/开放端口查询，只能把 ports.scan.safe 结果总结为“有界 TCP connect 安全探测”；不要把 HTTP 响应或 Web safe scan 总结成端口扫描，也不要把该结果夸大成 nmap 全量服务识别。
+	- 如果用户目标是内容发现、JS 路由提取或认证/鉴权测试，不要把 safe Web/API 扫描或单次 HTTP 请求总结成完整完成；必须说明覆盖范围、缺口和需要的插件/输入。
 	- answer 使用中文。`,
 		`You are CyberAgent, an authorized-target Web/API security analysis Agent. The low-risk built-in tools you requested have just completed; read the observations and provide a final synthesis plus next-step recommendation.
 
@@ -3752,7 +4461,7 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
   "answer": "Concise synthesis: which tools ran, key results, and what to do next",
   "task": {
     "goal": "Current task goal",
-    "kind": "chat|triage|planning|ops|scan|context_analysis|approval|tools|runs|health",
+    "kind": "chat|triage|planning|ops|scan|port_scan|context_analysis|approval|tools|runs|health",
     "status": "running|blocked|done|idle",
     "summary": "One-sentence task summary"
   },
@@ -3769,7 +4478,7 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
   "context_refs": [],
   "actions": [
     {
-      "name": "scan.web.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "name": "scan.web.safe|ports.scan.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
       "arguments": {"target":"https://example.com","scope":"https://example.com","url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path":".","query":"TODO","command":"pwd","run_id":"job_xxx"}
     }
   ],
@@ -3787,10 +4496,14 @@ Constraints:
 - This is the StepReplan/FinalAnswer phase: first evaluate whether the task is complete from observations. If a low-risk next step is still needed and does not require human confirmation, output phase=step_replan with actions; if complete, output phase=final_answer with empty actions.
 	- Synthesize only from observations; do not invent command output, scan results, or vulnerabilities.
 	- If a tool failed, state the failure and recovery step.
+	- During replanning, verify whether the operator goal is equivalent to the executed tool capability. If the observation came from a similar but non-equivalent tool, explicitly state coverage and gaps; do not present partial results as full completion.
 	- auto_continue: set true only when the observations provide enough context, the task is still unfinished, there is a clear low-risk next step, and no human confirmation/approval is needed. If the next step needs target/scope/credential/authorization input, approval, or risk confirmation, set false.
 	- Only discuss and handle authorized targets by default.
+	- If the operator's goal is port enumeration / open-port discovery, summarize ports.scan.safe only as a bounded TCP connect safe probe; do not summarize HTTP responses or Web safe scans as port scanning, and do not overstate it as full nmap service fingerprinting.
+	- If the operator's goal is content discovery, JS route extraction, or auth/authorization testing, do not summarize a safe Web/API scan or a single HTTP request as complete coverage; state the coverage, gaps, and needed plugin/inputs.
 	- answer must be in English.`,
 	)
+	base = base + "\n\n" + agentCapabilityRegistryPrompt(language)
 	instructions = strings.TrimSpace(instructions)
 	permission := agentOperationPermissionPrompt(language, operationLevel)
 	if instructions == "" {
@@ -3803,8 +4516,13 @@ func agentLLMToolDefinitions() []llm.ToolDef {
 	return []llm.ToolDef{
 		{
 			Name:        "scan.web.safe",
-			Description: "Start a safe-profile Web/API scan for an explicitly authorized http/https target and scope. Requires safe_scan operation level.",
+			Description: "Start a safe-profile Web/API vulnerability/evidence scan for an explicitly authorized http/https target and scope. This is not a port scanner and must not be used for open-port enumeration. Requires safe_scan operation level.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"target":{"type":"string","description":"Authorized http/https target URL"},"scope":{"type":"string","description":"Authorization boundary or URL prefix; defaults to target"}},"required":["target"],"additionalProperties":false}`),
+		},
+		{
+			Name:        "ports.scan.safe",
+			Description: "Run a bounded safe TCP connect probe against an explicitly authorized host to identify open TCP ports. Defaults to a small common_safe port set; custom ranges are capped. This is not nmap service fingerprinting and does not scan UDP.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"target":{"type":"string","description":"Authorized target URL or host"},"host":{"type":"string","description":"Authorized host name or IP; resolved from target when omitted"},"ports":{"oneOf":[{"type":"string","description":"Comma/range spec such as 80,443,8000-8010; capped by policy"},{"type":"array","items":{"type":"integer","minimum":1,"maximum":65535},"maxItems":128}],"description":"Optional TCP ports to probe; defaults to common_safe"},"port_profile":{"type":"string","description":"Optional label for the port set"}},"required":["target"],"additionalProperties":false}`),
 		},
 		{
 			Name:        "http.request",
@@ -3979,7 +4697,8 @@ func parseAgentPlannerResponse(raw string) (*agentPlannerResponse, error) {
 			lastErr = fmt.Errorf("decode planner response: %w", err)
 			continue
 		}
-		if strings.TrimSpace(plan.Answer) == "" && plan.Task == nil && len(plan.Todos) == 0 && plan.NextAction == nil && len(plan.ContextRefs) == 0 && len(agentPlannerActions(&plan)) == 0 {
+		normalizeAgentPlannerSuggestedPrompt(&plan)
+		if strings.TrimSpace(plan.Answer) == "" && strings.TrimSpace(agentPlannerPrimarySuggestedPrompt(&plan)) == "" && plan.Task == nil && len(plan.Todos) == 0 && plan.NextAction == nil && len(plan.ContextRefs) == 0 && len(agentPlannerActions(&plan)) == 0 {
 			lastErr = fmt.Errorf("planner response is empty")
 			continue
 		}
@@ -3990,6 +4709,51 @@ func parseAgentPlannerResponse(raw string) (*agentPlannerResponse, error) {
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("planner response is empty")
+}
+
+func normalizeAgentPlannerSuggestedPrompt(plan *agentPlannerResponse) {
+	if plan == nil {
+		return
+	}
+	suggested := agentPlannerPrimarySuggestedPrompt(plan)
+	if suggested == "" {
+		return
+	}
+	if plan.NextAction == nil {
+		plan.NextAction = &agentNextAction{
+			Type:            "continue",
+			Reason:          "model suggested a follow-up prompt",
+			SuggestedPrompt: suggested,
+			AutoContinue:    false,
+		}
+		return
+	}
+	if strings.TrimSpace(plan.NextAction.SuggestedPrompt) == "" {
+		plan.NextAction.SuggestedPrompt = suggested
+	}
+}
+
+func agentPlannerPrimarySuggestedPrompt(plan *agentPlannerResponse) string {
+	if plan == nil {
+		return ""
+	}
+	if plan.NextAction != nil {
+		if value := strings.TrimSpace(plan.NextAction.SuggestedPrompt); value != "" {
+			return value
+		}
+	}
+	if value := strings.TrimSpace(plan.SuggestedPrompt); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(plan.SuggestPrompt); value != "" {
+		return value
+	}
+	for _, value := range plan.SuggestedPrompts {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func agentLatestUserPrompt(history []agentMessage) string {
@@ -4038,6 +4802,9 @@ func agentFallbackPlannerFromPrompt(prompt, modelAnswer, language string) *agent
 	if prompt == "" {
 		return agentPlannerFromPlainAnswer(modelAnswer, "final_answer", language)
 	}
+	if gap := agentCapabilityGapPlannerFromPrompt(prompt, modelAnswer, language); gap != nil {
+		return gap
+	}
 
 	actions := agentHeuristicActionsFromPrompt(prompt)
 	if len(actions) == 0 {
@@ -4084,17 +4851,50 @@ func agentFallbackPlannerFromPrompt(prompt, modelAnswer, language string) *agent
 	}
 }
 
+func agentPortScanPlannerFromPrompt(prompt, modelAnswer, language string) *agentPlannerResponse {
+	target := firstNonEmpty(agentExtractURL(prompt), agentExtractPortScanHostFromPrompt(prompt))
+	answer := agentText(language,
+		fmt.Sprintf("我理解这是端口枚举任务，不是 Web 漏洞扫描。当前已内置 ports.scan.safe，可做有界 TCP connect 安全探测；如果你要求 nmap/masscan 全量服务识别、UDP 或超大范围扫描，需要缩小端口范围或接入专用插件。目标：%s。", emptyDash(target)),
+		fmt.Sprintf("I understand this as port enumeration, not a Web vulnerability scan. ports.scan.safe is available for bounded TCP connect safe probes; if you need full nmap/masscan service fingerprinting, UDP, or a very large range, narrow the port set or add a dedicated plugin. Target: %s.", emptyDash(target)),
+	)
+	if strings.TrimSpace(modelAnswer) != "" {
+		answer = trimSummary(modelAnswer, 480)
+	}
+	return &agentPlannerResponse{
+		Phase:  "plan",
+		Answer: answer,
+		Task: &agentPlannerTask{
+			Goal:    agentText(language, "枚举开放端口 "+emptyDash(target), "Enumerate open ports for "+emptyDash(target)),
+			Kind:    "port_scan",
+			Status:  "blocked",
+			Summary: agentText(language, "当前端口请求超出内置有界 TCP 探测能力，需缩小范围或接入 nmap/masscan 插件。", "The current port request exceeds the bounded TCP probe capability; narrow the range or add an nmap/masscan plugin."),
+		},
+		Todos: []agentPlannerTodo{
+			{Title: agentText(language, "识别任务为端口枚举", "Classify task as port enumeration"), Status: "done", Priority: 1},
+			{Title: agentText(language, "避免误启动 Web 漏洞扫描", "Avoid starting Web vulnerability scan"), Status: "done", Priority: 2},
+			{Title: agentText(language, "等待操作者缩小端口范围或接入 nmap/masscan", "Wait for operator to narrow ports or add nmap/masscan"), Status: "blocked", Priority: 3, BlockedReason: agentText(language, "端口范围超出内置安全上限", "Port range exceeds the built-in safe limit")},
+		},
+		NextAction: &agentNextAction{
+			Type:            "blocked",
+			Reason:          agentText(language, "端口枚举不能用 scan.web.safe 代替；请缩小到 128 个以内的 TCP 端口或接入专用插件。", "Port enumeration must not be substituted with scan.web.safe; narrow to at most 128 TCP ports or add a dedicated plugin."),
+			SuggestedPrompt: agentText(language, "扫描 "+emptyDash(target)+" 开放端口 ports=80,443,8080,8443", "scan open ports for "+emptyDash(target)+" ports=80,443,8080,8443"),
+			AutoContinue:    false,
+		},
+		Reasoning: agentText(language,
+			"用户询问开放端口，任务类型是端口枚举；当前 Web/API safe scan 是漏洞/证据扫描，不等价于端口扫描。",
+			"The operator asked for open ports, which is port enumeration; the Web/API safe scan is vulnerability/evidence scanning and is not equivalent.",
+		),
+	}
+}
+
 func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 	switch {
+	case agentIsPortScanIntent(prompt):
+		return agentPortScanActionsFromPrompt(prompt)
+	case agentHasCapabilityGapIntent(prompt):
+		return nil
 	case agentIsScanIntent(prompt):
-		target := agentExtractURL(prompt)
-		if target == "" {
-			return nil
-		}
-		return []agentPlannerAction{{Name: "scan.web.safe", Arguments: map[string]any{
-			"target": target,
-			"scope":  agentExtractScope(prompt, target),
-		}}}
+		return agentHeuristicScanActionsFromPrompt(prompt)
 	case agentIsResumeApprovedIntent(prompt):
 		return []agentPlannerAction{{Name: "runs.resume_approved", Arguments: map[string]any{"run_id": agentExtractRunID(prompt)}}}
 	case agentIsReportDraftIntent(prompt):
@@ -4127,11 +4927,31 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 		return []agentPlannerAction{{Name: "plugins.list", Arguments: map[string]any{}}}
 	case agentIsRunIntent(prompt):
 		return []agentPlannerAction{{Name: "runs.list", Arguments: map[string]any{}}}
-	case agentIsHTTPRequestIntent(prompt):
-		return []agentPlannerAction{{Name: "http.request", Arguments: map[string]any{
-			"url":    agentExtractURL(prompt),
-			"method": agentExtractHTTPMethod(prompt),
+	case agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt):
+		return agentHTTPProbeActionsFromPrompt(prompt)
+	case agentIsWorkspaceRebaseIntent(prompt):
+		oldText, newText := agentExtractWorkspaceRebaseTexts(prompt)
+		return []agentPlannerAction{{Name: "workspace.files.rebase", Arguments: map[string]any{
+			"change_id": agentExtractWorkspaceChangeID(prompt),
+			"old":       oldText,
+			"new":       newText,
 		}}}
+	case agentIsWorkspaceDiscardAllIntent(prompt):
+		return []agentPlannerAction{{Name: "workspace.files.discard", Arguments: map[string]any{"all": true}}}
+	case agentIsWorkspaceDiscardIntent(prompt):
+		args := map[string]any{"change_id": agentExtractWorkspaceChangeID(prompt)}
+		if groupID := agentExtractWorkspaceGroupID(prompt); groupID != "" {
+			args["group_id"] = groupID
+		}
+		return []agentPlannerAction{{Name: "workspace.files.discard", Arguments: args}}
+	case agentIsWorkspaceApplyAllIntent(prompt):
+		return []agentPlannerAction{{Name: "workspace.files.apply", Arguments: map[string]any{"all": true}}}
+	case agentIsWorkspaceApplyIntent(prompt):
+		args := map[string]any{"change_id": agentExtractWorkspaceChangeID(prompt)}
+		if groupID := agentExtractWorkspaceGroupID(prompt); groupID != "" {
+			args["group_id"] = groupID
+		}
+		return []agentPlannerAction{{Name: "workspace.files.apply", Arguments: args}}
 	case agentIsWorkspaceSearchIntent(prompt):
 		query := agentExtractWorkspaceSearchQuery(prompt)
 		if query == "" {
@@ -4171,6 +4991,24 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 			return nil
 		}
 		return []agentPlannerAction{{Name: "workspace.files.mkdir", Arguments: map[string]any{"path": path}}}
+	case agentIsWorkspacePatchIntent(prompt):
+		relPath, oldText, newText := agentExtractWorkspacePatch(prompt)
+		if relPath == "" || relPath == "." {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.files.patch", Arguments: map[string]any{"path": relPath, "old": oldText, "new": newText}}}
+	case agentIsWorkspaceDiffIntent(prompt):
+		relPath, oldText, newText := agentExtractWorkspacePatch(prompt)
+		if relPath == "" || relPath == "." {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.files.diff", Arguments: map[string]any{"path": relPath, "old": oldText, "new": newText}}}
+	case agentIsWorkspaceWriteIntent(prompt):
+		relPath, content := agentExtractWorkspaceWrite(prompt)
+		if relPath == "" || relPath == "." {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.files.write", Arguments: map[string]any{"path": relPath, "content": content}}}
 	case agentIsWorkspaceReadIntent(prompt):
 		path := agentExtractPath(prompt)
 		if path == "" {
@@ -4188,6 +5026,15 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 	}
 }
 
+func agentManualAuthorizationActionFromPrompt(prompt string) (agentPlannerAction, bool) {
+	for _, action := range agentHeuristicActionsFromPrompt(prompt) {
+		if agentPlannerActionRequiresManualAuthorization(action.Name) {
+			return action, true
+		}
+	}
+	return agentPlannerAction{}, false
+}
+
 func agentPromptRequestsImmediateExecution(prompt string) bool {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" || !agentNeedsDaemonTool(prompt) {
@@ -4200,6 +5047,7 @@ func agentPromptRequestsImmediateExecution(prompt string) bool {
 	}
 	return agentIsCommandIntent(prompt) ||
 		agentIsScanIntent(prompt) ||
+		agentIsPortScanIntent(prompt) ||
 		agentIsResumeApprovedIntent(prompt) ||
 		agentIsApprovalDecisionIntent(prompt) ||
 		agentIsWorkspaceIntent(prompt) ||
@@ -4210,7 +5058,8 @@ func agentPromptRequestsImmediateExecution(prompt string) bool {
 		agentIsRunIntent(prompt) ||
 		agentIsWorkspaceSearchIntent(prompt) ||
 		agentIsWorkspaceTreeIntent(prompt) ||
-		agentIsHTTPRequestIntent(prompt)
+		agentIsHTTPRequestIntent(prompt) ||
+		agentIsAPIFunctionalTestIntent(prompt)
 }
 
 func agentShouldRouteBeforeLLMSynthesis(prompt string) bool {
@@ -4367,35 +5216,108 @@ func extractBalancedJSONObjects(raw string) []string {
 }
 
 func unwrapOpenAIChatCompletionContent(candidate string) (string, bool) {
-	var envelope struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-			Delta struct {
-				Content string `json:"content"`
-			} `json:"delta"`
-			Text string `json:"text"`
-		} `json:"choices"`
-	}
+	var envelope map[string]any
 	if err := json.Unmarshal([]byte(candidate), &envelope); err != nil {
 		return "", false
 	}
-	if len(envelope.Choices) == 0 {
+	choices, _ := envelope["choices"].([]any)
+	if len(choices) == 0 {
 		return "", false
 	}
-	for _, choice := range envelope.Choices {
-		if content := strings.TrimSpace(choice.Message.Content); content != "" {
-			return content, true
+	rootSuggestion := openAIEnvelopeSuggestedPrompt(envelope)
+	for _, item := range choices {
+		choice, _ := item.(map[string]any)
+		if len(choice) == 0 {
+			continue
 		}
-		if content := strings.TrimSpace(choice.Delta.Content); content != "" {
-			return content, true
-		}
-		if content := strings.TrimSpace(choice.Text); content != "" {
-			return content, true
+		message, _ := choice["message"].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		suggestion := firstNonEmpty(
+			openAIEnvelopeSuggestedPrompt(message),
+			openAIEnvelopeSuggestedPrompt(delta),
+			openAIEnvelopeSuggestedPrompt(choice),
+			rootSuggestion,
+		)
+		for _, value := range []any{message["content"], delta["content"], choice["text"]} {
+			if content := openAIEnvelopeContentText(value); content != "" {
+				return mergeAgentPlannerSuggestedPromptContent(content, suggestion), true
+			}
 		}
 	}
+	if rootSuggestion != "" {
+		return mergeAgentPlannerSuggestedPromptContent("", rootSuggestion), true
+	}
 	return "", true
+}
+
+func openAIEnvelopeContentText(value any) string {
+	switch content := value.(type) {
+	case string:
+		return strings.TrimSpace(content)
+	case []any:
+		parts := make([]string, 0, len(content))
+		for _, item := range content {
+			switch part := item.(type) {
+			case string:
+				if text := strings.TrimSpace(part); text != "" {
+					parts = append(parts, text)
+				}
+			case map[string]any:
+				if text := firstNonEmpty(stringFromAny(part["text"]), stringFromAny(part["content"])); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	default:
+		return ""
+	}
+}
+
+func openAIEnvelopeSuggestedPrompt(records ...map[string]any) string {
+	for _, record := range records {
+		if len(record) == 0 {
+			continue
+		}
+		if value := firstNonEmpty(stringFromAny(record["suggested_prompt"]), stringFromAny(record["suggest_prompt"]), stringFromAny(record["prompt"])); value != "" {
+			return value
+		}
+		for _, key := range []string{"suggested_prompts", "suggestions"} {
+			items, _ := record[key].([]any)
+			for _, item := range items {
+				if value := stringFromAny(item); strings.TrimSpace(value) != "" {
+					return strings.TrimSpace(value)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func mergeAgentPlannerSuggestedPromptContent(content, suggest string) string {
+	content = strings.TrimSpace(content)
+	suggest = strings.TrimSpace(suggest)
+	if suggest == "" {
+		return content
+	}
+	payload := map[string]any{}
+	if content != "" && json.Unmarshal([]byte(content), &payload) == nil && len(payload) > 0 {
+		if strings.TrimSpace(stringFromAny(payload["suggested_prompt"])) == "" && strings.TrimSpace(stringFromAny(payload["suggest_prompt"])) == "" {
+			payload["suggest_prompt"] = suggest
+		}
+		encoded, err := json.Marshal(payload)
+		if err == nil {
+			return string(encoded)
+		}
+		return content
+	}
+	payload["answer"] = content
+	payload["suggest_prompt"] = suggest
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return content
+	}
+	return string(encoded)
 }
 
 func agentLLMHistory(history []agentMessage, memory *agentMemorySummary, language string) []llm.Message {
@@ -4774,6 +5696,7 @@ func agentLLMText(resp *llm.ChatResponse) string {
 
 var agentURLPattern = regexp.MustCompile(`https?://[^\s"'<>，。)]+`)
 var agentBareNetworkTargetPattern = regexp.MustCompile(`(?i)(?:^|[\s（(])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:/[^\s"'<>，。)]*)?)`)
+var agentBarePortScanHostPattern = regexp.MustCompile(`(?i)(?:^|[\s（(])((?:localhost|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})(?::\d{1,5})?)`)
 
 func agentExtractURL(prompt string) string {
 	if explicit := agentCleanToken(agentURLPattern.FindString(prompt)); explicit != "" {
@@ -4804,6 +5727,22 @@ func agentExtractBareNetworkTarget(prompt string) string {
 		candidate := agentCleanToken(match[1])
 		if agentLooksLikeBareNetworkTarget(candidate) {
 			return candidate
+		}
+	}
+	return ""
+}
+
+func agentExtractPortScanHostFromPrompt(prompt string) string {
+	if target := agentExtractURL(prompt); target != "" {
+		return agentExtractPortScanHost(target)
+	}
+	for _, match := range agentBarePortScanHostPattern.FindAllStringSubmatch(prompt, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		host := agentExtractPortScanHost(agentCleanToken(match[1]))
+		if host != "" {
+			return host
 		}
 	}
 	return ""
@@ -4893,6 +5832,271 @@ func agentWantsExternalTools(prompt string) bool {
 	return regexp.MustCompile(`(?i)(external|plugin|tool|插件|外部工具|启用工具)`).MatchString(prompt)
 }
 
+const (
+	agentIntentGeneralChat          = "general_chat"
+	agentIntentWebVulnerabilityScan = "web_vulnerability_scan"
+	agentIntentPortScan             = "port_scan"
+	agentIntentHTTPProbe            = "http_probe"
+	agentIntentContentDiscovery     = "content_discovery"
+	agentIntentJSRouteAnalysis      = "js_route_analysis"
+	agentIntentAPIAuthTest          = "api_auth_test"
+	agentIntentAPIFunctionalTest    = "api_functional_test"
+	agentIntentRunContext           = "run_context"
+	agentIntentReportGeneration     = "report_generation"
+	agentIntentWorkspace            = "workspace"
+	agentIntentApproval             = "approval"
+	agentIntentHealth               = "health"
+	agentIntentPlugins              = "plugins"
+	agentIntentRuns                 = "runs"
+)
+
+type agentCapabilityIntentDecision struct {
+	ID           string
+	Kind         string
+	Target       string
+	Supported    bool
+	Tools        []string
+	MissingTools []string
+	Actions      []agentPlannerAction
+	Reason       string
+}
+
+func agentClassifyCapabilityIntent(prompt string) agentCapabilityIntentDecision {
+	prompt = strings.TrimSpace(prompt)
+	target := agentExtractURL(prompt)
+	switch {
+	case agentIsPortScanIntent(prompt):
+		if target == "" {
+			target = agentExtractPortScanHostFromPrompt(prompt)
+		}
+		actions := agentPortScanActionsFromPrompt(prompt)
+		return agentCapabilityIntentDecision{
+			ID:        agentIntentPortScan,
+			Kind:      "port_scan",
+			Target:    target,
+			Supported: len(actions) > 0,
+			Tools:     []string{"ports.scan.safe"},
+			Actions:   actions,
+			Reason:    "safe TCP connect open-port probe",
+		}
+	case agentIsContentDiscoveryIntent(prompt):
+		return agentCapabilityIntentDecision{
+			ID:           agentIntentContentDiscovery,
+			Kind:         "content_discovery",
+			Target:       target,
+			Supported:    false,
+			MissingTools: []string{"content.discovery", "ffuf", "gobuster", "dirsearch"},
+			Reason:       "hidden path/directory discovery requires a content-discovery tool",
+		}
+	case agentIsJSRouteAnalysisIntent(prompt):
+		return agentCapabilityIntentDecision{
+			ID:           agentIntentJSRouteAnalysis,
+			Kind:         "js_route_analysis",
+			Target:       target,
+			Supported:    false,
+			MissingTools: []string{"js.routes.analyze", "js_route_analyzer"},
+			Reason:       "front-end JavaScript route extraction requires a JS route analyzer",
+		}
+	case agentIsAPIAuthTestIntent(prompt) && !agentIsExplicitHTTPRequestWithMethodOrRequest(prompt):
+		return agentCapabilityIntentDecision{
+			ID:           agentIntentAPIAuthTest,
+			Kind:         "api_auth_test",
+			Target:       target,
+			Supported:    false,
+			MissingTools: []string{"api.auth.test", "auth-flow runner"},
+			Reason:       "authentication/authorization testing needs an auth-aware workflow, credentials, and exact endpoints",
+		}
+	case agentIsScanIntent(prompt):
+		actions := agentHeuristicScanActionsFromPrompt(prompt)
+		return agentCapabilityIntentDecision{
+			ID:        agentIntentWebVulnerabilityScan,
+			Kind:      "scan",
+			Target:    target,
+			Supported: len(actions) > 0,
+			Tools:     []string{"scan.web.safe"},
+			Actions:   actions,
+			Reason:    "explicit Web/API safe-profile vulnerability/evidence scan",
+		}
+	case agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt):
+		actions := agentHTTPProbeActionsFromPrompt(prompt)
+		return agentCapabilityIntentDecision{
+			ID:        agentIntentHTTPProbe,
+			Kind:      "http_probe",
+			Target:    target,
+			Supported: len(actions) > 0,
+			Tools:     []string{"http.request"},
+			Actions:   actions,
+			Reason:    "single HTTP request/probe is equivalent to the operator request",
+		}
+	case agentIsReportDraftIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentReportGeneration, Kind: "report", Supported: true, Tools: []string{"reports.draft"}}
+	case agentIsRunContextAnalysisIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentRunContext, Kind: "context_analysis", Supported: true, Tools: []string{"runs.context"}}
+	case agentIsApprovalIntent(prompt) || agentIsApprovalDecisionIntent(prompt) || agentIsResumeApprovedIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentApproval, Kind: "approval", Supported: true, Tools: []string{"runs.approvals.list", "runs.approvals.approve", "runs.approvals.deny", "runs.resume_approved"}}
+	case agentIsHealthIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentHealth, Kind: "health", Supported: true, Tools: []string{"daemon.health"}}
+	case agentIsPluginIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentPlugins, Kind: "tools", Supported: true, Tools: []string{"plugins.list"}}
+	case agentIsRunIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentRuns, Kind: "runs", Supported: true, Tools: []string{"runs.list"}}
+	case agentIsWorkspaceIntent(prompt) || agentIsCommandIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentWorkspace, Kind: "workspace", Supported: true, Tools: []string{"workspace.*"}}
+	default:
+		return agentCapabilityIntentDecision{ID: agentIntentGeneralChat, Kind: "chat", Target: target, Supported: true}
+	}
+}
+
+func agentHasCapabilityGapIntent(prompt string) bool {
+	decision := agentClassifyCapabilityIntent(prompt)
+	return decision.ID != "" && decision.ID != agentIntentGeneralChat && !decision.Supported
+}
+
+func agentCapabilityGapPlannerFromPrompt(prompt, modelAnswer, language string) *agentPlannerResponse {
+	decision := agentClassifyCapabilityIntent(prompt)
+	if decision.Supported || decision.ID == "" || decision.ID == agentIntentGeneralChat {
+		return nil
+	}
+	target := emptyDash(decision.Target)
+	var answer string
+	var suggestions []string
+	var blockedTitle string
+	var reason string
+	switch decision.ID {
+	case agentIntentPortScan:
+		return agentPortScanPlannerFromPrompt(prompt, modelAnswer, language)
+	case agentIntentContentDiscovery:
+		answer = agentText(language,
+			fmt.Sprintf("我理解这是内容发现/目录枚举任务，不是 Web 漏洞扫描。当前内置工具没有 ffuf/gobuster/dirsearch 这类内容发现器，因此不会用 scan.web.safe 代替目录爆破。目标：%s。可选：1）接入 ffuf/gobuster/dirsearch 插件后让我调用；2）提供具体路径，我用 HTTP 请求逐个验证；3）如果你的目标是漏洞证据扫描，改用 safe Web/API 扫描。", target),
+			fmt.Sprintf("I understand this as content discovery/directory enumeration, not a Web vulnerability scan. The current built-ins do not include ffuf/gobuster/dirsearch-style content discovery, so I will not substitute scan.web.safe for directory brute force. Target: %s. Options: 1) add an ffuf/gobuster/dirsearch plugin; 2) provide exact paths and I can validate them with HTTP requests; 3) if you want vulnerability evidence scanning, switch to a safe Web/API scan.", target),
+		)
+		suggestions = []string{
+			agentText(language, "列出插件工具，检查是否有 ffuf/gobuster/dirsearch", "list plugins and check for ffuf/gobuster/dirsearch"),
+			agentText(language, "用 HTTP 请求验证我提供的具体路径", "validate the exact paths I provide with HTTP requests"),
+			agentText(language, "改为对 "+target+" 做 safe Web/API 安全扫描", "switch to a safe Web/API scan for "+target),
+		}
+		blockedTitle = agentText(language, "等待内容发现工具或具体路径", "Wait for content-discovery tool or exact paths")
+		reason = agentText(language, "缺少内容发现/目录枚举专用工具", "No dedicated content-discovery/directory-enumeration tool")
+	case agentIntentJSRouteAnalysis:
+		answer = agentText(language,
+			fmt.Sprintf("我理解这是 JS 路由/前端接口提取任务。当前内置工具没有 js_route_analyzer，也没有浏览器/Playwright 工具（本阶段不做 Browser/Playwright），因此不会用 safe Web/API 扫描或单次 HTTP 请求冒充 JS 路由分析。目标：%s。可选：1）接入 js_route_analyzer 插件；2）把 JS bundle 放到 Agent 工作区，我用工作区搜索/读文件辅助提取；3）只请求入口页面并人工确认下一步。", target),
+			fmt.Sprintf("I understand this as JS route/front-end endpoint extraction. The current built-ins do not include js_route_analyzer and Browser/Playwright tools are intentionally out of scope for now, so I will not pretend a safe Web/API scan or a single HTTP request is JS route analysis. Target: %s. Options: 1) add a js_route_analyzer plugin; 2) put JS bundles in the Agent workspace and I can use workspace search/read tools; 3) fetch only the entry page and let the operator confirm the next step.", target),
+		)
+		suggestions = []string{
+			agentText(language, "列出插件工具，检查是否有 js_route_analyzer", "list plugins and check for js_route_analyzer"),
+			agentText(language, "我会把 JS 文件放进工作区，请搜索接口路径", "I will place JS files in the workspace; search for API routes"),
+			agentText(language, "只请求入口页面并返回响应摘要", "only request the entry page and summarize the response"),
+		}
+		blockedTitle = agentText(language, "等待 JS 分析插件或 JS 文件", "Wait for JS analyzer plugin or JS files")
+		reason = agentText(language, "缺少 JS 路由分析专用工具", "No dedicated JS route analysis tool")
+	case agentIntentAPIAuthTest:
+		answer = agentText(language,
+			fmt.Sprintf("我理解这是 API 认证/鉴权测试，不是普通漏洞扫描。当前内置工具只有单次 http.request 和 safe Web/API 扫描，没有完整的登录态、Token 轮换、越权矩阵或角色对比测试工作流，因此不会把它误当作 scan.web.safe。目标：%s。可选：1）先在设置里配置 Auth Profile，并给出具体 endpoint/method，我用 http.request 验证；2）接入 auth-flow 测试插件；3）如果只是做泛化安全扫描，再明确要求 safe scan。", target),
+			fmt.Sprintf("I understand this as API authentication/authorization testing, not a generic vulnerability scan. Current built-ins only provide single http.request and safe Web/API scan; there is no full login-state/token-rotation/authorization-matrix workflow, so I will not misroute it to scan.web.safe. Target: %s. Options: 1) configure an Auth Profile and provide exact endpoint/method for http.request; 2) add an auth-flow testing plugin; 3) explicitly request safe scan if you only want a generic scan.", target),
+		)
+		suggestions = []string{
+			agentText(language, "使用已配置 Auth Profile 请求具体 API endpoint", "use a configured Auth Profile to request an exact API endpoint"),
+			agentText(language, "列出插件工具，检查是否有 auth-flow 测试插件", "list plugins and check for an auth-flow testing plugin"),
+			agentText(language, "改为对 "+target+" 做 safe Web/API 安全扫描", "switch to a safe Web/API scan for "+target),
+		}
+		blockedTitle = agentText(language, "等待具体认证测试输入", "Wait for exact auth-test inputs")
+		reason = agentText(language, "缺少认证/鉴权测试工作流与具体 endpoint/method/凭据上下文", "Missing auth/authorization workflow and exact endpoint/method/credential context")
+	default:
+		answer = agentText(language,
+			"我识别到该任务当前没有等价的内置工具；为了避免误执行，我会停在 Plan 阶段等待你选择替代方案。",
+			"I detected that this task has no equivalent built-in tool; to avoid incorrect execution I will stop at Plan and wait for an alternative.",
+		)
+		blockedTitle = agentText(language, "等待操作者选择替代方案", "Wait for operator alternative")
+		reason = agentText(language, "没有等价内置工具", "No equivalent built-in tool")
+	}
+	if strings.TrimSpace(modelAnswer) != "" {
+		answer = trimSummary(modelAnswer, 520)
+	}
+	nextPrompt := ""
+	if len(suggestions) > 0 {
+		nextPrompt = suggestions[0]
+	}
+	return &agentPlannerResponse{
+		Phase:            "plan",
+		Answer:           answer,
+		SuggestedPrompts: suggestions,
+		Task: &agentPlannerTask{
+			Goal:    agentCapabilityGoal(language, decision, prompt),
+			Kind:    decision.Kind,
+			Status:  "blocked",
+			Summary: reason,
+		},
+		Todos: []agentPlannerTodo{
+			{Title: agentText(language, "Plan：识别真实任务意图", "Plan: identify the real task intent"), Status: "done", Priority: 1},
+			{Title: agentText(language, "Plan：校验工具能力是否等价", "Plan: verify tool capability equivalence"), Status: "done", Priority: 2},
+			{Title: blockedTitle, Status: "blocked", Priority: 3, BlockedReason: reason},
+		},
+		NextAction: &agentNextAction{
+			Type:            "blocked",
+			Reason:          reason,
+			SuggestedPrompt: nextPrompt,
+			AutoContinue:    false,
+		},
+		Reasoning: agentText(language,
+			"该意图与现有内置工具不等价；Agent 停在 Plan 阶段，避免用相似工具制造错误结果。",
+			"This intent is not equivalent to current built-in tools; the Agent stops at Plan to avoid producing incorrect results with a similar tool.",
+		),
+	}
+}
+
+func agentCapabilityGoal(language string, decision agentCapabilityIntentDecision, prompt string) string {
+	target := emptyDash(firstNonEmpty(decision.Target, agentExtractURL(prompt)))
+	switch decision.ID {
+	case agentIntentContentDiscovery:
+		return agentText(language, "发现隐藏路径/目录 "+target, "Discover hidden paths/directories for "+target)
+	case agentIntentJSRouteAnalysis:
+		return agentText(language, "提取 JS 路由和前端接口 "+target, "Extract JS routes and front-end endpoints for "+target)
+	case agentIntentAPIAuthTest:
+		return agentText(language, "测试 API 认证/鉴权 "+target, "Test API authentication/authorization for "+target)
+	case agentIntentPortScan:
+		return agentText(language, "枚举开放端口 "+target, "Enumerate open ports for "+target)
+	default:
+		return agentTaskGoal(language, decision.Kind, prompt)
+	}
+}
+
+func agentPlannerActionCapabilityMismatch(prompt, actionName, language string) (string, string, bool) {
+	actionName = normalizeAgentPlannerActionName(actionName)
+	decision := agentClassifyCapabilityIntent(prompt)
+	if decision.ID == "" || decision.ID == agentIntentGeneralChat {
+		return "", "", false
+	}
+	allowed := false
+	switch decision.ID {
+	case agentIntentWebVulnerabilityScan:
+		allowed = actionName == "scan.web.safe" || actionName == "http.request" || agentPlannerActionAllowedByPrompt(prompt, actionName)
+	case agentIntentHTTPProbe:
+		allowed = actionName == "http.request" || actionName == "plugins.list" || agentPlannerActionAllowedByPrompt(prompt, actionName)
+	case agentIntentPortScan:
+		allowed = actionName == "ports.scan.safe" || actionName == "plugins.list" || (actionName == "http.request" && agentIsHTTPPortFallbackIntent(prompt))
+	case agentIntentContentDiscovery:
+		allowed = actionName == "plugins.list" || actionName == "workspace.search" || actionName == "workspace.files.read" || (actionName == "http.request" && agentPromptMentionsSpecificPathProbe(prompt))
+	case agentIntentJSRouteAnalysis:
+		allowed = actionName == "plugins.list" || actionName == "workspace.search" || actionName == "workspace.files.read" || (actionName == "http.request" && agentPromptRequestsEntryPageOnly(prompt))
+	case agentIntentAPIAuthTest:
+		allowed = actionName == "plugins.list" || (actionName == "http.request" && agentIsExplicitHTTPRequestWithMethodOrRequest(prompt))
+	default:
+		return "", "", false
+	}
+	if allowed {
+		return "", "", false
+	}
+	reason := agentText(language,
+		fmt.Sprintf("已阻止非等价工具动作：当前任务意图是 `%s`，但模型计划执行 `%s`。这类任务必须使用等价工具或等待你选择替代方案，不能用相似工具代替。", decision.ID, actionName),
+		fmt.Sprintf("Blocked a non-equivalent tool action: current task intent is `%s`, but the model planned `%s`. This task needs an equivalent tool or an operator-chosen fallback; a similar tool must not be substituted.", decision.ID, actionName),
+	)
+	suggested := ""
+	if gap := agentCapabilityGapPlannerFromPrompt(prompt, "", language); gap != nil && gap.NextAction != nil {
+		suggested = gap.NextAction.SuggestedPrompt
+	}
+	return reason, suggested, true
+}
+
 func agentIsRunContextAnalysisIntent(prompt string) bool {
 	return (agentExtractRunID(prompt) != "" || agentMentionsActiveRun(prompt)) &&
 		regexp.MustCompile(`(?i)(report|finding|artifact|evidence|events?|timeline|log|approvals?|approve|deny|context|报告|发现|漏洞|证据|工件|产物|事件|时间线|日志|审批|批准|拒绝|上下文|修复建议|误报)`).MatchString(prompt)
@@ -4910,7 +6114,59 @@ func agentIsScanIntent(prompt string) bool {
 	if agentExtractURL(prompt) == "" {
 		return false
 	}
-	return regexp.MustCompile(`(?i)(scan|test|assess|audit|扫描|测试|检测|分析|安全)`).MatchString(prompt)
+	if agentIsPortScanIntent(prompt) || agentIsContentDiscoveryIntent(prompt) || agentIsJSRouteAnalysisIntent(prompt) {
+		return false
+	}
+	if agentIsAPIAuthTestIntent(prompt) && !regexp.MustCompile(`(?i)(safe\s*scan|web\s*scan|vuln(?:erability)?\s*scan|security\s*(scan|audit|assessment)|安全扫描|漏洞扫描|漏洞检测)`).MatchString(prompt) {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(\bscan\s+https?://|扫描\s*https?://|扫描.*scope\s*=|web\s*scan|safe\s*scan|vuln(?:erability)?\s*scan|security\s*(scan|audit|assessment)|scan\s+for\s+(vuln|security)|audit\s+(?:the\s+)?(?:site|api|web)|assess\s+(?:the\s+)?(?:site|api|web)\s+security|扫描.*漏洞|漏洞.*扫描|检测.*漏洞|测试.*漏洞|扫描漏洞|漏洞扫描|安全扫描|Web\s*扫描|网站扫描|API\s*扫描|扫描网站|扫描接口|安全检测|安全测试|漏洞检测|漏洞测试)`).MatchString(prompt)
+}
+
+func agentIsPortScanIntent(prompt string) bool {
+	if agentExtractURL(prompt) == "" && agentExtractPortScanHostFromPrompt(prompt) == "" {
+		return false
+	}
+	if agentIsHTTPPortFallbackIntent(prompt) {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(open\s+ports?|ports?\s+open|port\s+(scan|enum|enumeration|discovery)|which\s+ports?|nmap|masscan|端口|开放.*端口|端口.*开放|哪些端口|开了哪些端口)`).MatchString(prompt)
+}
+
+func agentIsHTTPPortFallbackIntent(prompt string) bool {
+	if agentExtractURL(prompt) == "" && agentExtractPortScanHostFromPrompt(prompt) == "" {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(http\(s\)|https?|web\s*ports?|80\s*/\s*443|80\s+and\s+443|common\s+web\s+ports?|只验证.*(?:http|web).*端口|验证.*(?:80|443)|常见\s*web\s*端口|HTTP\s*响应|HTTPS?\s*响应)`).MatchString(prompt) &&
+		regexp.MustCompile(`(?i)(only|validate|probe|check|只|仅|验证|探测|检查)`).MatchString(prompt)
+}
+
+func agentIsContentDiscoveryIntent(prompt string) bool {
+	if agentExtractURL(prompt) == "" {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(content\s+discover|directory\s+(?:brute|fuzz|enum|enumeration|discover)|path\s+(?:brute|fuzz|enum|enumeration|discover)|dirbuster|dirsearch|gobuster|ffuf|feroxbuster|hidden\s+(?:dir|directory|path|file)|discover\s+(?:dirs?|directories|paths?|files)|目录(?:扫描|爆破|枚举|发现)|路径(?:爆破|枚举|发现|扫描)|隐藏(?:目录|路径|文件)|敏感(?:目录|路径|文件)|备份文件|字典扫描)`).MatchString(prompt)
+}
+
+func agentIsJSRouteAnalysisIntent(prompt string) bool {
+	if agentExtractURL(prompt) == "" && !regexp.MustCompile(`(?i)(workspace|工作空间|file|文件)`).MatchString(prompt) {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(js\s*(?:route|endpoint|api)|javascript\s*(?:route|endpoint|api)|front[-\s]?end\s*(?:route|endpoint)|extract\s+routes?|route\s+extract|analy[sz]e\s+js|js_route_analyzer|JS\s*(?:路由|接口|端点)|JavaScript\s*(?:路由|接口|端点)|前端(?:路由|接口)|提取.*(?:JS|JavaScript).*(?:接口|路由|端点)|从.*(?:JS|JavaScript).*(?:接口|路由|端点))`).MatchString(prompt)
+}
+
+func agentIsAPIAuthTestIntent(prompt string) bool {
+	if agentExtractURL(prompt) == "" {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(auth(?:entication|orization)?|login|logout|jwt|bearer|token|cookie|session|rbac|idor|access\s+control|privilege|permission|bypass\s+auth|认证|鉴权|授权|登录|登出|令牌|会话|权限|越权|水平越权|垂直越权|未授权|鉴权绕过|认证绕过|Cookie|JWT)`).MatchString(prompt)
+}
+
+func agentIsAPIFunctionalTestIntent(prompt string) bool {
+	if agentExtractURL(prompt) == "" {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(api\s*(?:functional|smoke|contract|schema|endpoint)\s*test|test\s+(?:the\s+)?api|call\s+(?:the\s+)?api|接口(?:功能|连通|冒烟|契约|调用|请求)|调用接口|测试接口|检查接口|验证接口)`).MatchString(prompt)
 }
 
 func agentIsHTTPRequestIntent(prompt string) bool {
@@ -4918,6 +6174,312 @@ func agentIsHTTPRequestIntent(prompt string) bool {
 		return false
 	}
 	return regexp.MustCompile(`(?i)(http|request|fetch|curl|headers?|status|probe|\bGET\b|\bHEAD\b|\bOPTIONS\b|\bPOST\b|\bPUT\b|\bPATCH\b|\bDELETE\b|访问|请求|抓取|获取|响应|状态码|响应头|探测)`).MatchString(prompt)
+}
+
+func agentIsExplicitHTTPRequestWithMethodOrRequest(prompt string) bool {
+	if agentExtractURL(prompt) == "" {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(\bGET\b|\bHEAD\b|\bOPTIONS\b|\bPOST\b|\bPUT\b|\bPATCH\b|\bDELETE\b|method\s*[:=]|curl|http\s+request|request|fetch|请求|调用|访问|响应头|状态码)`).MatchString(prompt)
+}
+
+func agentPromptMentionsSpecificPathProbe(prompt string) bool {
+	if !agentIsHTTPRequestIntent(prompt) {
+		return false
+	}
+	target := agentExtractURL(prompt)
+	if target == "" {
+		return false
+	}
+	parsed, err := url.Parse(target)
+	return err == nil && parsed.Path != "" && parsed.Path != "/"
+}
+
+func agentPromptRequestsEntryPageOnly(prompt string) bool {
+	return agentIsHTTPRequestIntent(prompt) &&
+		regexp.MustCompile(`(?i)(entry\s+page|home\s+page|index\s+page|入口页|首页|只请求|仅请求|只获取|仅获取)`).MatchString(prompt)
+}
+
+func agentHeuristicScanActionsFromPrompt(prompt string) []agentPlannerAction {
+	target := agentExtractURL(prompt)
+	if target == "" {
+		return nil
+	}
+	return []agentPlannerAction{{Name: "scan.web.safe", Arguments: map[string]any{
+		"target": target,
+		"scope":  agentExtractScope(prompt, target),
+	}}}
+}
+
+func agentHTTPProbeActionsFromPrompt(prompt string) []agentPlannerAction {
+	target := agentExtractURL(prompt)
+	if target == "" {
+		return nil
+	}
+	method := agentExtractHTTPMethod(prompt)
+	if agentIsHTTPPortFallbackIntent(prompt) {
+		host := agentExtractPortScanHostFromPrompt(prompt)
+		if host == "" {
+			if parsed, err := url.Parse(target); err == nil {
+				host = parsed.Host
+			}
+		}
+		host = strings.TrimSpace(host)
+		if host != "" {
+			return []agentPlannerAction{
+				{Name: "http.request", Arguments: map[string]any{"url": "https://" + strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://"), "method": http.MethodHead}},
+				{Name: "http.request", Arguments: map[string]any{"url": "http://" + strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://"), "method": http.MethodHead}},
+			}
+		}
+	}
+	return []agentPlannerAction{{Name: "http.request", Arguments: map[string]any{
+		"url":    target,
+		"method": method,
+	}}}
+}
+
+func agentPortScanActionsFromPrompt(prompt string) []agentPlannerAction {
+	target := agentExtractURL(prompt)
+	host := agentExtractPortScanHostFromPrompt(prompt)
+	if host == "" {
+		return nil
+	}
+	if target == "" {
+		target = host
+	}
+	ports, portLabel, err := agentExtractSafePortScanPorts(prompt)
+	if err != nil {
+		// Keep the planner conservative: if the requested range is too broad,
+		// do not emit a tool action; route/fallback will return a blocked plan.
+		return nil
+	}
+	return []agentPlannerAction{{Name: "ports.scan.safe", Arguments: map[string]any{
+		"target":       target,
+		"host":         host,
+		"ports":        ports,
+		"port_profile": portLabel,
+	}}}
+}
+
+type agentTCPPortProbeResult struct {
+	Port       int
+	Open       bool
+	Error      string
+	DurationMS int64
+}
+
+func agentScanTCPPorts(ctx context.Context, host string, ports []int, timeout time.Duration) []agentTCPPortProbeResult {
+	ports = normalizeAgentPortList(ports)
+	if len(ports) == 0 {
+		return nil
+	}
+	type job struct {
+		index int
+		port  int
+	}
+	jobs := make(chan job)
+	results := make([]agentTCPPortProbeResult, len(ports))
+	workers := minInt(24, len(ports))
+	if workers < 1 {
+		workers = 1
+	}
+	done := make(chan struct{}, workers)
+	for worker := 0; worker < workers; worker++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for item := range jobs {
+				start := time.Now()
+				address := net.JoinHostPort(host, strconv.Itoa(item.port))
+				dialer := net.Dialer{Timeout: timeout}
+				conn, err := dialer.DialContext(ctx, "tcp", address)
+				result := agentTCPPortProbeResult{Port: item.port, DurationMS: time.Since(start).Milliseconds()}
+				if err == nil {
+					result.Open = true
+					_ = conn.Close()
+				} else {
+					result.Error = trimSummary(err.Error(), 120)
+				}
+				results[item.index] = result
+			}
+		}()
+	}
+	for idx, port := range ports {
+		select {
+		case <-ctx.Done():
+			results[idx] = agentTCPPortProbeResult{Port: port, Error: ctx.Err().Error()}
+		case jobs <- job{index: idx, port: port}:
+		}
+	}
+	close(jobs)
+	for worker := 0; worker < workers; worker++ {
+		<-done
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Port < results[j].Port })
+	return results
+}
+
+func agentExtractPortScanHost(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	if strings.Contains(target, "://") {
+		parsed, err := url.Parse(target)
+		if err == nil {
+			return strings.TrimSpace(parsed.Hostname())
+		}
+	}
+	host := target
+	if slash := strings.Index(host, "/"); slash >= 0 {
+		host = host[:slash]
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	} else if colon := strings.LastIndex(host, ":"); colon > strings.LastIndex(host, "]") {
+		if _, atoiErr := strconv.Atoi(host[colon+1:]); atoiErr == nil {
+			host = host[:colon]
+		}
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" || strings.ContainsAny(host, " \t\r\n") {
+		return ""
+	}
+	return host
+}
+
+func agentDefaultSafePortList() []int {
+	return []int{21, 22, 25, 53, 80, 110, 143, 443, 445, 465, 587, 993, 995, 1433, 1521, 2049, 2375, 2376, 3000, 3306, 5000, 5432, 5601, 5672, 5900, 6379, 8000, 8080, 8443, 9000, 9200, 9300, 11211, 27017}
+}
+
+func agentExtractSafePortScanPorts(prompt string) ([]int, string, error) {
+	if token := agentExtractPortSpecToken(prompt); token != "" {
+		ports, err := parseAgentPortSpec(token, 128)
+		if err != nil {
+			return nil, "", err
+		}
+		return ports, token, nil
+	}
+	ports := agentDefaultSafePortList()
+	return ports, "common_safe", nil
+}
+
+func agentExtractPortSpecToken(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(?:^|\s)-p\s+([0-9][0-9,\-\s]{0,120})`),
+		regexp.MustCompile(`(?i)\bports?\s*[:=]\s*([0-9][0-9,\-\s]{0,120})`),
+		regexp.MustCompile(`(?:端口|端口范围)\s*[:：]\s*([0-9][0-9,\-\s]{0,120})`),
+		regexp.MustCompile(`(?i)\b([0-9]{1,5}\s*-\s*[0-9]{1,5})\b`),
+	} {
+		if match := re.FindStringSubmatch(prompt); len(match) > 1 {
+			return strings.Join(strings.Fields(strings.TrimSpace(match[1])), "")
+		}
+	}
+	return ""
+}
+
+func parseAgentPortSpec(spec string, maxPorts int) ([]int, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil, services.NewError(services.CodeBadRequest, "port spec is required", nil, nil)
+	}
+	seen := map[int]struct{}{}
+	ports := []int{}
+	addPort := func(port int) error {
+		if port < 1 || port > 65535 {
+			return services.NewError(services.CodeBadRequest, "port out of range", map[string]any{"port": port}, nil)
+		}
+		if _, ok := seen[port]; ok {
+			return nil
+		}
+		seen[port] = struct{}{}
+		ports = append(ports, port)
+		if maxPorts > 0 && len(ports) > maxPorts {
+			return services.NewError(services.CodePolicyDenied, "too many ports for safe built-in scan; narrow the range or use a dedicated nmap/masscan plugin", map[string]any{"max_ports": maxPorts}, nil)
+		}
+		return nil
+	}
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "-") {
+			bounds := strings.SplitN(part, "-", 2)
+			start, err := strconv.Atoi(strings.TrimSpace(bounds[0]))
+			if err != nil {
+				return nil, services.NewError(services.CodeBadRequest, "invalid port range", map[string]any{"range": part}, err)
+			}
+			end, err := strconv.Atoi(strings.TrimSpace(bounds[1]))
+			if err != nil {
+				return nil, services.NewError(services.CodeBadRequest, "invalid port range", map[string]any{"range": part}, err)
+			}
+			if start > end {
+				start, end = end, start
+			}
+			for port := start; port <= end; port++ {
+				if err := addPort(port); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		port, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, services.NewError(services.CodeBadRequest, "invalid port", map[string]any{"port": part}, err)
+		}
+		if err := addPort(port); err != nil {
+			return nil, err
+		}
+	}
+	return normalizeAgentPortList(ports), nil
+}
+
+func agentPortSpecFromPlannerArgument(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []int:
+		parts := make([]string, 0, len(typed))
+		for _, port := range typed {
+			parts = append(parts, strconv.Itoa(port))
+		}
+		return strings.Join(parts, ",")
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			switch v := item.(type) {
+			case float64:
+				parts = append(parts, strconv.Itoa(int(v)))
+			case int:
+				parts = append(parts, strconv.Itoa(v))
+			case string:
+				if strings.TrimSpace(v) != "" {
+					parts = append(parts, strings.TrimSpace(v))
+				}
+			}
+		}
+		return strings.Join(parts, ",")
+	default:
+		return ""
+	}
+}
+
+func normalizeAgentPortList(ports []int) []int {
+	seen := map[int]struct{}{}
+	out := make([]int, 0, len(ports))
+	for _, port := range ports {
+		if port < 1 || port > 65535 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		out = append(out, port)
+	}
+	sort.Ints(out)
+	return out
 }
 
 func agentExtractHTTPMethod(prompt string) string {
@@ -4946,6 +6508,9 @@ func agentHTTPMethodIsSafe(method string) bool {
 }
 
 func agentIsHealthIntent(prompt string) bool {
+	if agentExtractURL(prompt) != "" && regexp.MustCompile(`(?i)(http|headers?|status\s*code|response|响应|状态码|响应头)`).MatchString(prompt) {
+		return false
+	}
 	return regexp.MustCompile(`(?i)(health|doctor|status|daemon|体检|健康|状态|连接)`).MatchString(prompt)
 }
 
@@ -5401,8 +6966,10 @@ func agentPlannerActionAllowedByPrompt(prompt, actionName string) bool {
 	switch normalizeAgentPlannerActionName(actionName) {
 	case "scan.web.safe":
 		return agentIsScanIntent(prompt)
+	case "ports.scan.safe":
+		return agentIsPortScanIntent(prompt)
 	case "http.request":
-		return agentIsHTTPRequestIntent(prompt) || agentIsScanIntent(prompt)
+		return agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt) || agentIsScanIntent(prompt)
 	case "workspace.files.write":
 		return agentIsWorkspaceWriteIntent(prompt)
 	case "workspace.files.patch":
@@ -5758,11 +7325,23 @@ func agentBuildRunContextObservation(language string, detail services.RunDetail,
 			fmt.Sprintf("Read approval queue for run %s: approvals=%d, pending=%d. If pending > 0, resolve the approval gate before continuing execution.", runID, intFromAny(result["approval_count"]), intFromAny(result["pending"])),
 		)
 	case "findings":
+		if available, ok := result["report_available"].(bool); ok && !available {
+			return agentText(language,
+				fmt.Sprintf("运行 %s 的 report.json 尚未生成，当前仅能读取运行状态和事件片段：status=%s，events=%d，artifacts=%d。任务仍在执行或报告步骤尚未完成；可继续等待事件流或打开运行详情查看实时进度。", runID, detail.Summary.Status, intFromAny(result["event_count"]), intFromAny(result["artifact_count"])),
+				fmt.Sprintf("report.json for run %s is not generated yet; only run status and event samples are available: status=%s, events=%d, artifacts=%d. The task may still be running or the report step has not completed; continue watching events or open the run detail for live progress.", runID, detail.Summary.Status, intFromAny(result["event_count"]), intFromAny(result["artifact_count"])),
+			)
+		}
 		return agentText(language,
 			fmt.Sprintf("已读取运行 %s 的 findings：findings=%d，evidence=%d，artifacts=%d。下一步可按 sample_findings 的 evidence_ids 追溯证据，并按“影响 → 证据 → 误报检查 → 修复 → 复测”生成行动计划。", runID, intFromAny(result["finding_count"]), intFromAny(result["evidence_count"]), intFromAny(result["artifact_count"])),
 			fmt.Sprintf("Read findings for run %s: findings=%d, evidence=%d, artifacts=%d. Next, trace evidence_ids from sample_findings and produce an impact → evidence → false-positive check → remediation → retest action plan.", runID, intFromAny(result["finding_count"]), intFromAny(result["evidence_count"]), intFromAny(result["artifact_count"])),
 		)
 	default:
+		if available, ok := result["report_available"].(bool); ok && !available {
+			return agentText(language,
+				fmt.Sprintf("运行 %s 的 report.json 尚未生成，当前状态=%s，events=%d，artifacts=%d，target=%s。任务完成前不会再把这类情况显示成错误；可继续监控事件流，报告生成后再读取总结。", runID, detail.Summary.Status, intFromAny(result["event_count"]), intFromAny(result["artifact_count"]), target),
+				fmt.Sprintf("report.json for run %s is not generated yet; current status=%s, events=%d, artifacts=%d, target=%s. This is treated as pending instead of an error; keep monitoring events and read the summary after report generation.", runID, detail.Summary.Status, intFromAny(result["event_count"]), intFromAny(result["artifact_count"]), target),
+			)
+		}
 		return agentText(language,
 			fmt.Sprintf("已读取运行 %s 的 report.json：findings=%d，evidence=%d，artifacts=%d，target=%s。可继续要求我解释 finding、证据链或生成复测计划。", runID, intFromAny(result["finding_count"]), intFromAny(result["evidence_count"]), intFromAny(result["artifact_count"]), target),
 			fmt.Sprintf("Read report.json for run %s: findings=%d, evidence=%d, artifacts=%d, target=%s. You can ask me to explain findings, evidence chains, or produce a retest plan.", runID, intFromAny(result["finding_count"]), intFromAny(result["evidence_count"]), intFromAny(result["artifact_count"]), target),
@@ -5915,15 +7494,16 @@ func failedAgentToolCall(name string, err error) agentToolCall {
 
 func buildAgentSendResponse(sessionID string, messages []agentMessage, toolCalls []agentToolCall, session agentSession) sendAgentMessageResponse {
 	return sendAgentMessageResponse{
-		SessionID:      sessionID,
-		Messages:       cloneAgentMessages(messages),
-		ToolCalls:      cloneAgentToolCalls(toolCalls),
-		ActiveTask:     cloneAgentTask(session.ActiveTask),
-		Todos:          cloneAgentTodos(session.Todos),
-		ContextRefs:    cloneAgentContextRefs(session.ContextRefs),
-		PendingChanges: cloneAgentWorkspaceChanges(session.PendingChanges),
-		MemorySummary:  cloneAgentMemorySummary(session.MemorySummary),
-		NextAction:     cloneAgentNextAction(session.NextAction),
+		SessionID:            sessionID,
+		Messages:             cloneAgentMessages(messages),
+		ToolCalls:            cloneAgentToolCalls(toolCalls),
+		ActiveTask:           cloneAgentTask(session.ActiveTask),
+		Todos:                cloneAgentTodos(session.Todos),
+		ContextRefs:          cloneAgentContextRefs(session.ContextRefs),
+		PendingChanges:       cloneAgentWorkspaceChanges(session.PendingChanges),
+		PendingAuthorization: cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		MemorySummary:        cloneAgentMemorySummary(session.MemorySummary),
+		NextAction:           cloneAgentNextAction(session.NextAction),
 	}
 }
 
@@ -6035,7 +7615,7 @@ func (m *agentManager) syncTerminalActiveRunLocked(ctx context.Context, session 
 	}
 	switch status {
 	case contracts.StatusSucceeded, contracts.StatusPartiallySucceeded:
-		return normalizeCompletedActiveRunSession(session, status) || changed
+		return normalizeCompletedActiveRunSession(session, status, detail) || changed
 	case contracts.StatusFailed, contracts.StatusCancelled:
 		return normalizeStoppedActiveRunSession(session, status) || changed
 	default:
@@ -6467,10 +8047,11 @@ func agentRunTerminalStatus(status contracts.Status) bool {
 	}
 }
 
-func normalizeCompletedActiveRunSession(session *agentSession, status contracts.Status) bool {
+func normalizeCompletedActiveRunSession(session *agentSession, status contracts.Status, detail services.RunDetail) bool {
 	if session == nil || session.ActiveTask == nil {
 		return false
 	}
+	runID := strings.TrimSpace(session.ActiveTask.ActiveRunID)
 	if sessionHasRunEvidenceActionTodos(session) {
 		now := time.Now().UTC()
 		session.Status = "running"
@@ -6520,7 +8101,47 @@ func normalizeCompletedActiveRunSession(session *agentSession, status contracts.
 		Reason:          "active run reached terminal status: " + string(status),
 		SuggestedPrompt: agentSuggestedRunSummaryPrompt(session.Language, session.ActiveTask.ActiveRunID),
 	}
+	if runID != "" && !sessionHasTerminalRunSummaryMessage(session, runID) {
+		session.Messages = append(session.Messages, agentSyntheticRunSummaryMessage(session.Language, runID, status, detail))
+	}
 	return true
+}
+
+func sessionHasTerminalRunSummaryMessage(session *agentSession, runID string) bool {
+	if session == nil || strings.TrimSpace(runID) == "" {
+		return false
+	}
+	for _, message := range session.Messages {
+		if message.Role == "agent" && message.Phase == "final_answer" && strings.Contains(message.Content, runID) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentSyntheticRunSummaryMessage(language, runID string, status contracts.Status, detail services.RunDetail) agentMessage {
+	now := time.Now().UTC()
+	counts := detail.Summary.Counts
+	target := firstNonEmpty(detail.Summary.Target, detail.Summary.Scope)
+	if target == "" && detail.Job != nil {
+		target = detail.Job.TargetID
+	}
+	reportText := agentText(language, "报告尚未生成", "report pending")
+	if detail.Summary.Report.JSON {
+		reportText = agentText(language, "报告已生成", "report ready")
+	}
+	content := agentText(language,
+		fmt.Sprintf("任务已完成：运行 `%s` 状态为 `%s`。\n\n- 目标：%s\n- 事件：%d\n- 证据/Artifact：%d\n- 发现：%d\n- 审批：%d（待处理 %d）\n- 报告：%s\n\n下一步建议：发送 `%s`，我会读取报告/事件并给出证据链、风险摘要和复测建议。", runID, status, emptyDash(target), counts.Events, counts.Artifacts, counts.Findings, counts.Approvals, counts.PendingApprovals, reportText, agentSuggestedRunSummaryPrompt(language, runID)),
+		fmt.Sprintf("Task completed: run `%s` status is `%s`.\n\n- Target: %s\n- Events: %d\n- Artifacts: %d\n- Findings: %d\n- Approvals: %d (pending %d)\n- Report: %s\n\nSuggested next step: send `%s`; I will read the report/events and summarize evidence chains, risk, and retest guidance.", runID, status, emptyDash(target), counts.Events, counts.Artifacts, counts.Findings, counts.Approvals, counts.PendingApprovals, reportText, agentSuggestedRunSummaryPrompt(language, runID)),
+	)
+	return agentMessage{
+		ID:        strings.Replace(runs.NewJobID(now), "job_", "msg_", 1),
+		Role:      "agent",
+		Content:   content,
+		Timestamp: now,
+		Phase:     "final_answer",
+		Links:     []agentLink{{To: "/scan/" + runID, Label: agentText(language, "打开运行详情", "Open run detail"), Kind: "run"}},
+	}
 }
 
 func normalizeStoppedActiveRunSession(session *agentSession, status contracts.Status) bool {
@@ -6606,6 +8227,9 @@ func (s *agentSession) normalize() {
 
 func normalizeCompletedOneShotAgentSession(session *agentSession) bool {
 	if session == nil || len(session.Todos) == 0 || len(session.ToolCalls) == 0 {
+		return false
+	}
+	if session.PendingAuthorization != nil && strings.EqualFold(session.PendingAuthorization.Status, "pending") {
 		return false
 	}
 	if session.ActiveTask != nil && strings.TrimSpace(session.ActiveTask.ActiveRunID) != "" {
@@ -7541,6 +9165,22 @@ func (m *agentManager) updateNextActionLocked(session *agentSession) {
 	if session.ActiveTask != nil {
 		session.ActiveTask.UpdatedAt = now
 	}
+	if session.PendingAuthorization != nil && strings.EqualFold(session.PendingAuthorization.Status, "pending") {
+		session.Status = "waiting_authorization"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+		}
+		if session.NextAction == nil || session.NextAction.Type != "authorization_required" {
+			session.NextAction = &agentNextAction{
+				Type:            "authorization_required",
+				Reason:          session.PendingAuthorization.Reason,
+				SuggestedPrompt: agentAuthorizationSuggestedPrompt(session.Language, session.PendingAuthorization),
+				AutoContinue:    false,
+			}
+		}
+		session.UpdatedAt = now
+		return
+	}
 	if session.NextAction != nil && session.NextAction.Type == "approval_required" {
 		session.Status = "running"
 		if session.ActiveTask != nil {
@@ -7607,7 +9247,12 @@ func agentNextActionIsEvidenceActionComplete(next *agentNextAction) bool {
 }
 
 func agentTaskKind(prompt string) string {
+	if decision := agentClassifyCapabilityIntent(prompt); decision.ID != "" && decision.ID != agentIntentGeneralChat {
+		return decision.Kind
+	}
 	switch {
+	case agentIsPortScanIntent(prompt):
+		return "port_scan"
 	case agentIsScanIntent(prompt):
 		return "scan"
 	case agentIsResumeApprovedIntent(prompt):
@@ -7632,6 +9277,17 @@ func agentTaskGoal(language, kind, prompt string) string {
 		target := agentExtractURL(prompt)
 		scope := agentExtractScope(prompt, target)
 		return agentText(language, "扫描授权目标 "+emptyDash(target)+" scope="+emptyDash(scope), "Scan authorized target "+emptyDash(target)+" scope="+emptyDash(scope))
+	}
+	if kind == "http_probe" {
+		target := agentExtractURL(prompt)
+		return agentText(language, "探测 HTTP 响应 "+emptyDash(target), "Probe HTTP response for "+emptyDash(target))
+	}
+	if kind == "port_scan" {
+		target := firstNonEmpty(agentExtractURL(prompt), agentExtractPortScanHostFromPrompt(prompt))
+		return agentText(language, "枚举开放端口 "+emptyDash(target), "Enumerate open ports for "+emptyDash(target))
+	}
+	if kind == "content_discovery" || kind == "js_route_analysis" || kind == "api_auth_test" {
+		return agentCapabilityGoal(language, agentClassifyCapabilityIntent(prompt), prompt)
 	}
 	if kind == "context_analysis" {
 		return agentText(language, "分析运行上下文与证据", "Analyze run context and evidence")
@@ -7658,6 +9314,16 @@ func agentTaskSummary(language, kind string) string {
 	switch kind {
 	case "scan":
 		return agentText(language, "Agent 将校验 scope、启动 safe profile、跟踪运行并收集报告上下文。", "The Agent will validate scope, start the safe profile, track the run and collect report context.")
+	case "http_probe":
+		return agentText(language, "Agent 将执行最小 HTTP 请求并根据响应状态、响应头和正文摘要给出结论。", "The Agent will run the minimal HTTP request and summarize status, headers, and body snippet.")
+	case "port_scan":
+		return agentText(language, "Agent 会识别这是端口枚举任务；若缺少 nmap/masscan 类工具，会先提示可选替代方案。", "The Agent will classify this as port enumeration; if nmap/masscan-style tools are missing, it will offer alternatives first.")
+	case "content_discovery":
+		return agentText(language, "Agent 会识别这是内容发现/目录枚举任务；缺少等价工具时不会误用漏洞扫描代替。", "The Agent will classify this as content discovery/directory enumeration; without an equivalent tool it will not substitute vulnerability scanning.")
+	case "js_route_analysis":
+		return agentText(language, "Agent 会识别这是 JS 路由/前端接口提取任务；缺少分析器时等待插件或 JS 文件。", "The Agent will classify this as JS route/front-end endpoint extraction; without an analyzer it waits for a plugin or JS files.")
+	case "api_auth_test":
+		return agentText(language, "Agent 会识别这是认证/鉴权测试；需要具体 endpoint、凭据/Auth Profile 或专用流程。", "The Agent will classify this as auth/authorization testing; it needs exact endpoints, credentials/Auth Profile, or a dedicated workflow.")
 	case "context_analysis":
 		return agentText(language, "Agent 将读取 run / artifact / finding 上下文并给出下一步建议。", "The Agent will read run / artifact / finding context and suggest next actions.")
 	default:
@@ -7675,6 +9341,37 @@ func agentInitialTodos(language, kind string, now time.Time) []agentTodo {
 			agentText(language, "启动 daemon Web 扫描", "Start daemon web scan"),
 			agentText(language, "跟踪运行事件、证据和审批", "Track run events, evidence and approvals"),
 			agentText(language, "读取报告并总结下一步", "Read report and summarize next actions"),
+		}
+	case "port_scan":
+		titles = []string{
+			agentText(language, "确认目标与端口枚举范围", "Confirm target and port-enumeration scope"),
+			agentText(language, "检查是否有端口扫描专用工具", "Check for a dedicated port-scanning tool"),
+			agentText(language, "选择 nmap/masscan 插件或 HTTP 探测替代方案", "Choose nmap/masscan plugin or HTTP-probe fallback"),
+			agentText(language, "汇总开放端口证据与限制", "Summarize open-port evidence and limitations"),
+		}
+	case "http_probe":
+		titles = []string{
+			agentText(language, "确认 URL 与 HTTP 方法", "Confirm URL and HTTP method"),
+			agentText(language, "执行最小 HTTP 请求", "Run the minimal HTTP request"),
+			agentText(language, "总结状态码、响应头和正文摘要", "Summarize status, headers, and body snippet"),
+		}
+	case "content_discovery":
+		titles = []string{
+			agentText(language, "确认这是内容发现/目录枚举", "Confirm this is content discovery/directory enumeration"),
+			agentText(language, "检查是否有 ffuf/gobuster/dirsearch 等价工具", "Check for equivalent ffuf/gobuster/dirsearch tool"),
+			agentText(language, "等待插件或具体路径验证方案", "Wait for plugin or exact-path validation fallback"),
+		}
+	case "js_route_analysis":
+		titles = []string{
+			agentText(language, "确认这是 JS 路由/前端接口提取", "Confirm this is JS route/front-end endpoint extraction"),
+			agentText(language, "检查是否有 JS 路由分析器", "Check for a JS route analyzer"),
+			agentText(language, "等待插件、JS 文件或入口页验证方案", "Wait for plugin, JS files, or entry-page fallback"),
+		}
+	case "api_auth_test":
+		titles = []string{
+			agentText(language, "确认认证/鉴权测试目标", "Confirm auth/authorization test target"),
+			agentText(language, "收集 endpoint、method、Auth Profile/凭据上下文", "Collect endpoint, method, Auth Profile/credential context"),
+			agentText(language, "选择 http.request 验证或专用插件流程", "Choose http.request validation or dedicated plugin workflow"),
 		}
 	case "context_analysis":
 		titles = []string{
@@ -7926,6 +9623,18 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func appendAgentInstructionBlock(base, block string) string {
+	base = strings.TrimSpace(base)
+	block = strings.TrimSpace(block)
+	if block == "" {
+		return base
+	}
+	if base == "" {
+		return block
+	}
+	return base + "\n\n" + block
+}
+
 func agentPlannerActions(plan *agentPlannerResponse) []agentPlannerAction {
 	if plan == nil {
 		return nil
@@ -7949,6 +9658,8 @@ func agentPlannerActions(plan *agentPlannerResponse) []agentPlannerAction {
 		}
 		keyParts := []string{
 			name,
+			stringFromAny(action.Arguments["host"]),
+			agentPortSpecFromPlannerArgument(action.Arguments["ports"]),
 			stringFromAny(action.Arguments["url"]),
 			stringFromAny(action.Arguments["target"]),
 			stringFromAny(action.Arguments["method"]),
@@ -7989,6 +9700,8 @@ func normalizeAgentPlannerActionName(raw string) string {
 	switch name {
 	case "scan.web.safe", "web.scan.safe", "scan.web", "web.scan", "scans.web", "scan", "start.scan", "start.web.scan":
 		return "scan.web.safe"
+	case "ports.scan.safe", "port.scan.safe", "ports.scan", "port.scan", "portscan", "port.scan.tcp", "tcp.scan", "scan.ports", "nmap":
+		return "ports.scan.safe"
 	case "http.request", "http", "request", "fetch", "curl", "web.request", "web.fetch", "http.get", "http.head":
 		return "http.request"
 	case "workspace.command", "workspace.commands.run", "workspace.run.command", "command", "commands.run", "shell", "terminal":
@@ -8781,8 +10494,29 @@ func cloneAgentSession(session *agentSession) agentSession {
 	cloned.ToolCalls = cloneAgentToolCalls(session.ToolCalls)
 	cloned.ContextRefs = cloneAgentContextRefs(session.ContextRefs)
 	cloned.PendingChanges = cloneAgentWorkspaceChanges(session.PendingChanges)
+	cloned.PendingAuthorization = cloneAgentAuthorizationRequest(session.PendingAuthorization)
 	cloned.MemorySummary = cloneAgentMemorySummary(session.MemorySummary)
 	cloned.NextAction = cloneAgentNextAction(session.NextAction)
+	return cloned
+}
+
+func cloneAgentAuthorizationRequest(request *agentAuthorizationRequest) *agentAuthorizationRequest {
+	if request == nil {
+		return nil
+	}
+	cloned := *request
+	cloned.Arguments = cloneMapStringAny(request.Arguments)
+	return &cloned
+}
+
+func cloneMapStringAny(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(input))
+	for key, value := range input {
+		cloned[key] = value
+	}
 	return cloned
 }
 

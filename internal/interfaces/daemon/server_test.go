@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -87,6 +88,33 @@ func TestParseAgentPlannerResponseUnwrapsOpenAIChatCompletions(t *testing.T) {
 	}
 }
 
+func TestParseAgentPlannerResponseUnwrapsOpenAIChatCompletionsSuggestPrompt(t *testing.T) {
+	raw := `{
+		"id":"chatcmpl-test",
+		"object":"chat.completion",
+		"suggest_prompt":"继续分析 HTTP 响应头",
+		"choices":[{
+			"index":0,
+			"message":{
+				"role":"assistant",
+				"content":[{"type":"text","text":"{\"answer\":\"HEAD 请求完成\",\"task\":{\"goal\":\"HTTP 探测\",\"kind\":\"ops\",\"status\":\"running\",\"summary\":\"ok\"}}"}]
+			},
+			"finish_reason":"stop"
+		}]
+	}`
+
+	plan, err := parseAgentPlannerResponse(raw)
+	if err != nil {
+		t.Fatalf("parseAgentPlannerResponse() error = %v", err)
+	}
+	if plan.Answer != "HEAD 请求完成" {
+		t.Fatalf("Answer = %q", plan.Answer)
+	}
+	if plan.NextAction == nil || plan.NextAction.SuggestedPrompt != "继续分析 HTTP 响应头" {
+		t.Fatalf("NextAction suggested prompt not merged: %#v", plan.NextAction)
+	}
+}
+
 func TestParseAgentPlannerResponseFindsPlannerJSONAfterOperatorText(t *testing.T) {
 	raw := "我先说明一下。\n```bash\npwd\n```\n\n" + `{
 		"answer":"已提取主要 answer，不展示整段 JSON。",
@@ -101,6 +129,286 @@ func TestParseAgentPlannerResponseFindsPlannerJSONAfterOperatorText(t *testing.T
 	}
 	if plan.Answer != "已提取主要 answer，不展示整段 JSON。" {
 		t.Fatalf("Answer = %q", plan.Answer)
+	}
+}
+
+func TestParseAgentPlannerResponseAcceptsSuggestPromptAlias(t *testing.T) {
+	raw := `{
+		"answer":"建议下一步操作。",
+		"suggest_prompt":"继续读取最近运行上下文并总结下一步",
+		"task":{"goal":"解析建议","kind":"chat","status":"running","summary":"ok"}
+	}`
+
+	plan, err := parseAgentPlannerResponse(raw)
+	if err != nil {
+		t.Fatalf("parseAgentPlannerResponse() error = %v", err)
+	}
+	if plan.NextAction == nil {
+		t.Fatalf("NextAction should be synthesized from suggest_prompt: %#v", plan)
+	}
+	if plan.NextAction.SuggestedPrompt != "继续读取最近运行上下文并总结下一步" {
+		t.Fatalf("SuggestedPrompt = %q", plan.NextAction.SuggestedPrompt)
+	}
+}
+
+func TestPortScanIntentUsesDedicatedSafePortTool(t *testing.T) {
+	prompt := "扫描 ai.usmercari.com 开了哪些端口"
+	if !agentIsPortScanIntent(prompt) {
+		t.Fatalf("expected port scan intent")
+	}
+	if agentIsScanIntent(prompt) {
+		t.Fatalf("port scan intent must not be classified as web safe scan")
+	}
+	actions := agentHeuristicActionsFromPrompt(prompt)
+	if len(actions) != 1 || actions[0].Name != "ports.scan.safe" {
+		t.Fatalf("port scan should produce ports.scan.safe action: %#v", actions)
+	}
+	plan := agentFallbackPlannerFromPrompt(prompt, "", "zh")
+	if plan == nil || plan.Task == nil || plan.Task.Kind != "port_scan" || len(agentPlannerActions(plan)) != 1 {
+		t.Fatalf("unexpected port scan fallback plan: %#v", plan)
+	}
+	if _, _, mismatch := agentPlannerActionCapabilityMismatch(prompt, "scan.web.safe", "zh"); !mismatch {
+		t.Fatalf("scan.web.safe must be rejected as non-equivalent for port_scan")
+	}
+}
+
+func TestGenericAnalysisDoesNotAutoStartWebSafeScan(t *testing.T) {
+	if agentIsScanIntent("分析 ai.usmercari.com") {
+		t.Fatalf("generic analysis must not be classified as web safe scan")
+	}
+	if agentIsScanIntent("检测 ai.usmercari.com") {
+		t.Fatalf("generic detection must not be classified as web safe scan without security/vulnerability intent")
+	}
+	if !agentIsScanIntent("对 ai.usmercari.com 做安全扫描") {
+		t.Fatalf("explicit security scan should be classified as web safe scan")
+	}
+	if !agentIsScanIntent("扫描 ai.usmercari.com 漏洞") {
+		t.Fatalf("explicit vulnerability scan should be classified as web safe scan")
+	}
+}
+
+func TestCapabilityClassifierPreventsCommonNonEquivalentTools(t *testing.T) {
+	cases := []struct {
+		name       string
+		prompt     string
+		intent     string
+		wrongTool  string
+		shouldScan bool
+	}{
+		{
+			name:      "content discovery is not web safe scan",
+			prompt:    "帮我找 https://example.com 的隐藏目录和备份文件",
+			intent:    agentIntentContentDiscovery,
+			wrongTool: "scan.web.safe",
+		},
+		{
+			name:      "js route analysis is not web safe scan",
+			prompt:    "分析 https://example.com 的 JS 路由和前端接口",
+			intent:    agentIntentJSRouteAnalysis,
+			wrongTool: "scan.web.safe",
+		},
+		{
+			name:      "api auth test is not generic web safe scan",
+			prompt:    "测试 https://api.example.com/login 是否存在认证绕过和越权",
+			intent:    agentIntentAPIAuthTest,
+			wrongTool: "scan.web.safe",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := agentClassifyCapabilityIntent(tc.prompt)
+			if decision.ID != tc.intent {
+				t.Fatalf("intent = %q, want %q", decision.ID, tc.intent)
+			}
+			if decision.Supported {
+				t.Fatalf("intent %q should be blocked until an equivalent tool/input exists", decision.ID)
+			}
+			if agentIsScanIntent(tc.prompt) {
+				t.Fatalf("%q must not be classified as scan.web.safe intent", tc.prompt)
+			}
+			plan := agentFallbackPlannerFromPrompt(tc.prompt, "", "zh")
+			if plan == nil || plan.Task == nil || plan.Task.Status != "blocked" || len(agentPlannerActions(plan)) != 0 {
+				t.Fatalf("expected blocked fallback plan without actions: %#v", plan)
+			}
+			if _, _, mismatch := agentPlannerActionCapabilityMismatch(tc.prompt, tc.wrongTool, "zh"); !mismatch {
+				t.Fatalf("expected %s to be rejected as non-equivalent for %s", tc.wrongTool, tc.intent)
+			}
+		})
+	}
+}
+
+func TestHTTPProbeAndPortFallbackRouting(t *testing.T) {
+	statusPrompt := "获取 https://example.com 的响应头和状态码"
+	if agentIsScanIntent(statusPrompt) {
+		t.Fatalf("HTTP status/header probe must not be classified as web safe scan")
+	}
+	statusDecision := agentClassifyCapabilityIntent(statusPrompt)
+	if statusDecision.ID != agentIntentHTTPProbe || !statusDecision.Supported {
+		t.Fatalf("unexpected status probe decision: %#v", statusDecision)
+	}
+	statusActions := agentHeuristicActionsFromPrompt(statusPrompt)
+	if len(statusActions) != 1 || statusActions[0].Name != "http.request" || statusActions[0].Arguments["method"] != http.MethodHead {
+		t.Fatalf("unexpected status probe actions: %#v", statusActions)
+	}
+
+	portFallbackPrompt := "只验证常见 Web 端口 HTTP 响应，目标 example.com"
+	if agentIsPortScanIntent(portFallbackPrompt) {
+		t.Fatalf("explicit HTTP web-port fallback should not be treated as full port_scan")
+	}
+	actions := agentHeuristicActionsFromPrompt(portFallbackPrompt)
+	if len(actions) != 2 {
+		t.Fatalf("expected https/http HEAD probes for web-port fallback, got %#v", actions)
+	}
+	for _, action := range actions {
+		if action.Name != "http.request" || action.Arguments["method"] != http.MethodHead {
+			t.Fatalf("unexpected web-port fallback action: %#v", action)
+		}
+	}
+}
+
+func TestSafePortScanDetectsLocalOpenPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	results := agentScanTCPPorts(context.Background(), "127.0.0.1", []int{port}, 300*time.Millisecond)
+	if len(results) != 1 {
+		t.Fatalf("results = %#v", results)
+	}
+	if !results[0].Open || results[0].Port != port {
+		t.Fatalf("expected local port %d to be open, got %#v", port, results[0])
+	}
+
+	prompt := fmt.Sprintf("扫描 127.0.0.1 开放端口 ports=%d", port)
+	if !agentIsPortScanIntent(prompt) {
+		t.Fatalf("expected IP host port_scan intent")
+	}
+	actions := agentPortScanActionsFromPrompt(prompt)
+	if len(actions) != 1 || actions[0].Name != "ports.scan.safe" {
+		t.Fatalf("unexpected port scan action: %#v", actions)
+	}
+}
+
+func TestSafePortScanRejectsTooBroadRange(t *testing.T) {
+	if _, err := parseAgentPortSpec("1-200", 128); err == nil {
+		t.Fatalf("expected broad range to be rejected by safe cap")
+	}
+	plan := agentFallbackPlannerFromPrompt("扫描 example.com 开放端口 ports=1-200", "", "zh")
+	if plan == nil || plan.Task == nil || plan.Task.Status != "blocked" || len(agentPlannerActions(plan)) != 0 {
+		t.Fatalf("expected blocked plan for too broad range: %#v", plan)
+	}
+}
+
+func TestAgentSkillRegistryExposesToolsAndSkills(t *testing.T) {
+	registry := agentSkillRegistry("zh")
+	if len(registry.Skills) == 0 {
+		t.Fatalf("expected builtin skills")
+	}
+	if len(registry.ToolCapabilities) == 0 {
+		t.Fatalf("expected tool capabilities")
+	}
+	seenSkill := map[string]bool{}
+	for _, skill := range registry.Skills {
+		seenSkill[skill.ID] = true
+	}
+	for _, id := range []string{"port_scan", "content_discovery", "js_route_analysis", "api_auth_test"} {
+		if !seenSkill[id] {
+			t.Fatalf("missing skill %s", id)
+		}
+	}
+	seenTool := map[string]agentToolCapabilitySpec{}
+	for _, tool := range registry.ToolCapabilities {
+		seenTool[tool.Name] = tool
+	}
+	portTool, ok := seenTool["ports.scan.safe"]
+	if !ok {
+		t.Fatalf("missing ports.scan.safe capability")
+	}
+	if portTool.RequiredLevel != "safe_scan" || len(portTool.CannotDo) == 0 {
+		t.Fatalf("unexpected ports.scan.safe capability: %#v", portTool)
+	}
+	prompt := agentCapabilityRegistryPrompt("zh")
+	if !strings.Contains(prompt, "Skill / Tool Capability Registry") || !strings.Contains(prompt, "ports.scan.safe") {
+		t.Fatalf("registry prompt missing expected content: %s", prompt)
+	}
+}
+
+func TestAgentMCPRegistryMapsDeclaredToolsToCapabilities(t *testing.T) {
+	manager := newAgentManager(filepath.Join(t.TempDir(), "runs"))
+	initial, err := manager.ListMCPRegistry(context.Background())
+	if err != nil {
+		t.Fatalf("initial ListMCPRegistry() error = %v", err)
+	}
+	if initial.Count < 5 || initial.EnabledCount != 0 || len(initial.ToolCapabilities) != 0 {
+		t.Fatalf("expected disabled MCP presets only, got %#v", initial)
+	}
+	presetIDs := map[string]bool{}
+	for _, server := range initial.Servers {
+		if server.Preset {
+			presetIDs[server.ID] = true
+		}
+	}
+	for _, id := range []string{"preset-nmap", "preset-ffuf", "preset-nuclei", "preset-semgrep", "preset-trivy"} {
+		if !presetIDs[id] {
+			t.Fatalf("missing MCP preset %s", id)
+		}
+	}
+
+	server, err := manager.AddMCPServer(context.Background(), agentMCPServerConfig{
+		Name:      "local-ffuf",
+		Transport: "stdio",
+		Command:   "ffuf",
+		Enabled:   true,
+		Tools: []agentMCPToolConfig{{
+			Name:          "content.discovery",
+			Description:   "Run bounded content discovery",
+			IntentTags:    []string{"content_discovery", "directory_enum"},
+			CanDo:         []string{"discover hidden paths with a wordlist"},
+			CannotDo:      []string{"port_scan"},
+			Risk:          "medium",
+			RequiredLevel: "safe_scan",
+			Enabled:       true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AddMCPServer() error = %v", err)
+	}
+	if server.ID == "" {
+		t.Fatalf("server ID should be generated")
+	}
+	view, err := manager.ListMCPRegistry(context.Background())
+	if err != nil {
+		t.Fatalf("ListMCPRegistry() error = %v", err)
+	}
+	if view.Count < 6 || view.EnabledCount != 1 || len(view.ToolCapabilities) != 1 {
+		t.Fatalf("unexpected MCP view: %#v", view)
+	}
+	capability := view.ToolCapabilities[0]
+	if capability.Source != "mcp:"+server.ID || capability.RequiredLevel != "safe_scan" {
+		t.Fatalf("unexpected MCP capability: %#v", capability)
+	}
+	prompt := manager.agentMCPRegistryPrompt("zh")
+	if !strings.Contains(prompt, "mcp."+server.ID) || !strings.Contains(prompt, "content_discovery") {
+		t.Fatalf("MCP prompt missing capability: %s", prompt)
+	}
+	discovery, err := manager.DiscoverMCPTools(context.Background(), server.ID)
+	if err != nil {
+		t.Fatalf("DiscoverMCPTools() error = %v", err)
+	}
+	if discovery.Status != "ok" || len(discovery.ToolCapabilities) != 1 {
+		t.Fatalf("unexpected discovery response: %#v", discovery)
 	}
 }
 
@@ -2043,10 +2351,34 @@ func TestHTTPAgentPlannerApprovalActionRequiresExplicitPrompt(t *testing.T) {
 	if send.StatusCode != http.StatusOK || !send.Body.OK {
 		t.Fatalf("unexpected planner approval response: status=%d body=%#v", send.StatusCode, send.Body)
 	}
-	if llmRequests.Load() != 2 {
-		t.Fatalf("LLM server received %d requests, want 2", llmRequests.Load())
+	if llmRequests.Load() != 1 {
+		t.Fatalf("LLM server received %d requests before authorization, want 1", llmRequests.Load())
 	}
-	toolCalls := asList(t, send.Body.Data["tool_calls"])
+	pendingAuth := asMap(t, send.Body.Data["pending_authorization"])
+	if pendingAuth["action_name"] != "runs.approvals.approve" || pendingAuth["status"] != "pending" {
+		t.Fatalf("planner approval should pause at authorization gate: %#v", pendingAuth)
+	}
+
+	approvePayload, err := json.Marshal(map[string]any{
+		"operator":        "tester",
+		"language":        "zh",
+		"operation_level": "approval_ops",
+		"provider":        "openai",
+		"model":           "planner-approval-test",
+		"api_key":         "planner-approval-key",
+		"base_url":        llmServer.URL,
+	})
+	if err != nil {
+		t.Fatalf("marshal planner approval authorize payload: %v", err)
+	}
+	approve := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/authorization/approve", "test-token", string(approvePayload))
+	if approve.StatusCode != http.StatusOK || !approve.Body.OK {
+		t.Fatalf("unexpected planner approval authorize response: status=%d body=%#v", approve.StatusCode, approve.Body)
+	}
+	if llmRequests.Load() != 2 {
+		t.Fatalf("LLM server received %d requests after authorization, want 2", llmRequests.Load())
+	}
+	toolCalls := asList(t, asMap(t, approve.Body.Data["session"])["tool_calls"])
 	approvalTool := findMapByKey(t, toolCalls, "name", "POST /api/v1/runs/{run_id}/approvals/{approval_id}/approve")
 	if approvalTool["status"] != string(contracts.StatusSucceeded) {
 		t.Fatalf("planner approval tool should succeed: %#v", approvalTool)
@@ -3450,30 +3782,8 @@ func TestHTTPAgentLLMPlannerMutatingWorkspaceActionRequiresExplicitIntent(t *tes
 			return
 		}
 
-		if !strings.Contains(string(encodedMessages), "Observation 1") ||
-			!strings.Contains(string(encodedMessages), "workspace.files.write") ||
-			!strings.Contains(string(encodedMessages), "policy_denied") ||
-			!strings.Contains(string(encodedMessages), "explicit_operator_intent_required") {
-			t.Errorf("LLM synthesis request missing policy-denied observation: %s", encodedMessages)
-		}
-		synthesisContent := `{
-			"answer":"已阻止自动写入：Planner 请求 workspace.files.write，但最新用户消息没有明确写入或修改文件的意图。请明确说明要写入的路径和内容后再执行。",
-			"task":{"goal":"检查上下文","kind":"ops","status":"blocked","summary":"变更 workspace 的 Planner action 已被显式意图策略拒绝。"},
-			"todos":[{"title":"确认上下文","status":"blocked","priority":1,"blocked_reason":"需要用户明确授权写入文件"}],
-			"next_action":{"type":"wait_user","reason":"需要用户明确确认写入路径和内容。","suggested_prompt":"请明确说明要写入的文件路径和内容","auto_continue":false}
-		}`
-		encodedContent, err := json.Marshal(synthesisContent)
-		if err != nil {
-			t.Errorf("marshal synthesis content: %v", err)
-			http.Error(w, "bad json", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id":"chatcmpl-mutating-policy-synthesis",
-			"choices":[{"message":{"role":"assistant","content":` + string(encodedContent) + `},"finish_reason":"stop"}],
-			"usage":{"prompt_tokens":22,"completion_tokens":18}
-		}`))
+		t.Errorf("unexpected extra LLM request after authorization gate; messages=%s", encodedMessages)
+		http.Error(w, "unexpected extra request", http.StatusBadRequest)
 	}))
 	defer llmServer.Close()
 
@@ -3510,66 +3820,37 @@ func TestHTTPAgentLLMPlannerMutatingWorkspaceActionRequiresExplicitIntent(t *tes
 	if send.StatusCode != http.StatusOK || !send.Body.OK {
 		t.Fatalf("unexpected planner mutating policy response: status=%d body=%#v", send.StatusCode, send.Body)
 	}
-	if llmRequests.Load() != 2 {
-		t.Fatalf("LLM server received %d requests, want 2", llmRequests.Load())
+	if llmRequests.Load() != 1 {
+		t.Fatalf("LLM server received %d requests, want 1 before authorization", llmRequests.Load())
 	}
 
 	messages := asList(t, send.Body.Data["messages"])
-	if len(messages) != 4 || asMap(t, messages[0])["role"] != "user" {
-		t.Fatalf("expected user, planner, denied tool, and synthesis messages: %#v", messages)
+	if len(messages) != 3 || asMap(t, messages[0])["role"] != "user" {
+		t.Fatalf("expected user, planner, and authorization gate messages: %#v", messages)
 	}
-	if synthesis := asMap(t, messages[len(messages)-1]); synthesis["role"] != "agent" || !strings.Contains(stringValue(t, synthesis["content"]), "已阻止自动写入") {
-		t.Fatalf("unexpected policy synthesis message: %#v", synthesis)
+	if authMessage := asMap(t, messages[len(messages)-1]); authMessage["role"] != "agent" || !strings.Contains(stringValue(t, authMessage["content"]), "需要授权确认") {
+		t.Fatalf("unexpected authorization message: %#v", authMessage)
 	}
 
 	toolCalls := asList(t, send.Body.Data["tool_calls"])
-	if len(toolCalls) != 3 {
-		t.Fatalf("expected LLM chat, denied workspace write, and LLM synthesis tool calls: %#v", toolCalls)
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected only LLM chat before authorization: %#v", toolCalls)
 	}
-	writeTool := findMapByKey(t, toolCalls, "name", "workspace.files.write")
-	if writeTool["status"] != string(contracts.StatusFailed) {
-		t.Fatalf("workspace write should be denied before execution: %#v", writeTool)
-	}
-	errorBody := asMap(t, writeTool["error"])
-	if errorBody["code"] != string(services.CodePolicyDenied) {
-		t.Fatalf("workspace write should fail with policy_denied: %#v", errorBody)
-	}
-	result := asMap(t, writeTool["result"])
-	if result["action"] != "workspace.files.write" || result["policy"] != "explicit_operator_intent_required" {
-		t.Fatalf("workspace write denial result missing action/policy details: %#v", result)
-	}
-	details := asMap(t, result["details"])
-	if details["action"] != "workspace.files.write" || details["policy"] != "explicit_operator_intent_required" {
-		t.Fatalf("workspace write denial details mismatch: %#v", details)
-	}
-	metadata := asMap(t, writeTool["metadata"])
-	if stringValue(t, metadata["action_queue_id"]) == "" ||
-		int(metadata["action_index"].(float64)) != 1 ||
-		int(metadata["action_count"].(float64)) != 1 ||
-		metadata["action_name"] != "workspace.files.write" {
-		t.Fatalf("denied planner action should keep queue metadata: %#v", metadata)
-	}
-	synthesisTool := findMapByKey(t, toolCalls, "name", "LLM synthesis")
-	if synthesisTool["status"] != string(contracts.StatusSucceeded) {
-		t.Fatalf("synthesis should still succeed after policy denial: %#v", synthesisTool)
+	if asMap(t, toolCalls[0])["name"] != "LLM chat" {
+		t.Fatalf("unexpected pre-authorization tool calls: %#v", toolCalls)
 	}
 	nextAction := asMap(t, send.Body.Data["next_action"])
-	if nextAction["type"] != "wait_user" || !strings.Contains(stringValue(t, nextAction["suggested_prompt"]), "写入") {
-		t.Fatalf("policy denial should converge to wait_user next action: %#v", nextAction)
+	if nextAction["type"] != "authorization_required" {
+		t.Fatalf("policy gate should pause at authorization_required next action: %#v", nextAction)
 	}
-	todos := asList(t, send.Body.Data["todos"])
-	hasRecoveryTodo := false
-	for _, raw := range todos {
-		todo := asMap(t, raw)
-		if strings.Contains(stringValue(t, todo["id"]), "todo_recover_") &&
-			strings.Contains(stringValue(t, todo["title"]), "确认") &&
-			stringValue(t, todo["status"]) == "blocked" {
-			hasRecoveryTodo = true
-			break
-		}
+	pendingAuth := asMap(t, send.Body.Data["pending_authorization"])
+	if pendingAuth["action_name"] != "workspace.files.write" ||
+		pendingAuth["policy"] != "explicit_operator_intent_required" ||
+		pendingAuth["status"] != "pending" {
+		t.Fatalf("pending authorization should preserve exact planner action: %#v", pendingAuth)
 	}
-	if !hasRecoveryTodo {
-		t.Fatalf("policy denial should add a blocked recovery TODO: %#v", todos)
+	if send.Body.Data["status"] == "running" {
+		t.Fatalf("authorization gate should not continue running before approval: %#v", send.Body.Data)
 	}
 
 	writtenPath := filepath.Join(runsDir, ".agent", "workspaces", sessionID, "workspace", "llm-auto.md")
@@ -3577,23 +3858,44 @@ func TestHTTPAgentLLMPlannerMutatingWorkspaceActionRequiresExplicitIntent(t *tes
 		t.Fatalf("workspace file should not be written at %s; stat err=%v", writtenPath, err)
 	}
 
+	approve := doDaemonRequestWithBody(
+		t,
+		http.MethodPost,
+		api.URL+"/api/v1/agent/sessions/"+sessionID+"/authorization/approve",
+		"test-token",
+		`{"operator":"tester","language":"zh","operation_level":"workspace_write","skip_synthesis":true}`,
+	)
+	if approve.StatusCode != http.StatusOK || !approve.Body.OK {
+		t.Fatalf("unexpected authorization approve response: status=%d body=%#v", approve.StatusCode, approve.Body)
+	}
+	if llmRequests.Load() != 1 {
+		t.Fatalf("approve with skip_synthesis should not call LLM again; got %d requests", llmRequests.Load())
+	}
+	approveSession := asMap(t, approve.Body.Data["session"])
+	if _, ok := approveSession["pending_authorization"]; ok {
+		t.Fatalf("approve should clear pending authorization: %#v", approveSession["pending_authorization"])
+	}
+	approvedTools := asList(t, approveSession["tool_calls"])
+	approvedWrite := findMapByKey(t, approvedTools, "name", "workspace.files.write")
+	if approvedWrite["status"] != string(contracts.StatusSucceeded) {
+		t.Fatalf("approved workspace write should execute successfully: %#v", approvedWrite)
+	}
+	if data, err := os.ReadFile(writtenPath); err != nil || string(data) != "should not be written" {
+		t.Fatalf("approved workspace file content mismatch: data=%q err=%v", string(data), err)
+	}
+
 	persisted := doDaemonRequest(t, api.URL+"/api/v1/agent/sessions/"+sessionID, "test-token")
 	if persisted.StatusCode != http.StatusOK || !persisted.Body.OK {
 		t.Fatalf("unexpected persisted policy session response: status=%d body=%#v", persisted.StatusCode, persisted.Body)
 	}
 	session := asMap(t, persisted.Body.Data["session"])
+	if _, ok := session["pending_authorization"]; ok {
+		t.Fatalf("persisted session should not keep pending authorization after approve: %#v", session["pending_authorization"])
+	}
 	persistedToolCalls := asList(t, session["tool_calls"])
 	persistedWrite := findMapByKey(t, persistedToolCalls, "name", "workspace.files.write")
-	if persistedWrite["status"] != string(contracts.StatusFailed) {
-		t.Fatalf("persisted workspace write should stay failed: %#v", persistedWrite)
-	}
-	persistedError := asMap(t, persistedWrite["error"])
-	if persistedError["code"] != string(services.CodePolicyDenied) {
-		t.Fatalf("persisted workspace write should keep policy_denied: %#v", persistedError)
-	}
-	persistedResult := asMap(t, persistedWrite["result"])
-	if persistedResult["policy"] != "explicit_operator_intent_required" {
-		t.Fatalf("persisted workspace write should keep policy result: %#v", persistedResult)
+	if persistedWrite["status"] != string(contracts.StatusSucceeded) {
+		t.Fatalf("persisted workspace write should stay succeeded after approve: %#v", persistedWrite)
 	}
 }
 
@@ -3798,7 +4100,7 @@ func TestHTTPAgentHTTPRequestUsesAuthProfileWithoutLeakingSecret(t *testing.T) {
 	}
 	sessionID := stringValue(t, asMap(t, create.Body.Data["session"])["session_id"])
 
-	payload, err := json.Marshal(map[string]any{
+	requestPayload := map[string]any{
 		"operator":        "tester",
 		"language":        "zh",
 		"operation_level": "safe_scan",
@@ -3818,7 +4120,8 @@ func TestHTTPAgentHTTPRequestUsesAuthProfileWithoutLeakingSecret(t *testing.T) {
 			},
 		},
 		"default_auth_profile_id": "api-auth",
-	})
+	}
+	payload, err := json.Marshal(requestPayload)
 	if err != nil {
 		t.Fatalf("marshal auth profile payload: %v", err)
 	}
@@ -3826,17 +4129,36 @@ func TestHTTPAgentHTTPRequestUsesAuthProfileWithoutLeakingSecret(t *testing.T) {
 	if send.StatusCode != http.StatusOK || !send.Body.OK {
 		t.Fatalf("unexpected auth profile response: status=%d body=%#v", send.StatusCode, send.Body)
 	}
+	if targetRequests.Load() != 0 {
+		t.Fatalf("target server should not be called before authorization; got %d requests", targetRequests.Load())
+	}
+	if llmRequests.Load() != 1 {
+		t.Fatalf("LLM server received %d requests before authorization, want 1", llmRequests.Load())
+	}
+	pendingAuth := asMap(t, send.Body.Data["pending_authorization"])
+	if pendingAuth["action_name"] != "http.request" || pendingAuth["status"] != "pending" {
+		t.Fatalf("http.request should pause at authorization gate: %#v", pendingAuth)
+	}
+
+	approvePayload, err := json.Marshal(requestPayload)
+	if err != nil {
+		t.Fatalf("marshal auth profile authorize payload: %v", err)
+	}
+	approve := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/authorization/approve", "test-token", string(approvePayload))
+	if approve.StatusCode != http.StatusOK || !approve.Body.OK {
+		t.Fatalf("unexpected auth profile authorize response: status=%d body=%#v", approve.StatusCode, approve.Body)
+	}
 	if targetRequests.Load() != 1 {
 		t.Fatalf("target server received %d requests, want 1", targetRequests.Load())
 	}
 	if llmRequests.Load() != 2 {
 		t.Fatalf("LLM server received %d requests, want 2", llmRequests.Load())
 	}
-	encodedResponse, _ := json.Marshal(send.Body.Data)
+	encodedResponse, _ := json.Marshal(approve.Body.Data)
 	if strings.Contains(string(encodedResponse), secretToken) {
 		t.Fatalf("agent response leaked auth secret: %s", encodedResponse)
 	}
-	toolCalls := asList(t, send.Body.Data["tool_calls"])
+	toolCalls := asList(t, asMap(t, approve.Body.Data["session"])["tool_calls"])
 	httpTool := findMapByKey(t, toolCalls, "name", "http.request")
 	if httpTool["status"] != string(contracts.StatusSucceeded) {
 		t.Fatalf("http.request should succeed: %#v", httpTool)
@@ -3875,6 +4197,12 @@ func TestNormalizeAgentProviderBaseURL(t *testing.T) {
 			want:     "http://127.0.0.1:8080/v1/chat/completions",
 		},
 		{
+			name:     "openai prefixed v1",
+			provider: "openai-compatible",
+			raw:      "http://127.0.0.1:8080/api/v1",
+			want:     "http://127.0.0.1:8080/api/v1/chat/completions",
+		},
+		{
 			name:     "openai full path unchanged",
 			provider: "openai",
 			raw:      "http://127.0.0.1:8080/v1/chat/completions",
@@ -3891,6 +4219,18 @@ func TestNormalizeAgentProviderBaseURL(t *testing.T) {
 			provider: "anthropic-compatible",
 			raw:      "http://127.0.0.1:8080/v1",
 			want:     "http://127.0.0.1:8080/v1/messages",
+		},
+		{
+			name:     "anthropic prefixed v1",
+			provider: "anthropic-compatible",
+			raw:      "http://127.0.0.1:8080/anthropic/v1",
+			want:     "http://127.0.0.1:8080/anthropic/v1/messages",
+		},
+		{
+			name:     "anthropic sdk base",
+			provider: "anthropic-compatible",
+			raw:      "http://127.0.0.1:8080/anthropic",
+			want:     "http://127.0.0.1:8080/anthropic/v1/messages",
 		},
 		{
 			name:     "custom path unchanged",

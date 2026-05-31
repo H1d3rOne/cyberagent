@@ -73,6 +73,15 @@ func newRouter(svc routerServices, token string) http.Handler {
 	mux.HandleFunc("/api/v1/agent/capabilities", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
 		writeOK(w, http.StatusOK, agentCapabilities(r.URL.Query().Get("language")))
 	}))
+	mux.HandleFunc("/api/v1/agent/skills", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
+		writeOK(w, http.StatusOK, agentSkillRegistry(r.URL.Query().Get("language")))
+	}))
+	mux.HandleFunc("/api/v1/agent/mcp", func(w http.ResponseWriter, r *http.Request) {
+		handleAgentMCPRoute(w, r, svc)
+	})
+	mux.HandleFunc("/api/v1/agent/mcp/", func(w http.ResponseWriter, r *http.Request) {
+		handleAgentMCPRoute(w, r, svc)
+	})
 	mux.HandleFunc("/api/v1/agent/sessions", func(w http.ResponseWriter, r *http.Request) {
 		handleAgentSessionsRoute(w, r, svc)
 	})
@@ -138,6 +147,101 @@ func requireMethod(method string, next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func handleAgentMCPRoute(w http.ResponseWriter, r *http.Request, svc routerServices) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/agent/mcp")
+	path = strings.Trim(path, "/")
+	switch {
+	case path == "":
+		if r.Method != http.MethodGet {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		view, err := svc.agent.ListMCPRegistry(r.Context())
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, view)
+		return
+	case path == "servers":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		var body agentMCPServerConfig
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		for idx := range body.Tools {
+			if !body.Tools[idx].Enabled {
+				body.Tools[idx].Enabled = true
+			}
+		}
+		server, err := svc.agent.AddMCPServer(r.Context(), body)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusCreated, map[string]any{"server": server})
+		return
+	case path == "discover":
+		if r.Method != http.MethodPost {
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+			return
+		}
+		response, err := svc.agent.DiscoverMCPTools(r.Context(), r.URL.Query().Get("server_id"))
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, response)
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	if len(parts) == 3 && parts[0] == "servers" {
+		serverID := parts[1]
+		action := parts[2]
+		switch {
+		case action == "enable" && r.Method == http.MethodPost:
+			server, err := svc.agent.SetMCPServerEnabled(r.Context(), serverID, true)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, map[string]any{"server": server})
+			return
+		case action == "disable" && r.Method == http.MethodPost:
+			server, err := svc.agent.SetMCPServerEnabled(r.Context(), serverID, false)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, map[string]any{"server": server})
+			return
+		case action == "discover" && r.Method == http.MethodPost:
+			response, err := svc.agent.DiscoverMCPTools(r.Context(), serverID)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, response)
+			return
+		}
+	}
+	if len(parts) == 2 && parts[0] == "servers" && r.Method == http.MethodDelete {
+		server, err := svc.agent.DeleteMCPServer(r.Context(), parts[1])
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{"server": server, "status": "deleted"})
+		return
+	}
+	writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
 }
 
 func handleAgentSessionsRoute(w http.ResponseWriter, r *http.Request, svc routerServices) {
@@ -254,6 +358,23 @@ func handleAgentSessionsRoute(w http.ResponseWriter, r *http.Request, svc router
 				return
 			}
 			writeOK(w, http.StatusOK, response)
+		case "authorization", "authorization/approve", "authorization/deny":
+			var body agentAuthorizationDecisionRequest
+			if err := decodeJSONBody(r, &body); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			if resource == "authorization/approve" {
+				body.Action = "approve"
+			} else if resource == "authorization/deny" {
+				body.Action = "deny"
+			}
+			response, err := svc.agent.DecideAgentAuthorization(r.Context(), sessionID, body, svc)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, response)
 		case "workspace":
 			handleWorkspaceRoute(w, r, svc, sessionID)
 		default:
@@ -266,28 +387,30 @@ func handleAgentSessionsRoute(w http.ResponseWriter, r *http.Request, svc router
 
 func agentSessionStatePayload(r *http.Request, svc routerServices, session agentSession) map[string]any {
 	return map[string]any{
-		"session":         session,
-		"session_id":      session.SessionID,
-		"status":          session.Status,
-		"active_task":     cloneAgentTask(session.ActiveTask),
-		"todos":           cloneAgentTodos(session.Todos),
-		"tool_calls":      cloneAgentToolCalls(session.ToolCalls),
-		"context_refs":    cloneAgentContextRefs(session.ContextRefs),
-		"pending_changes": cloneAgentWorkspaceChanges(session.PendingChanges),
-		"memory_summary":  cloneAgentMemorySummary(session.MemorySummary),
-		"next_action":     cloneAgentNextAction(session.NextAction),
-		"run_summary":     svc.agent.agentSessionRunSummary(r.Context(), &session),
+		"session":               session,
+		"session_id":            session.SessionID,
+		"status":                session.Status,
+		"active_task":           cloneAgentTask(session.ActiveTask),
+		"todos":                 cloneAgentTodos(session.Todos),
+		"tool_calls":            cloneAgentToolCalls(session.ToolCalls),
+		"context_refs":          cloneAgentContextRefs(session.ContextRefs),
+		"pending_changes":       cloneAgentWorkspaceChanges(session.PendingChanges),
+		"pending_authorization": cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		"memory_summary":        cloneAgentMemorySummary(session.MemorySummary),
+		"next_action":           cloneAgentNextAction(session.NextAction),
+		"run_summary":           svc.agent.agentSessionRunSummary(r.Context(), &session),
 	}
 }
 
 func agentSessionContextPayload(r *http.Request, svc routerServices, session agentSession) map[string]any {
 	return map[string]any{
-		"session_id":      session.SessionID,
-		"active_task":     cloneAgentTask(session.ActiveTask),
-		"context_refs":    cloneAgentContextRefs(session.ContextRefs),
-		"pending_changes": cloneAgentWorkspaceChanges(session.PendingChanges),
-		"memory_summary":  cloneAgentMemorySummary(session.MemorySummary),
-		"run_summary":     svc.agent.agentSessionRunSummary(r.Context(), &session),
+		"session_id":            session.SessionID,
+		"active_task":           cloneAgentTask(session.ActiveTask),
+		"context_refs":          cloneAgentContextRefs(session.ContextRefs),
+		"pending_changes":       cloneAgentWorkspaceChanges(session.PendingChanges),
+		"pending_authorization": cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		"memory_summary":        cloneAgentMemorySummary(session.MemorySummary),
+		"run_summary":           svc.agent.agentSessionRunSummary(r.Context(), &session),
 	}
 }
 
@@ -300,25 +423,26 @@ func agentSessionTracePayload(r *http.Request, svc routerServices, session agent
 		}
 	}
 	return map[string]any{
-		"trace_version":   "agent.trace.v1",
-		"generated_at":    time.Now().UTC(),
-		"session_id":      session.SessionID,
-		"operator":        session.Operator,
-		"language":        session.Language,
-		"operation_level": session.OperationLevel,
-		"status":          session.Status,
-		"created_at":      session.CreatedAt,
-		"updated_at":      session.UpdatedAt,
-		"active_task":     cloneAgentTask(session.ActiveTask),
-		"todos":           cloneAgentTodos(session.Todos),
-		"context_refs":    cloneAgentContextRefs(session.ContextRefs),
-		"pending_changes": cloneAgentWorkspaceChanges(session.PendingChanges),
-		"memory_summary":  cloneAgentMemorySummary(session.MemorySummary),
-		"next_action":     cloneAgentNextAction(session.NextAction),
-		"run_summary":     svc.agent.agentSessionRunSummary(r.Context(), &session),
-		"messages":        cloneAgentMessages(session.Messages),
-		"tool_calls":      cloneAgentToolCalls(session.ToolCalls),
-		"timeline":        timeline,
+		"trace_version":         "agent.trace.v1",
+		"generated_at":          time.Now().UTC(),
+		"session_id":            session.SessionID,
+		"operator":              session.Operator,
+		"language":              session.Language,
+		"operation_level":       session.OperationLevel,
+		"status":                session.Status,
+		"created_at":            session.CreatedAt,
+		"updated_at":            session.UpdatedAt,
+		"active_task":           cloneAgentTask(session.ActiveTask),
+		"todos":                 cloneAgentTodos(session.Todos),
+		"context_refs":          cloneAgentContextRefs(session.ContextRefs),
+		"pending_changes":       cloneAgentWorkspaceChanges(session.PendingChanges),
+		"pending_authorization": cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		"memory_summary":        cloneAgentMemorySummary(session.MemorySummary),
+		"next_action":           cloneAgentNextAction(session.NextAction),
+		"run_summary":           svc.agent.agentSessionRunSummary(r.Context(), &session),
+		"messages":              cloneAgentMessages(session.Messages),
+		"tool_calls":            cloneAgentToolCalls(session.ToolCalls),
+		"timeline":              timeline,
 		"summary": map[string]any{
 			"message_count":        len(session.Messages),
 			"tool_call_count":      len(session.ToolCalls),
@@ -956,6 +1080,9 @@ func parseAgentSessionPath(path string) (sessionID string, resource string, ok b
 	}
 	if len(parts) >= 2 && strings.TrimSpace(parts[1]) == "workspace" {
 		return parts[0], "workspace", true
+	}
+	if len(parts) == 3 && strings.TrimSpace(parts[1]) == "authorization" && strings.TrimSpace(parts[2]) != "" {
+		return parts[0], "authorization/" + strings.TrimSpace(parts[2]), true
 	}
 	if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
 		return parts[0], parts[1], true
