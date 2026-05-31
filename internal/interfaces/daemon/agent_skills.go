@@ -169,7 +169,7 @@ func attachAgentSkillFileSources(skills []agentSkillSpec) []agentSkillSpec {
 			continue
 		}
 		skills[idx].Path = path
-		if _, err := os.Stat(path); err == nil {
+		if _, err := os.Stat(agentAssetPath(path)); err == nil {
 			skills[idx].Source = "filesystem"
 		} else {
 			skills[idx].Source = "builtin"

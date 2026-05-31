@@ -323,7 +323,7 @@ func agentMCPToolCapabilitiesFromServers(servers []agentMCPServerConfig) []agent
 }
 
 func agentDefaultMCPServers() []agentMCPServerConfig {
-	if servers := loadAgentMCPPresetFiles(filepath.Join("mcp", "presets")); len(servers) > 0 {
+	if servers := loadAgentMCPPresetFiles(agentAssetPath("mcp", "presets")); len(servers) > 0 {
 		return servers
 	}
 	return agentDefaultMCPServersBuiltin()

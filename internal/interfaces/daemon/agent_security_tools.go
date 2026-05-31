@@ -37,7 +37,7 @@ type agentSecurityToolSpec struct {
 }
 
 func agentSecurityToolCatalog() []agentSecurityToolSpec {
-	catalogPath := filepath.Join("security-tools", "catalog.json")
+	catalogPath := agentAssetPath("security-tools", "catalog.json")
 	data, err := os.ReadFile(catalogPath)
 	if err != nil {
 		return nil
@@ -53,7 +53,11 @@ func agentSecurityToolCatalog() []agentSecurityToolSpec {
 		if path == "" {
 			continue
 		}
-		specData, err := os.ReadFile(path)
+		resolved := path
+		if !filepath.IsAbs(resolved) {
+			resolved = agentAssetPath(path)
+		}
+		specData, err := os.ReadFile(resolved)
 		if err != nil {
 			continue
 		}
