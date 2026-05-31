@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 const anthropicDefaultURL = "https://api.anthropic.com/v1/messages"
@@ -18,13 +20,53 @@ type AnthropicProvider struct {
 }
 
 func NewAnthropic(config ProviderConfig) *AnthropicProvider {
-	if config.BaseURL == "" {
-		config.BaseURL = anthropicDefaultURL
-	}
+	config.BaseURL = ResolveAnthropicEndpoint(config.BaseURL)
 	if config.Model == "" {
 		config.Model = "claude-sonnet-4-20250514"
 	}
 	return &AnthropicProvider{config: config, client: &http.Client{}}
+}
+
+// ResolveAnthropicEndpoint resolves a user-provided Anthropic-compatible base
+// URL to the concrete Messages endpoint used by this provider.
+func ResolveAnthropicEndpoint(base string) string {
+	if strings.TrimSpace(base) == "" {
+		base = anthropicDefaultURL
+	}
+	return normalizeAnthropicBaseURL(base)
+}
+
+// NormalizeAnthropicBaseURL normalizes non-empty Anthropic-compatible URLs
+// without applying the default Anthropic endpoint.
+func NormalizeAnthropicBaseURL(base string) string {
+	return normalizeAnthropicBaseURL(base)
+}
+
+func normalizeAnthropicBaseURL(base string) string {
+	base = strings.TrimSpace(base)
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return base
+	}
+	trimmedPath := strings.TrimRight(parsed.Path, "/")
+	lowerPath := strings.ToLower(trimmedPath)
+	if strings.HasSuffix(lowerPath, "/messages") {
+		parsed.Path = trimmedPath
+		return parsed.String()
+	}
+	switch {
+	case trimmedPath == "":
+		parsed.Path = "/v1/messages"
+		return parsed.String()
+	case strings.HasSuffix(lowerPath, "/v1"):
+		parsed.Path = trimmedPath + "/messages"
+		return parsed.String()
+	case strings.HasSuffix(lowerPath, "/anthropic"):
+		parsed.Path = trimmedPath + "/v1/messages"
+		return parsed.String()
+	default:
+		return base
+	}
 }
 
 func (p *AnthropicProvider) Name() string { return "anthropic" }
@@ -62,7 +104,7 @@ func (p *AnthropicProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("anthropic API error %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("anthropic API error %d at %s: %s", resp.StatusCode, diagnosticURL(p.config.BaseURL), responseSnippet(respBody, 1200))
 	}
 
 	return p.parseResponse(respBody)

@@ -272,9 +272,12 @@ func (s *APIServer) handleProviderTest(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := llm.ProviderConfig{APIKey: req.APIKey, BaseURL: req.BaseURL, Model: req.Model}
 	var provider llm.Provider
+	requestURL := ""
 	if strings.Contains(strings.ToLower(req.Type), "anthropic") {
+		requestURL = llm.ResolveAnthropicEndpoint(req.BaseURL)
 		provider = llm.NewAnthropic(cfg)
 	} else {
+		requestURL = llm.ResolveOpenAIEndpoint(req.BaseURL)
 		provider = llm.NewOpenAI(cfg)
 	}
 
@@ -290,7 +293,7 @@ func (s *APIServer) handleProviderTest(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok": false, "provider": provider.Name(), "model": req.Model,
-			"latency_ms": latency, "error": err.Error(),
+			"latency_ms": latency, "error": err.Error(), "request_url": requestURL,
 		})
 		return
 	}
@@ -304,7 +307,7 @@ func (s *APIServer) handleProviderTest(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "provider": provider.Name(), "model": req.Model,
-		"latency_ms": latency, "output": output,
+		"latency_ms": latency, "output": output, "request_url": requestURL,
 	})
 }
 
@@ -317,8 +320,8 @@ func (s *APIServer) handleTools(w http.ResponseWriter, r *http.Request) {
 	tools := make([]map[string]interface{}, 0, len(defs))
 	for _, d := range defs {
 		tools = append(tools, map[string]interface{}{
-			"name":        d.Name,
-			"description": d.Description,
+			"name":         d.Name,
+			"description":  d.Description,
 			"input_schema": d.InputSchema,
 		})
 	}
