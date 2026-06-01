@@ -3,36 +3,43 @@ package daemon
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
+	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
 	"github.com/H1d3rOne/cyberagent/internal/agent/toolregistry"
 )
 
-// TestToolRegistryParityWithAgentLLMToolDefinitions guards Phase 1 of the
-// production-runtime refactor: the new toolregistry package must produce the
-// exact same LLM tool list (name + description + schema) as the legacy
-// agentLLMToolDefinitions() literal until the daemon swaps over to it.
-func TestToolRegistryParityWithAgentLLMToolDefinitions(t *testing.T) {
-	legacy := agentLLMToolDefinitions()
-	got := toolregistry.NewWithBuiltins().LLMDefinitions()
-
-	sort.Slice(legacy, func(i, j int) bool { return legacy[i].Name < legacy[j].Name })
-	sort.Slice(got, func(i, j int) bool { return got[i].Name < got[j].Name })
-	if len(legacy) != len(got) {
-		t.Fatalf("tool count mismatch: legacy=%d registry=%d", len(legacy), len(got))
+// TestToolRegistryDaemonLLMDefinitions guards Phase 1 of the
+// production-runtime refactor: the daemon's tool registry must continue to
+// surface every builtin spec through Registry.LLMDefinitions() so the LLM
+// request body never drifts from the canonical source.
+func TestToolRegistryDaemonLLMDefinitions(t *testing.T) {
+	got := toolRegistry().LLMDefinitions()
+	if len(got) == 0 {
+		t.Fatal("toolRegistry().LLMDefinitions() returned empty")
 	}
-	for i := range legacy {
-		if legacy[i].Name != got[i].Name {
-			t.Fatalf("tool[%d] name mismatch: legacy=%q registry=%q", i, legacy[i].Name, got[i].Name)
+	specs := toolregistry.Builtins()
+	if len(got) != len(specs) {
+		t.Fatalf("tool count mismatch: registry=%d builtins=%d", len(got), len(specs))
+	}
+	byName := make(map[string]toolregistry.ToolSpec, len(specs))
+	for _, spec := range specs {
+		byName[spec.Name] = spec
+	}
+	defs := append([]llm.ToolDef{}, got...)
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
+	for _, def := range defs {
+		spec, ok := byName[def.Name]
+		if !ok {
+			t.Fatalf("registry surfaced unknown tool %q", def.Name)
 		}
-		if legacy[i].Description != got[i].Description {
-			t.Fatalf("tool %q description mismatch:\nlegacy=%s\nregistry=%s", legacy[i].Name, legacy[i].Description, got[i].Description)
+		if def.Description != spec.Description.Pick("zh") {
+			t.Fatalf("tool %q description drift:\nregistry=%s\nbuiltin=%s", def.Name, def.Description, spec.Description.Pick("zh"))
 		}
-		if !jsonEqual(t, legacy[i].InputSchema, got[i].InputSchema) {
-			t.Fatalf("tool %q schema mismatch:\nlegacy=%s\nregistry=%s", legacy[i].Name, legacy[i].InputSchema, got[i].InputSchema)
+		if !jsonEqual(t, def.InputSchema, spec.InputSchema) {
+			t.Fatalf("tool %q schema drift:\nregistry=%s\nbuiltin=%s", def.Name, def.InputSchema, spec.InputSchema)
 		}
 	}
 }
@@ -68,22 +75,36 @@ func TestToolRegistryParityWithNormalizeAgentPlannerActionName(t *testing.T) {
 // TestToolRegistryParityWithPromptEnumString pins the four hand-edited tool
 // enum strings inside the planner / synthesis prompt templates against the
 // registry's PromptEnumString(). Adding a new tool without updating these
-// literals would let the model see a stale tool list and was the original
-// source of the schedule.create regression. The test reads agent.go directly
-// so the literals do not need to be exported.
+// literals used to silently leave the model with a stale list (the original
+// source of the schedule.create regression). The daemon now substitutes the
+// legacy literal with the live registry value at render time, so this test
+// asserts both rendered prompts (planner + synthesis) for both languages
+// already contain the registry-derived string.
 func TestToolRegistryParityWithPromptEnumString(t *testing.T) {
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	source, err := os.ReadFile(filepath.Join(wd, "agent.go"))
-	if err != nil {
-		t.Fatalf("read agent.go: %v", err)
-	}
 	want := toolregistry.NewWithBuiltins().PromptEnumString()
-	occurrences := bytes.Count(source, []byte(want))
-	if occurrences < 4 {
-		t.Fatalf("prompt enum string appears %d times in agent.go, expected ≥4 (planner zh/en + synthesis zh/en); registry value=%q", occurrences, want)
+	if want == "" {
+		t.Fatal("registry PromptEnumString returned empty")
+	}
+	cases := []struct {
+		name   string
+		render func() string
+	}{
+		{"planner_zh", func() string { return agentPlannerSystemPrompt("zh", "", "safe_scan") }},
+		{"planner_en", func() string { return agentPlannerSystemPrompt("en", "", "safe_scan") }},
+		{"synthesis_zh", func() string { return agentToolSynthesisSystemPrompt("zh", "", "safe_scan") }},
+		{"synthesis_en", func() string { return agentToolSynthesisSystemPrompt("en", "", "safe_scan") }},
+	}
+	for _, tc := range cases {
+		rendered := tc.render()
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("%s prompt missing registry tool enum %q", tc.name, want)
+		}
+		// Belt-and-braces: the legacy hand-written enum literal that used to
+		// drift on its own must NOT be present after substitution unless it
+		// happens to match the registry's current output.
+		if strings.Contains(rendered, legacyPromptToolEnum) && legacyPromptToolEnum != want {
+			t.Fatalf("%s prompt still contains the legacy literal %q after substitution", tc.name, legacyPromptToolEnum)
+		}
 	}
 }
 
@@ -96,27 +117,6 @@ func TestToolRegistryParityWithRequiredOperationLevel(t *testing.T) {
 		if spec.RequiredLevel != legacy {
 			t.Fatalf("tool %q required_level mismatch: legacy=%q registry=%q", spec.Name, legacy, spec.RequiredLevel)
 		}
-	}
-}
-
-// TestToolRegistryParityWithPromptEnumStrings ensures the four hand-written
-// tool enum literals in agent.go's prompt templates stay in lock-step with
-// toolregistry.PromptEnumString. When the daemon switches to generated
-// templates these literals disappear; until then this test prevents drift.
-func TestToolRegistryParityWithPromptEnumStrings(t *testing.T) {
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	path := filepath.Join(wd, "agent.go")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read agent.go: %v", err)
-	}
-	want := toolregistry.NewWithBuiltins().PromptEnumString()
-	count := bytes.Count(data, []byte(want))
-	if count < 4 {
-		t.Fatalf("expected prompt enum literal %q to appear at least 4 times in agent.go, got %d", want, count)
 	}
 }
 

@@ -40,7 +40,12 @@ func Builtins() []ToolSpec {
 			RequiredLevel: "safe_scan",
 			AutoRun:       true,
 			IntentTags:    []string{"web_vulnerability_scan", "security_scan", "evidence_scan"},
-			SkillID:       "web_vulnerability_scan",
+			CanDo:         []string{"safe profile Web/API vulnerability evidence scan", "runtime run tracking"},
+			CannotDo:      []string{"port_scan", "content_discovery", "js_route_analysis", "full auth matrix"},
+			Examples: LocalizedExamples{
+				{ZH: "对授权目标做 safe Web/API 扫描", EN: "run a safe Web/API scan for an authorized target"},
+			},
+			SkillID: "web_vulnerability_scan",
 		},
 		{
 			Name: "ports.scan.safe",
@@ -57,7 +62,12 @@ func Builtins() []ToolSpec {
 			RequiredLevel: "safe_scan",
 			AutoRun:       false, // matches agentCapabilityToolPolicy "ports.scan.safe"
 			IntentTags:    []string{"port_scan", "open_ports", "tcp_connect_probe"},
-			SkillID:       "port_scan",
+			CanDo:         []string{"bounded TCP connect open-port probe"},
+			CannotDo:      []string{"UDP scan", "nmap service fingerprinting", "very large ranges"},
+			Examples: LocalizedExamples{
+				{ZH: "扫描 example.com 开放端口 ports=80,443", EN: "scan open ports for example.com ports=80,443"},
+			},
+			SkillID: "port_scan",
 		},
 		{
 			Name: "http.request",
@@ -73,6 +83,11 @@ func Builtins() []ToolSpec {
 			RequiredLevel: "safe_scan",
 			AutoRun:       true,
 			IntentTags:    []string{"http_probe", "api_functional_test", "single_request"},
+			CanDo:         []string{"single authorized HTTP request", "status/header/body snippet", "Auth Profile application"},
+			CannotDo:      []string{"crawl", "port_scan", "full auth workflow"},
+			Examples: LocalizedExamples{
+				{ZH: "获取目标响应头和状态码", EN: "fetch headers and status code"},
+			},
 		},
 		{
 			Name: "web.search",
@@ -89,7 +104,12 @@ func Builtins() []ToolSpec {
 			RequiredLevel: "safe_scan",
 			AutoRun:       true,
 			IntentTags:    []string{"web_search", "search", "lookup", "查询", "搜索"},
-			SkillID:       "web_search",
+			CanDo:         []string{"search public web information through the configured provider", "return title/url/snippet/source results"},
+			CannotDo:      []string{"read a known URL directly", "scan or probe a target", "work without Web Search settings"},
+			Examples: LocalizedExamples{
+				{ZH: "搜索 CVE 详情和参考来源", EN: "search for CVE details and references"},
+			},
+			SkillID: "web_search",
 		},
 		{
 			Name: "web.fetch",
@@ -106,7 +126,12 @@ func Builtins() []ToolSpec {
 			RequiredLevel: "safe_scan",
 			AutoRun:       true,
 			IntentTags:    []string{"web_fetch", "page_read", "read_url", "读取网页"},
-			SkillID:       "web_fetch",
+			CanDo:         []string{"GET a specific public http/https URL", "extract readable text from HTML", "return truncated raw content"},
+			CannotDo:      []string{"POST/PUT/PATCH/DELETE", "fetch private/internal/metadata URLs", "search the web by query"},
+			Examples: LocalizedExamples{
+				{ZH: "读取指定网页并总结", EN: "read a specified web page and summarize it"},
+			},
+			SkillID: "web_fetch",
 		},
 		{
 			Name: "workspace.command",
@@ -333,6 +358,8 @@ func Builtins() []ToolSpec {
 			Risk:          RiskReadOnly,
 			RequiredLevel: "read_only",
 			AutoRun:       true,
+			IntentTags:    []string{"plugins", "tools", "capability_discovery"},
+			CanDo:         []string{"list available plugins/tools"},
 		},
 		{
 			Name: "runs.list",
@@ -357,6 +384,8 @@ func Builtins() []ToolSpec {
 			Risk:          RiskReadOnly,
 			RequiredLevel: "read_only",
 			AutoRun:       true,
+			IntentTags:    []string{"run_context", "evidence", "findings", "events"},
+			CanDo:         []string{"read run report/findings/artifacts/events/approvals"},
 		},
 		{
 			Name: "reports.draft",
@@ -369,6 +398,8 @@ func Builtins() []ToolSpec {
 			Risk:          RiskWorkspaceWrite,
 			RequiredLevel: "workspace_write",
 			AutoRun:       true,
+			IntentTags:    []string{"report_generation", "workspace"},
+			CanDo:         []string{"generate markdown report draft into workspace"},
 		},
 		{
 			Name: "runs.approvals.list",
@@ -432,7 +463,13 @@ func Builtins() []ToolSpec {
 			RequiredLevel: "advanced",
 			AutoRun:       false,
 			IntentTags:    []string{"schedule", "cron", "recurring", "periodic", "scheduled_scan", "scheduled_prompt"},
-			SkillID:       "schedule_management",
+			CanDo:         []string{"register a cron-driven recurring agent_prompt for arbitrary Agent work", "register optimized scan_web schedules for explicit recurring safe Web/API scans"},
+			CannotDo:      []string{"run scan immediately (use the immediate tool for one-off work)"},
+			Examples: LocalizedExamples{
+				{ZH: "每天 7:20 扫描 example.com 开放端口 → schedule.create cron=\"20 7 * * *\" action=agent_prompt", EN: "daily 7:20 scan open ports for example.com → schedule.create cron=\"20 7 * * *\" action=agent_prompt"},
+				{ZH: "每小时安全漏扫 https://example.com → schedule.create cron=\"0 * * * *\" action=scan_web", EN: "every hour vulnerability scan https://example.com → schedule.create cron=\"0 * * * *\" action=scan_web"},
+			},
+			SkillID: "schedule_management",
 		},
 		{
 			Name: "schedule.list",
@@ -446,6 +483,7 @@ func Builtins() []ToolSpec {
 			RequiredLevel: "read_only",
 			AutoRun:       true,
 			IntentTags:    []string{"schedule", "cron", "list_schedules"},
+			CanDo:         []string{"list configured schedules with cron, action, last/next run"},
 		},
 		{
 			Name: "schedule.delete",
@@ -459,6 +497,7 @@ func Builtins() []ToolSpec {
 			RequiredLevel: "advanced",
 			AutoRun:       false,
 			IntentTags:    []string{"schedule", "cron", "cancel_schedule"},
+			CanDo:         []string{"cancel a configured schedule by id"},
 		},
 	}
 }

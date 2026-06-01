@@ -56,8 +56,13 @@ func (l LocalizedText) Pick(language string) string {
 // LocalizedExamples is a list of bilingual example strings.
 type LocalizedExamples []LocalizedText
 
-// Pick collapses the list to the requested locale.
+// Pick collapses the list to the requested locale. Returns nil (not an empty
+// slice) when the source list is empty, so callers can compare with the
+// legacy daemon helpers that leave unset fields as nil via reflect.DeepEqual.
 func (e LocalizedExamples) Pick(language string) []string {
+	if len(e) == 0 {
+		return nil
+	}
 	out := make([]string, 0, len(e))
 	for _, ex := range e {
 		out = append(out, ex.Pick(language))
@@ -163,8 +168,17 @@ func (r *Registry) Register(spec ToolSpec) error {
 	r.tools[canonical] = &stored
 	r.order = append(r.order, canonical)
 	r.aliases[canonical] = canonical
+	// Also let the canonical name resolve through the same punctuation-folding
+	// as the planner output (workspace.files.diff_many → workspace.files.diff.many),
+	// so daemon callers passing the raw planner name still hit the spec.
+	if folded := normalizeKey(canonical); folded != canonical {
+		if existing, ok := r.aliases[folded]; ok && existing != canonical {
+			return fmt.Errorf("toolregistry: canonical name %q collides with alias of %q", spec.Name, existing)
+		}
+		r.aliases[folded] = canonical
+	}
 	for _, alias := range spec.Aliases {
-		key := strings.ToLower(strings.TrimSpace(alias))
+		key := normalizeKey(alias)
 		if key == "" {
 			continue
 		}
@@ -184,11 +198,13 @@ func (r *Registry) MustRegister(spec ToolSpec) {
 	}
 }
 
-// Lookup resolves a raw name (canonical or alias) to its spec.
+// Lookup resolves a raw name (canonical or alias) to its spec. The matcher
+// applies the same folding as Normalize (lowercase, trim, `-`/`_`/whitespace
+// → `.`) so callers can pass planner output verbatim.
 func (r *Registry) Lookup(rawName string) (*ToolSpec, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	canonical, ok := r.aliases[strings.ToLower(strings.TrimSpace(rawName))]
+	canonical, ok := r.aliases[normalizeKey(rawName)]
 	if !ok {
 		return nil, false
 	}
@@ -199,13 +215,31 @@ func (r *Registry) Lookup(rawName string) (*ToolSpec, bool) {
 // Normalize maps a raw name (planner output, alias, casing variant) to the
 // canonical tool name. Returns the input unchanged when no match is found so
 // callers can treat unknown tools as plugin/MCP names without crashing.
+//
+// The matching is intentionally aggressive: lowercased, trimmed, with `-`/`_`
+// folded to `.` and runs of whitespace collapsed. This mirrors the behaviour
+// of the legacy normalizeAgentPlannerActionName so the daemon can swap over
+// without changing any caller.
 func (r *Registry) Normalize(rawName string) string {
+	key := normalizeKey(rawName)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if canonical, ok := r.aliases[strings.ToLower(strings.TrimSpace(rawName))]; ok {
+	if canonical, ok := r.aliases[key]; ok {
 		return canonical
 	}
-	return strings.TrimSpace(rawName)
+	return key
+}
+
+// normalizeKey produces the lookup key used by both Lookup and Normalize. It
+// applies the same transformations as legacy normalizeAgentPlannerActionName
+// so aliases written with `-`, `_`, mixed case, or whitespace continue to
+// resolve.
+func normalizeKey(raw string) string {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	v = strings.ReplaceAll(v, "-", ".")
+	v = strings.ReplaceAll(v, "_", ".")
+	v = strings.Join(strings.Fields(v), ".")
+	return v
 }
 
 // All returns every spec in registration order. The slice is a copy so
@@ -269,21 +303,36 @@ type CapabilityMetadata struct {
 	AutoRun       bool
 }
 
-// CapabilityMetadataByName returns one entry per tool, localized.
+// CapabilityMetadataByName returns one entry per tool, localized. Empty
+// IntentTags / CanDo / CannotDo / Examples come back as nil (not []string{})
+// to match the legacy agentToolCapabilityMetadataByName parity expected by
+// reflect.DeepEqual-based tests.
 func (r *Registry) CapabilityMetadataByName(language string) map[string]CapabilityMetadata {
 	specs := r.All()
 	out := make(map[string]CapabilityMetadata, len(specs))
 	for _, spec := range specs {
 		out[spec.Name] = CapabilityMetadata{
-			IntentTags:    append([]string{}, spec.IntentTags...),
-			CanDo:         append([]string{}, spec.CanDo...),
-			CannotDo:      append([]string{}, spec.CannotDo...),
+			IntentTags:    cloneOrNil(spec.IntentTags),
+			CanDo:         cloneOrNil(spec.CanDo),
+			CannotDo:      cloneOrNil(spec.CannotDo),
 			Examples:      spec.Examples.Pick(language),
 			Risk:          spec.Risk,
 			RequiredLevel: spec.RequiredLevel,
 			AutoRun:       spec.AutoRun,
 		}
 	}
+	return out
+}
+
+// cloneOrNil returns a defensive copy of src. Empty input collapses to nil so
+// downstream reflect.DeepEqual comparisons against legacy literal maps (which
+// leave unset slice fields as nil) keep passing.
+func cloneOrNil(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]string, len(src))
+	copy(out, src)
 	return out
 }
 

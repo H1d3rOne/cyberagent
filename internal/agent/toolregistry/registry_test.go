@@ -105,3 +105,67 @@ func TestRequiredLevelFallback(t *testing.T) {
 		t.Fatalf("unknown tool should default to advanced, got %q", got)
 	}
 }
+
+// TestBuiltinsAliasesAreSelfConsistent walks every builtin spec and confirms
+// each declared alias collapses back to its canonical name through the same
+// registry. Catches new alias rows that accidentally shadow a different tool's
+// canonical name (the original schedule.create regression class).
+func TestBuiltinsAliasesAreSelfConsistent(t *testing.T) {
+	r := NewWithBuiltins()
+	for _, spec := range Builtins() {
+		if got := r.Normalize(spec.Name); got != spec.Name {
+			t.Fatalf("canonical %q normalized to %q", spec.Name, got)
+		}
+		for _, alias := range spec.Aliases {
+			if got := r.Normalize(alias); got != spec.Name {
+				t.Fatalf("alias %q expected to resolve to %q, got %q", alias, spec.Name, got)
+			}
+		}
+	}
+}
+
+// TestBuiltinsRequiredLevels asserts every builtin spec has a non-empty
+// RequiredLevel and the registry-derived RequiredLevel matches the spec.
+// Without this check a typo in builtins.go could silently downgrade a tool to
+// the "advanced" fallback path and let a high-risk action slip through.
+func TestBuiltinsRequiredLevels(t *testing.T) {
+	r := NewWithBuiltins()
+	for _, spec := range Builtins() {
+		if spec.RequiredLevel == "" {
+			t.Fatalf("tool %q has empty RequiredLevel", spec.Name)
+		}
+		if got := r.RequiredLevel(spec.Name); got != spec.RequiredLevel {
+			t.Fatalf("tool %q registry RequiredLevel=%q want %q", spec.Name, got, spec.RequiredLevel)
+		}
+	}
+}
+
+// TestBuiltinsDerivedViewsAreStable pins the basic shape of the four
+// downstream artifacts (LLM tool list, prompt enum string, capability
+// metadata, skill references) so accidentally dropping a tool fails loud.
+func TestBuiltinsDerivedViewsAreStable(t *testing.T) {
+	r := NewWithBuiltins()
+	want := len(Builtins())
+	if got := len(r.LLMDefinitions()); got != want {
+		t.Fatalf("LLMDefinitions count = %d, want %d", got, want)
+	}
+	enum := r.PromptEnumString()
+	if enum == "" {
+		t.Fatal("PromptEnumString empty")
+	}
+	if want, got := want, len(strings.Split(enum, "|")); want != got {
+		t.Fatalf("PromptEnumString contains %d names, want %d", got, want)
+	}
+	caps := r.CapabilityMetadataByName("zh")
+	for _, spec := range Builtins() {
+		if _, ok := caps[spec.Name]; !ok {
+			t.Fatalf("CapabilityMetadataByName missing %q", spec.Name)
+		}
+	}
+	// Skills must be a subset of registered tools.
+	for _, ref := range r.Skills() {
+		if _, ok := r.Lookup(ref.ToolName); !ok {
+			t.Fatalf("Skills() reference %q is not a registered tool", ref.ToolName)
+		}
+	}
+}

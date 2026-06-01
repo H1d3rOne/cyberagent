@@ -220,8 +220,9 @@ func attachAgentSkillFileSources(skills []agentSkillSpec) []agentSkillSpec {
 func agentToolCapabilities(language string) []agentToolCapabilitySpec {
 	metadata := agentToolCapabilityMetadataByName(language)
 	securityToolCatalog := agentSecurityToolCatalogByName()
-	out := make([]agentToolCapabilitySpec, 0, len(agentLLMToolDefinitions()))
-	for _, tool := range agentLLMToolDefinitions() {
+	defs := toolRegistry().LLMDefinitions()
+	out := make([]agentToolCapabilitySpec, 0, len(defs))
+	for _, tool := range defs {
 		name := normalizeAgentPlannerActionName(tool.Name)
 		if name == "" {
 			name = tool.Name
@@ -254,68 +255,28 @@ func agentToolCapabilities(language string) []agentToolCapabilitySpec {
 	return out
 }
 
+// agentToolCapabilityMetadataByName returns per-tool capability metadata for
+// the agent's prompt and skill registry. The data is now derived from the
+// canonical tool registry (toolregistry.Registry) so adding a new tool means
+// editing one ToolSpec instead of also editing this map. Tools without any
+// capability hints (IntentTags / CanDo / CannotDo / Examples) are dropped to
+// preserve the legacy "tool absent from map" semantics — the parity test in
+// agent_toolregistry_capability_parity_test.go pins this.
 func agentToolCapabilityMetadataByName(language string) map[string]agentToolCapabilityMetadata {
-	return map[string]agentToolCapabilityMetadata{
-		"scan.web.safe": {
-			IntentTags: []string{"web_vulnerability_scan", "security_scan", "evidence_scan"},
-			CanDo:      []string{"safe profile Web/API vulnerability evidence scan", "runtime run tracking"},
-			CannotDo:   []string{"port_scan", "content_discovery", "js_route_analysis", "full auth matrix"},
-			Examples:   []string{agentText(language, "对授权目标做 safe Web/API 扫描", "run a safe Web/API scan for an authorized target")},
-		},
-		"ports.scan.safe": {
-			IntentTags: []string{"port_scan", "open_ports", "tcp_connect_probe"},
-			CanDo:      []string{"bounded TCP connect open-port probe"},
-			CannotDo:   []string{"UDP scan", "nmap service fingerprinting", "very large ranges"},
-			Examples:   []string{agentText(language, "扫描 example.com 开放端口 ports=80,443", "scan open ports for example.com ports=80,443")},
-		},
-		"http.request": {
-			IntentTags: []string{"http_probe", "api_functional_test", "single_request"},
-			CanDo:      []string{"single authorized HTTP request", "status/header/body snippet", "Auth Profile application"},
-			CannotDo:   []string{"crawl", "port_scan", "full auth workflow"},
-			Examples:   []string{agentText(language, "获取目标响应头和状态码", "fetch headers and status code")},
-		},
-		"web.search": {
-			IntentTags: []string{"web_search", "search", "lookup", "查询", "搜索"},
-			CanDo:      []string{"search public web information through the configured provider", "return title/url/snippet/source results"},
-			CannotDo:   []string{"read a known URL directly", "scan or probe a target", "work without Web Search settings"},
-			Examples:   []string{agentText(language, "搜索 CVE 详情和参考来源", "search for CVE details and references")},
-		},
-		"web.fetch": {
-			IntentTags: []string{"web_fetch", "page_read", "read_url", "读取网页"},
-			CanDo:      []string{"GET a specific public http/https URL", "extract readable text from HTML", "return truncated raw content"},
-			CannotDo:   []string{"POST/PUT/PATCH/DELETE", "fetch private/internal/metadata URLs", "search the web by query"},
-			Examples:   []string{agentText(language, "读取指定网页并总结", "read a specified web page and summarize it")},
-		},
-		"plugins.list": {
-			IntentTags: []string{"plugins", "tools", "capability_discovery"},
-			CanDo:      []string{"list available plugins/tools"},
-		},
-		"runs.context": {
-			IntentTags: []string{"run_context", "evidence", "findings", "events"},
-			CanDo:      []string{"read run report/findings/artifacts/events/approvals"},
-		},
-		"reports.draft": {
-			IntentTags: []string{"report_generation", "workspace"},
-			CanDo:      []string{"generate markdown report draft into workspace"},
-		},
-		"schedule.create": {
-			IntentTags: []string{"schedule", "cron", "recurring", "periodic", "scheduled_scan", "scheduled_prompt"},
-			CanDo:      []string{"register a cron-driven recurring agent_prompt for arbitrary Agent work", "register optimized scan_web schedules for explicit recurring safe Web/API scans"},
-			CannotDo:   []string{"run scan immediately (use the immediate tool for one-off work)"},
-			Examples: []string{
-				agentText(language, "每天 7:20 扫描 example.com 开放端口 → schedule.create cron=\"20 7 * * *\" action=agent_prompt", "daily 7:20 scan open ports for example.com → schedule.create cron=\"20 7 * * *\" action=agent_prompt"),
-				agentText(language, "每小时安全漏扫 https://example.com → schedule.create cron=\"0 * * * *\" action=scan_web", "every hour vulnerability scan https://example.com → schedule.create cron=\"0 * * * *\" action=scan_web"),
-			},
-		},
-		"schedule.list": {
-			IntentTags: []string{"schedule", "cron", "list_schedules"},
-			CanDo:      []string{"list configured schedules with cron, action, last/next run"},
-		},
-		"schedule.delete": {
-			IntentTags: []string{"schedule", "cron", "cancel_schedule"},
-			CanDo:      []string{"cancel a configured schedule by id"},
-		},
+	derived := toolRegistry().CapabilityMetadataByName(normalizeAgentLanguage(language))
+	out := make(map[string]agentToolCapabilityMetadata, len(derived))
+	for name, meta := range derived {
+		if len(meta.IntentTags) == 0 && len(meta.CanDo) == 0 && len(meta.CannotDo) == 0 && len(meta.Examples) == 0 {
+			continue
+		}
+		out[name] = agentToolCapabilityMetadata{
+			IntentTags: meta.IntentTags,
+			CanDo:      meta.CanDo,
+			CannotDo:   meta.CannotDo,
+			Examples:   meta.Examples,
+		}
 	}
+	return out
 }
 
 func agentCapabilityRegistryPrompt(language string) string {

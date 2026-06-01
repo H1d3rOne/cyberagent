@@ -671,8 +671,9 @@ func (m *agentManager) DeleteSession(ctx context.Context, sessionID string) (del
 func agentCapabilities(language string) agentCapabilitiesResponse {
 	language = normalizeAgentLanguage(language)
 	registry := agentSkillRegistry(language)
-	tools := make([]agentCapabilityTool, 0, len(agentLLMToolDefinitions()))
-	for _, tool := range agentLLMToolDefinitions() {
+	llmTools := toolRegistry().LLMDefinitions()
+	tools := make([]agentCapabilityTool, 0, len(llmTools))
+	for _, tool := range llmTools {
 		risk, autoRun := agentCapabilityToolPolicy(tool.Name)
 		tools = append(tools, agentCapabilityTool{
 			Name:        tool.Name,
@@ -1694,7 +1695,7 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 		Model:       strings.TrimSpace(req.Model),
 		System:      agentPlannerSystemPrompt(language, instructions, req.OperationLevel),
 		Messages:    agentLLMHistory(history, memory, language),
-		Tools:       agentLLMToolDefinitions(),
+		Tools:       toolRegistry().LLMDefinitions(),
 		MaxTokens:   1600,
 		Temperature: 0.2,
 	})
@@ -3957,33 +3958,14 @@ func agentOperationLevelAtLeast(level, required string) bool {
 }
 
 func agentOperationLevelRequiredForAction(actionName string) string {
-	switch normalizeAgentPlannerActionName(actionName) {
-	case "scan.web.safe", "ports.scan.safe", "http.request", "web.search", "web.fetch":
-		return "safe_scan"
-	case "workspace.files.write",
-		"workspace.files.patch",
-		"workspace.files.diff",
-		"workspace.files.diff_many",
-		"workspace.files.rebase",
-		"workspace.files.apply",
-		"workspace.files.discard",
-		"workspace.files.delete",
-		"workspace.files.move",
-		"workspace.files.copy",
-		"workspace.files.mkdir",
-		"reports.draft":
-		return "workspace_write"
-	case "runs.approvals.approve",
-		"runs.approvals.deny",
-		"runs.resume_approved":
-		return "approval_ops"
-	case "schedule.create", "schedule.delete":
-		return "advanced"
-	case "schedule.list":
-		return "read_only"
-	default:
-		return "read_only"
+	// Delegate to the canonical tool registry. Unknown actions (plugin / MCP
+	// names) fall through to read_only to preserve legacy behaviour during the
+	// migration window — the registry-side default is "advanced", but flipping
+	// that here would gate previously-allowed plugin invocations.
+	if spec, ok := toolRegistry().Lookup(actionName); ok {
+		return spec.RequiredLevel
 	}
+	return "read_only"
 }
 
 func agentOperationLevelRequiredForPlannerAction(actionName string, args map[string]any) string {
@@ -4541,9 +4523,9 @@ Constraints:
 	instructions = strings.TrimSpace(instructions)
 	permission := agentOperationPermissionPrompt(language, operationLevel)
 	if instructions == "" {
-		return base + permission
+		return applyToolEnumPlaceholders(base + permission)
 	}
-	return base + permission + "\n\n" + agentText(language, "操作者附加指令：", "Additional operator instructions:") + "\n" + instructions
+	return applyToolEnumPlaceholders(base + permission + "\n\n" + agentText(language, "操作者附加指令：", "Additional operator instructions:") + "\n" + instructions)
 }
 
 func agentToolSynthesisSystemPrompt(language, instructions, operationLevel string) string {
@@ -4652,179 +4634,9 @@ Constraints:
 	instructions = strings.TrimSpace(instructions)
 	permission := agentOperationPermissionPrompt(language, operationLevel)
 	if instructions == "" {
-		return base + permission
+		return applyToolEnumPlaceholders(base + permission)
 	}
-	return base + permission + "\n\n" + agentText(language, "操作者附加指令：", "Additional operator instructions:") + "\n" + instructions
-}
-
-func agentLLMToolDefinitions() []llm.ToolDef {
-	return []llm.ToolDef{
-		{
-			Name:        "scan.web.safe",
-			Description: "Start a safe-profile Web/API vulnerability/evidence scan for an explicitly authorized http/https target and scope. This is not a port scanner and must not be used for open-port enumeration. Requires safe_scan operation level.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"target":{"type":"string","description":"Authorized http/https target URL"},"scope":{"type":"string","description":"Authorization boundary or URL prefix; defaults to target"}},"required":["target"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "ports.scan.safe",
-			Description: "Run a bounded safe TCP connect probe against an explicitly authorized host to identify open TCP ports. Defaults to a small common_safe port set; custom ranges are capped. This is not nmap service fingerprinting and does not scan UDP.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"target":{"type":"string","description":"Authorized target URL or host"},"host":{"type":"string","description":"Authorized host name or IP; resolved from target when omitted"},"ports":{"oneOf":[{"type":"string","description":"Comma/range spec such as 80,443,8000-8010; capped by policy"},{"type":"array","items":{"type":"integer","minimum":1,"maximum":65535},"maxItems":128}],"description":"Optional TCP ports to probe; defaults to common_safe"},"port_profile":{"type":"string","description":"Optional label for the port set"}},"required":["target"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "http.request",
-			Description: "Make an HTTP request to an explicitly authorized http/https URL and return status, headers, and a truncated body. GET/HEAD/OPTIONS require safe_scan; POST/PUT/PATCH/DELETE require advanced.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"Authorized http/https URL"},"method":{"type":"string","enum":["GET","HEAD","OPTIONS","POST","PUT","PATCH","DELETE"],"description":"HTTP method; defaults to GET"},"auth_profile_id":{"type":"string","description":"Optional configured API auth profile ID/name; secrets are resolved by the daemon and are not exposed to the model"},"headers":{"type":"object","description":"Optional request headers for authorized testing; sensitive values are redacted in stored results","additionalProperties":{"type":"string"}},"body":{"type":"string","description":"Optional request body for POST/PUT/PATCH/DELETE"},"content_type":{"type":"string","description":"Optional Content-Type header when body is provided"}},"required":["url"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "web.search",
-			Description: "Search the public web for lookup/research queries using the configured Web Search provider. Use for search/query intents, not for probing a specific target. Requires safe_scan operation level and configured Web Search settings.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query"},"max_results":{"type":"integer","minimum":1,"maximum":10,"description":"Maximum results to return; defaults to configured value or 5"},"locale":{"type":"string","description":"Optional locale/language hint such as en-US or zh-CN"}},"required":["query"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "web.fetch",
-			Description: "Fetch and read a specific public http/https URL with SSRF protections. Use for reading a known page URL, not for arbitrary API testing or non-GET HTTP requests. Requires safe_scan operation level.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"Public http/https URL to fetch"},"mode":{"type":"string","enum":["readable","raw"],"description":"readable extracts text from HTML; raw returns truncated response text. Defaults to readable"},"max_chars":{"type":"integer","minimum":1,"maximum":20000,"description":"Maximum response characters to return; defaults to 8000"}},"required":["url"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.command",
-			Description: "Run a low-risk allowlisted read-only command in the current Agent workspace. Allowed examples: pwd, ls, cat, head, tail, grep, find, wc, git status.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Low-risk allowlisted command to execute"}},"required":["command"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.list",
-			Description: "List files in the current Agent workspace.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory path","default":"."}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.tree",
-			Description: "Show a recursive workspace file tree with depth and result limits.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory path","default":"."},"depth":{"type":"integer","minimum":1,"maximum":8,"default":3},"limit":{"type":"integer","minimum":1,"maximum":500,"default":120},"include_hidden":{"type":"boolean","default":false}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.read",
-			Description: "Read a workspace-relative file from the current Agent workspace.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"}},"required":["path"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.search",
-			Description: "Search text in workspace files without modifying files; returns file paths, line numbers, and matching lines.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Text or regex to search for"},"path":{"type":"string","description":"Workspace-relative directory path","default":"."},"regex":{"type":"boolean","default":false},"case_sensitive":{"type":"boolean","default":false},"limit":{"type":"integer","minimum":1,"maximum":300,"default":80}},"required":["query"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.write",
-			Description: "Write or replace a workspace-relative file in the current Agent workspace when explicitly requested by the operator.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"},"content":{"type":"string","description":"File content to write"}},"required":["path","content"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.patch",
-			Description: "Patch a workspace-relative file by replacing one exact old text block with new text and returning a diff preview.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"},"old":{"type":"string","description":"Exact text to replace; must occur exactly once"},"new":{"type":"string","description":"Replacement text"}},"required":["path","old","new"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.diff",
-			Description: "Create a staged workspace file change by replacing one exact old text block with new text; returns a diff preview and change_id without modifying the file.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"},"old":{"type":"string","description":"Exact text to replace; must occur exactly once"},"new":{"type":"string","description":"Replacement text"}},"required":["path","old","new"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.diff_many",
-			Description: "Create one staged change set across multiple workspace files. Each item replaces one exact old text block with new text and returns a shared group_id plus per-file change_id values without modifying files.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"changes":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"},"old":{"type":"string","description":"Exact text to replace; must occur exactly once"},"new":{"type":"string","description":"Replacement text"}},"required":["path","old","new"],"additionalProperties":false}}},"required":["changes"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.rebase",
-			Description: "Regenerate a pending/conflict staged change by change_id using the current exact old text from the workspace file. The replacement defaults to the original staged new text; returns a new change_id and supersedes the old change.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"change_id":{"type":"string","description":"Existing staged change ID to regenerate"},"old":{"type":"string","description":"Exact current text to replace; must occur exactly once"},"new":{"type":"string","description":"Optional replacement text; defaults to the original staged new text"}},"required":["change_id","old"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.apply",
-			Description: "Apply a previously staged workspace file change by change_id, a staged group by group_id, or all pending changes with all=true after validating old text still matches exactly once.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"change_id":{"type":"string","description":"ID returned by workspace.files.diff"},"group_id":{"type":"string","description":"Group ID returned by workspace.files.diff_many"},"all":{"type":"boolean","description":"Apply all pending staged changes when explicitly requested"}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.discard",
-			Description: "Discard a previously staged workspace file change by change_id, a staged group by group_id, or all pending/conflict changes with all=true without modifying files.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"change_id":{"type":"string","description":"ID returned by workspace.files.diff"},"group_id":{"type":"string","description":"Group ID returned by workspace.files.diff_many"},"all":{"type":"boolean","description":"Discard all pending/conflict staged changes when explicitly requested"}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.delete",
-			Description: "Delete a workspace-relative file when the operator explicitly requests deletion. Directories are rejected.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"}},"required":["path"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.move",
-			Description: "Move or rename a workspace-relative file when the operator explicitly requests it. Directories are rejected.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"from":{"type":"string","description":"Source workspace-relative file path"},"to":{"type":"string","description":"Destination workspace-relative file path"}},"required":["from","to"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.copy",
-			Description: "Copy a workspace-relative file when the operator explicitly requests it. Directories are rejected and destination must not already exist.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"from":{"type":"string","description":"Source workspace-relative file path"},"to":{"type":"string","description":"Destination workspace-relative file path"}},"required":["from","to"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "workspace.files.mkdir",
-			Description: "Create a workspace-relative directory when the operator explicitly requests it.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory path"}},"required":["path"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "daemon.health",
-			Description: "Check CyberAgent daemon health/version/status.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-		},
-		{
-			Name:        "plugins.list",
-			Description: "List available CyberAgent plugins/tools.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-		},
-		{
-			Name:        "runs.list",
-			Description: "List recent CyberAgent runs/history.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-		},
-		{
-			Name:        "runs.context",
-			Description: "Read structured context for a run: report_json, findings, artifact_index, events, or approvals. Defaults to the active run when run_id is omitted.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"run_id":{"type":"string","description":"Run ID to inspect; defaults to active run when omitted"},"context":{"type":"string","enum":["report_json","findings","artifact_index","events","approvals"],"description":"Context section to read"}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "reports.draft",
-			Description: "Generate a Markdown report draft for a run from runtime report/context and save it into the Agent workspace. Requires workspace_write operation level.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"run_id":{"type":"string","description":"Run ID to draft; defaults to the active run when omitted"},"path":{"type":"string","description":"Optional workspace-relative markdown path"}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "runs.approvals.list",
-			Description: "List pending approval requests for a specific run, or summarize the global approval queue when run_id is omitted.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"run_id":{"type":"string","description":"Optional run ID to inspect"}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "runs.approvals.approve",
-			Description: "Approve one pending approval when the operator explicitly asks to approve it. Requires run_id plus approval_id/step_id unless the active run has exactly one pending approval.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"run_id":{"type":"string","description":"Run ID"},"approval_id":{"type":"string","description":"Approval request ID"},"step_id":{"type":"string","description":"Alternative step ID"},"comment":{"type":"string","description":"Optional approval comment"}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "runs.approvals.deny",
-			Description: "Deny one pending approval when the operator explicitly asks to reject it. Requires run_id plus approval_id/step_id unless the active run has exactly one pending approval.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"run_id":{"type":"string","description":"Run ID"},"approval_id":{"type":"string","description":"Approval request ID"},"step_id":{"type":"string","description":"Alternative step ID"},"comment":{"type":"string","description":"Optional rejection comment"}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "runs.resume_approved",
-			Description: "Resume approved steps for a run when the operator explicitly asks to resume approved work.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"run_id":{"type":"string","description":"Run ID to resume; defaults to active run when omitted"}},"additionalProperties":false}`),
-		},
-		{
-			Name:        "schedule.create",
-			Description: "Create a recurring schedule. Prefer action=agent_prompt with the executable instruction for arbitrary scheduled Agent work (including port scans, HTTP checks, searches, workspace tasks); use action=scan_web only for an explicit recurring safe Web/API vulnerability scan. Do NOT call the immediate tool for scheduled requests. Requires advanced operation level.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"cron":{"type":"string","description":"Standard 5-field cron expression or @every / @hourly / @daily / @weekly / @monthly macro"},"action":{"type":"string","enum":["agent_prompt","scan_web"],"description":"What the schedule fires: agent_prompt sends an executable instruction into the Agent session and supports arbitrary future Agent work; scan_web is only for recurring safe Web/API vulnerability scans"},"name":{"type":"string","description":"Optional schedule name; defaults are derived from action+target/prompt"},"target":{"type":"string","description":"Authorized http/https target URL (required when action=scan_web)"},"scope":{"type":"string","description":"Authorization boundary; defaults to target"},"profile":{"type":"string","description":"Scan profile (defaults to safe)"},"prompt":{"type":"string","description":"Executable prompt to dispatch at trigger time (required when action=agent_prompt). Strip schedule wording; keep only the action to perform."},"session_id":{"type":"string","description":"Target agent session id; defaults to the current session for agent_prompt"},"enabled":{"type":"boolean","description":"Whether the schedule is enabled on creation; defaults to true"}},"required":["cron","action"],"additionalProperties":false}`),
-		},
-		{
-			Name:        "schedule.list",
-			Description: "List currently configured schedules together with their cron expression, action, last run, and next-run time.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-		},
-		{
-			Name:        "schedule.delete",
-			Description: "Delete an existing schedule by id when the operator explicitly asks to cancel/remove it. Requires advanced operation level.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"Schedule id returned by schedule.list"}},"required":["id"],"additionalProperties":false}`),
-		},
-	}
+	return applyToolEnumPlaceholders(base + permission + "\n\n" + agentText(language, "操作者附加指令：", "Additional operator instructions:") + "\n" + instructions)
 }
 
 func parseAgentPlannerResponse(raw string) (*agentPlannerResponse, error) {
@@ -10085,81 +9897,17 @@ func agentPlannerActions(plan *agentPlannerResponse) []agentPlannerAction {
 	return actions
 }
 
+// normalizeAgentPlannerActionName collapses planner-emitted tool names
+// (canonical, alias, casing variant, dash/underscore variants) into the
+// canonical name held by the daemon tool registry. Unknown names pass through
+// folded so plugin/MCP names still flow downstream.
+//
+// The implementation is a thin wrapper over toolregistry.Registry.Normalize
+// to keep a single source of truth; a parity test in
+// agent_toolregistry_parity_test.go guards against drift while remaining
+// callers migrate to the registry directly.
 func normalizeAgentPlannerActionName(raw string) string {
-	name := strings.ToLower(strings.TrimSpace(raw))
-	name = strings.ReplaceAll(name, "-", ".")
-	name = strings.ReplaceAll(name, "_", ".")
-	name = strings.Join(strings.Fields(name), ".")
-	switch name {
-	case "scan.web.safe", "web.scan.safe", "scan.web", "web.scan", "scans.web", "scan", "start.scan", "start.web.scan":
-		return "scan.web.safe"
-	case "ports.scan.safe", "port.scan.safe", "ports.scan", "port.scan", "portscan", "port.scan.tcp", "tcp.scan", "scan.ports", "nmap":
-		return "ports.scan.safe"
-	case "http.request", "http", "request", "curl", "web.request", "http.get", "http.head":
-		return "http.request"
-	case "workspace.command", "workspace.commands.run", "workspace.run.command", "command", "commands.run", "shell", "terminal":
-		return "workspace.command"
-	case "workspace.files.list", "workspace.file.list", "workspace.list", "workspace.ls", "files.list", "file.list", "list.files", "list.file", "ls":
-		return "workspace.files.list"
-	case "workspace.files.tree", "workspace.file.tree", "workspace.tree", "files.tree", "file.tree", "tree", "list.tree", "directory.tree":
-		return "workspace.files.tree"
-	case "workspace.files.read", "workspace.file.read", "workspace.read", "files.read", "file.read", "read.file", "cat":
-		return "workspace.files.read"
-	case "workspace.search", "workspace.grep", "workspace.find.text", "files.search", "file.search", "search.files", "grep", "search":
-		return "workspace.search"
-	case "workspace.files.patch", "workspace.file.patch", "workspace.patch", "files.patch", "file.patch", "patch.file", "patch", "edit.file", "modify.file", "replace.in.file":
-		return "workspace.files.patch"
-	case "workspace.files.diff", "workspace.file.diff", "workspace.diff", "files.diff", "file.diff", "diff.file", "diff", "preview.file", "preview.patch", "stage.file", "stage.patch", "staged.diff":
-		return "workspace.files.diff"
-	case "workspace.files.diff.many", "workspace.files.diffmany", "workspace.files.diff_many", "workspace.file.diff.many", "workspace.diff.many", "files.diff.many", "diff.many", "preview.files", "stage.files", "stage.changeset", "staged.changeset":
-		return "workspace.files.diff_many"
-	case "workspace.files.rebase", "workspace.file.rebase", "workspace.rebase", "files.rebase", "file.rebase", "rebase.file", "regenerate.change", "regenerate.patch", "refresh.change", "rebase.patch":
-		return "workspace.files.rebase"
-	case "workspace.files.apply", "workspace.file.apply", "workspace.apply", "files.apply", "file.apply", "apply.file", "apply.patch", "apply.change", "apply", "commit.patch":
-		return "workspace.files.apply"
-	case "workspace.files.discard", "workspace.file.discard", "workspace.discard", "files.discard", "file.discard", "discard.file", "discard.patch", "discard.change", "discard", "drop.patch", "cancel.patch":
-		return "workspace.files.discard"
-	case "workspace.files.delete", "workspace.file.delete", "workspace.delete", "files.delete", "file.delete", "delete.file", "remove.file", "rm.file", "unlink.file", "delete", "remove", "rm":
-		return "workspace.files.delete"
-	case "workspace.files.move", "workspace.file.move", "workspace.move", "files.move", "file.move", "move.file", "rename.file", "mv.file", "move", "rename", "relocate", "mv":
-		return "workspace.files.move"
-	case "workspace.files.copy", "workspace.file.copy", "workspace.copy", "files.copy", "file.copy", "copy.file", "duplicate.file", "cp.file", "copy", "duplicate", "cp":
-		return "workspace.files.copy"
-	case "workspace.files.mkdir", "workspace.file.mkdir", "workspace.mkdir", "files.mkdir", "file.mkdir", "mkdir", "make.dir", "make.directory", "create.dir", "create.directory":
-		return "workspace.files.mkdir"
-	case "workspace.files.write", "workspace.file.write", "workspace.write", "files.write", "file.write", "write.file", "write", "save.file", "create.file", "replace.file":
-		return "workspace.files.write"
-	case "daemon.health", "daemon.doctor", "health", "doctor", "status":
-		return "daemon.health"
-	case "plugins.list", "plugin.list", "tools.list", "tool.list", "plugins", "tools":
-		return "plugins.list"
-	case "runs.list", "run.list", "history.list", "runs", "history":
-		return "runs.list"
-	case "runs.context", "run.context", "runs.get", "run.get", "runs.report", "run.report", "runs.findings", "run.findings", "runs.events", "run.events", "runs.artifacts", "run.artifacts":
-		return "runs.context"
-	case "runs.approvals.list", "run.approvals.list", "approvals.list", "approval.list", "approvals", "approval.queue":
-		return "runs.approvals.list"
-	case "runs.approvals.approve", "run.approvals.approve", "approvals.approve", "approval.approve", "approve.approval":
-		return "runs.approvals.approve"
-	case "runs.approvals.deny", "run.approvals.deny", "approvals.deny", "approval.deny", "deny.approval", "reject.approval":
-		return "runs.approvals.deny"
-	case "runs.resume.approved", "run.resume.approved", "resume.approved", "resume.approved.run", "runs.resume.approval":
-		return "runs.resume_approved"
-	case "reports.draft", "report.draft", "draft.report", "report.generate", "reports.generate", "generate.report", "write.report":
-		return "reports.draft"
-	case "schedule.create", "schedule.add", "schedule.set", "create.schedule", "set.schedule", "cron.create", "cron.add", "schedules.create", "add.schedule":
-		return "schedule.create"
-	case "schedule.list", "schedules.list", "list.schedules", "list.schedule", "cron.list", "schedules":
-		return "schedule.list"
-	case "schedule.delete", "schedule.remove", "schedules.delete", "delete.schedule", "remove.schedule", "cron.delete", "cron.remove":
-		return "schedule.delete"
-	case "web.search", "websearch", "search.web", "google.search", "google", "search.engine", "tavily.search":
-		return "web.search"
-	case "web.fetch", "webfetch", "fetch.url", "fetch.page", "fetch.web", "page.fetch", "open.url", "fetch":
-		return "web.fetch"
-	default:
-		return name
-	}
+	return toolRegistry().Normalize(raw)
 }
 
 func normalizeAgentPlannerActionArguments(value any) map[string]any {
