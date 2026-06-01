@@ -37,10 +37,13 @@ func newRouter(svc routerServices, token string) http.Handler {
 	if svc.agent == nil {
 		svc.agent = newAgentManager(svc.runs.RunsDir)
 	}
+	providerStoreProvided := svc.providers != nil
 	if svc.providers == nil {
 		svc.providers = newProviderStore("")
 	}
-	svc.agent.AttachProviderStore(svc.providers)
+	if providerStoreProvided {
+		svc.agent.AttachProviderStore(svc.providers)
+	}
 	mux := http.NewServeMux()
 
 	// Register /api/scans endpoints from the web API server

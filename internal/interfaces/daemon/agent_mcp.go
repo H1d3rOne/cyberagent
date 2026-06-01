@@ -305,7 +305,7 @@ func agentMCPToolCapabilitiesFromServers(servers []agentMCPServerConfig) []agent
 				continue
 			}
 			out = append(out, agentToolCapabilitySpec{
-				Name:          "mcp." + server.ID + "." + normalizeAgentMCPServerID(name),
+				Name:          agentMCPToolName(server.ID, name),
 				Source:        "mcp:" + server.ID,
 				IntentTags:    append([]string{}, tool.IntentTags...),
 				CanDo:         append([]string{}, tool.CanDo...),
@@ -515,6 +515,33 @@ func normalizeAgentMCPServerID(raw string) string {
 		value = value[:80]
 	}
 	return value
+}
+
+func agentMCPToolName(serverID, toolName string) string {
+	serverID = normalizeAgentMCPServerID(serverID)
+	toolName = normalizeAgentMCPServerID(toolName)
+	if serverID == "" || toolName == "" {
+		return ""
+	}
+	return "mcp__" + serverID + "__" + toolName
+}
+
+func normalizeAgentMCPToolActionName(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	switch {
+	case strings.HasPrefix(value, "mcp__"):
+		parts := strings.Split(value, "__")
+		if len(parts) >= 3 {
+			return agentMCPToolName(parts[1], strings.Join(parts[2:], "__"))
+		}
+	case strings.HasPrefix(value, "mcp."):
+		legacy := strings.TrimPrefix(value, "mcp.")
+		parts := strings.SplitN(legacy, ".", 2)
+		if len(parts) == 2 {
+			return agentMCPToolName(parts[0], parts[1])
+		}
+	}
+	return ""
 }
 
 func normalizeAgentMCPTools(tools []agentMCPToolConfig) []agentMCPToolConfig {

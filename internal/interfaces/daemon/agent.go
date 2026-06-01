@@ -1196,9 +1196,6 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 }
 
 func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID string, req agentAuthorizationDecisionRequest, svc routerServices) (agentControlResponse, error) {
-	if svc.providers != nil {
-		m.AttachProviderStore(svc.providers)
-	}
 	if err := contextError(ctx); err != nil {
 		return agentControlResponse{}, err
 	}
@@ -1314,7 +1311,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 	}
 
 	action := agentPlannerAction{Name: pending.ActionName, Arguments: cloneMapStringAny(pending.Arguments)}
-	actionMessages, actionToolCalls, execErr := m.executeAgentPlannerAction(ctx, sessionID, language, operator, svc, action, req.AuthProfiles, req.DefaultAuthProfileID)
+	actionMessages, actionToolCalls, execErr := m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, action, req.AuthProfiles, req.DefaultAuthProfileID)
 	if execErr != nil {
 		tool := failedAgentToolCall(pending.ActionName, execErr)
 		tool.Result = map[string]any{"action": pending.ActionName, "authorization_id": pending.ID}
@@ -1397,9 +1394,6 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 }
 
 func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (resp sendAgentMessageResponse, err error) {
-	if svc.providers != nil {
-		m.AttachProviderStore(svc.providers)
-	}
 	if err := contextError(ctx); err != nil {
 		return sendAgentMessageResponse{}, err
 	}
@@ -2219,7 +2213,7 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 			messages = append(messages, authMessage)
 			return messages, toolCalls, true
 		} else {
-			actionMessages, actionToolCalls, err = m.executeAgentPlannerAction(ctx, sessionID, language, operator, svc, action, authProfiles, defaultAuthProfileID)
+			actionMessages, actionToolCalls, err = m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, action, authProfiles, defaultAuthProfileID)
 		}
 		if err != nil {
 			if actionName == "" {
@@ -2415,13 +2409,19 @@ func suffixIfNotEmpty(prefix, value string) string {
 	return prefix + value
 }
 
-func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID, language, operator string, svc routerServices, action agentPlannerAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID, language, operator, operationLevel string, svc routerServices, action agentPlannerAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, error) {
 	name := normalizeAgentPlannerActionName(action.Name)
 	args := action.Arguments
 	if args == nil {
 		args = map[string]any{}
 	}
 
+	if spec, ok := toolRegistry().Lookup(name); ok && spec.Handler != nil {
+		return m.executeAgentRegistryHandler(ctx, sessionID, language, operator, operationLevel, spec, args)
+	}
+
+	// Deprecated: legacy per-tool dispatch. Migrate cases into ToolSpec.Handler
+	// in small slices until the registry is the only execution source.
 	switch name {
 	case "scan.web.safe":
 		target := firstNonEmpty(
@@ -9747,6 +9747,9 @@ func agentPlannerActions(plan *agentPlannerResponse) []agentPlannerAction {
 // agent_toolregistry_parity_test.go guards against drift while remaining
 // callers migrate to the registry directly.
 func normalizeAgentPlannerActionName(raw string) string {
+	if mcpName := normalizeAgentMCPToolActionName(raw); mcpName != "" {
+		return mcpName
+	}
 	return toolRegistry().Normalize(raw)
 }
 

@@ -25,6 +25,7 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/core/reporting"
 	coreruntime "github.com/H1d3rOne/cyberagent/internal/core/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	webiface "github.com/H1d3rOne/cyberagent/internal/interfaces/web"
 	artifactruntime "github.com/H1d3rOne/cyberagent/internal/runtime/artifacts"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 )
@@ -400,7 +401,7 @@ func TestAgentMCPRegistryMapsDeclaredToolsToCapabilities(t *testing.T) {
 		t.Fatalf("unexpected MCP capability: %#v", capability)
 	}
 	prompt := manager.agentMCPRegistryPrompt("zh")
-	if !strings.Contains(prompt, "mcp."+server.ID) || !strings.Contains(prompt, "content_discovery") {
+	if !strings.Contains(prompt, "mcp__"+server.ID+"__content.discovery") || !strings.Contains(prompt, "content_discovery") {
 		t.Fatalf("MCP prompt missing capability: %s", prompt)
 	}
 	discovery, err := manager.DiscoverMCPTools(context.Background(), server.ID)
@@ -2839,6 +2840,108 @@ func TestHTTPAgentMessageUsesConfiguredLLMProvider(t *testing.T) {
 	result := asMap(t, tool["result"])
 	if result["provider"] != "openai" || result["model"] != "gpt-test" {
 		t.Fatalf("unexpected LLM tool result: %#v", result)
+	}
+}
+
+func TestHTTPAgentMessageFallsBackToSecondaryProviderOnTransientError(t *testing.T) {
+	var primaryRequests atomic.Int32
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryRequests.Add(1)
+		http.Error(w, "upstream temporarily unavailable", http.StatusBadGateway)
+	}))
+	defer primaryServer.Close()
+
+	var secondaryRequests atomic.Int32
+	secondaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondaryRequests.Add(1)
+		if got := r.Header.Get("Authorization"); got != "Bearer secondary-key" {
+			t.Errorf("fallback Authorization = %q, want Bearer secondary-key", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode fallback LLM request: %v", err)
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if body["model"] != "fallback-model" {
+			t.Errorf("fallback model = %#v, want fallback-model", body["model"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"chatcmpl-fallback",
+			"choices":[{"message":{"role":"assistant","content":"fallback provider reply"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":7,"completion_tokens":3}
+		}`))
+	}))
+	defer secondaryServer.Close()
+
+	root := t.TempDir()
+	providers := newProviderStore(filepath.Join(root, "providers.json"))
+	if err := providers.Save(webiface.ProviderConfig{
+		ActiveID: "primary",
+		Providers: []webiface.ProviderProfile{
+			{ID: "primary", Name: "Primary", Type: "openai", Model: "primary-model", APIKey: "primary-key", BaseURL: primaryServer.URL + "/v1"},
+			{ID: "secondary", Name: "Secondary", Type: "openai", Model: "fallback-model", APIKey: "secondary-key", BaseURL: secondaryServer.URL + "/v1"},
+		},
+	}); err != nil {
+		t.Fatalf("save provider config: %v", err)
+	}
+
+	handler := newRouter(routerServices{
+		version:   services.NewVersionService(services.BuildInfo{Name: "CyberAgent", Version: "vagent-provider-fallback"}),
+		plugins:   services.NewPluginService(filepath.Join(root, "plugins")),
+		runs:      services.NewRunService(filepath.Join(root, "runs")),
+		approvals: services.NewApprovalService(filepath.Join(root, "runs")),
+		providers: providers,
+	}, "test-token")
+	api := httptest.NewServer(handler)
+	defer api.Close()
+
+	create := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions", "test-token", `{"operator":"tester","language":"en"}`)
+	if create.StatusCode != http.StatusCreated || !create.Body.OK {
+		t.Fatalf("unexpected create agent session response: status=%d body=%#v", create.StatusCode, create.Body)
+	}
+	sessionID := stringValue(t, asMap(t, create.Body.Data["session"])["session_id"])
+
+	payload, err := json.Marshal(map[string]any{
+		"operator": "tester",
+		"language": "en",
+		"message":  "Use the AI planner and answer through provider fallback",
+		"provider": "openai",
+		"model":    "primary-model",
+		"api_key":  "primary-key",
+		"base_url": primaryServer.URL + "/v1",
+	})
+	if err != nil {
+		t.Fatalf("marshal fallback payload: %v", err)
+	}
+	send := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/agent/sessions/"+sessionID+"/messages", "test-token", string(payload))
+	if send.StatusCode != http.StatusOK || !send.Body.OK || send.Body.Data["session_id"] != sessionID {
+		t.Fatalf("unexpected send fallback response: status=%d body=%#v", send.StatusCode, send.Body)
+	}
+	if primaryRequests.Load() == 0 {
+		t.Fatalf("primary provider was not attempted")
+	}
+	if secondaryRequests.Load() != 1 {
+		t.Fatalf("secondary provider requests = %d, want 1", secondaryRequests.Load())
+	}
+
+	messages := asList(t, send.Body.Data["messages"])
+	lastMessage := asMap(t, messages[len(messages)-1])
+	if !strings.Contains(stringValue(t, lastMessage["content"]), "fallback provider reply") {
+		t.Fatalf("unexpected fallback agent reply: %#v", lastMessage)
+	}
+	toolCalls := asList(t, send.Body.Data["tool_calls"])
+	if len(toolCalls) != 1 {
+		t.Fatalf("unexpected fallback tool calls: %#v", toolCalls)
+	}
+	result := asMap(t, asMap(t, toolCalls[0])["result"])
+	if result["model"] != "fallback-model" || !boolValue(t, result["provider_fallback"]) {
+		t.Fatalf("fallback metadata missing from result: %#v", result)
+	}
+	attempts := asList(t, result["provider_attempts"])
+	if len(attempts) != 1 || stringValue(t, asMap(t, attempts[0])["model"]) != "primary-model" {
+		t.Fatalf("unexpected provider attempts metadata: %#v", attempts)
 	}
 }
 
