@@ -105,6 +105,7 @@ func TestHTTPAgentSessionStreamForwardsRuntimeEvents(t *testing.T) {
 		var payload runtime.Event
 		require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(dataLine, "data: "))), &payload))
 		require.Equal(t, "model_token", payload.Type)
+		require.Equal(t, sessionID, payload.SessionID)
 		require.Equal(t, sessionID, payload.Data["session_id"])
 		require.Equal(t, "hello", payload.Data["text"])
 		return

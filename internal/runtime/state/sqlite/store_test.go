@@ -88,7 +88,7 @@ func TestStoreSaveLoadAndFilterEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEvents(limit) error = %v", err)
 	}
-	if len(limited) != 2 || limited[0].Seq != 1 || limited[1].Seq != 2 {
+	if len(limited) != 2 || limited[0].Seq != 2 || limited[1].Seq != 3 {
 		t.Fatalf("unexpected limited events: %#v", limited)
 	}
 	maxSeq, err := store.MaxEventSeq(ctx)
@@ -97,6 +97,75 @@ func TestStoreSaveLoadAndFilterEvents(t *testing.T) {
 	}
 	if maxSeq != 3 {
 		t.Fatalf("MaxEventSeq() = %d, want 3", maxSeq)
+	}
+}
+
+func TestStoreEventsUseTopLevelSessionIDAndRecentWindow(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open(:memory:) error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	for i := 1; i <= 4; i++ {
+		if err := store.AppendEvent(ctx, agentruntime.Event{
+			Type:      "model_token",
+			SessionID: "session-top",
+			Data:      map[string]any{"i": i},
+			Timestamp: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("AppendEvent(%d) error = %v", i, err)
+		}
+	}
+
+	recent, err := store.ListEvents(ctx, agentruntime.EventFilter{SessionID: "session-top"}, 2)
+	if err != nil {
+		t.Fatalf("ListEvents(recent) error = %v", err)
+	}
+	if len(recent) != 2 || recent[0].Seq != 3 || recent[1].Seq != 4 {
+		t.Fatalf("recent = %#v, want seq 3,4", recent)
+	}
+	for _, ev := range recent {
+		if ev.SessionID != "session-top" {
+			t.Fatalf("event SessionID = %q, want session-top: %#v", ev.SessionID, ev)
+		}
+	}
+
+	afterSeq, err := store.ListEvents(ctx, agentruntime.EventFilter{SessionID: "session-top", FromSeq: 2}, 10)
+	if err != nil {
+		t.Fatalf("ListEvents(fromSeq) error = %v", err)
+	}
+	if len(afterSeq) != 2 || afterSeq[0].Seq != 3 || afterSeq[1].Seq != 4 {
+		t.Fatalf("afterSeq = %#v, want seq 3,4", afterSeq)
+	}
+}
+
+func TestStoreRejectsEmptyIDsAndMissingRows(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open(:memory:) error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.SaveTask(ctx, agentruntime.Task{}); err == nil {
+		t.Fatal("SaveTask(empty) error = nil, want error")
+	}
+	if err := store.SaveRun(ctx, agentruntime.Run{}); err == nil {
+		t.Fatal("SaveRun(empty) error = nil, want error")
+	}
+	if err := store.SaveTurn(ctx, agentruntime.Turn{}); err == nil {
+		t.Fatal("SaveTurn(empty) error = nil, want error")
+	}
+	if err := store.AppendEvent(ctx, agentruntime.Event{}); err == nil {
+		t.Fatal("AppendEvent(empty type) error = nil, want error")
+	}
+	if _, err := store.LoadTask(ctx, "missing"); err == nil {
+		t.Fatal("LoadTask(missing) error = nil, want error")
+	}
+	if _, err := store.LoadRun(ctx, "missing"); err == nil {
+		t.Fatal("LoadRun(missing) error = nil, want error")
 	}
 }
 

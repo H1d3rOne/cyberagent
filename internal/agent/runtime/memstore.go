@@ -103,11 +103,31 @@ func (m *MemStore) ListRuns(_ context.Context, taskID string) ([]Run, error) {
 
 // ListEvents returns a filtered snapshot of the append-only event log. It is
 // used for SSE reconnect replay before the caller starts receiving live
-// fan-out events. Results preserve append order and are capped by limit when
-// limit > 0.
+// fan-out events. FromSeq queries preserve append order and cap the first
+// matching events after FromSeq. With FromSeq=0 and limit>0, the store first
+// takes the newest limit events by descending Seq, then returns that recent
+// window in ascending order so SSE replay IDs move forward.
 func (m *MemStore) ListEvents(_ context.Context, filter EventFilter, limit int) ([]Event, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if filter.FromSeq <= 0 && limit > 0 {
+		recent := make([]Event, 0, limit)
+		for i := len(m.events) - 1; i >= 0; i-- {
+			ev := m.events[i]
+			if !eventMatchesFilter(ev, filter) {
+				continue
+			}
+			recent = append(recent, ev)
+			if len(recent) >= limit {
+				break
+			}
+		}
+		out := make([]Event, len(recent))
+		for i := range recent {
+			out[len(recent)-1-i] = recent[i]
+		}
+		return out, nil
+	}
 	out := make([]Event, 0, len(m.events))
 	for _, ev := range m.events {
 		if !eventMatchesFilter(ev, filter) {

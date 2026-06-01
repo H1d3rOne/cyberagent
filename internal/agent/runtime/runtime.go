@@ -21,10 +21,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+const eventReplayLimit = 512
 
 // Task is one unit of agent work.
 type Task struct {
@@ -60,6 +63,7 @@ type Turn struct {
 type Event struct {
 	Seq       int64          `json:"seq,omitempty"`
 	Type      string         `json:"type"` // task_created|turn_started|model_token|tool_started|tool_finished|approval_required|approval_resolved|task_finished|task_failed|...
+	SessionID string         `json:"session_id,omitempty"`
 	TurnID    string         `json:"turn_id,omitempty"`
 	RunID     string         `json:"run_id,omitempty"`
 	TaskID    string         `json:"task_id,omitempty"`
@@ -68,8 +72,7 @@ type Event struct {
 }
 
 // EventFilter scopes a streaming subscription. Empty fields match all
-// events. SessionID is carried in Event.Data["session_id"] while the runtime
-// migration is still bridging legacy daemon sessions to Task/Run events.
+// events. SessionID matches the V1 envelope's top-level Event.SessionID.
 type EventFilter struct {
 	TaskID    string
 	RunID     string
@@ -184,11 +187,11 @@ func (e *Engine) Subscribe(ctx context.Context, filter EventFilter) <-chan Event
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ch := make(chan Event, 128)
+	ch := make(chan Event, eventReplayLimit+128)
 	var replay []Event
 	e.eventMu.Lock()
-	if filter.FromSeq > 0 && e.store != nil {
-		if events, err := e.store.ListEvents(ctx, filter, 512); err == nil {
+	if e.store != nil {
+		if events, err := e.store.ListEvents(ctx, filter, eventReplayLimit); err == nil {
 			replay = events
 		}
 	}
@@ -240,6 +243,7 @@ func (e *Engine) publish(ctx context.Context, ev Event) {
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = time.Now()
 	}
+	ev = normalizeEventEnvelope(ev)
 	if ev.Seq == 0 {
 		ev.Seq = e.nextSeq.Add(1)
 	}
@@ -271,8 +275,7 @@ func eventMatchesFilter(ev Event, filter EventFilter) bool {
 		return false
 	}
 	if filter.SessionID != "" {
-		sessionID, _ := ev.Data["session_id"].(string)
-		if sessionID != filter.SessionID {
+		if eventSessionID(ev) != filter.SessionID {
 			return false
 		}
 	}
@@ -411,4 +414,20 @@ func (e *Engine) sessionIDForTaskLocked(taskID string) string {
 		return task.SessionID
 	}
 	return ""
+}
+
+func normalizeEventEnvelope(ev Event) Event {
+	ev.SessionID = eventSessionID(ev)
+	return ev
+}
+
+func eventSessionID(ev Event) string {
+	if sessionID := strings.TrimSpace(ev.SessionID); sessionID != "" {
+		return sessionID
+	}
+	if ev.Data == nil {
+		return ""
+	}
+	sessionID, _ := ev.Data["session_id"].(string)
+	return strings.TrimSpace(sessionID)
 }

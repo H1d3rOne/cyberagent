@@ -264,6 +264,8 @@ func (s *Store) AppendEvent(ctx context.Context, ev agentruntime.Event) error {
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = time.Now().UTC()
 	}
+	sessionID := eventSessionID(ev)
+	ev.SessionID = sessionID
 	dataJSON, err := json.Marshal(ev.Data)
 	if err != nil {
 		return fmt.Errorf("marshal runtime event data: %w", err)
@@ -272,7 +274,6 @@ func (s *Store) AppendEvent(ctx context.Context, ev agentruntime.Event) error {
 	if err != nil {
 		return fmt.Errorf("marshal runtime event: %w", err)
 	}
-	sessionID := eventSessionID(ev)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ev.Seq <= 0 {
@@ -355,7 +356,10 @@ func (s *Store) ListRuns(ctx context.Context, taskID string) ([]agentruntime.Run
 	return out, nil
 }
 
-// ListEvents returns a filtered event snapshot in ascending Seq order.
+// ListEvents returns a filtered event snapshot. FromSeq queries return the
+// first matching events after FromSeq in ascending Seq order. With FromSeq=0
+// and limit>0, the query selects the newest limit rows by descending Seq and
+// returns that recent window in ascending order for SSE replay.
 func (s *Store) ListEvents(ctx context.Context, filter agentruntime.EventFilter, limit int) ([]agentruntime.Event, error) {
 	ctx = runtimeContext(ctx)
 	query := `SELECT json FROM events`
@@ -380,7 +384,12 @@ func (s *Store) ListEvents(ctx context.Context, filter agentruntime.EventFilter,
 	if len(clauses) > 0 {
 		query += ` WHERE ` + strings.Join(clauses, ` AND `)
 	}
-	query += ` ORDER BY seq ASC`
+	reverse := filter.FromSeq <= 0 && limit > 0
+	if reverse {
+		query += ` ORDER BY seq DESC`
+	} else {
+		query += ` ORDER BY seq ASC`
+	}
 	if limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit)
@@ -404,6 +413,11 @@ func (s *Store) ListEvents(ctx context.Context, filter agentruntime.EventFilter,
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate runtime events: %w", err)
+	}
+	if reverse {
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
 	}
 	return out, nil
 }
@@ -464,11 +478,13 @@ func formatTime(t time.Time) string {
 }
 
 func eventSessionID(ev agentruntime.Event) string {
-	if ev.Data == nil {
-		return ""
+	if sessionID := strings.TrimSpace(ev.SessionID); sessionID != "" {
+		return sessionID
 	}
-	if sessionID, ok := ev.Data["session_id"].(string); ok {
-		return strings.TrimSpace(sessionID)
+	if ev.Data != nil {
+		if sessionID, ok := ev.Data["session_id"].(string); ok {
+			return strings.TrimSpace(sessionID)
+		}
 	}
 	return ""
 }

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -63,6 +64,35 @@ func TestSubmitSimpleChat(t *testing.T) {
 
 	if !hasEvent(store.Events(), "task_created", "task-chat") {
 		t.Fatalf("task_created event missing: %#v", store.Events())
+	}
+}
+
+func TestEventEnvelopeHasTopLevelSessionID(t *testing.T) {
+	e, store := newTestEngine()
+	ctx := context.Background()
+
+	e.Publish(ctx, Event{
+		Type: "model_token",
+		Data: map[string]any{"session_id": "session-envelope", "text": "hello"},
+	})
+
+	events := store.Events()
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want 1: %#v", len(events), events)
+	}
+	if events[0].SessionID != "session-envelope" {
+		t.Fatalf("Event.SessionID = %q, want session-envelope", events[0].SessionID)
+	}
+	encoded, err := json.Marshal(events[0])
+	if err != nil {
+		t.Fatalf("Marshal(Event) error = %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("Unmarshal(Event JSON) error = %v", err)
+	}
+	if payload["session_id"] != "session-envelope" {
+		t.Fatalf("top-level session_id = %#v, want session-envelope; payload=%s", payload["session_id"], encoded)
 	}
 }
 
@@ -196,5 +226,149 @@ func TestSubscribeReplaysFromSeq(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for live event after replay")
+	}
+}
+
+func TestSubscribeReplaysRecentHistoryFromZeroThenLive(t *testing.T) {
+	e, _ := newTestEngine()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for i := 0; i < eventReplayLimit+2; i++ {
+		e.Publish(ctx, Event{Type: "model_token", SessionID: "session-recent", Data: map[string]any{"i": i + 1}})
+	}
+
+	ch := e.Subscribe(ctx, EventFilter{SessionID: "session-recent"})
+	for i := 0; i < eventReplayLimit; i++ {
+		select {
+		case ev := <-ch:
+			if i == 0 && ev.Seq != 3 {
+				t.Fatalf("first replay seq = %d, want 3", ev.Seq)
+			}
+			if i == eventReplayLimit-1 && ev.Seq != int64(eventReplayLimit+2) {
+				t.Fatalf("last replay seq = %d, want %d", ev.Seq, eventReplayLimit+2)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for replay event %d/%d", i+1, eventReplayLimit)
+		}
+	}
+
+	e.Publish(ctx, Event{Type: "model_token", SessionID: "session-recent", Data: map[string]any{"i": "live"}})
+	select {
+	case ev := <-ch:
+		if ev.Seq != int64(eventReplayLimit+3) || ev.Data["i"] != "live" {
+			t.Fatalf("live event = %#v, want seq=%d i=live", ev, eventReplayLimit+3)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for live event after recent replay")
+	}
+}
+
+func TestMemStoreListEventsRecentWindowAndFromSeq(t *testing.T) {
+	e, store := newTestEngine()
+	ctx := context.Background()
+	for i := 1; i <= 4; i++ {
+		e.Publish(ctx, Event{Type: "model_token", SessionID: "session-list", Data: map[string]any{"i": i}})
+	}
+
+	recent, err := store.ListEvents(ctx, EventFilter{SessionID: "session-list"}, 2)
+	if err != nil {
+		t.Fatalf("ListEvents(recent) error = %v", err)
+	}
+	if len(recent) != 2 || recent[0].Seq != 3 || recent[1].Seq != 4 {
+		t.Fatalf("recent events = %#v, want seq 3,4", recent)
+	}
+
+	afterSeq, err := store.ListEvents(ctx, EventFilter{SessionID: "session-list", FromSeq: 2}, 2)
+	if err != nil {
+		t.Fatalf("ListEvents(fromSeq) error = %v", err)
+	}
+	if len(afterSeq) != 2 || afterSeq[0].Seq != 3 || afterSeq[1].Seq != 4 {
+		t.Fatalf("fromSeq events = %#v, want seq 3,4", afterSeq)
+	}
+}
+
+func TestMemStoreLoadListAndStateValidation(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	task := Task{ID: "task-load", SessionID: "session-load", Origin: "user", Goal: "load"}
+	if err := store.SaveTask(ctx, task); err != nil {
+		t.Fatalf("SaveTask() error = %v", err)
+	}
+	if err := store.SaveTurn(ctx, Turn{ID: "turn-load", RunID: "run-load", Index: 1, State: string(TurnFinished)}); err != nil {
+		t.Fatalf("SaveTurn() error = %v", err)
+	}
+	run1 := Run{ID: "run-new", TaskID: task.ID, State: string(RunRunning), CreatedAt: time.Now().UTC().Add(time.Second)}
+	run0 := Run{ID: "run-old", TaskID: task.ID, State: string(RunPending), CreatedAt: time.Now().UTC()}
+	if err := store.SaveRun(ctx, run1); err != nil {
+		t.Fatalf("SaveRun(run1) error = %v", err)
+	}
+	if err := store.SaveRun(ctx, run0); err != nil {
+		t.Fatalf("SaveRun(run0) error = %v", err)
+	}
+
+	loaded, err := store.LoadTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("LoadTask() error = %v", err)
+	}
+	if loaded.SessionID != task.SessionID {
+		t.Fatalf("loaded SessionID = %q, want %q", loaded.SessionID, task.SessionID)
+	}
+	if _, err := store.LoadTask(ctx, "missing"); err == nil {
+		t.Fatal("LoadTask(missing) error = nil, want error")
+	}
+	runs, err := store.ListRuns(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("ListRuns() error = %v", err)
+	}
+	if len(runs) != 2 || runs[0].ID != "run-old" || runs[1].ID != "run-new" {
+		t.Fatalf("runs = %#v, want old,new order", runs)
+	}
+
+	if !IsTaskTerminal(TaskDone) || IsTaskTerminal(TaskRunning) {
+		t.Fatal("IsTaskTerminal returned unexpected values")
+	}
+	if err := ValidateTaskTransition(TaskQueued, TaskRunning); err != nil {
+		t.Fatalf("ValidateTaskTransition(queued,running) error = %v", err)
+	}
+	if err := ValidateTaskTransition(TaskDone, TaskRunning); err == nil {
+		t.Fatal("ValidateTaskTransition(done,running) error = nil, want error")
+	}
+	if err := ValidateRunTransition(RunRunning, RunDone); err != nil {
+		t.Fatalf("ValidateRunTransition(running,done) error = %v", err)
+	}
+	if err := ValidateRunTransition(RunDone, RunRunning); err == nil {
+		t.Fatal("ValidateRunTransition(done,running) error = nil, want error")
+	}
+}
+
+func TestFinishRunPublishesTerminalEvents(t *testing.T) {
+	e, store := newTestEngine()
+	ctx := context.Background()
+	if _, err := e.Submit(ctx, Task{ID: "task-finish", SessionID: "session-finish", Origin: "user", Goal: "finish"}); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if _, err := e.SubmitRun(ctx, Run{ID: "run-finish", TaskID: "task-finish", State: string(RunRunning)}); err != nil {
+		t.Fatalf("SubmitRun() error = %v", err)
+	}
+	if err := e.FinishRun(ctx, "run-finish", true); err != nil {
+		t.Fatalf("FinishRun(success) error = %v", err)
+	}
+	run, err := store.LoadRun(ctx, "run-finish")
+	if err != nil {
+		t.Fatalf("LoadRun() error = %v", err)
+	}
+	if run.State != string(RunDone) {
+		t.Fatalf("run state = %q, want %q", run.State, RunDone)
+	}
+	events := store.Events()
+	if !hasEvent(events, "task_finished", "task-finish") {
+		t.Fatalf("task_finished missing: %#v", events)
+	}
+	if events[len(events)-1].SessionID != "session-finish" {
+		t.Fatalf("terminal SessionID = %q, want session-finish", events[len(events)-1].SessionID)
+	}
+	if err := e.FinishRun(ctx, "missing", false); err == nil {
+		t.Fatal("FinishRun(missing) error = nil, want error")
 	}
 }
