@@ -4426,6 +4426,55 @@ func TestHTTPApprovalWriteAPIs(t *testing.T) {
 	}
 }
 
+func TestHTTPApprovalCancelAndEditArgsAPIs(t *testing.T) {
+	root := t.TempDir()
+	runsDir := filepath.Join(root, "runs")
+	writeDaemonApprovalRun(t, runsDir, "run_approval_edit", []contracts.HITLRequest{
+		daemonTestApproval("approval_cancel", "job_001", "step_cancel"),
+		daemonTestApproval("approval_edit", "job_001", "step_edit"),
+	})
+
+	handler := newRouter(routerServices{
+		version:   services.NewVersionService(services.BuildInfo{Name: "CyberAgent", Version: "vapproval-edit-api"}),
+		plugins:   services.NewPluginService(filepath.Join(root, "plugins")),
+		runs:      services.NewRunService(runsDir),
+		approvals: services.NewApprovalService(runsDir),
+	}, "test-token")
+	api := httptest.NewServer(handler)
+	defer api.Close()
+
+	cancel := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/run_approval_edit/approvals/approval_cancel/cancel", "test-token", `{"operator":"local-user","comment":"cancel from http"}`)
+	if cancel.StatusCode != http.StatusOK || !cancel.Body.OK || cancel.Body.Data["status"] != string(contracts.HITLCancelled) {
+		t.Fatalf("unexpected cancel response: status=%d body=%#v", cancel.StatusCode, cancel.Body)
+	}
+	cancelResolution := asMap(t, cancel.Body.Data["resolution"])
+	if cancelResolution["decision"] != "cancel" || cancelResolution["resolved_by"] != "local-user" || cancelResolution["comment"] != "cancel from http" {
+		t.Fatalf("unexpected cancel resolution: %#v", cancelResolution)
+	}
+
+	edit := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/run_approval_edit/approvals/approval_edit/edit-args", "test-token", `{"operator":"local-user","edit_args":{"target":"https://example.com/edited","method":"POST"}}`)
+	if edit.StatusCode != http.StatusOK || !edit.Body.OK || edit.Body.Data["status"] != string(contracts.HITLModified) {
+		t.Fatalf("unexpected edit-args response: status=%d body=%#v", edit.StatusCode, edit.Body)
+	}
+	editResolution := asMap(t, edit.Body.Data["resolution"])
+	if editResolution["decision"] != "edit_args" || editResolution["resolved_by"] != "local-user" {
+		t.Fatalf("unexpected edit-args resolution: %#v", editResolution)
+	}
+	editArgs := asMap(t, editResolution["edit_args"])
+	if editArgs["target"] != "https://example.com/edited" || editArgs["method"] != "POST" {
+		t.Fatalf("unexpected edit_args: %#v", editArgs)
+	}
+
+	list := doDaemonRequest(t, api.URL+"/api/v1/runs/run_approval_edit/approvals", "test-token")
+	if list.StatusCode != http.StatusOK || !list.Body.OK {
+		t.Fatalf("unexpected approval list response: status=%d body=%#v", list.StatusCode, list.Body)
+	}
+	approvals := asList(t, list.Body.Data["approvals"])
+	if len(approvals) != 2 || asMap(t, approvals[0])["status"] != string(contracts.HITLCancelled) || asMap(t, approvals[1])["status"] != string(contracts.HITLModified) {
+		t.Fatalf("unexpected persisted approvals: %#v", approvals)
+	}
+}
+
 func TestHTTPResumeApprovedAPI(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

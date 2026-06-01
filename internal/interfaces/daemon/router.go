@@ -926,8 +926,9 @@ func handleRunRead(w http.ResponseWriter, r *http.Request, svc routerServices) {
 }
 
 type approvalDecisionHTTPBody struct {
-	Operator string `json:"operator"`
-	Comment  string `json:"comment"`
+	Operator string         `json:"operator"`
+	Comment  string         `json:"comment"`
+	EditArgs map[string]any `json:"edit_args"`
 }
 
 type resumeApprovedHTTPBody struct {
@@ -946,6 +947,7 @@ func handleRunWrite(w http.ResponseWriter, r *http.Request, svc routerServices) 
 			ApprovalIDOrStepID: approvalID,
 			Operator:           body.Operator,
 			Comment:            body.Comment,
+			EditArgs:           body.EditArgs,
 		}
 		var (
 			resolved any
@@ -956,6 +958,10 @@ func handleRunWrite(w http.ResponseWriter, r *http.Request, svc routerServices) 
 			resolved, err = svc.approvals.Approve(r.Context(), req)
 		case "deny":
 			resolved, err = svc.approvals.Deny(r.Context(), req)
+		case "cancel":
+			resolved, err = svc.approvals.Cancel(r.Context(), req)
+		case "edit-args", "edit_args":
+			resolved, err = svc.approvals.EditArgs(r.Context(), req)
 		default:
 			writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
 			return

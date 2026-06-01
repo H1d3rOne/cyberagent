@@ -17,14 +17,17 @@ import (
 type Decision string
 
 const (
-	DecisionApprove Decision = "approve"
-	DecisionDeny    Decision = "deny"
+	DecisionApprove  Decision = "approve"
+	DecisionDeny     Decision = "deny"
+	DecisionCancel   Decision = "cancel"
+	DecisionEditArgs Decision = "edit_args"
 )
 
 // ResolutionMetadata captures optional operator context for an approval decision.
 type ResolutionMetadata struct {
 	ResolvedBy string
 	Comment    string
+	EditArgs   map[string]any
 }
 
 // Store manages persisted approval requests for one run workspace.
@@ -57,19 +60,21 @@ func (s Store) List() ([]contracts.HITLRequest, error) {
 	return requests, nil
 }
 
-// Resolve marks one pending approval as approved or rejected.
+// Resolve marks one pending approval as approved, rejected, cancelled, or
+// modified.
 // idOrStepID may be either the HITL request ID or the Step ID.
 func (s Store) Resolve(idOrStepID string, decision Decision) (contracts.HITLRequest, error) {
 	return s.ResolveWithMetadata(idOrStepID, decision, ResolutionMetadata{ResolvedBy: "cli"})
 }
 
-// ResolveWithMetadata marks one pending approval as approved or rejected and records operator context.
+// ResolveWithMetadata marks one pending approval as approved, rejected,
+// cancelled, or modified and records operator context.
 // idOrStepID may be either the HITL request ID or the Step ID.
 func (s Store) ResolveWithMetadata(idOrStepID string, decision Decision, metadata ResolutionMetadata) (contracts.HITLRequest, error) {
 	if strings.TrimSpace(idOrStepID) == "" {
 		return contracts.HITLRequest{}, fmt.Errorf("approval id or step id is required")
 	}
-	if decision != DecisionApprove && decision != DecisionDeny {
+	if !isSupportedDecision(decision) {
 		return contracts.HITLRequest{}, fmt.Errorf("unsupported approval decision %q", decision)
 	}
 
@@ -92,10 +97,15 @@ func (s Store) ResolveWithMetadata(idOrStepID string, decision Decision, metadat
 	}
 
 	resolved := contracts.Now()
-	if decision == DecisionApprove {
+	switch decision {
+	case DecisionApprove:
 		requests[idx].Status = contracts.HITLApproved
-	} else {
+	case DecisionDeny:
 		requests[idx].Status = contracts.HITLRejected
+	case DecisionCancel:
+		requests[idx].Status = contracts.HITLCancelled
+	case DecisionEditArgs:
+		requests[idx].Status = contracts.HITLModified
 	}
 	resolvedBy := strings.TrimSpace(metadata.ResolvedBy)
 	if resolvedBy == "" {
@@ -109,6 +119,9 @@ func (s Store) ResolveWithMetadata(idOrStepID string, decision Decision, metadat
 	if strings.TrimSpace(metadata.Comment) != "" {
 		requests[idx].Resolution["comment"] = metadata.Comment
 	}
+	if len(metadata.EditArgs) > 0 {
+		requests[idx].Resolution["edit_args"] = cloneMapStringAny(metadata.EditArgs)
+	}
 
 	if err := s.writeAll(requests); err != nil {
 		return contracts.HITLRequest{}, err
@@ -120,6 +133,15 @@ func (s Store) ResolveWithMetadata(idOrStepID string, decision Decision, metadat
 		return contracts.HITLRequest{}, err
 	}
 	return requests[idx], nil
+}
+
+func isSupportedDecision(decision Decision) bool {
+	switch decision {
+	case DecisionApprove, DecisionDeny, DecisionCancel, DecisionEditArgs:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s Store) approvalsPath() string {
@@ -170,6 +192,9 @@ func (s Store) recordResolution(request contracts.HITLRequest, decision Decision
 		"status":              string(request.Status),
 		"decision":            string(decision),
 	}
+	if editArgs, ok := request.Resolution["edit_args"]; ok {
+		event.Data["edit_args"] = editArgs
+	}
 	if err := eventStore.Append(event); err != nil {
 		return fmt.Errorf("append approval event: %w", err)
 	}
@@ -197,8 +222,22 @@ func (s Store) recordResolution(request contracts.HITLRequest, decision Decision
 			"status":              string(request.Status),
 		},
 	}
+	if editArgs, ok := request.Resolution["edit_args"]; ok {
+		call.Metadata["edit_args"] = editArgs
+	}
 	if err := command.NewRecorder(s.commandsPath()).Append(call); err != nil {
 		return fmt.Errorf("append approval command record: %w", err)
 	}
 	return nil
+}
+
+func cloneMapStringAny(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }

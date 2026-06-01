@@ -92,6 +92,70 @@ func TestApprovalServiceListApproveDenyAndErrors(t *testing.T) {
 	}
 }
 
+func TestApprovalServiceCancelAndEditArgs(t *testing.T) {
+	runsDir := t.TempDir()
+	layout := createApprovalRun(t, runsDir, "run_approval_decisions", []contracts.HITLRequest{
+		testApproval("approval_cancel", "job_001", "step_cancel"),
+		testApproval("approval_edit", "job_001", "step_edit"),
+	})
+
+	service := NewApprovalService(runsDir)
+	cancelled, err := service.Cancel(context.Background(), ApprovalDecisionRequest{
+		RunIDOrPath:        "run_approval_decisions",
+		ApprovalIDOrStepID: "step_cancel",
+		Operator:           "service-test",
+		Comment:            "operator cancelled",
+	})
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if cancelled.Status != contracts.HITLCancelled || cancelled.Resolution["decision"] != "cancel" || cancelled.Resolution["comment"] != "operator cancelled" {
+		t.Fatalf("unexpected cancelled request: %#v", cancelled)
+	}
+
+	editArgs := map[string]any{"target": "https://example.com/edited", "method": "POST"}
+	modified, err := service.EditArgs(context.Background(), ApprovalDecisionRequest{
+		RunIDOrPath:        layout.Path,
+		ApprovalIDOrStepID: "approval_edit",
+		Operator:           "service-test",
+		EditArgs:           editArgs,
+	})
+	if err != nil {
+		t.Fatalf("EditArgs() error = %v", err)
+	}
+	if modified.Status != contracts.HITLModified || modified.Resolution["decision"] != "edit_args" {
+		t.Fatalf("unexpected modified request: %#v", modified)
+	}
+	modifiedArgs, ok := modified.Resolution["edit_args"].(map[string]any)
+	if !ok || modifiedArgs["target"] != editArgs["target"] || modifiedArgs["method"] != editArgs["method"] {
+		t.Fatalf("unexpected modified edit_args: %#v", modified.Resolution["edit_args"])
+	}
+
+	persistedCancel := loadHITL(t, layout.BoltPath, "approval_cancel")
+	if persistedCancel.Status != contracts.HITLCancelled {
+		t.Fatalf("state cancel status = %s, want cancelled", persistedCancel.Status)
+	}
+	persistedEdit := loadHITL(t, layout.BoltPath, "approval_edit")
+	if persistedEdit.Status != contracts.HITLModified || persistedEdit.Resolution["decision"] != "edit_args" {
+		t.Fatalf("unexpected persisted edit request: %#v", persistedEdit)
+	}
+
+	allEvents, err := events.NewStore(layout.EventsPath).ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll events: %v", err)
+	}
+	if len(allEvents) != 2 || allEvents[0].Data["decision"] != "cancel" || allEvents[1].Data["decision"] != "edit_args" {
+		t.Fatalf("unexpected approval events: %#v", allEvents)
+	}
+	commands, err := command.NewRecorder(layout.CommandsPath).ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll commands: %v", err)
+	}
+	if len(commands) != 2 || commands[0].Metadata["decision"] != "cancel" || commands[1].Metadata["decision"] != "edit_args" {
+		t.Fatalf("unexpected approval command calls: %#v", commands)
+	}
+}
+
 func TestApprovalServiceResumeApprovedWrapperNoApprovedSteps(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

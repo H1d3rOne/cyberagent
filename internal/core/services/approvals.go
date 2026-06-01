@@ -22,10 +22,11 @@ func NewApprovalService(runsDir string) ApprovalService {
 
 // ApprovalDecisionRequest describes one approval resolution request.
 type ApprovalDecisionRequest struct {
-	RunIDOrPath        string `json:"run_id,omitempty"`
-	ApprovalIDOrStepID string `json:"approval_id,omitempty"`
-	Operator           string `json:"operator,omitempty"`
-	Comment            string `json:"comment,omitempty"`
+	RunIDOrPath        string         `json:"run_id,omitempty"`
+	ApprovalIDOrStepID string         `json:"approval_id,omitempty"`
+	Operator           string         `json:"operator,omitempty"`
+	Comment            string         `json:"comment,omitempty"`
+	EditArgs           map[string]any `json:"edit_args,omitempty"`
 }
 
 // ResumeApprovedRequest describes a request to resume approved steps for a run.
@@ -66,6 +67,16 @@ func (s ApprovalService) Approve(ctx context.Context, req ApprovalDecisionReques
 // Deny rejects one pending approval request.
 func (s ApprovalService) Deny(ctx context.Context, req ApprovalDecisionRequest) (contracts.HITLRequest, error) {
 	return s.resolve(ctx, req, approvalruntime.DecisionDeny)
+}
+
+// Cancel cancels one pending approval request.
+func (s ApprovalService) Cancel(ctx context.Context, req ApprovalDecisionRequest) (contracts.HITLRequest, error) {
+	return s.resolve(ctx, req, approvalruntime.DecisionCancel)
+}
+
+// EditArgs resolves one pending approval request with operator-edited args.
+func (s ApprovalService) EditArgs(ctx context.Context, req ApprovalDecisionRequest) (contracts.HITLRequest, error) {
+	return s.resolve(ctx, req, approvalruntime.DecisionEditArgs)
 }
 
 // ResumeApproved resumes approved steps in an existing run workspace.
@@ -111,6 +122,7 @@ func (s ApprovalService) resolve(ctx context.Context, req ApprovalDecisionReques
 	resolved, err := approvalruntime.NewStore(layout.Path).ResolveWithMetadata(req.ApprovalIDOrStepID, decision, approvalruntime.ResolutionMetadata{
 		ResolvedBy: resolvedBy(req.Operator),
 		Comment:    req.Comment,
+		EditArgs:   req.EditArgs,
 	})
 	if err != nil {
 		return contracts.HITLRequest{}, mapApprovalResolveError(err)

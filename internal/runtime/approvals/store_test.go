@@ -107,6 +107,115 @@ func TestStoreResolveRejectsNonPending(t *testing.T) {
 	}
 }
 
+func TestStoreResolveCancelAndEditArgsRoundTrip(t *testing.T) {
+	runDir := t.TempDir()
+	now := contracts.Now()
+	requests := []contracts.HITLRequest{
+		{
+			ID:               "approval_cancel",
+			JobID:            "job_001",
+			StepID:           "step_cancel",
+			PolicyDecisionID: "policy_cancel",
+			Status:           contracts.HITLPending,
+			Reason:           "cancel me",
+			RequestedAction:  "execute_step",
+			Options:          []string{"approve", "deny", "cancel"},
+			CreatedAt:        now,
+		},
+		{
+			ID:               "approval_edit",
+			JobID:            "job_001",
+			StepID:           "step_edit",
+			PolicyDecisionID: "policy_edit",
+			Status:           contracts.HITLPending,
+			Reason:           "edit me",
+			RequestedAction:  "execute_step",
+			Options:          []string{"approve", "deny", "edit_args"},
+			CreatedAt:        now,
+		},
+	}
+	writeApprovalsForTest(t, runDir, requests)
+
+	stateStore, err := state.Open(filepath.Join(runDir, "state", "bolt.db"))
+	if err != nil {
+		t.Fatalf("open state store: %v", err)
+	}
+	for _, request := range requests {
+		if err := stateStore.SaveHITLRequest(request); err != nil {
+			_ = stateStore.Close()
+			t.Fatalf("SaveHITLRequest() error = %v", err)
+		}
+	}
+	stateStore.Close()
+
+	store := NewStore(runDir)
+	cancelled, err := store.ResolveWithMetadata("step_cancel", DecisionCancel, ResolutionMetadata{ResolvedBy: "tester", Comment: "stop it"})
+	if err != nil {
+		t.Fatalf("ResolveWithMetadata(cancel) error = %v", err)
+	}
+	if cancelled.Status != contracts.HITLCancelled || cancelled.Resolution["decision"] != string(DecisionCancel) || cancelled.Resolution["comment"] != "stop it" {
+		t.Fatalf("unexpected cancelled approval: %#v", cancelled)
+	}
+
+	editArgs := map[string]any{"target": "https://example.com/edited", "method": "POST"}
+	modified, err := store.ResolveWithMetadata("approval_edit", DecisionEditArgs, ResolutionMetadata{ResolvedBy: "tester", EditArgs: editArgs})
+	if err != nil {
+		t.Fatalf("ResolveWithMetadata(edit_args) error = %v", err)
+	}
+	if modified.Status != contracts.HITLModified || modified.Resolution["decision"] != string(DecisionEditArgs) {
+		t.Fatalf("unexpected modified approval: %#v", modified)
+	}
+	returnedEditArgs, ok := modified.Resolution["edit_args"].(map[string]any)
+	if !ok || returnedEditArgs["target"] != editArgs["target"] || returnedEditArgs["method"] != editArgs["method"] {
+		t.Fatalf("unexpected edit_args in modified approval: %#v", modified.Resolution["edit_args"])
+	}
+
+	var onDisk []contracts.HITLRequest
+	readJSONForTest(t, filepath.Join(runDir, "approvals.json"), &onDisk)
+	if len(onDisk) != 2 || onDisk[0].Status != contracts.HITLCancelled || onDisk[1].Status != contracts.HITLModified {
+		t.Fatalf("unexpected approvals.json statuses: %#v", onDisk)
+	}
+	diskEditArgs := onDisk[1].Resolution["edit_args"].(map[string]any)
+	if diskEditArgs["target"] != editArgs["target"] || diskEditArgs["method"] != editArgs["method"] {
+		t.Fatalf("unexpected approvals.json edit_args: %#v", diskEditArgs)
+	}
+
+	stateStore, err = state.Open(filepath.Join(runDir, "state", "bolt.db"))
+	if err != nil {
+		t.Fatalf("reopen state store: %v", err)
+	}
+	persisted, err := stateStore.LoadHITLRequest("approval_edit")
+	stateStore.Close()
+	if err != nil {
+		t.Fatalf("LoadHITLRequest(approval_edit) error = %v", err)
+	}
+	if persisted.Status != contracts.HITLModified || persisted.Resolution["decision"] != string(DecisionEditArgs) {
+		t.Fatalf("unexpected persisted modified approval: %#v", persisted)
+	}
+
+	allEvents, err := events.NewStore(filepath.Join(runDir, "events.jsonl")).ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll events: %v", err)
+	}
+	if len(allEvents) != 2 || allEvents[0].Data["decision"] != string(DecisionCancel) || allEvents[1].Data["decision"] != string(DecisionEditArgs) {
+		t.Fatalf("unexpected approval events: %#v", allEvents)
+	}
+	if asMap := allEvents[1].Data["edit_args"].(map[string]any); asMap["target"] != editArgs["target"] {
+		t.Fatalf("unexpected event edit_args: %#v", asMap)
+	}
+
+	calls, err := command.NewRecorder(filepath.Join(runDir, "commands.log")).ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll commands: %v", err)
+	}
+	if len(calls) != 2 || calls[0].Metadata["decision"] != string(DecisionCancel) || calls[1].Metadata["decision"] != string(DecisionEditArgs) {
+		t.Fatalf("unexpected approval command calls: %#v", calls)
+	}
+	if asMap := calls[1].Metadata["edit_args"].(map[string]any); asMap["method"] != editArgs["method"] {
+		t.Fatalf("unexpected command edit_args: %#v", asMap)
+	}
+}
+
 func writeApprovalsForTest(t *testing.T, runDir string, requests []contracts.HITLRequest) {
 	t.Helper()
 	encoded, err := json.MarshalIndent(requests, "", "  ")
