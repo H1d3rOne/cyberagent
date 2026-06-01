@@ -33,6 +33,7 @@ import (
 const agentAPIVersion = "v0.1.8"
 
 const agentSessionMaxMessages = 80
+const agentSessionMemoryCompactionTurns = 40
 
 type agentManager struct {
 	mu        sync.Mutex
@@ -51,51 +52,6 @@ type agentManager struct {
 // the manager exposes Subscribe(ctx, sessionID) so router-side SSE handlers
 // can stream model_token / tool_* / approval_required events instead of
 // polling GetSession.
-func (m *agentManager) AttachEngine(e *runtime.Engine) {
-	m.mu.Lock()
-	m.engine = e
-	m.mu.Unlock()
-}
-
-// Subscribe fans all engine events out as a per-session channel. Caller
-// cancels the ctx to unsubscribe. Filters on sessionID's owned Task/Run —
-// when the manager has no engine, the channel is closed immediately.
-//
-// Note: today's Engine exposes a single broadcast channel, so this is a
-// best-effort, single-subscriber implementation. Phase 3 step 2 will
-// promote the engine to a fan-out pub/sub once multiple SSE consumers
-// (cockpit + webhooks + audit taps) need to co-exist.
-func (m *agentManager) Subscribe(ctx context.Context, sessionID string) <-chan runtime.Event {
-	out := make(chan runtime.Event, 64)
-	m.mu.Lock()
-	eng := m.engine
-	m.mu.Unlock()
-	if eng == nil {
-		close(out)
-		return out
-	}
-	src := eng.Stream()
-	go func() {
-		defer close(out)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev, ok := <-src:
-				if !ok {
-					return
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case out <- ev:
-				}
-			}
-		}
-	}()
-	return out
-}
-
 type agentSession struct {
 	SessionID            string                     `json:"session_id"`
 	CreatedAt            time.Time                  `json:"created_at"`
@@ -396,6 +352,7 @@ type sendAgentMessageRequest struct {
 	Operator             string                 `json:"operator"`
 	Language             string                 `json:"language"`
 	OperationLevel       string                 `json:"operation_level,omitempty"`
+	Origin               string                 `json:"-"`
 	Provider             string                 `json:"provider,omitempty"`
 	Model                string                 `json:"model,omitempty"`
 	APIKey               string                 `json:"api_key,omitempty"`
@@ -1022,13 +979,14 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 		message := agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, "当前有挂起的工具授权，请先点击允许或拒绝；在此之前不会继续执行任务。", "A tool authorization is pending. Approve or deny it first; the task will not continue before that."), nil, nil), "step")
 		session.Messages = append(session.Messages, message)
 		session.UpdatedAt = now
-		compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+		compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
 		if err := m.persistSessionLocked(session); err != nil {
 			m.mu.Unlock()
 			return agentControlResponse{}, err
 		}
 		sessionState := cloneAgentSession(session)
 		m.mu.Unlock()
+		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
 		return agentControlResponse{Session: sessionState, Message: message}, nil
 	}
 
@@ -1210,13 +1168,15 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 	}
 	session.Messages = append(session.Messages, message)
 	session.UpdatedAt = now
-	compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+	compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
 	if err := m.persistSessionLocked(session); err != nil {
 		m.mu.Unlock()
 		return agentControlResponse{}, err
 	}
 	sessionState := cloneAgentSession(session)
 	m.mu.Unlock()
+	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
+	m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, sessionState, message)
 
 	if (action == "stop" || action == "cancel") && cancelJobID != "" && svc.jobs != nil {
 		if job, cancelErr := svc.jobs.CancelJob(ctx, cancelJobID); cancelErr == nil {
@@ -1304,13 +1264,16 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		message = agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, fmt.Sprintf("已拒绝授权：`%s` 未执行。", pending.ActionName), fmt.Sprintf("Authorization denied: `%s` was not executed.", pending.ActionName)), nil, nil), "step")
 		session.Messages = append(session.Messages, message)
 		session.UpdatedAt = now
-		compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+		compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
 		if err := m.persistSessionLocked(session); err != nil {
 			m.mu.Unlock()
 			return agentControlResponse{}, err
 		}
 		sessionState := cloneAgentSession(session)
 		m.mu.Unlock()
+		m.emitRuntimeApprovalResolved(ctx, sessionID, sessionState, *pending, "denied")
+		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
+		m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, sessionState, message)
 		return agentControlResponse{Session: sessionState, Message: message}, nil
 	case "approve":
 		pending.Status = "approved"
@@ -1330,12 +1293,16 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		message = agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, fmt.Sprintf("已授权，继续执行挂起动作：`%s`。", pending.ActionName), fmt.Sprintf("Authorized. Continuing pending action: `%s`.", pending.ActionName)), nil, nil), "step")
 		session.Messages = append(session.Messages, message)
 		session.UpdatedAt = now
-		compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+		compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
 		if err := m.persistSessionLocked(session); err != nil {
 			m.mu.Unlock()
 			return agentControlResponse{}, err
 		}
+		approvedSessionState := cloneAgentSession(session)
 		m.mu.Unlock()
+		m.emitRuntimeApprovalResolved(ctx, sessionID, approvedSessionState, *pending, "approved")
+		m.emitRuntimeMemoryCompacted(ctx, sessionID, approvedSessionState, agentRuntimeTurnRef{}, compaction)
+		m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, approvedSessionState, message)
 	default:
 		m.mu.Unlock()
 		return agentControlResponse{}, services.NewError(services.CodeBadRequest, "unsupported authorization decision", map[string]any{"action": req.Action}, nil)
@@ -1387,7 +1354,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		if getErr == nil {
 			history := cloneAgentMessages(sessionState.Messages)
 			memorySummary := cloneAgentMemorySummary(sessionState.MemorySummary)
-			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, llmReq, history, memorySummary, actionMessages)
+			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, sessionID, agentRuntimeTurnRef{}, language, llmReq, history, memorySummary, actionMessages)
 			if synthesisErr != nil {
 				warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 				warningTool = agentToolCallWithPhase(warningTool, "step_replan")
@@ -1408,7 +1375,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					nextState, _ := m.GetSession(ctx, sessionID)
 					loopHistory := cloneAgentMessages(nextState.Messages)
-					followupMessages, followupToolCalls := m.runAgentReplanActionContinuation(ctx, sessionID, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(llmReq)-1)
+					followupMessages, followupToolCalls := m.runAgentReplanActionContinuation(ctx, sessionID, agentRuntimeTurnRef{}, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(llmReq)-1)
 					responseMessages = append(responseMessages, followupMessages...)
 					responseToolCalls = append(responseToolCalls, followupToolCalls...)
 				}
@@ -1424,11 +1391,11 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 	return agentControlResponse{Session: sessionState, Message: message}, nil
 }
 
-func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (sendAgentMessageResponse, error) {
+func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (resp sendAgentMessageResponse, err error) {
 	if err := contextError(ctx); err != nil {
 		return sendAgentMessageResponse{}, err
 	}
-	sessionID, err := normalizeAgentSessionID(sessionID)
+	sessionID, err = normalizeAgentSessionID(sessionID)
 	if err != nil {
 		return sendAgentMessageResponse{}, err
 	}
@@ -1439,10 +1406,15 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	operator := normalizeAgentOperator(req.Operator)
 	language := normalizeAgentLanguage(req.Language)
 	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
+	var turnRef agentRuntimeTurnRef
+	defer func() {
+		m.finishRuntimeTurn(ctx, sessionID, turnRef, resp, err)
+	}()
 
 	var history []agentMessage
 	var memorySummary *agentMemorySummary
 	userMessage := agentMessage{}
+	sessionSnapshot := agentSession{}
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
 	if !ok {
@@ -1464,11 +1436,14 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	} else {
 		m.touchAgentTaskForMessageLocked(session, prompt, language)
 	}
-	compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+	compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
 	history = cloneAgentMessages(session.Messages)
 	memorySummary = cloneAgentMemorySummary(session.MemorySummary)
 	_ = m.persistSessionLocked(session)
+	sessionSnapshot = cloneAgentSession(session)
 	m.mu.Unlock()
+	turnRef = m.beginRuntimeTurn(ctx, sessionID, prompt, firstNonEmpty(req.Origin, "user"), operationLevel, sessionSnapshot, userMessage)
+	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionSnapshot, turnRef, compaction)
 
 	if controlReq, ok := agentControlRequestFromPrompt(prompt, operator, language); ok {
 		controlReq.OperationLevel = operationLevel
@@ -1516,7 +1491,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				history = cloneAgentMessages(sessionState.Messages)
 				memorySummary = cloneAgentMemorySummary(sessionState.MemorySummary)
 			}
-			messages, toolCalls, err := m.runAgentLLMToolLoop(ctx, sessionID, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+			messages, toolCalls, err := m.runAgentLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
 			if err == nil {
 				responseMessages := append([]agentMessage{userMessage, controlResp.Message}, messages...)
 				sessionState, _ = m.GetSession(ctx, sessionID)
@@ -1567,7 +1542,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		responseMessages := append([]agentMessage{userMessage}, messages...)
 		if len(toolCalls) > 0 {
 			synthesisHistory := append(cloneAgentMessages(history), messages...)
-			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, synthesisHistory, memorySummary, messages)
+			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, synthesisHistory, memorySummary, messages)
 			if synthesisErr != nil {
 				warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 				warningTool = withAgentToolMetadata(warningTool, map[string]interface{}{"phase": "tool_synthesis"})
@@ -1588,7 +1563,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				toolCalls = append(toolCalls, synthesisToolCalls...)
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					loopHistory := append(synthesisHistory, synthesisMessages...)
-					followupMessages, followupToolCalls := m.runAgentReplanActionContinuation(ctx, sessionID, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(req)-1)
+					followupMessages, followupToolCalls := m.runAgentReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(req)-1)
 					responseMessages = append(responseMessages, followupMessages...)
 					toolCalls = append(toolCalls, followupToolCalls...)
 				}
@@ -1599,7 +1574,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	}
 
 	if agentLLMConfigured(req) {
-		messages, toolCalls, err := m.runAgentLLMToolLoop(ctx, sessionID, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+		messages, toolCalls, err := m.runAgentLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
 		if err == nil {
 			responseMessages := append([]agentMessage{userMessage}, messages...)
 			sessionState, _ := m.GetSession(ctx, sessionID)
@@ -1664,7 +1639,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	responseMessages := append([]agentMessage{userMessage}, messages...)
 	if agentLLMConfigured(req) && len(toolCalls) > 0 {
 		synthesisHistory := append(cloneAgentMessages(history), messages...)
-		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, synthesisHistory, memorySummary, messages)
+		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, synthesisHistory, memorySummary, messages)
 		if synthesisErr != nil {
 			warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 			warningTool = withAgentToolMetadata(warningTool, map[string]interface{}{"phase": "tool_synthesis"})
@@ -1727,7 +1702,7 @@ func (m *agentManager) handleAgentActiveRunContinue(ctx context.Context, session
 	return messages, toolCalls, true
 }
 
-func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, req sendAgentMessageRequest, history []agentMessage, memory *agentMemorySummary) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
+func (m *agentManager) handleAgentLLMChat(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language string, req sendAgentMessageRequest, history []agentMessage, memory *agentMemorySummary) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
 	providerName := normalizeAgentProvider(req.Provider)
 	provider := buildAgentLLMProvider(providerName, llm.ProviderConfig{
 		APIKey:  strings.TrimSpace(req.APIKey),
@@ -1739,15 +1714,19 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 	tool := runningAgentToolCall("LLM chat", provider.Name())
 	chatCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	response, err := provider.Chat(chatCtx, llm.ChatRequest{
+	chatReq := llm.ChatRequest{
 		Model:       strings.TrimSpace(req.Model),
 		System:      agentPlannerSystemPrompt(language, instructions, req.OperationLevel),
 		Messages:    agentLLMHistory(history, memory, language),
 		Tools:       toolRegistry().LLMDefinitions(),
 		MaxTokens:   1600,
 		Temperature: 0.2,
-	})
+	}
+	response, streamed, err := m.chatAgentLLM(chatCtx, sessionID, turnRef, "plan", provider, chatReq)
 	tool = finishAgentToolCall(tool, err)
+	if streamed {
+		tool = withAgentToolMetadata(tool, map[string]interface{}{"runtime_streamed": true, "runtime_turn_id": turnRef.TurnID})
+	}
 	if err != nil {
 		tool.Error = &daemonJobError{Code: services.CodeBadRequest, Message: err.Error()}
 		return nil, []agentToolCall{tool}, nil, err
@@ -1834,7 +1813,7 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 	return []agentMessage{message}, []agentToolCall{tool}, plan, nil
 }
 
-func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, language string, req sendAgentMessageRequest, history []agentMessage, memory *agentMemorySummary, toolMessages []agentMessage) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
+func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language string, req sendAgentMessageRequest, history []agentMessage, memory *agentMemorySummary, toolMessages []agentMessage) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
 	if len(toolMessages) == 0 {
 		return nil, nil, nil, nil
 	}
@@ -1852,14 +1831,18 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, language 
 
 	chatCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	response, err := provider.Chat(chatCtx, llm.ChatRequest{
+	chatReq := llm.ChatRequest{
 		Model:       strings.TrimSpace(req.Model),
 		System:      agentToolSynthesisSystemPrompt(language, instructions, req.OperationLevel),
 		Messages:    agentLLMToolSynthesisHistory(history, memory, toolMessages, language),
 		MaxTokens:   1200,
 		Temperature: 0.2,
-	})
+	}
+	response, streamed, err := m.chatAgentLLM(chatCtx, sessionID, turnRef, "step_replan", provider, chatReq)
 	tool = finishAgentToolCall(tool, err)
+	if streamed {
+		tool = withAgentToolMetadata(tool, map[string]interface{}{"runtime_streamed": true, "runtime_turn_id": turnRef.TurnID})
+	}
 	if err != nil {
 		tool.Error = &daemonJobError{Code: services.CodeBadRequest, Message: err.Error()}
 		return nil, []agentToolCall{tool}, nil, err
@@ -1920,8 +1903,99 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, language 
 	return []agentMessage{message}, []agentToolCall{tool}, plan, nil
 }
 
-func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	planMessages, planToolCalls, plan, err := m.handleAgentLLMChat(ctx, language, req, history, memorySummary)
+func (m *agentManager) chatAgentLLM(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, phase string, provider llm.Provider, req llm.ChatRequest) (*llm.ChatResponse, bool, error) {
+	eng := m.runtimeEngine()
+	if eng == nil || turnRef.TaskID == "" || turnRef.TurnID == "" {
+		resp, err := provider.Chat(ctx, req)
+		return resp, false, err
+	}
+	streamProvider, ok := provider.(llm.StreamProvider)
+	if !ok {
+		resp, err := provider.Chat(ctx, req)
+		return resp, false, err
+	}
+	stream, err := streamProvider.StreamChat(ctx, req)
+	if err != nil {
+		if strings.Contains(err.Error(), "does not support streaming") {
+			resp, chatErr := provider.Chat(ctx, req)
+			return resp, false, chatErr
+		}
+		return nil, false, err
+	}
+
+	var text strings.Builder
+	var blocks []llm.ContentBlock
+	stopReason := llm.StopReasonEndTurn
+	var usage llm.Usage
+	streamed := false
+	for ev := range stream {
+		switch ev.Type {
+		case "text_delta":
+			if ev.TextDelta == "" {
+				continue
+			}
+			streamed = true
+			text.WriteString(ev.TextDelta)
+			eng.Publish(ctx, runtime.Event{
+				Type:   "model_token",
+				TaskID: turnRef.TaskID,
+				RunID:  turnRef.RunID,
+				TurnID: turnRef.TurnID,
+				Data: map[string]any{
+					"session_id": sessionID,
+					"phase":      phase,
+					"provider":   provider.Name(),
+					"delta":      ev.TextDelta,
+					"text":       ev.TextDelta,
+				},
+				Timestamp: time.Now().UTC(),
+			})
+		case "thinking_delta", "reasoning_delta":
+			if ev.TextDelta == "" {
+				continue
+			}
+			streamed = true
+			eng.Publish(ctx, runtime.Event{
+				Type:   "model_reasoning",
+				TaskID: turnRef.TaskID,
+				RunID:  turnRef.RunID,
+				TurnID: turnRef.TurnID,
+				Data: map[string]any{
+					"session_id": sessionID,
+					"phase":      phase,
+					"provider":   provider.Name(),
+					"delta":      ev.TextDelta,
+					"text":       ev.TextDelta,
+				},
+				Timestamp: time.Now().UTC(),
+			})
+		case "tool_use":
+			if ev.Block != nil {
+				blocks = append(blocks, ev.Block)
+			}
+		case "done":
+			if ev.StopReason != "" {
+				stopReason = ev.StopReason
+			}
+			usage = ev.Usage
+		case "error":
+			if ev.Error != nil {
+				return nil, streamed, ev.Error
+			}
+		}
+	}
+	if strings.TrimSpace(text.String()) != "" {
+		blocks = append([]llm.ContentBlock{llm.TextBlock{Text: text.String()}}, blocks...)
+	}
+	return &llm.ChatResponse{
+		Content:    blocks,
+		StopReason: stopReason,
+		Usage:      usage,
+	}, streamed, nil
+}
+
+func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	planMessages, planToolCalls, plan, err := m.handleAgentLLMChat(ctx, sessionID, turnRef, language, req, history, memorySummary)
 	if err != nil {
 		return planMessages, planToolCalls, err
 	}
@@ -1966,7 +2040,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID, promp
 			break
 		}
 
-		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, loopHistory, memorySummary, actionMessages)
+		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, loopHistory, memorySummary, actionMessages)
 		if synthesisErr != nil {
 			warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 			warningTool = agentToolCallWithPhase(warningTool, "step_replan")
@@ -2001,7 +2075,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID, promp
 	return responseMessages, toolCalls, nil
 }
 
-func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]agentMessage, []agentToolCall) {
+func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]agentMessage, []agentToolCall) {
 	if maxLoops <= 0 {
 		return nil, nil
 	}
@@ -2031,7 +2105,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			break
 		}
 
-		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, language, req, loopHistory, memorySummary, actionMessages)
+		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, loopHistory, memorySummary, actionMessages)
 		if synthesisErr != nil {
 			warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 			warningTool = agentToolCallWithPhase(warningTool, "step_replan")
@@ -3691,10 +3765,11 @@ func (m *agentManager) appendMessages(sessionID string, messages ...agentMessage
 }
 
 func (m *agentManager) appendMessagesWithPlanner(sessionID string, plan *agentPlannerResponse, messages ...agentMessage) {
+	eng := m.runtimeEngine()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	session, ok := m.sessions[sessionID]
 	if !ok {
+		m.mu.Unlock()
 		return
 	}
 	session.Messages = append(session.Messages, messages...)
@@ -3705,8 +3780,12 @@ func (m *agentManager) appendMessagesWithPlanner(sessionID string, plan *agentPl
 	if len(messages) > 0 {
 		session.UpdatedAt = messages[len(messages)-1].Timestamp
 	}
-	compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+	compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
 	_ = m.persistSessionLocked(session)
+	sessionState := cloneAgentSession(session)
+	m.mu.Unlock()
+	m.emitRuntimeMemoryCompacted(context.Background(), sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
+	m.emitAgentRuntimeEvents(context.Background(), eng, sessionID, sessionState, messages...)
 }
 
 func (m *agentManager) message(language, role, content string, toolCalls []agentToolCall, links []agentLink) agentMessage {
@@ -5360,278 +5439,6 @@ func mergeAgentPlannerSuggestedPromptContent(content, suggest string) string {
 		return content
 	}
 	return string(encoded)
-}
-
-func agentLLMHistory(history []agentMessage, memory *agentMemorySummary, language string) []llm.Message {
-	start := len(history) - 20
-	if start < 0 {
-		start = 0
-	}
-
-	var memoryMessage *llm.Message
-	if memoryPrompt := agentMemorySummaryPrompt(language, memory); memoryPrompt != "" {
-		message := llm.Message{
-			Role:    llm.RoleUser,
-			Content: []llm.ContentBlock{llm.TextBlock{Text: memoryPrompt}},
-		}
-		memoryMessage = &message
-	}
-
-	messages := make([]llm.Message, 0, len(history[start:])+1)
-	seenUser := false
-	for _, message := range history[start:] {
-		content := strings.TrimSpace(message.Content)
-		if content == "" {
-			continue
-		}
-		if len(content) > 4000 {
-			content = content[:4000] + "\n…"
-		}
-
-		role := llm.RoleAssistant
-		switch message.Role {
-		case "user":
-			role = llm.RoleUser
-			seenUser = true
-		case "agent":
-			if !seenUser {
-				continue
-			}
-		case "tool":
-			if !seenUser {
-				continue
-			}
-			content = "Runtime/tool observation:\n" + content
-		default:
-			continue
-		}
-
-		if len(messages) > 0 && messages[len(messages)-1].Role == role {
-			previous := messages[len(messages)-1].Content
-			if len(previous) > 0 {
-				if text, ok := previous[len(previous)-1].(llm.TextBlock); ok {
-					text.Text = strings.TrimSpace(text.Text) + "\n\n" + content
-					messages[len(messages)-1].Content[len(previous)-1] = text
-					continue
-				}
-			}
-		}
-		messages = append(messages, llm.Message{Role: role, Content: []llm.ContentBlock{llm.TextBlock{Text: content}}})
-	}
-
-	if len(messages) > 17 {
-		messages = messages[len(messages)-16:]
-	}
-	for len(messages) > 0 && messages[0].Role != llm.RoleUser {
-		messages = messages[1:]
-	}
-	if memoryMessage != nil {
-		messages = append([]llm.Message{*memoryMessage}, messages...)
-	}
-	return messages
-}
-
-func agentLLMToolSynthesisHistory(history []agentMessage, memory *agentMemorySummary, toolMessages []agentMessage, language string) []llm.Message {
-	messages := agentLLMHistory(history, memory, language)
-	observation := agentToolObservationPrompt(language, toolMessages)
-	if strings.TrimSpace(observation) == "" {
-		return messages
-	}
-	messages = append(messages, llm.Message{
-		Role:    llm.RoleUser,
-		Content: []llm.ContentBlock{llm.TextBlock{Text: observation}},
-	})
-	if len(messages) > 18 {
-		messages = trimAgentLLMMessagesPreservingFirst(messages, 18, agentMemorySummaryPrompt(language, memory) != "")
-	}
-	for len(messages) > 0 && messages[0].Role != llm.RoleUser {
-		messages = messages[1:]
-	}
-	return messages
-}
-
-func trimAgentLLMMessagesPreservingFirst(messages []llm.Message, max int, preserveFirst bool) []llm.Message {
-	if max <= 0 || len(messages) <= max {
-		return messages
-	}
-	if !preserveFirst || len(messages) == 0 {
-		return messages[len(messages)-max:]
-	}
-	if max == 1 {
-		return []llm.Message{messages[0]}
-	}
-	tail := messages[1:]
-	tailMax := max - 1
-	if len(tail) > tailMax {
-		tail = tail[len(tail)-tailMax:]
-	}
-	trimmed := make([]llm.Message, 0, 1+len(tail))
-	trimmed = append(trimmed, messages[0])
-	trimmed = append(trimmed, tail...)
-	return trimmed
-}
-
-func compactAgentSessionMessagesLocked(session *agentSession, max int) {
-	if session == nil {
-		return
-	}
-	if max <= 0 {
-		max = agentSessionMaxMessages
-	}
-	if len(session.Messages) <= max {
-		return
-	}
-	compactCount := len(session.Messages) - max
-	if compactCount <= 0 {
-		return
-	}
-	compacted := cloneAgentMessages(session.Messages[:compactCount])
-	session.Messages = cloneAgentMessages(session.Messages[compactCount:])
-	session.MemorySummary = buildAgentMemorySummary(session, compacted, session.MemorySummary)
-}
-
-func buildAgentMemorySummary(session *agentSession, compacted []agentMessage, previous *agentMemorySummary) *agentMemorySummary {
-	if len(compacted) == 0 && previous == nil {
-		return nil
-	}
-	parts := make([]string, 0, 12)
-	if previous != nil && strings.TrimSpace(previous.Summary) != "" {
-		parts = append(parts, "Previous memory: "+agentLimitBlock(strings.TrimSpace(previous.Summary), 1800))
-	}
-	if session != nil && session.ActiveTask != nil {
-		taskBits := []string{
-			"goal=" + emptyString(session.ActiveTask.Goal, "-"),
-			"kind=" + emptyString(session.ActiveTask.Kind, "-"),
-			"status=" + emptyString(session.ActiveTask.Status, "-"),
-		}
-		if session.ActiveTask.ActiveRunID != "" {
-			taskBits = append(taskBits, "active_run="+session.ActiveTask.ActiveRunID)
-		}
-		if session.ActiveTask.Summary != "" {
-			taskBits = append(taskBits, "summary="+agentLimitBlock(session.ActiveTask.Summary, 320))
-		}
-		parts = append(parts, "Active task: "+strings.Join(taskBits, " | "))
-	}
-	if session != nil && len(session.Todos) > 0 {
-		todoParts := make([]string, 0, minInt(len(session.Todos), 8))
-		for idx, todo := range session.Todos {
-			if idx >= 8 {
-				break
-			}
-			todoParts = append(todoParts, fmt.Sprintf("%s:%s", emptyString(todo.Title, todo.ID), emptyString(todo.Status, "-")))
-		}
-		if len(todoParts) > 0 {
-			parts = append(parts, "Todos: "+strings.Join(todoParts, "; "))
-		}
-	}
-	if session != nil && len(session.ContextRefs) > 0 {
-		refParts := make([]string, 0, minInt(len(session.ContextRefs), 8))
-		for idx, ref := range session.ContextRefs {
-			if idx >= 8 {
-				break
-			}
-			refText := firstNonEmpty(ref.Label, ref.RefID, ref.ID)
-			if ref.Summary != "" {
-				refText += " (" + agentLimitBlock(ref.Summary, 180) + ")"
-			}
-			refParts = append(refParts, refText)
-		}
-		if len(refParts) > 0 {
-			parts = append(parts, "Context refs: "+strings.Join(refParts, "; "))
-		}
-	}
-
-	messageParts := make([]string, 0, minInt(len(compacted), 24))
-	start := 0
-	if len(compacted) > 24 {
-		start = len(compacted) - 24
-	}
-	for _, message := range compacted[start:] {
-		summary := agentMemoryMessageLine(message)
-		if summary != "" {
-			messageParts = append(messageParts, summary)
-		}
-	}
-	if len(messageParts) > 0 {
-		parts = append(parts, "Compacted conversation:\n"+strings.Join(messageParts, "\n"))
-	}
-
-	summary := agentLimitBlock(strings.TrimSpace(strings.Join(parts, "\n\n")), 5000)
-	if summary == "" && previous != nil {
-		summary = previous.Summary
-	}
-	var lastID string
-	var lastAt *time.Time
-	if len(compacted) > 0 {
-		last := compacted[len(compacted)-1]
-		lastID = last.ID
-		if !last.Timestamp.IsZero() {
-			ts := last.Timestamp
-			lastAt = &ts
-		}
-	} else if previous != nil {
-		lastID = previous.LastMessageID
-		if previous.LastMessageAt != nil {
-			ts := *previous.LastMessageAt
-			lastAt = &ts
-		}
-	}
-	messageCount := len(compacted)
-	if previous != nil {
-		messageCount += previous.MessageCount
-	}
-	return &agentMemorySummary{
-		Summary:       summary,
-		MessageCount:  messageCount,
-		LastMessageID: lastID,
-		LastMessageAt: lastAt,
-		UpdatedAt:     time.Now().UTC(),
-	}
-}
-
-func agentMemoryMessageLine(message agentMessage) string {
-	role := emptyString(message.Role, "message")
-	content := strings.TrimSpace(message.Content)
-	if content != "" {
-		content = strings.ReplaceAll(content, "\r\n", "\n")
-		content = strings.ReplaceAll(content, "\r", "\n")
-		content = strings.Join(strings.Fields(content), " ")
-		content = agentLimitBlock(content, 420)
-	}
-	toolBits := make([]string, 0, len(message.ToolCalls))
-	for _, call := range message.ToolCalls {
-		name := emptyString(call.Name, "tool")
-		status := string(call.Status)
-		if status == "" {
-			status = "-"
-		}
-		toolBits = append(toolBits, name+":"+status)
-	}
-	prefix := "- " + role
-	if !message.Timestamp.IsZero() {
-		prefix += "@" + message.Timestamp.Format(time.RFC3339)
-	}
-	switch {
-	case content != "" && len(toolBits) > 0:
-		return prefix + ": " + content + " [tools: " + strings.Join(toolBits, ", ") + "]"
-	case content != "":
-		return prefix + ": " + content
-	case len(toolBits) > 0:
-		return prefix + ": [tools: " + strings.Join(toolBits, ", ") + "]"
-	default:
-		return ""
-	}
-}
-
-func agentMemorySummaryPrompt(language string, memory *agentMemorySummary) string {
-	if memory == nil || strings.TrimSpace(memory.Summary) == "" {
-		return ""
-	}
-	return agentText(
-		language,
-		fmt.Sprintf("以下是当前 Agent 会话早期内容的压缩记忆。它来自已从短期聊天窗口裁剪的 %d 条消息；请把它当作已有上下文，不要要求用户重复这些信息。\n\n%s", memory.MessageCount, agentLimitBlock(memory.Summary, 5000)),
-		fmt.Sprintf("The following is compressed memory from the earlier part of this Agent session. It comes from %d message(s) that were trimmed out of the short-term chat window; treat it as existing context and do not ask the operator to repeat it.\n\n%s", memory.MessageCount, agentLimitBlock(memory.Summary, 5000)),
-	)
 }
 
 func agentToolObservationPrompt(language string, toolMessages []agentMessage) string {

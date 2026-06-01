@@ -1,0 +1,179 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"path/filepath"
+	"testing"
+	"time"
+
+	agentruntime "github.com/H1d3rOne/cyberagent/internal/agent/runtime"
+)
+
+func TestStoreSaveLoadAndFilterEvents(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "runtime", "runtime.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	created := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
+	task := agentruntime.Task{
+		ID:             "task-1",
+		SessionID:      "session-a",
+		Origin:         "user",
+		Goal:           "scan target",
+		Prompt:         "scan https://example.com",
+		OperationLevel: "safe",
+		ScheduleID:     "schedule-1",
+		Created:        created,
+	}
+	if err := store.SaveTask(ctx, task); err != nil {
+		t.Fatalf("SaveTask() error = %v", err)
+	}
+	run1 := agentruntime.Run{ID: "run-1", TaskID: task.ID, State: string(agentruntime.RunRunning), Turn: 1, CreatedAt: created.Add(2 * time.Second)}
+	run0 := agentruntime.Run{ID: "run-0", TaskID: task.ID, State: string(agentruntime.RunPending), Turn: 0, CreatedAt: created.Add(time.Second)}
+	if err := store.SaveRun(ctx, run1); err != nil {
+		t.Fatalf("SaveRun(run1) error = %v", err)
+	}
+	if err := store.SaveRun(ctx, run0); err != nil {
+		t.Fatalf("SaveRun(run0) error = %v", err)
+	}
+	turn := agentruntime.Turn{ID: "turn-1", RunID: run1.ID, Index: 1, State: string(agentruntime.TurnRunning)}
+	if err := store.SaveTurn(ctx, turn); err != nil {
+		t.Fatalf("SaveTurn() error = %v", err)
+	}
+
+	if err := store.AppendEvent(ctx, agentruntime.Event{Seq: 1, Type: "model_token", TaskID: task.ID, RunID: run1.ID, TurnID: turn.ID, Data: map[string]any{"session_id": "session-a", "text": "one"}, Timestamp: created}); err != nil {
+		t.Fatalf("AppendEvent(1) error = %v", err)
+	}
+	if err := store.AppendEvent(ctx, agentruntime.Event{Seq: 2, Type: "model_token", TaskID: task.ID, RunID: run1.ID, TurnID: turn.ID, Data: map[string]any{"session_id": "session-b", "text": "two"}, Timestamp: created.Add(time.Second)}); err != nil {
+		t.Fatalf("AppendEvent(2) error = %v", err)
+	}
+	if err := store.AppendEvent(ctx, agentruntime.Event{Seq: 3, Type: "tool_finished", TaskID: task.ID, RunID: run1.ID, TurnID: turn.ID, Data: map[string]any{"session_id": "session-a", "ok": true}, Timestamp: created.Add(2 * time.Second)}); err != nil {
+		t.Fatalf("AppendEvent(3) error = %v", err)
+	}
+
+	loadedTask, err := store.LoadTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("LoadTask() error = %v", err)
+	}
+	if loadedTask.SessionID != task.SessionID || loadedTask.Prompt != task.Prompt || loadedTask.ScheduleID != task.ScheduleID {
+		t.Fatalf("unexpected loaded task: %#v", loadedTask)
+	}
+	loadedRun, err := store.LoadRun(ctx, run1.ID)
+	if err != nil {
+		t.Fatalf("LoadRun() error = %v", err)
+	}
+	if loadedRun.State != string(agentruntime.RunRunning) || loadedRun.Turn != 1 {
+		t.Fatalf("unexpected loaded run: %#v", loadedRun)
+	}
+	runs, err := store.ListRuns(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("ListRuns() error = %v", err)
+	}
+	if len(runs) != 2 || runs[0].ID != "run-0" || runs[1].ID != "run-1" {
+		t.Fatalf("unexpected run order: %#v", runs)
+	}
+
+	events, err := store.ListEvents(ctx, agentruntime.EventFilter{SessionID: "session-a", FromSeq: 1}, 10)
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	if len(events) != 1 || events[0].Seq != 3 || events[0].Type != "tool_finished" || events[0].Data["ok"] != true {
+		t.Fatalf("unexpected filtered events: %#v", events)
+	}
+	limited, err := store.ListEvents(ctx, agentruntime.EventFilter{TaskID: task.ID}, 2)
+	if err != nil {
+		t.Fatalf("ListEvents(limit) error = %v", err)
+	}
+	if len(limited) != 2 || limited[0].Seq != 1 || limited[1].Seq != 2 {
+		t.Fatalf("unexpected limited events: %#v", limited)
+	}
+	maxSeq, err := store.MaxEventSeq(ctx)
+	if err != nil {
+		t.Fatalf("MaxEventSeq() error = %v", err)
+	}
+	if maxSeq != 3 {
+		t.Fatalf("MaxEventSeq() = %d, want 3", maxSeq)
+	}
+}
+
+func TestStorePersistsAcrossOpenAndCreatesForwardTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime.db")
+	ctx := context.Background()
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if err := store.SaveTask(ctx, agentruntime.Task{ID: "task-persist", SessionID: "session-persist", Origin: "schedule", Goal: "nightly", Created: time.Now().UTC()}); err != nil {
+		t.Fatalf("SaveTask() error = %v", err)
+	}
+	if err := store.AppendEvent(ctx, agentruntime.Event{Seq: 7, Type: "task_created", TaskID: "task-persist", Data: map[string]any{"session_id": "session-persist"}, Timestamp: time.Now().UTC()}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(reopen) error = %v", err)
+	}
+	defer reopened.Close()
+	loadedTask, err := reopened.LoadTask(ctx, "task-persist")
+	if err != nil {
+		t.Fatalf("LoadTask(reopen) error = %v", err)
+	}
+	if loadedTask.SessionID != "session-persist" || loadedTask.Origin != "schedule" {
+		t.Fatalf("unexpected reopened task: %#v", loadedTask)
+	}
+	maxSeq, err := reopened.MaxEventSeq(ctx)
+	if err != nil {
+		t.Fatalf("MaxEventSeq(reopen) error = %v", err)
+	}
+	if maxSeq != 7 {
+		t.Fatalf("MaxEventSeq(reopen) = %d, want 7", maxSeq)
+	}
+	for _, table := range []string{"sessions", "tasks", "runs", "turns", "events", "approvals", "schedules", "memories"} {
+		if !sqliteTableExists(t, reopened.db, table) {
+			t.Fatalf("schema table %q missing", table)
+		}
+	}
+}
+
+func TestEngineSeedsEventSeqFromSQLiteStore(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "runtime.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if err := store.AppendEvent(ctx, agentruntime.Event{Seq: 41, Type: "model_token", Data: map[string]any{"session_id": "session-seq"}, Timestamp: time.Now().UTC()}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	engine := agentruntime.NewEngine(store)
+	engine.Publish(ctx, agentruntime.Event{Type: "model_token", Data: map[string]any{"session_id": "session-seq", "text": "next"}})
+	events, err := store.ListEvents(ctx, agentruntime.EventFilter{SessionID: "session-seq", FromSeq: 41}, 10)
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	if len(events) != 1 || events[0].Seq != 42 || events[0].Data["text"] != "next" {
+		t.Fatalf("unexpected next event after seeded engine: %#v", events)
+	}
+}
+
+func sqliteTableExists(t *testing.T, db *sql.DB, table string) bool {
+	t.Helper()
+	var name string
+	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
+	if err == nil {
+		return name == table
+	}
+	if err == sql.ErrNoRows {
+		return false
+	}
+	t.Fatalf("query sqlite_master for %s: %v", table, err)
+	return false
+}

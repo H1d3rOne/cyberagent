@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	agentruntime "github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/command"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
@@ -554,6 +555,22 @@ func handleAgentSessionStream(w http.ResponseWriter, r *http.Request, svc router
 		flusher.Flush()
 		return true
 	}
+	writeRuntimeEvent := func(ev agentruntime.Event) bool {
+		if strings.TrimSpace(ev.Type) == "" {
+			ev.Type = "runtime_event"
+		}
+		encoded, err := json.Marshal(ev)
+		if err != nil {
+			return false
+		}
+		if ev.Seq > 0 {
+			_, _ = fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.Seq, ev.Type, encoded)
+		} else {
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, encoded)
+		}
+		flusher.Flush()
+		return true
+	}
 	writeSessionEvent := func(session agentSession) bool {
 		signature := agentSessionStreamSignature(session)
 		if signature == lastSignature {
@@ -565,6 +582,10 @@ func handleAgentSessionStream(w http.ResponseWriter, r *http.Request, svc router
 
 	writeSessionEvent(session)
 	previousSession := session
+	var runtimeEvents <-chan agentruntime.Event
+	if svc.agent.runtimeEngine() != nil {
+		runtimeEvents = svc.agent.SubscribeSince(r.Context(), sessionID, agentRuntimeStreamFromSeq(r))
+	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	pingTicker := time.NewTicker(15 * time.Second)
@@ -585,11 +606,38 @@ func handleAgentSessionStream(w http.ResponseWriter, r *http.Request, svc router
 			}
 			writeSessionEvent(session)
 			previousSession = session
+		case ev, ok := <-runtimeEvents:
+			if !ok {
+				runtimeEvents = nil
+				continue
+			}
+			writeRuntimeEvent(ev)
 		case <-pingTicker.C:
 			_, _ = fmt.Fprintf(w, "event: ping\ndata: {\"time\":%q}\n\n", time.Now().UTC().Format(time.RFC3339))
 			flusher.Flush()
 		}
 	}
+}
+
+func agentRuntimeStreamFromSeq(r *http.Request) int64 {
+	if r == nil {
+		return 0
+	}
+	for _, raw := range []string{
+		r.Header.Get("Last-Event-ID"),
+		r.URL.Query().Get("from_seq"),
+		r.URL.Query().Get("last_event_id"),
+	} {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		seq, err := strconv.ParseInt(value, 10, 64)
+		if err == nil && seq > 0 {
+			return seq
+		}
+	}
+	return 0
 }
 
 type agentStreamActivity struct {

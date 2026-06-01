@@ -101,8 +101,28 @@ func (m *MemStore) ListRuns(_ context.Context, taskID string) ([]Run, error) {
 	return out, nil
 }
 
-// Events returns a snapshot of the event log. Phase 3 will swap this for a
-// streaming subscription; Phase 2 only needs the snapshot for tests.
+// ListEvents returns a filtered snapshot of the append-only event log. It is
+// used for SSE reconnect replay before the caller starts receiving live
+// fan-out events. Results preserve append order and are capped by limit when
+// limit > 0.
+func (m *MemStore) ListEvents(_ context.Context, filter EventFilter, limit int) ([]Event, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Event, 0, len(m.events))
+	for _, ev := range m.events {
+		if !eventMatchesFilter(ev, filter) {
+			continue
+		}
+		out = append(out, ev)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Events returns a snapshot of the event log for tests. Production callers
+// should prefer Engine.Subscribe with EventFilter/FromSeq.
 func (m *MemStore) Events() []Event {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

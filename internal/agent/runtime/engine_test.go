@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func newTestEngine() (*Engine, *MemStore) {
@@ -137,4 +138,63 @@ func TestApprovalPauseResume(t *testing.T) {
 	got := eventTypes(store.Events(), "run-approval")
 	want := []string{"run_started", "approval_required", "approval_resolved"}
 	assertContainsInOrder(t, got, want)
+}
+
+func TestSubscribeFanOutAndSessionFilter(t *testing.T) {
+	e, _ := newTestEngine()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	subA := e.Subscribe(ctx, EventFilter{SessionID: "session-a"})
+	subB := e.Subscribe(ctx, EventFilter{SessionID: "session-a"})
+	subOther := e.Subscribe(ctx, EventFilter{SessionID: "session-b"})
+
+	if _, err := e.Submit(ctx, Task{ID: "task-a", SessionID: "session-a", Origin: "user", Goal: "hello"}); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+
+	for name, ch := range map[string]<-chan Event{"subA": subA, "subB": subB} {
+		select {
+		case ev := <-ch:
+			if ev.Type != "task_created" || ev.TaskID != "task-a" {
+				t.Fatalf("%s got %#v, want task_created/task-a", name, ev)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%s timed out waiting for fan-out event", name)
+		}
+	}
+	select {
+	case ev := <-subOther:
+		t.Fatalf("session-b subscriber received session-a event: %#v", ev)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestSubscribeReplaysFromSeq(t *testing.T) {
+	e, _ := newTestEngine()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	e.Publish(ctx, Event{Type: "model_token", TaskID: "task-replay", Data: map[string]any{"session_id": "session-replay", "text": "one"}})
+	e.Publish(ctx, Event{Type: "model_token", TaskID: "task-replay", Data: map[string]any{"session_id": "session-replay", "text": "two"}})
+
+	ch := e.Subscribe(ctx, EventFilter{SessionID: "session-replay", FromSeq: 1})
+	select {
+	case ev := <-ch:
+		if ev.Seq != 2 || ev.Data["text"] != "two" {
+			t.Fatalf("replayed event = %#v, want seq=2 text=two", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for replayed event")
+	}
+
+	e.Publish(ctx, Event{Type: "model_token", TaskID: "task-replay", Data: map[string]any{"session_id": "session-replay", "text": "three"}})
+	select {
+	case ev := <-ch:
+		if ev.Seq != 3 || ev.Data["text"] != "three" {
+			t.Fatalf("live event = %#v, want seq=3 text=three", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for live event after replay")
+	}
 }

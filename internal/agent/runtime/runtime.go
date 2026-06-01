@@ -20,16 +20,22 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // Task is one unit of agent work.
 type Task struct {
-	ID      string
-	Origin  string // "user" | "schedule" | "approval" | "replan" | "subagent"
-	Goal    string
-	Created time.Time
+	ID             string
+	SessionID      string
+	Origin         string // "user" | "schedule" | "approval" | "replan" | "subagent"
+	Goal           string
+	Prompt         string
+	OperationLevel string
+	ScheduleID     string
+	Created        time.Time
 }
 
 // Run is one execution attempt of a Task.
@@ -52,12 +58,23 @@ type Turn struct {
 // Event is the append-only timeline entry feeding both audit log and
 // streaming UI.
 type Event struct {
-	Type      string // task_created|turn_started|model_token|tool_started|tool_finished|approval_required|approval_resolved|task_finished|task_failed|...
-	TurnID    string
-	RunID     string
+	Seq       int64          `json:"seq,omitempty"`
+	Type      string         `json:"type"` // task_created|turn_started|model_token|tool_started|tool_finished|approval_required|approval_resolved|task_finished|task_failed|...
+	TurnID    string         `json:"turn_id,omitempty"`
+	RunID     string         `json:"run_id,omitempty"`
+	TaskID    string         `json:"task_id,omitempty"`
+	Data      map[string]any `json:"data,omitempty"`
+	Timestamp time.Time      `json:"timestamp"`
+}
+
+// EventFilter scopes a streaming subscription. Empty fields match all
+// events. SessionID is carried in Event.Data["session_id"] while the runtime
+// migration is still bridging legacy daemon sessions to Task/Run events.
+type EventFilter struct {
 	TaskID    string
-	Data      map[string]any
-	Timestamp time.Time
+	RunID     string
+	SessionID string
+	FromSeq   int64
 }
 
 // Store is the persistence boundary. The Phase 2 in-memory implementation
@@ -71,30 +88,54 @@ type Store interface {
 	LoadTask(ctx context.Context, id string) (Task, error)
 	LoadRun(ctx context.Context, id string) (Run, error)
 	ListRuns(ctx context.Context, taskID string) ([]Run, error)
+	ListEvents(ctx context.Context, filter EventFilter, limit int) ([]Event, error)
 }
 
 // Engine is the central coordinator. The Phase 2 cut wires Submit/Stream
 // only; runTurn/approval routing land in subsequent commits.
 type Engine struct {
-	store  Store
-	mu     sync.Mutex
-	tasks  map[string]*Task
-	runs   map[string]*Run
-	turns  map[string]*Turn
-	events chan Event
-	subs   []chan Event
+	store Store
+	mu    sync.Mutex
+	tasks map[string]*Task
+	runs  map[string]*Run
+	turns map[string]*Turn
+
+	events  chan Event // legacy single-consumer stream; prefer Subscribe.
+	nextSeq atomic.Int64
+	eventMu sync.Mutex // serializes append/replay/register so reconnects do not miss events.
+
+	subMu     sync.Mutex
+	nextSubID int
+	subs      map[int]eventSubscriber
+}
+
+type eventSubscriber struct {
+	filter EventFilter
+	ch     chan Event
+}
+
+type eventSeqStore interface {
+	MaxEventSeq(ctx context.Context) (int64, error)
 }
 
 // NewEngine returns a fresh engine bound to store. Subscribers are added
-// later via Stream().
+// later via Stream(). Stores may expose MaxEventSeq so a restarted daemon
+// continues event IDs above the durable high-water mark.
 func NewEngine(s Store) *Engine {
-	return &Engine{
+	engine := &Engine{
 		store:  s,
 		tasks:  map[string]*Task{},
 		runs:   map[string]*Run{},
 		turns:  map[string]*Turn{},
 		events: make(chan Event, 256),
+		subs:   map[int]eventSubscriber{},
 	}
+	if seqStore, ok := s.(eventSeqStore); ok {
+		if seq, err := seqStore.MaxEventSeq(context.Background()); err == nil && seq > 0 {
+			engine.nextSeq.Store(seq)
+		}
+	}
+	return engine
 }
 
 // Submit registers a new Task and emits a task_created event. The current
@@ -113,25 +154,95 @@ func (e *Engine) Submit(ctx context.Context, t Task) (string, error) {
 		}
 	}
 	e.publish(ctx, Event{
-		Type:      "task_created",
-		TaskID:    t.ID,
-		Data:      map[string]any{"origin": t.Origin, "goal": t.Goal},
+		Type:   "task_created",
+		TaskID: t.ID,
+		Data: map[string]any{
+			"session_id":      t.SessionID,
+			"origin":          t.Origin,
+			"goal":            t.Goal,
+			"prompt":          t.Prompt,
+			"operation_level": t.OperationLevel,
+			"schedule_id":     t.ScheduleID,
+		},
 		Timestamp: time.Now(),
 	})
 	return t.ID, nil
 }
 
-// Stream returns the global event channel. Subscribers fan out via subs in
-// later commits; the Phase 2 skeleton exposes the raw channel so callers
-// can wire telemetry tests.
+// Stream returns the legacy global event channel. It is intentionally kept
+// for compatibility with the Phase 2 seam; new callers should use Subscribe
+// so multiple consumers do not steal events from each other.
 func (e *Engine) Stream() <-chan Event {
 	return e.events
+}
+
+// Subscribe returns a fan-out stream of future events matching filter. The
+// returned channel is closed when ctx is cancelled. Delivery is best-effort:
+// slow subscribers drop events instead of blocking the engine; Store remains
+// the durable source for replay/recovery.
+func (e *Engine) Subscribe(ctx context.Context, filter EventFilter) <-chan Event {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ch := make(chan Event, 128)
+	var replay []Event
+	e.eventMu.Lock()
+	if filter.FromSeq > 0 && e.store != nil {
+		if events, err := e.store.ListEvents(ctx, filter, 512); err == nil {
+			replay = events
+		}
+	}
+	e.subMu.Lock()
+	e.nextSubID++
+	id := e.nextSubID
+	e.subs[id] = eventSubscriber{filter: filter, ch: ch}
+	e.subMu.Unlock()
+	// Send replay before releasing eventMu so live publishes cannot overtake
+	// the reconnect snapshot in the subscriber channel. Delivery remains
+	// best-effort; dropped replay entries can still be requested again with a
+	// lower FromSeq.
+	for _, ev := range replay {
+		select {
+		case ch <- ev:
+		default:
+		}
+	}
+	e.eventMu.Unlock()
+
+	go func() {
+		<-ctx.Done()
+		e.subMu.Lock()
+		if sub, ok := e.subs[id]; ok {
+			delete(e.subs, id)
+			close(sub.ch)
+		}
+		e.subMu.Unlock()
+	}()
+	return ch
+}
+
+// Publish appends and broadcasts a pre-built runtime event. It is the bridge
+// used by the legacy daemon while SendMessage/tool execution is still being
+// migrated into Engine.runTurn.
+func (e *Engine) Publish(ctx context.Context, ev Event) {
+	if ev.Timestamp.IsZero() {
+		ev.Timestamp = time.Now()
+	}
+	e.publish(ctx, ev)
 }
 
 // publish writes to the audit store and best-effort fans the event into
 // the broadcast channel. Slow consumers drop events rather than block the
 // engine — the durable record lives in Store.
 func (e *Engine) publish(ctx context.Context, ev Event) {
+	e.eventMu.Lock()
+	defer e.eventMu.Unlock()
+	if ev.Timestamp.IsZero() {
+		ev.Timestamp = time.Now()
+	}
+	if ev.Seq == 0 {
+		ev.Seq = e.nextSeq.Add(1)
+	}
 	if e.store != nil {
 		_ = e.store.AppendEvent(ctx, ev)
 	}
@@ -139,6 +250,36 @@ func (e *Engine) publish(ctx context.Context, ev Event) {
 	case e.events <- ev:
 	default:
 	}
+	e.subMu.Lock()
+	for _, sub := range e.subs {
+		if !eventMatchesFilter(ev, sub.filter) {
+			continue
+		}
+		select {
+		case sub.ch <- ev:
+		default:
+		}
+	}
+	e.subMu.Unlock()
+}
+
+func eventMatchesFilter(ev Event, filter EventFilter) bool {
+	if filter.TaskID != "" && ev.TaskID != filter.TaskID {
+		return false
+	}
+	if filter.RunID != "" && ev.RunID != filter.RunID {
+		return false
+	}
+	if filter.SessionID != "" {
+		sessionID, _ := ev.Data["session_id"].(string)
+		if sessionID != filter.SessionID {
+			return false
+		}
+	}
+	if filter.FromSeq > 0 && ev.Seq <= filter.FromSeq {
+		return false
+	}
+	return true
 }
 
 // SubmitRun registers a Run for an existing Task and emits run_started.
@@ -149,6 +290,7 @@ func (e *Engine) SubmitRun(ctx context.Context, r Run) (string, error) {
 		r.CreatedAt = time.Now()
 	}
 	e.runs[r.ID] = &r
+	sessionID := e.sessionIDForTaskLocked(r.TaskID)
 	if e.store != nil {
 		if err := e.store.SaveRun(ctx, r); err != nil {
 			return "", err
@@ -158,7 +300,7 @@ func (e *Engine) SubmitRun(ctx context.Context, r Run) (string, error) {
 		Type:      "run_started",
 		RunID:     r.ID,
 		TaskID:    r.TaskID,
-		Data:      map[string]any{"state": r.State, "turn": r.Turn},
+		Data:      map[string]any{"session_id": sessionID, "state": r.State, "turn": r.Turn},
 		Timestamp: time.Now(),
 	})
 	return r.ID, nil
@@ -190,14 +332,17 @@ func (e *Engine) RequestApproval(runID, reason string) error {
 		return err
 	}
 	r.State = string(RunAwaitingApproval)
+	sessionID := e.sessionIDForTaskLocked(r.TaskID)
 	if e.store != nil {
-		_ = e.store.SaveRun(ctx, *r)
+		if err := e.store.SaveRun(ctx, *r); err != nil {
+			return fmt.Errorf("save run %s: %w", runID, err)
+		}
 	}
 	e.publish(ctx, Event{
 		Type:      "approval_required",
 		RunID:     runID,
 		TaskID:    r.TaskID,
-		Data:      map[string]any{"reason": reason},
+		Data:      map[string]any{"session_id": sessionID, "reason": reason},
 		Timestamp: time.Now(),
 	})
 	return nil
@@ -216,14 +361,17 @@ func (e *Engine) ResolveApproval(runID, decision string) error {
 		return err
 	}
 	r.State = string(RunRunning)
+	sessionID := e.sessionIDForTaskLocked(r.TaskID)
 	if e.store != nil {
-		_ = e.store.SaveRun(ctx, *r)
+		if err := e.store.SaveRun(ctx, *r); err != nil {
+			return fmt.Errorf("save run %s: %w", runID, err)
+		}
 	}
 	e.publish(ctx, Event{
 		Type:      "approval_resolved",
 		RunID:     runID,
 		TaskID:    r.TaskID,
-		Data:      map[string]any{"decision": decision},
+		Data:      map[string]any{"session_id": sessionID, "decision": decision},
 		Timestamp: time.Now(),
 	})
 	return nil
@@ -248,9 +396,19 @@ func (e *Engine) FinishRun(ctx context.Context, runID string, ok bool) error {
 		return err
 	}
 	r.State = string(target)
+	sessionID := e.sessionIDForTaskLocked(r.TaskID)
 	if e.store != nil {
-		_ = e.store.SaveRun(ctx, *r)
+		if err := e.store.SaveRun(ctx, *r); err != nil {
+			return fmt.Errorf("save run %s: %w", runID, err)
+		}
 	}
-	e.publish(ctx, Event{Type: evType, RunID: runID, TaskID: r.TaskID, Timestamp: time.Now()})
+	e.publish(ctx, Event{Type: evType, RunID: runID, TaskID: r.TaskID, Data: map[string]any{"session_id": sessionID}, Timestamp: time.Now()})
 	return nil
+}
+
+func (e *Engine) sessionIDForTaskLocked(taskID string) string {
+	if task, ok := e.tasks[taskID]; ok && task != nil {
+		return task.SessionID
+	}
+	return ""
 }
