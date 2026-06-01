@@ -33,10 +33,11 @@ type Task struct {
 
 // Run is one execution attempt of a Task.
 type Run struct {
-	ID     string
-	TaskID string
-	State  string // "queued" | "running" | "awaiting_approval" | "succeeded" | "failed" | "cancelled"
-	Turn   int
+	ID        string
+	TaskID    string
+	State     string // "queued" | "running" | "awaiting_approval" | "succeeded" | "failed" | "cancelled"
+	Turn      int
+	CreatedAt time.Time
 }
 
 // Turn is one LLM-and-tool exchange inside a Run.
