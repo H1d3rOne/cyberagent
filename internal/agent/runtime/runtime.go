@@ -19,6 +19,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -138,4 +139,118 @@ func (e *Engine) publish(ctx context.Context, ev Event) {
 	case e.events <- ev:
 	default:
 	}
+}
+
+// SubmitRun registers a Run for an existing Task and emits run_started.
+func (e *Engine) SubmitRun(ctx context.Context, r Run) (string, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = time.Now()
+	}
+	e.runs[r.ID] = &r
+	if e.store != nil {
+		if err := e.store.SaveRun(ctx, r); err != nil {
+			return "", err
+		}
+	}
+	e.publish(ctx, Event{
+		Type:      "run_started",
+		RunID:     r.ID,
+		TaskID:    r.TaskID,
+		Data:      map[string]any{"state": r.State, "turn": r.Turn},
+		Timestamp: time.Now(),
+	})
+	return r.ID, nil
+}
+
+// runTurnLLMToolLoop emits a deterministic token/tool sequence for the
+// engine_test.go main-link tests. Real LLM integration lands in Phase 3.
+func (e *Engine) runTurnLLMToolLoop(ctx context.Context, runID string) {
+	turnID := runID + "-turn-1"
+	e.publish(ctx, Event{Type: "turn_started", RunID: runID, TurnID: turnID, Timestamp: time.Now()})
+	for i := 0; i < 3; i++ {
+		e.publish(ctx, Event{Type: "model_token", RunID: runID, TurnID: turnID, Data: map[string]any{"i": i}, Timestamp: time.Now()})
+	}
+	e.publish(ctx, Event{Type: "tool_started", RunID: runID, TurnID: turnID, Data: map[string]any{"tool": "scan.web.safe"}, Timestamp: time.Now()})
+	e.publish(ctx, Event{Type: "tool_finished", RunID: runID, TurnID: turnID, Data: map[string]any{"tool": "scan.web.safe", "ok": true}, Timestamp: time.Now()})
+	e.publish(ctx, Event{Type: "turn_finished", RunID: runID, TurnID: turnID, Timestamp: time.Now()})
+}
+
+// RequestApproval pauses a running run and emits approval_required.
+func (e *Engine) RequestApproval(runID, reason string) error {
+	ctx := context.Background()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	r, ok := e.runs[runID]
+	if !ok {
+		return errors.New("run not found: " + runID)
+	}
+	if err := ValidateRunTransition(RunState(r.State), RunAwaitingApproval); err != nil {
+		return err
+	}
+	r.State = string(RunAwaitingApproval)
+	if e.store != nil {
+		_ = e.store.SaveRun(ctx, *r)
+	}
+	e.publish(ctx, Event{
+		Type:      "approval_required",
+		RunID:     runID,
+		TaskID:    r.TaskID,
+		Data:      map[string]any{"reason": reason},
+		Timestamp: time.Now(),
+	})
+	return nil
+}
+
+// ResolveApproval resumes a run that was paused for approval.
+func (e *Engine) ResolveApproval(runID, decision string) error {
+	ctx := context.Background()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	r, ok := e.runs[runID]
+	if !ok {
+		return errors.New("run not found: " + runID)
+	}
+	if err := ValidateRunTransition(RunState(r.State), RunRunning); err != nil {
+		return err
+	}
+	r.State = string(RunRunning)
+	if e.store != nil {
+		_ = e.store.SaveRun(ctx, *r)
+	}
+	e.publish(ctx, Event{
+		Type:      "approval_resolved",
+		RunID:     runID,
+		TaskID:    r.TaskID,
+		Data:      map[string]any{"decision": decision},
+		Timestamp: time.Now(),
+	})
+	return nil
+}
+
+// FinishRun closes a run with a terminal state and emits task_finished or
+// task_failed.
+func (e *Engine) FinishRun(ctx context.Context, runID string, ok bool) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	r, ok2 := e.runs[runID]
+	if !ok2 {
+		return errors.New("run not found: " + runID)
+	}
+	target := RunDone
+	evType := "task_finished"
+	if !ok {
+		target = RunFailed
+		evType = "task_failed"
+	}
+	if err := ValidateRunTransition(RunState(r.State), target); err != nil {
+		return err
+	}
+	r.State = string(target)
+	if e.store != nil {
+		_ = e.store.SaveRun(ctx, *r)
+	}
+	e.publish(ctx, Event{Type: evType, RunID: runID, TaskID: r.TaskID, Timestamp: time.Now()})
+	return nil
 }

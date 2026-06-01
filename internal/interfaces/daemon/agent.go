@@ -798,16 +798,11 @@ func agentCapabilities(language string) agentCapabilitiesResponse {
 }
 
 func agentCapabilityToolPolicy(name string) (string, bool) {
-	switch normalizeAgentPlannerActionName(name) {
-	case "ports.scan.safe":
-		return "medium", false
-	case "runs.approvals.approve", "runs.approvals.deny", "runs.resume_approved":
-		return "medium", false
-	case "schedule.create", "schedule.delete":
-		return "medium", false
-	default:
-		return "low", true
+	spec, ok := toolRegistry().Lookup(name)
+	if !ok {
+		return "", false
 	}
+	return spec.Risk, spec.AutoRun
 }
 
 func agentSessionSummaryFrom(session *agentSession) agentSessionSummary {

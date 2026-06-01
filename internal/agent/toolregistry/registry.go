@@ -20,11 +20,14 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
 )
 
-// Risk classifies the worst-case impact a tool can have. Operators map this to
-// the `operation_level` UI control via RequiredLevel.
-type Risk string
+// Risk classifies the approval posture surfaced in capability metadata. It is
+// intentionally a string alias so daemon compatibility helpers can return a
+// spec's Risk directly while Phase 1/2 migration code still uses raw strings.
+type Risk = string
 
 const (
+	RiskLow            Risk = "low"
+	RiskMedium         Risk = "medium"
 	RiskReadOnly       Risk = "read_only"
 	RiskWorkspaceWrite Risk = "workspace_write"
 	RiskSafeScan       Risk = "safe_scan"
@@ -99,6 +102,7 @@ type ToolSpec struct {
 	CannotDo   []string
 	Examples   LocalizedExamples
 
+	Skills  []SkillReference
 	SkillID string
 
 	Handler Handler
@@ -348,6 +352,15 @@ func (r *Registry) Skills() []SkillReference {
 	specs := r.All()
 	out := make([]SkillReference, 0, len(specs))
 	for _, spec := range specs {
+		for _, ref := range spec.Skills {
+			if strings.TrimSpace(ref.SkillID) == "" {
+				continue
+			}
+			if strings.TrimSpace(ref.ToolName) == "" {
+				ref.ToolName = spec.Name
+			}
+			out = append(out, ref)
+		}
 		if strings.TrimSpace(spec.SkillID) == "" {
 			continue
 		}
