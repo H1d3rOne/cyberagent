@@ -43,6 +43,7 @@ func NewServer(cfg Config) (*Server, error) {
 		return buildAgentLLMProvider(name, cfg)
 	})
 	scheduler := newScheduleManager(cfg.RunsDir)
+	providers := newProviderStore("")
 
 	svc := routerServices{
 		version:     version,
@@ -52,10 +53,12 @@ func NewServer(cfg Config) (*Server, error) {
 		jobs:        jobs,
 		scanManager: scanManager,
 		schedules:   scheduler,
+		providers:   providers,
 	}
 	if svc.agent == nil {
 		svc.agent = newAgentManager(cfg.RunsDir)
 	}
+	svc.agent.AttachProviderStore(providers)
 	var engine *agentruntime.Engine
 	var runtimeStore interface{ Close() error }
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("CYBERAGENT_RUNTIME")), "engine") {

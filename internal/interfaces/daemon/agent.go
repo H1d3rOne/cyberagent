@@ -25,6 +25,7 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/command"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	"github.com/H1d3rOne/cyberagent/internal/interfaces/web"
 	doctorruntime "github.com/H1d3rOne/cyberagent/internal/runtime/doctor"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 	"github.com/H1d3rOne/cyberagent/internal/workspace"
@@ -43,6 +44,7 @@ type agentManager struct {
 	approvals services.ApprovalService
 	workspace *workspace.Manager
 	command   *command.Executor
+	providers web.ProviderStore
 	// engine is the optional runtime.Engine used to drive streaming event
 	// output for sessions. nil-safe; set via AttachEngine.
 	engine *runtime.Engine
@@ -1194,6 +1196,9 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 }
 
 func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID string, req agentAuthorizationDecisionRequest, svc routerServices) (agentControlResponse, error) {
+	if svc.providers != nil {
+		m.AttachProviderStore(svc.providers)
+	}
 	if err := contextError(ctx); err != nil {
 		return agentControlResponse{}, err
 	}
@@ -1392,6 +1397,9 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 }
 
 func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (resp sendAgentMessageResponse, err error) {
+	if svc.providers != nil {
+		m.AttachProviderStore(svc.providers)
+	}
 	if err := contextError(ctx); err != nil {
 		return sendAgentMessageResponse{}, err
 	}
@@ -1703,40 +1711,29 @@ func (m *agentManager) handleAgentActiveRunContinue(ctx context.Context, session
 }
 
 func (m *agentManager) handleAgentLLMChat(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language string, req sendAgentMessageRequest, history []agentMessage, memory *agentMemorySummary) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
-	providerName := normalizeAgentProvider(req.Provider)
-	provider := buildAgentLLMProvider(providerName, llm.ProviderConfig{
-		APIKey:  strings.TrimSpace(req.APIKey),
-		BaseURL: strings.TrimSpace(req.BaseURL),
-		Model:   strings.TrimSpace(req.Model),
-	})
-	instructions := agentInstructionsWithAuthProfiles(language, req.Instructions, req.AuthProfiles, req.DefaultAuthProfileID)
-	instructions = appendAgentInstructionBlock(instructions, m.agentMCPRegistryPrompt(language))
-	tool := runningAgentToolCall("LLM chat", provider.Name())
+	attempts := m.agentLLMProviderAttempts(req)
+	tool := runningAgentToolCall("LLM chat", agentLLMAttemptDetail(attempts))
 	chatCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	chatReq := llm.ChatRequest{
-		Model:       strings.TrimSpace(req.Model),
-		System:      agentPlannerSystemPrompt(language, instructions, req.OperationLevel),
-		Messages:    agentLLMHistory(history, memory, language),
-		Tools:       toolRegistry().LLMDefinitions(),
-		MaxTokens:   1600,
-		Temperature: 0.2,
-	}
-	response, streamed, err := m.chatAgentLLM(chatCtx, sessionID, turnRef, "plan", provider, chatReq)
+	response, streamed, usedAttempt, fallbackLog, err := m.chatAgentLLMWithFallback(chatCtx, sessionID, turnRef, "plan", attempts, func(attempt agentLLMProviderAttempt) llm.ChatRequest {
+		instructions := agentInstructionsWithAuthProfiles(language, attempt.Request.Instructions, attempt.Request.AuthProfiles, attempt.Request.DefaultAuthProfileID)
+		instructions = appendAgentInstructionBlock(instructions, m.agentMCPRegistryPrompt(language))
+		return llm.ChatRequest{
+			Model:       strings.TrimSpace(attempt.Request.Model),
+			System:      agentPlannerSystemPrompt(language, instructions, attempt.Request.OperationLevel),
+			Messages:    agentLLMHistory(history, memory, language),
+			Tools:       toolRegistry().LLMDefinitions(),
+			MaxTokens:   1600,
+			Temperature: 0.2,
+		}
+	})
+	tool = agentToolCallWithLLMFallbackMetadata(tool, usedAttempt, fallbackLog, streamed, turnRef.TurnID)
 	tool = finishAgentToolCall(tool, err)
-	if streamed {
-		tool = withAgentToolMetadata(tool, map[string]interface{}{"runtime_streamed": true, "runtime_turn_id": turnRef.TurnID})
-	}
 	if err != nil {
 		tool.Error = &daemonJobError{Code: services.CodeBadRequest, Message: err.Error()}
 		return nil, []agentToolCall{tool}, nil, err
 	}
-	tool.Result = map[string]any{
-		"provider":      provider.Name(),
-		"model":         strings.TrimSpace(req.Model),
-		"input_tokens":  response.Usage.InputTokens,
-		"output_tokens": response.Usage.OutputTokens,
-	}
+	tool.Result = agentLLMToolResult(usedAttempt, response, fallbackLog, "")
 	content := agentLLMText(response)
 	plan, parseErr := parseAgentPlannerResponse(content)
 	if parseErr == nil && plan != nil {
@@ -1818,43 +1815,31 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, sessionID
 		return nil, nil, nil, nil
 	}
 
-	providerName := normalizeAgentProvider(req.Provider)
-	provider := buildAgentLLMProvider(providerName, llm.ProviderConfig{
-		APIKey:  strings.TrimSpace(req.APIKey),
-		BaseURL: strings.TrimSpace(req.BaseURL),
-		Model:   strings.TrimSpace(req.Model),
-	})
-	instructions := agentInstructionsWithAuthProfiles(language, req.Instructions, req.AuthProfiles, req.DefaultAuthProfileID)
-	instructions = appendAgentInstructionBlock(instructions, m.agentMCPRegistryPrompt(language))
-	tool := runningAgentToolCall("LLM synthesis", provider.Name())
+	attempts := m.agentLLMProviderAttempts(req)
+	tool := runningAgentToolCall("LLM synthesis", agentLLMAttemptDetail(attempts))
 	tool = withAgentToolMetadata(tool, map[string]interface{}{"phase": "tool_synthesis"})
 
 	chatCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	chatReq := llm.ChatRequest{
-		Model:       strings.TrimSpace(req.Model),
-		System:      agentToolSynthesisSystemPrompt(language, instructions, req.OperationLevel),
-		Messages:    agentLLMToolSynthesisHistory(history, memory, toolMessages, language),
-		MaxTokens:   1200,
-		Temperature: 0.2,
-	}
-	response, streamed, err := m.chatAgentLLM(chatCtx, sessionID, turnRef, "step_replan", provider, chatReq)
+	response, streamed, usedAttempt, fallbackLog, err := m.chatAgentLLMWithFallback(chatCtx, sessionID, turnRef, "step_replan", attempts, func(attempt agentLLMProviderAttempt) llm.ChatRequest {
+		instructions := agentInstructionsWithAuthProfiles(language, attempt.Request.Instructions, attempt.Request.AuthProfiles, attempt.Request.DefaultAuthProfileID)
+		instructions = appendAgentInstructionBlock(instructions, m.agentMCPRegistryPrompt(language))
+		return llm.ChatRequest{
+			Model:       strings.TrimSpace(attempt.Request.Model),
+			System:      agentToolSynthesisSystemPrompt(language, instructions, attempt.Request.OperationLevel),
+			Messages:    agentLLMToolSynthesisHistory(history, memory, toolMessages, language),
+			MaxTokens:   1200,
+			Temperature: 0.2,
+		}
+	})
+	tool = agentToolCallWithLLMFallbackMetadata(tool, usedAttempt, fallbackLog, streamed, turnRef.TurnID)
 	tool = finishAgentToolCall(tool, err)
-	if streamed {
-		tool = withAgentToolMetadata(tool, map[string]interface{}{"runtime_streamed": true, "runtime_turn_id": turnRef.TurnID})
-	}
 	if err != nil {
 		tool.Error = &daemonJobError{Code: services.CodeBadRequest, Message: err.Error()}
 		return nil, []agentToolCall{tool}, nil, err
 	}
 
-	tool.Result = map[string]any{
-		"provider":      provider.Name(),
-		"model":         strings.TrimSpace(req.Model),
-		"input_tokens":  response.Usage.InputTokens,
-		"output_tokens": response.Usage.OutputTokens,
-		"phase":         "step_replan",
-	}
+	tool.Result = agentLLMToolResult(usedAttempt, response, fallbackLog, "step_replan")
 
 	content := agentLLMText(response)
 	plan, parseErr := parseAgentPlannerResponse(content)

@@ -119,6 +119,12 @@ func (r *RetryProvider) backoff(attempt int) time.Duration {
 	return delay
 }
 
+// IsRetryableError reports whether an error is likely transient and safe to
+// retry or fail over to another equivalent provider.
+func IsRetryableError(err error) bool {
+	return isRetryable(err)
+}
+
 func isRetryable(err error) bool {
 	if err == nil {
 		return false
