@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Bot,
@@ -33,6 +33,7 @@ import type {
   AgentProviderConfig,
   AgentSession,
   AgentSessionRunSummary,
+  AgentSessionStreamMeta,
   AgentSessionSummary,
   AgentTodo,
   AgentToolCall,
@@ -40,10 +41,10 @@ import type {
 } from '@/lib/api'
 import { ApiError, normalizeAgentOperationLevel } from '@/lib/api'
 import { consumeAgentDraft } from '@/lib/agent-draft'
+import { agentCockpitReducer, initialAgentCockpitState } from '@/agent/state/store'
+import type { AgentRuntimeEvent, CockpitStreamStatus } from '@/agent/state/store'
 import { text, useConsole } from '@/lib/console'
 import { cn } from '@/lib/utils'
-
-type StreamStatus = 'offline' | 'connecting' | 'online' | 'error'
 
 interface DisplayContent {
   text: string
@@ -104,27 +105,79 @@ const OPERATION_LEVELS: AgentOperationLevel[] = ['read_only', 'workspace', 'safe
 
 export function AgentCockpitPage() {
   const { client, settings, updateSettings, language, t } = useConsole()
-  const [sessions, setSessions] = useState<AgentSessionSummary[]>([])
-  const [activeSessionId, setActiveSessionId] = useState<string>('')
-  const [session, setSession] = useState<AgentSession | null>(null)
-  const [loadingSessions, setLoadingSessions] = useState(false)
-  const [loadingSession, setLoadingSession] = useState(false)
-  const [sending, setSending] = useState(false)
+  const [cockpitState, dispatchCockpit] = useReducer(agentCockpitReducer, initialAgentCockpitState)
+  const {
+    sessions,
+    activeSessionId,
+    session,
+    loadingSessions,
+    loadingSession,
+    sending,
+    error,
+    streamStatus,
+  } = cockpitState
   const [authBusy, setAuthBusy] = useState(false)
   const [input, setInput] = useState('')
-  const [error, setError] = useState('')
   const [dismissedAuthorizationGates, setDismissedAuthorizationGates] = useState<string[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [quickOpen, setQuickOpen] = useState(false)
   const [taskOpen, setTaskOpen] = useState(false)
   const [permissionOpen, setPermissionOpen] = useState(false)
-  const [streamStatus, setStreamStatus] = useState<StreamStatus>('offline')
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceData, setTraceData] = useState<AgentTraceResponse | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const draftConsumedRef = useRef(false)
+  const sessionRef = useRef<AgentSession | null>(null)
+  const streamSessionRef = useRef('')
+  const lastSeqRef = useRef(0)
+
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
+
+  const setSessions = useCallback((items: AgentSessionSummary[]) => {
+    dispatchCockpit({ type: 'sessions/loaded', sessions: items })
+  }, [])
+
+  const setActiveSessionId = useCallback((sessionId: string) => {
+    dispatchCockpit({ type: 'session/select', sessionId })
+  }, [])
+
+  const setSession = useCallback((next: AgentSession | null | ((current: AgentSession | null) => AgentSession | null)) => {
+    const resolved = typeof next === 'function' ? next(sessionRef.current) : next
+    sessionRef.current = resolved
+    dispatchCockpit({ type: 'session/loaded', session: resolved })
+  }, [])
+
+  const setLoadingSessions = useCallback((loading: boolean) => {
+    dispatchCockpit({ type: 'sessions/loading', loading })
+  }, [])
+
+  const setLoadingSession = useCallback((loading: boolean) => {
+    dispatchCockpit({ type: 'session/loading', loading })
+  }, [])
+
+  const setSending = useCallback((nextSending: boolean) => {
+    dispatchCockpit({ type: 'sending', sending: nextSending })
+  }, [])
+
+  const setError = useCallback((nextError: string) => {
+    dispatchCockpit({ type: 'error', error: nextError })
+  }, [])
+
+  const setStreamStatus = useCallback((status: CockpitStreamStatus) => {
+    dispatchCockpit({ type: 'stream/status', status })
+  }, [])
+
+  const dispatchStreamEvent = useCallback((event: string, payload: Record<string, unknown>, meta?: AgentSessionStreamMeta) => {
+    const eventPayload: Record<string, unknown> = { ...payload }
+    if (typeof eventPayload.type !== 'string') eventPayload.type = event
+    if (eventPayload.id === undefined && meta?.id) eventPayload.id = meta.id
+    if (eventPayload.seq === undefined && meta?.seq !== undefined) eventPayload.seq = meta.seq
+    dispatchCockpit({ type: 'stream/event', event: eventPayload as unknown as AgentRuntimeEvent })
+  }, [])
 
   const providerConfig = useMemo(() => ({
     provider: settings.agentProvider.provider,
@@ -233,21 +286,31 @@ export function AgentCockpitPage() {
   useEffect(() => {
     if (!activeSessionId) {
       setStreamStatus('offline')
+      streamSessionRef.current = ''
+      lastSeqRef.current = 0
       return
     }
     const controller = new AbortController()
+    if (streamSessionRef.current !== activeSessionId) {
+      streamSessionRef.current = activeSessionId
+      lastSeqRef.current = 0
+    }
     setStreamStatus('connecting')
-    client.streamAgentSession(activeSessionId, {
+    void client.streamAgentSession(activeSessionId, {
       onOpen: () => setStreamStatus('online'),
       onSession: (nextSession) => setSession(nextSession),
+      onEvent: dispatchStreamEvent,
+      onLastSeq: (seq) => {
+        lastSeqRef.current = seq
+      },
       onError: () => setStreamStatus('error'),
-    }, controller.signal).catch((err) => {
+    }, controller.signal, { fromSeq: lastSeqRef.current || undefined }).catch((err) => {
       if (!controller.signal.aborted) {
         setStreamStatus(formatError(err, language).includes('401') ? 'error' : 'offline')
       }
     })
     return () => controller.abort()
-  }, [activeSessionId, client, language])
+  }, [activeSessionId, client, dispatchStreamEvent, language, setSession, setStreamStatus])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -2042,17 +2105,19 @@ function permissionModeDetail(level: string, language: 'zh' | 'en') {
   return details[normalized][language]
 }
 
-function streamLabel(status: StreamStatus, language: 'zh' | 'en') {
+function streamLabel(status: CockpitStreamStatus, language: 'zh' | 'en') {
   if (status === 'online') return text(language, '实时在线', 'Live')
   if (status === 'connecting') return text(language, '连接中', 'Connecting')
   if (status === 'error') return text(language, '流异常', 'Stream error')
+  if (status === 'degraded') return text(language, '降级同步', 'Degraded')
   return text(language, '轮询同步', 'Polling')
 }
 
-function streamDotClass(status: StreamStatus) {
+function streamDotClass(status: CockpitStreamStatus) {
   if (status === 'online') return 'bg-emerald-300 shadow-[0_0_12px_rgba(110,231,183,0.75)]'
   if (status === 'connecting') return 'bg-primary shadow-[0_0_12px_rgba(96,165,250,0.75)]'
   if (status === 'error') return 'bg-red-300 shadow-[0_0_12px_rgba(252,165,165,0.75)]'
+  if (status === 'degraded') return 'bg-amber-300 shadow-[0_0_12px_rgba(252,211,77,0.65)]'
   return 'bg-slate-500'
 }
 
