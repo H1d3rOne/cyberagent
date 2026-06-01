@@ -11,7 +11,14 @@ type agentRegistryHandlerResult struct {
 	ToolCalls []agentToolCall
 }
 
-func (m *agentManager) executeAgentRegistryHandler(ctx context.Context, sessionID, language, operator, operationLevel string, spec *toolregistry.ToolSpec, args map[string]any) ([]agentMessage, []agentToolCall, error) {
+type agentRegistryHandlerRuntime struct {
+	Manager              *agentManager
+	Services             routerServices
+	AuthProfiles         []agentHTTPAuthProfile
+	DefaultAuthProfileID string
+}
+
+func (m *agentManager) executeAgentRegistryHandler(ctx context.Context, sessionID, language, operator, operationLevel string, svc routerServices, spec *toolregistry.ToolSpec, args map[string]any, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, error) {
 	if spec == nil || spec.Handler == nil {
 		return nil, nil, nil
 	}
@@ -21,6 +28,12 @@ func (m *agentManager) executeAgentRegistryHandler(ctx context.Context, sessionI
 		Language:       language,
 		OperationLevel: operationLevel,
 		RawArgs:        cloneMapStringAny(args),
+		Runtime: agentRegistryHandlerRuntime{
+			Manager:              m,
+			Services:             svc,
+			AuthProfiles:         append([]agentHTTPAuthProfile(nil), authProfiles...),
+			DefaultAuthProfileID: defaultAuthProfileID,
+		},
 	})
 	if err != nil {
 		return nil, nil, err

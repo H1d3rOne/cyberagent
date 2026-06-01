@@ -25,6 +25,7 @@ var (
 func toolRegistry() *toolregistry.Registry {
 	daemonToolRegistryOnce.Do(func() {
 		daemonToolRegistryRef = toolregistry.NewWithBuiltins()
+		attachDaemonToolHandlers(daemonToolRegistryRef)
 	})
 	return daemonToolRegistryRef
 }

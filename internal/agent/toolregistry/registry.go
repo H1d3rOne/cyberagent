@@ -80,6 +80,7 @@ type HandlerInput struct {
 	Language       string
 	OperationLevel string
 	RawArgs        map[string]any
+	Runtime        any
 }
 
 // Handler is the (eventually) streaming executor for a tool. The Phase 1 cut

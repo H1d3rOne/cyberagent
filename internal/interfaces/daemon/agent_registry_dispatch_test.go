@@ -64,3 +64,15 @@ func TestMCPToolNamesUseDoubleUnderscoreNamespace(t *testing.T) {
 		t.Fatalf("V1 MCP action normalized to %q, want %q", normalized, name)
 	}
 }
+
+func TestRegistryBuiltinHandlersAreAttached(t *testing.T) {
+	for _, name := range []string{"daemon.health", "plugins.list", "runs.list"} {
+		spec, ok := toolRegistry().Lookup(name)
+		if !ok {
+			t.Fatalf("%s missing from registry", name)
+		}
+		if spec.Handler == nil {
+			t.Fatalf("%s Handler is nil", name)
+		}
+	}
+}

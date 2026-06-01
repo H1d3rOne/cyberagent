@@ -2417,7 +2417,7 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 	}
 
 	if spec, ok := toolRegistry().Lookup(name); ok && spec.Handler != nil {
-		return m.executeAgentRegistryHandler(ctx, sessionID, language, operator, operationLevel, spec, args)
+		return m.executeAgentRegistryHandler(ctx, sessionID, language, operator, operationLevel, svc, spec, args, authProfiles, defaultAuthProfileID)
 	}
 
 	// Deprecated: legacy per-tool dispatch. Migrate cases into ToolSpec.Handler
