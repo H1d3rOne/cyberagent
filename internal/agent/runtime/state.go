@@ -87,6 +87,12 @@ func ValidateTaskTransition(from, to TaskState) error {
 		if to != TaskRunning && to != TaskCancelled {
 			return fmt.Errorf("paused->%s invalid", to)
 		}
+	default:
+		// Catches typos / unknown raw strings cast into TaskState. Without this
+		// the function would silently accept any from-state not in the case
+		// list above (e.g. a misspelled "runing" or a future state added
+		// elsewhere) and let an invalid transition through.
+		return fmt.Errorf("unknown task state transition: %s -> %s", from, to)
 	}
 	return nil
 }
@@ -112,6 +118,12 @@ func ValidateRunTransition(from, to RunState) error {
 		if to != RunRunning && to != RunFailed && to != RunCancelled {
 			return fmt.Errorf("awaiting_approval->%s invalid", to)
 		}
+	default:
+		// Same defensive default as ValidateTaskTransition: unknown from-state
+		// (typo or future addition not yet covered here) must fail loudly so
+		// the bad write surfaces in the engine path instead of silently
+		// succeeding.
+		return fmt.Errorf("unknown run state transition: %s -> %s", from, to)
 	}
 	return nil
 }
