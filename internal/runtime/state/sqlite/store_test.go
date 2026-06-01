@@ -233,6 +233,87 @@ func TestEngineSeedsEventSeqFromSQLiteStore(t *testing.T) {
 	}
 }
 
+
+func TestListRunsByState(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "runtime.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	created := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	task := agentruntime.Task{ID: "task-list-runs", SessionID: "session-list-runs", Origin: "user", Goal: "recover"}
+	if err := store.SaveTask(ctx, task); err != nil {
+		t.Fatalf("SaveTask() error = %v", err)
+	}
+	runs := []agentruntime.Run{
+		{ID: "run-pending-b", TaskID: task.ID, State: string(agentruntime.RunPending), CreatedAt: created.Add(2 * time.Second)},
+		{ID: "run-running", TaskID: task.ID, State: string(agentruntime.RunRunning), CreatedAt: created.Add(3 * time.Second)},
+		{ID: "run-awaiting", TaskID: task.ID, State: string(agentruntime.RunAwaitingApproval), CreatedAt: created.Add(4 * time.Second)},
+		{ID: "run-pending-a", TaskID: task.ID, State: string(agentruntime.RunPending), CreatedAt: created.Add(time.Second)},
+		{ID: "run-done", TaskID: task.ID, State: string(agentruntime.RunDone), CreatedAt: created.Add(5 * time.Second)},
+		{ID: "run-failed", TaskID: task.ID, State: string(agentruntime.RunFailed), CreatedAt: created.Add(6 * time.Second)},
+	}
+	for _, run := range runs {
+		if err := store.SaveRun(ctx, run); err != nil {
+			t.Fatalf("SaveRun(%s) error = %v", run.ID, err)
+		}
+	}
+
+	got, err := store.ListRunsByState(ctx, agentruntime.RunPending, agentruntime.RunRunning, agentruntime.RunAwaitingApproval)
+	if err != nil {
+		t.Fatalf("ListRunsByState() error = %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("ListRunsByState() len = %d, want 4: %#v", len(got), got)
+	}
+	wantIDs := []string{"run-pending-a", "run-pending-b", "run-running", "run-awaiting"}
+	for i, run := range got {
+		if run.ID != wantIDs[i] {
+			t.Fatalf("ListRunsByState()[%d].ID = %q, want %q; runs=%#v", i, run.ID, wantIDs[i], got)
+		}
+	}
+
+	empty, err := store.ListRunsByState(ctx)
+	if err != nil {
+		t.Fatalf("ListRunsByState(empty) error = %v", err)
+	}
+	if empty != nil {
+		t.Fatalf("ListRunsByState(empty) = %#v, want nil", empty)
+	}
+
+	filtered, err := store.ListRunsByState(ctx, agentruntime.RunState(""), agentruntime.RunState("   "), agentruntime.RunDone)
+	if err != nil {
+		t.Fatalf("ListRunsByState(filtered) error = %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != "run-done" {
+		t.Fatalf("ListRunsByState(filtered) = %#v, want only run-done", filtered)
+	}
+
+	missing, err := store.ListRunsByState(ctx, agentruntime.RunState("missing"))
+	if err != nil {
+		t.Fatalf("ListRunsByState(missing) error = %v", err)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("ListRunsByState(missing) = %#v, want empty", missing)
+	}
+}
+
+func TestListRunsByStateReturnsErrorAfterClose(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "runtime.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	_, err = store.ListRunsByState(context.Background(), agentruntime.RunPending)
+	if err == nil {
+		t.Fatal("ListRunsByState(closed) error = nil, want error")
+	}
+}
+
 func sqliteTableExists(t *testing.T, db *sql.DB, table string) bool {
 	t.Helper()
 	var name string

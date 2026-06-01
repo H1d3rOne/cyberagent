@@ -121,6 +121,10 @@ type eventSeqStore interface {
 	MaxEventSeq(ctx context.Context) (int64, error)
 }
 
+type recoverableRunStore interface {
+	ListRunsByState(ctx context.Context, states ...RunState) ([]Run, error)
+}
+
 // NewEngine returns a fresh engine bound to store. Subscribers are added
 // later via Stream(). Stores may expose MaxEventSeq so a restarted daemon
 // continues event IDs above the durable high-water mark.
@@ -283,6 +287,68 @@ func eventMatchesFilter(ev Event, filter EventFilter) bool {
 		return false
 	}
 	return true
+}
+
+// RecoverInterruptedRuns marks durable, non-terminal runs left behind by a daemon
+// crash as failed and publishes task_failed recovery events for audit/UI replay.
+// It is intentionally opt-in: stores that do not expose recoverableRunStore are
+// left untouched, preserving legacy/in-memory behaviour.
+func (e *Engine) RecoverInterruptedRuns(ctx context.Context) (int, error) {
+	if e == nil || e.store == nil {
+		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runStore, ok := e.store.(recoverableRunStore)
+	if !ok {
+		return 0, nil
+	}
+	runs, err := runStore.ListRunsByState(ctx, RunPending, RunRunning, RunAwaitingApproval)
+	if err != nil {
+		return 0, err
+	}
+	recovered := 0
+	for _, run := range runs {
+		previousState := strings.TrimSpace(run.State)
+		if previousState == "" || IsRunTerminal(RunState(previousState)) {
+			continue
+		}
+		sessionID := ""
+		if strings.TrimSpace(run.TaskID) != "" {
+			if task, err := e.store.LoadTask(ctx, run.TaskID); err == nil {
+				sessionID = strings.TrimSpace(task.SessionID)
+				e.mu.Lock()
+				e.tasks[task.ID] = &task
+				e.mu.Unlock()
+			}
+		}
+		run.State = string(RunFailed)
+		if err := e.store.SaveRun(ctx, run); err != nil {
+			return recovered, fmt.Errorf("mark interrupted run %s failed: %w", run.ID, err)
+		}
+		e.mu.Lock()
+		runCopy := run
+		e.runs[run.ID] = &runCopy
+		e.mu.Unlock()
+		e.publish(ctx, Event{
+			Type:      "task_failed",
+			SessionID: sessionID,
+			RunID:     run.ID,
+			TaskID:    run.TaskID,
+			Data: map[string]any{
+				"recovery":       true,
+				"recoverable":    true,
+				"previous_state": previousState,
+				"reason":         "daemon_restarted",
+				"run_id":         run.ID,
+				"task_id":        run.TaskID,
+			},
+			Timestamp: time.Now().UTC(),
+		})
+		recovered++
+	}
+	return recovered, nil
 }
 
 // SubmitRun registers a Run for an existing Task and emits run_started.

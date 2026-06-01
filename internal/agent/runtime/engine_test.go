@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -10,6 +12,47 @@ import (
 func newTestEngine() (*Engine, *MemStore) {
 	store := NewMemStore()
 	return NewEngine(store), store
+}
+
+type recoverableTestStore struct {
+	*MemStore
+}
+
+func newRecoverableTestEngine() (*Engine, *recoverableTestStore) {
+	store := &recoverableTestStore{MemStore: NewMemStore()}
+	return NewEngine(store), store
+}
+
+func (s *recoverableTestStore) ListRunsByState(_ context.Context, states ...RunState) ([]Run, error) {
+	if len(states) == 0 {
+		return nil, nil
+	}
+	wanted := make(map[string]bool, len(states))
+	for _, state := range states {
+		trimmed := strings.TrimSpace(string(state))
+		if trimmed != "" {
+			wanted[trimmed] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []Run
+	for _, run := range s.runs {
+		if wanted[run.State] {
+			out = append(out, run)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 func eventTypes(events []Event, runID string) []string {
@@ -339,6 +382,80 @@ func TestMemStoreLoadListAndStateValidation(t *testing.T) {
 	}
 	if err := ValidateRunTransition(RunDone, RunRunning); err == nil {
 		t.Fatal("ValidateRunTransition(done,running) error = nil, want error")
+	}
+}
+
+func TestRecoverInterruptedRunsMarksFailedAndPublishesReplayableEvent(t *testing.T) {
+	e, store := newRecoverableTestEngine()
+	ctx := context.Background()
+	task := Task{ID: "task-recovery", SessionID: "session-recovery", Origin: "user", Goal: "resume after crash"}
+	if _, err := e.Submit(ctx, task); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if _, err := e.SubmitRun(ctx, Run{ID: "run-recovery", TaskID: task.ID, State: string(RunRunning), CreatedAt: time.Now().UTC().Add(-time.Minute)}); err != nil {
+		t.Fatalf("SubmitRun() error = %v", err)
+	}
+	if _, err := e.SubmitRun(ctx, Run{ID: "run-recovery-nolink", State: string(RunAwaitingApproval), CreatedAt: time.Now().UTC().Add(-2 * time.Minute)}); err != nil {
+		t.Fatalf("SubmitRun(no-link) error = %v", err)
+	}
+
+	recovered, err := e.RecoverInterruptedRuns(ctx)
+	if err != nil {
+		t.Fatalf("RecoverInterruptedRuns() error = %v", err)
+	}
+	if recovered != 2 {
+		t.Fatalf("RecoverInterruptedRuns() recovered = %d, want 2", recovered)
+	}
+
+	run, err := store.LoadRun(ctx, "run-recovery")
+	if err != nil {
+		t.Fatalf("LoadRun(run-recovery) error = %v", err)
+	}
+	if run.State != string(RunFailed) {
+		t.Fatalf("run-recovery state = %q, want %q", run.State, RunFailed)
+	}
+
+	runNoLink, err := store.LoadRun(ctx, "run-recovery-nolink")
+	if err != nil {
+		t.Fatalf("LoadRun(run-recovery-nolink) error = %v", err)
+	}
+	if runNoLink.State != string(RunFailed) {
+		t.Fatalf("run-recovery-nolink state = %q, want %q", runNoLink.State, RunFailed)
+	}
+
+	events, err := store.ListEvents(ctx, EventFilter{FromSeq: 0, SessionID: "session-recovery"}, 20)
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	var recoveryEvents []Event
+	for _, ev := range events {
+		if ev.Type == "task_failed" {
+			recoveryEvents = append(recoveryEvents, ev)
+		}
+	}
+	if len(recoveryEvents) != 1 {
+		t.Fatalf("recovery task_failed events = %#v, want 1", recoveryEvents)
+	}
+	ev := recoveryEvents[0]
+	if ev.SessionID != task.SessionID || ev.TaskID != task.ID || ev.RunID != "run-recovery" {
+		t.Fatalf("recovery event envelope = %#v, want task/run/session linked", ev)
+	}
+	if ev.Data["recovery"] != true || ev.Data["recoverable"] != true || ev.Data["reason"] != "daemon_restarted" {
+		t.Fatalf("recovery event data = %#v, want recovery metadata", ev.Data)
+	}
+	if ev.Data["previous_state"] != string(RunRunning) {
+		t.Fatalf("recovery previous_state = %#v, want %q", ev.Data["previous_state"], RunRunning)
+	}
+	if ev.Data["run_id"] != "run-recovery" || ev.Data["task_id"] != task.ID {
+		t.Fatalf("recovery ids = %#v, want run/task ids", ev.Data)
+	}
+
+	replayed, err := store.ListEvents(ctx, EventFilter{FromSeq: ev.Seq - 1, SessionID: task.SessionID}, 10)
+	if err != nil {
+		t.Fatalf("ListEvents(replay) error = %v", err)
+	}
+	if len(replayed) == 0 || replayed[len(replayed)-1].Seq != ev.Seq {
+		t.Fatalf("replayed events = %#v, want recovery event replayed", replayed)
 	}
 }
 

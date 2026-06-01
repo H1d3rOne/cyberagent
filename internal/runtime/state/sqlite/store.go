@@ -356,6 +356,49 @@ func (s *Store) ListRuns(ctx context.Context, taskID string) ([]agentruntime.Run
 	return out, nil
 }
 
+// ListRunsByState returns runs whose state is in states, ordered by creation time.
+func (s *Store) ListRunsByState(ctx context.Context, states ...agentruntime.RunState) ([]agentruntime.Run, error) {
+	ctx = runtimeContext(ctx)
+	if len(states) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, 0, len(states))
+	args := make([]any, 0, len(states))
+	for _, state := range states {
+		trimmed := strings.TrimSpace(string(state))
+		if trimmed == "" {
+			continue
+		}
+		placeholders = append(placeholders, "?")
+		args = append(args, trimmed)
+	}
+	if len(placeholders) == 0 {
+		return nil, nil
+	}
+	query := `SELECT json FROM runs WHERE state IN (` + strings.Join(placeholders, `,`) + `) ORDER BY created_at ASC, id ASC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list runtime runs by state: %w", err)
+	}
+	defer rows.Close()
+	var out []agentruntime.Run
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, fmt.Errorf("scan runtime run by state: %w", err)
+		}
+		var r agentruntime.Run
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, fmt.Errorf("decode runtime run by state: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate runtime runs by state: %w", err)
+	}
+	return out, nil
+}
+
 // ListEvents returns a filtered event snapshot. FromSeq queries return the
 // first matching events after FromSeq in ascending Seq order. With FromSeq=0
 // and limit>0, the query selects the newest limit rows by descending Seq and
