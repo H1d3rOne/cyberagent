@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -24,13 +26,16 @@ func TestScheduleManagerPersistRoundTrip(t *testing.T) {
 	if spec.ID == "" {
 		t.Fatal("expected ID assigned")
 	}
+	if spec.Action != scheduleActionAgentPrompt || spec.Prompt != "扫描 https://example.com scope=subdomain" || spec.OpsLevel != "safe_scan" {
+		t.Fatalf("legacy scan_web should normalize to prompt schedule: %+v", spec)
+	}
 
 	reloaded := newScheduleManager(dir)
 	got, err := reloaded.Get(spec.ID)
 	if err != nil {
 		t.Fatalf("reload Get error: %v", err)
 	}
-	if got.Cron != spec.Cron || got.Target != spec.Target || got.Action != spec.Action {
+	if got.Cron != spec.Cron || got.Target != spec.Target || got.Action != scheduleActionAgentPrompt || got.Prompt != spec.Prompt {
 		t.Fatalf("reloaded spec mismatch: got=%+v want=%+v", got, spec)
 	}
 	if got.InFlight {
@@ -47,7 +52,7 @@ func TestScheduleManagerSkipIfRunning(t *testing.T) {
 		fires   int
 	)
 	m.BindRunner(scheduleRunner{
-		StartScanWeb: func(ctx context.Context, s scheduleSpec) (string, error) {
+		SendAgentPrompt: func(ctx context.Context, s scheduleSpec) (string, error) {
 			mu.Lock()
 			fires++
 			mu.Unlock()
@@ -59,8 +64,8 @@ func TestScheduleManagerSkipIfRunning(t *testing.T) {
 	spec, err := m.Create(scheduleSpec{
 		Name:   "slow",
 		Cron:   "*/5 * * * *",
-		Action: scheduleActionScanWeb,
-		Target: "https://example.com",
+		Action: scheduleActionAgentPrompt,
+		Prompt: "扫描 https://example.com",
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
@@ -103,13 +108,41 @@ func TestScheduleManagerSkipIfRunning(t *testing.T) {
 	}
 }
 
+func TestScheduleManagerMigratesPersistedScanWebToPrompt(t *testing.T) {
+	dir := t.TempDir()
+	storeDir := filepath.Join(dir, ".agent", "schedules")
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
+		t.Fatalf("mkdir schedules: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(storeDir, "sched_legacy.json"), []byte(`{
+		"id":"sched_legacy",
+		"name":"legacy scan",
+		"cron":"*/5 * * * *",
+		"action":"scan_web",
+		"enabled":true,
+		"target":"https://example.com",
+		"scope":"https://example.com/app"
+	}`), 0o600); err != nil {
+		t.Fatalf("write legacy schedule: %v", err)
+	}
+
+	m := newScheduleManager(dir)
+	got, err := m.Get("sched_legacy")
+	if err != nil {
+		t.Fatalf("Get migrated schedule error: %v", err)
+	}
+	if got.Action != scheduleActionAgentPrompt || got.Prompt != "扫描 https://example.com scope=https://example.com/app" || got.OpsLevel != "safe_scan" {
+		t.Fatalf("unexpected migrated schedule: %+v", got)
+	}
+}
+
 func TestScheduleManagerInvalidCronRejected(t *testing.T) {
 	m := newScheduleManager(t.TempDir())
 	if _, err := m.Create(scheduleSpec{
 		Name:    "bad",
 		Cron:    "this is not cron",
-		Action:  scheduleActionScanWeb,
-		Target:  "https://example.com",
+		Action:  scheduleActionAgentPrompt,
+		Prompt:  "扫描 https://example.com",
 	}); err == nil {
 		t.Fatal("expected error for invalid cron")
 	}
@@ -126,8 +159,8 @@ func TestScheduleManagerEnableDisableTogglesEntry(t *testing.T) {
 	spec, err := m.Create(scheduleSpec{
 		Name:    "toggle",
 		Cron:    "*/5 * * * *",
-		Action:  scheduleActionScanWeb,
-		Target:  "https://example.com",
+		Action:  scheduleActionAgentPrompt,
+		Prompt:  "扫描 https://example.com",
 		Enabled: true,
 	})
 	if err != nil {

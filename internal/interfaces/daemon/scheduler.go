@@ -21,8 +21,10 @@ import (
 type scheduleAction string
 
 const (
+	// Deprecated: schedules are normalized to agent_prompt during validation.
 	scheduleActionAgentPrompt scheduleAction = "agent_prompt"
-	scheduleActionScanWeb     scheduleAction = "scan_web"
+	// Deprecated: legacy scan_web entries are migrated into Prompt text.
+	scheduleActionScanWeb scheduleAction = "scan_web"
 )
 
 type scheduleSpec struct {
@@ -38,6 +40,7 @@ type scheduleSpec struct {
 	Operator  string `json:"operator,omitempty"`
 	Language  string `json:"language,omitempty"`
 	Prompt    string `json:"prompt,omitempty"`
+	OpsLevel  string `json:"ops_level,omitempty"`
 
 	Target  string `json:"target,omitempty"`
 	Scope   string `json:"scope,omitempty"`
@@ -54,7 +57,8 @@ type scheduleSpec struct {
 
 type scheduleRunner struct {
 	SendAgentPrompt func(ctx context.Context, s scheduleSpec) (msgID string, err error)
-	StartScanWeb    func(ctx context.Context, s scheduleSpec) (jobID string, err error)
+	// Deprecated: scan_web schedules are migrated into SendAgentPrompt.
+	StartScanWeb func(ctx context.Context, s scheduleSpec) (jobID string, err error)
 }
 
 type scheduleManager struct {
@@ -150,9 +154,13 @@ func (m *scheduleManager) loadLocked() error {
 		if err := json.Unmarshal(data, &spec); err != nil || strings.TrimSpace(spec.ID) == "" {
 			continue
 		}
+		if err := m.validateLocked(&spec); err != nil {
+			continue
+		}
 		spec.InFlight = false
 		clone := spec
 		m.items[spec.ID] = &clone
+		_ = m.persistLocked(&clone)
 	}
 	return nil
 }
@@ -197,23 +205,17 @@ func (m *scheduleManager) validateLocked(spec *scheduleSpec) error {
 	if _, err := m.parser.Parse(spec.Cron); err != nil {
 		return services.NewError(services.CodeBadRequest, "invalid cron expression", map[string]any{"field": "cron", "value": spec.Cron}, err)
 	}
+	normalizeSchedulePromptSpec(spec)
 	switch spec.Action {
 	case scheduleActionAgentPrompt:
-		if strings.TrimSpace(spec.SessionID) == "" {
-			return services.NewError(services.CodeBadRequest, "session_id required for agent_prompt", map[string]any{"field": "session_id"}, nil)
-		}
 		if strings.TrimSpace(spec.Prompt) == "" {
-			return services.NewError(services.CodeBadRequest, "prompt required for agent_prompt", map[string]any{"field": "prompt"}, nil)
+			return services.NewError(services.CodeBadRequest, "prompt required for schedule", map[string]any{"field": "prompt"}, nil)
 		}
 		if strings.TrimSpace(spec.Operator) == "" {
 			spec.Operator = "scheduler"
 		}
 		if strings.TrimSpace(spec.Language) == "" {
 			spec.Language = "zh"
-		}
-	case scheduleActionScanWeb:
-		if strings.TrimSpace(spec.Target) == "" {
-			return services.NewError(services.CodeBadRequest, "target required for scan_web", map[string]any{"field": "target"}, nil)
 		}
 	default:
 		return services.NewError(services.CodeBadRequest, "unsupported action", map[string]any{"field": "action", "value": string(spec.Action)}, nil)
@@ -222,6 +224,46 @@ func (m *scheduleManager) validateLocked(spec *scheduleSpec) error {
 		spec.Name = string(spec.Action) + " · " + spec.Cron
 	}
 	return nil
+}
+
+func normalizeSchedulePromptSpec(spec *scheduleSpec) {
+	if spec == nil {
+		return
+	}
+	spec.Action = scheduleAction(strings.ToLower(strings.TrimSpace(string(spec.Action))))
+	switch spec.Action {
+	case "", scheduleActionAgentPrompt:
+		spec.Action = scheduleActionAgentPrompt
+	case scheduleActionScanWeb:
+		if strings.TrimSpace(spec.Prompt) == "" {
+			spec.Prompt = schedulePromptFromLegacyScanWeb(*spec)
+		}
+		spec.Action = scheduleActionAgentPrompt
+	default:
+		if strings.TrimSpace(spec.Prompt) != "" {
+			spec.Action = scheduleActionAgentPrompt
+		}
+	}
+	if strings.TrimSpace(spec.OpsLevel) == "" {
+		spec.OpsLevel = "safe_scan"
+	} else {
+		spec.OpsLevel = normalizeAgentOperationLevel(spec.OpsLevel)
+	}
+}
+
+func schedulePromptFromLegacyScanWeb(spec scheduleSpec) string {
+	target := strings.TrimSpace(spec.Target)
+	if target == "" {
+		return ""
+	}
+	prompt := "扫描 " + target
+	if scope := strings.TrimSpace(spec.Scope); scope != "" {
+		prompt += " scope=" + scope
+	}
+	if profile := strings.TrimSpace(spec.Profile); profile != "" {
+		prompt += " profile=" + profile
+	}
+	return prompt
 }
 
 func (m *scheduleManager) Create(spec scheduleSpec) (scheduleSpec, error) {
@@ -273,6 +315,7 @@ func (m *scheduleManager) Update(id string, patch scheduleSpec) (scheduleSpec, e
 	merged.Operator = patch.Operator
 	merged.Language = patch.Language
 	merged.Prompt = patch.Prompt
+	merged.OpsLevel = patch.OpsLevel
 	merged.Target = patch.Target
 	merged.Scope = patch.Scope
 	merged.Profile = patch.Profile
@@ -447,9 +490,9 @@ func (m *scheduleManager) fire(ctx context.Context, id string) {
 	m.mu.Unlock()
 
 	var (
-		jobID    string
-		msgID    string
-		runErr   error
+		jobID  string
+		msgID  string
+		runErr error
 	)
 	switch clone.Action {
 	case scheduleActionAgentPrompt:
@@ -458,12 +501,6 @@ func (m *scheduleManager) fire(ctx context.Context, id string) {
 			break
 		}
 		msgID, runErr = runner.SendAgentPrompt(ctx, clone)
-	case scheduleActionScanWeb:
-		if runner.StartScanWeb == nil {
-			runErr = errors.New("scan runner not bound")
-			break
-		}
-		jobID, runErr = runner.StartScanWeb(ctx, clone)
 	default:
 		runErr = fmt.Errorf("unsupported action %q", clone.Action)
 	}

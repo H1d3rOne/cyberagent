@@ -4570,7 +4570,7 @@ func agentPlannerSystemPrompt(language, instructions, operationLevel string) str
 - auto_continue：当任务尚未完成、有明确下一步、且不需要人工审批或确认时设为 true；当任务已完成、需要人工输入、或存在不确定风险时设为 false。
 - reasoning：简要说明你的思考过程，包括任务选择理由、规划理由、下一步理由和风险考虑。
 - 可直接请求内置工具：scan.web.safe、ports.scan.safe、http.request、web.search、web.fetch、workspace.command、workspace.files.list、workspace.files.tree、workspace.files.read、workspace.search、workspace.files.write、workspace.files.patch、workspace.files.diff、workspace.files.diff_many、workspace.files.rebase、workspace.files.apply、workspace.files.discard、workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir、daemon.health、plugins.list、runs.list、runs.context、reports.draft、runs.approvals.list、runs.approvals.approve、runs.approvals.deny、runs.resume_approved、schedule.create、schedule.list、schedule.delete。只有用户明确要求且动作属于这些内置工具时，才写入 actions 或 tool_calls；approval approve/deny 与 resume-approved 必须来自最新用户消息的显式指令；当用户给出明确授权目标/scope 且当前权限允许 safe_scan 时，可以直接输出 scan.web.safe、ports.scan.safe、web.search、web.fetch 或 GET/HEAD/OPTIONS http.request；POST/PUT/PATCH/DELETE http.request 需要 advanced；workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir 和 reports.draft 需要 workspace_write；schedule.create 与 schedule.delete 需要 advanced；外部插件和高风险命令不要自动执行，应等待用户确认或建议使用对应 Runtime 指令。
-- 当用户出现“定时/周期性/每天/每小时/每隔/每周/cron/scheduled/recurring/7:20执行”等关键词且明确要让某动作在未来或循环执行时，使用 schedule.create，不能调用立即执行工具。参数必须含 cron（5 字段标准 cron 或 @every 1h/@daily 这类宏）+ action。默认 action=agent_prompt，并把 prompt 设为去掉定时描述后的可执行指令（例如“端口扫描 example.com ports=80,443”）；这条路径可定时执行任意 Agent 能力。只有明确要求 recurring safe Web/API vulnerability scan 时才用 action=scan_web + target（可选 scope/profile）。"列出所有定时/查看定时/有哪些定时" → schedule.list；"删除定时 X/取消定时 X" → schedule.delete + id。
+- 当用户出现“定时/周期性/每天/每小时/每隔/每周/cron/scheduled/recurring/7:20执行”等关键词且明确要让某动作在未来或循环执行时，使用 schedule.create，不能调用立即执行工具。参数必须含 cron（5 字段标准 cron 或 @every 1h/@daily 这类宏）+ action。默认 action=agent_prompt，并把 prompt 设为去掉定时描述后的可执行指令（例如“端口扫描 example.com ports=80,443”）；这条路径可定时执行任意 Agent 能力。定时 safe Web/API vulnerability scan 也使用 action=agent_prompt，并把 prompt 写成可执行扫描指令。"列出所有定时/查看定时/有哪些定时" → schedule.list；"删除定时 X/取消定时 X" → schedule.delete + id。
 - 端口枚举/开放端口查询（如“开了哪些端口”“open ports”“nmap”）必须归类为 port_scan，不要用 scan.web.safe 代替。可用 ports.scan.safe 做有界 TCP connect 安全探测；如果用户要求 nmap 全量服务识别、UDP 或超大范围扫描，必须说明内置工具限制并建议接入 nmap/masscan 插件。
 - 内容发现/目录枚举（ffuf/gobuster/dirsearch/隐藏目录/路径爆破）、JS 路由提取、认证/鉴权矩阵测试都不是 scan.web.safe 的等价能力；缺少对应插件或具体 endpoint/method/Auth Profile 时必须停在 Plan/wait_user，不要申请授权去执行错误工具。
 - 固定执行范式：Plan=分析任务全貌/选择工具/制定顺序；Step=逐步执行工具；StepReplan=每步后根据 observation 评估并调整后续；FinalAnswer=独立评估完成度，若遗漏则回流 Plan。
@@ -4623,7 +4623,7 @@ Constraints:
 - auto_continue: set to true when the task is not finished, there is a clear next step, and no human approval or confirmation is needed; set to false when the task is complete, human input is required, or there is uncertain risk.
 - reasoning: briefly explain your thinking process, including task selection reason, planning reason, next step reason, and risk considerations.
 - You may request built-in tools directly: scan.web.safe, ports.scan.safe, http.request, web.search, web.fetch, workspace.command, workspace.files.list, workspace.files.tree, workspace.files.read, workspace.search, workspace.files.write, workspace.files.patch, workspace.files.diff, workspace.files.diff_many, workspace.files.rebase, workspace.files.apply, workspace.files.discard, workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir, daemon.health, plugins.list, runs.list, runs.context, reports.draft, runs.approvals.list, runs.approvals.approve, runs.approvals.deny, runs.resume_approved, schedule.create, schedule.list, schedule.delete. Only populate actions or tool_calls when the user clearly asks for it and the action is one of these built-ins; approval approve/deny and resume-approved must come from an explicit instruction in the latest user message; when the operator provides an explicitly authorized target/scope and the current permission allows safe_scan, you may directly output scan.web.safe, ports.scan.safe, web.search, web.fetch, or GET/HEAD/OPTIONS http.request; POST/PUT/PATCH/DELETE http.request requires advanced; workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir and reports.draft require workspace_write; schedule.create and schedule.delete require advanced; do not auto-run external plugins or high-risk commands.
-- When the user asks for a scheduled / recurring / every-N / cron / daily / hourly / weekly action, or a future-time trigger like "run at 7:20", use schedule.create and do not call the immediate tool. Required args: cron (standard 5-field cron, or @every 1h / @daily macros) and action. Default to action=agent_prompt with prompt set to the executable instruction after stripping schedule wording (for example: "port scan example.com ports=80,443"); this supports arbitrary scheduled Agent capabilities. Use action=scan_web + target only for an explicit recurring safe Web/API vulnerability scan. "list schedules / show schedules" → schedule.list; "delete schedule X / cancel schedule X" → schedule.delete with id.
+- When the user asks for a scheduled / recurring / every-N / cron / daily / hourly / weekly action, or a future-time trigger like "run at 7:20", use schedule.create and do not call the immediate tool. Required args: cron (standard 5-field cron, or @every 1h / @daily macros) and action. Default to action=agent_prompt with prompt set to the executable instruction after stripping schedule wording (for example: "port scan example.com ports=80,443"); this supports arbitrary scheduled Agent capabilities. Scheduled safe Web/API vulnerability scans also use action=agent_prompt with an executable scan prompt. "list schedules / show schedules" → schedule.list; "delete schedule X / cancel schedule X" → schedule.delete with id.
 - Port enumeration / open-port requests (for example "open ports", "which ports", "nmap") must be classified as port_scan and must not be substituted with scan.web.safe. Use ports.scan.safe for bounded TCP connect safe probes; if the operator asks for full nmap service fingerprinting, UDP, or very large ranges, state the built-in limitation and suggest an nmap/masscan plugin.
 - Content discovery/directory enumeration (ffuf/gobuster/dirsearch/hidden directories/path brute force), JS route extraction, and auth/authorization matrix testing are not equivalent to scan.web.safe; without the matching plugin or exact endpoint/method/Auth Profile, stop at Plan/wait_user instead of asking approval for the wrong tool.
 - Fixed execution pattern: Plan=analyze full task/select tools/order steps; Step=execute tools step by step; StepReplan=after each step, evaluate observations and adjust remaining steps; FinalAnswer=independently evaluate completion, and if something is missing, flow back to Plan.
@@ -6109,13 +6109,16 @@ func agentScheduleArgsFromPrompt(prompt, language string) map[string]any {
 	}
 	target := agentExtractURL(prompt)
 	if target != "" && agentIsScanIntent(prompt) {
+		args["action"] = "agent_prompt"
 		args["target"] = target
-		args["action"] = "scan_web"
+		args["prompt"] = "扫描 " + target
+		args["ops_level"] = "safe_scan"
 		args["profile"] = "safe"
 		return args
 	}
 	args["action"] = "agent_prompt"
 	args["prompt"] = agentScheduleExecutionPrompt(prompt)
+	args["ops_level"] = "safe_scan"
 	return args
 }
 
@@ -12979,6 +12982,7 @@ func (m *agentManager) handleAgentScheduleCreate(sessionID, language, operator s
 		Language:  firstNonEmpty(stringFromAny(args["language"]), language),
 		SessionID: strings.TrimSpace(firstNonEmpty(stringFromAny(args["session_id"]), sessionID)),
 		Prompt:    strings.TrimSpace(stringFromAny(args["prompt"])),
+		OpsLevel:  strings.TrimSpace(firstNonEmpty(stringFromAny(args["ops_level"]), stringFromAny(args["operation_level"]))),
 		Target:    strings.TrimSpace(firstNonEmpty(stringFromAny(args["target"]), stringFromAny(args["url"]))),
 		Scope:     strings.TrimSpace(stringFromAny(args["scope"])),
 		Profile:   strings.TrimSpace(stringFromAny(args["profile"])),
@@ -12991,7 +12995,10 @@ func (m *agentManager) handleAgentScheduleCreate(sessionID, language, operator s
 
 	switch rawAction {
 	case "scan_web", "scan.web", "scan", "web_scan", "web.scan", "scanweb":
-		spec.Action = scheduleActionScanWeb
+		spec.Action = scheduleActionAgentPrompt
+		if spec.Prompt == "" {
+			spec.Prompt = schedulePromptFromLegacyScanWeb(spec)
+		}
 	case "agent_prompt", "agent.prompt", "prompt", "chat", "ask", "agent", "":
 		spec.Action = scheduleActionAgentPrompt
 	case "ports.scan.safe", "port.scan", "port_scan", "ports_scan", "ports.scan":
@@ -13016,24 +13023,13 @@ func (m *agentManager) handleAgentScheduleCreate(sessionID, language, operator s
 	}
 
 	if spec.Action == scheduleActionAgentPrompt && spec.Prompt == "" {
-		err := services.NewError(services.CodeBadRequest, "schedule.create with action=agent_prompt requires prompt", map[string]any{"action": "schedule.create"}, nil)
-		tool = finishAgentToolCall(tool, err)
-		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
-		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
-	}
-	if spec.Action == scheduleActionScanWeb && spec.Target == "" {
-		err := services.NewError(services.CodeBadRequest, "schedule.create with action=scan_web requires target", map[string]any{"action": "schedule.create"}, nil)
+		err := services.NewError(services.CodeBadRequest, "schedule.create requires prompt", map[string]any{"action": "schedule.create"}, nil)
 		tool = finishAgentToolCall(tool, err)
 		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
 		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
 	}
 	if spec.Name == "" {
-		switch spec.Action {
-		case scheduleActionScanWeb:
-			spec.Name = "scan " + spec.Target
-		default:
-			spec.Name = agentText(language, "定时对话", "scheduled prompt")
-		}
+		spec.Name = agentText(language, "定时提示词", "scheduled prompt")
 	}
 
 	created, err := svc.schedules.Create(spec)
@@ -13051,6 +13047,7 @@ func (m *agentManager) handleAgentScheduleCreate(sessionID, language, operator s
 		"action":      string(created.Action),
 		"cron":        created.Cron,
 		"enabled":     created.Enabled,
+		"ops_level":   created.OpsLevel,
 		"next_run_at": next,
 	}
 	content := agentText(
