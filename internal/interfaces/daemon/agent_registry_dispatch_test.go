@@ -66,13 +66,13 @@ func TestMCPToolNamesUseDoubleUnderscoreNamespace(t *testing.T) {
 }
 
 func TestRegistryBuiltinHandlersAreAttached(t *testing.T) {
-	for _, name := range []string{"daemon.health", "plugins.list", "runs.list"} {
-		spec, ok := toolRegistry().Lookup(name)
+	for _, builtin := range toolregistry.Builtins() {
+		spec, ok := toolRegistry().Lookup(builtin.Name)
 		if !ok {
-			t.Fatalf("%s missing from registry", name)
+			t.Fatalf("%s missing from registry", builtin.Name)
 		}
 		if spec.Handler == nil {
-			t.Fatalf("%s Handler is nil", name)
+			t.Fatalf("%s Handler is nil", builtin.Name)
 		}
 	}
 }
