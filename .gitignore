@@ -35,3 +35,4 @@ venv/
 /web/frontend/tsconfig.tsbuildinfo
 # Local agent/editor metadata
 /.claude/
+internal/interfaces/web/frontend/dist/
