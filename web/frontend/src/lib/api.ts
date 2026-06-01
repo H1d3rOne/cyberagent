@@ -1170,13 +1170,23 @@ export interface AgentActivity {
   timestamp: string
 }
 
+export interface AgentSessionStreamMeta {
+  id?: string
+  seq?: number
+}
+
 export interface AgentSessionStreamHandlers {
   onOpen?: () => void
   onSession?: (session: AgentSession) => void
   onActivity?: (activity: AgentActivity) => void
   onPing?: (time: string) => void
   onError?: (error: ApiErrorPayload) => void
-  onEvent?: (event: string, payload: Record<string, unknown>) => void
+  onEvent?: (event: string, payload: Record<string, unknown>, meta?: AgentSessionStreamMeta) => void
+  onLastSeq?: (seq: number) => void
+}
+
+export interface AgentSessionStreamOptions {
+  fromSeq?: number
 }
 
 export interface AgentProviderConfig {
@@ -1344,6 +1354,71 @@ function joinUrl(baseUrl: string, path: string): string {
   return `${base}${path}`
 }
 
+
+export function agentSessionStreamPath(sessionId: string, fromSeq?: number): string {
+  const path = `/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/stream`
+  const seq = Number(fromSeq)
+  return Number.isFinite(seq) && seq > 0 ? `${path}?from_seq=${Math.floor(seq)}` : path
+}
+
+export function parseAgentSessionSSEBlock(raw: string): { event: string; payload: Record<string, unknown>; meta: AgentSessionStreamMeta } | null {
+  const lines = raw.split(/\r?\n/)
+  let event = 'message'
+  let id = ''
+  const dataLines: string[] = []
+  for (const line of lines) {
+    if (line.startsWith('event:')) event = line.slice('event:'.length).trim()
+    if (line.startsWith('id:')) id = line.slice('id:'.length).trim()
+    if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trimStart())
+  }
+  if (dataLines.length === 0) return null
+  let payload: Record<string, unknown>
+  try {
+    payload = JSON.parse(dataLines.join('\n')) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  const seq = numberFromStreamValue(payload.seq ?? id)
+  return { event, payload, meta: { id: id || undefined, seq } }
+}
+
+export function handleAgentSessionSSEBlock(raw: string, handlers: AgentSessionStreamHandlers) {
+  const parsedBlock = parseAgentSessionSSEBlock(raw)
+  if (!parsedBlock) return
+  const { event, payload: parsed, meta } = parsedBlock
+  if (meta.seq !== undefined) handlers.onLastSeq?.(meta.seq)
+  if (event === 'session') {
+    const payload = parsed as unknown as AgentSessionStreamEvent
+    handlers.onEvent?.(event, parsed, meta)
+    if (payload.session) handlers.onSession?.(payload.session)
+    return
+  }
+  if (event === 'activity') {
+    const activity = parsed.activity as AgentActivity | undefined
+    handlers.onEvent?.(event, parsed, meta)
+    if (activity) handlers.onActivity?.(activity)
+    return
+  }
+  if (event === 'ping') {
+    const time = typeof parsed.time === 'string' ? parsed.time : new Date().toISOString()
+    handlers.onEvent?.(event, parsed, meta)
+    handlers.onPing?.(time)
+    return
+  }
+  if (event === 'error') {
+    const error = parsed.error as ApiErrorPayload | undefined
+    handlers.onEvent?.(event, parsed, meta)
+    handlers.onError?.(error || { code: 'stream_error', message: 'stream error' })
+    return
+  }
+  handlers.onEvent?.(event, parsed, meta)
+}
+
+function numberFromStreamValue(value: unknown): number | undefined {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
 export class ApiClient {
   private baseUrl: string
   private token: string
@@ -1384,11 +1459,13 @@ export class ApiClient {
     sessionId: string,
     handlers: AgentSessionStreamHandlers,
     signal?: AbortSignal,
+    options: AgentSessionStreamOptions = {},
   ): Promise<void> {
     const headers = new Headers()
     headers.set('Accept', 'text/event-stream')
     if (this.token.trim()) headers.set('Authorization', `Bearer ${this.token.trim()}`)
-    const response = await fetch(joinUrl(this.baseUrl, `/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/stream`), {
+    const path = agentSessionStreamPath(sessionId, options.fromSeq)
+    const response = await fetch(joinUrl(this.baseUrl, path), {
       headers,
       signal,
     })
@@ -1413,52 +1490,10 @@ export class ApiClient {
       while (sep >= 0) {
         const raw = buffer.slice(0, sep)
         buffer = buffer.slice(sep + 2)
-        this.handleSSEBlock(raw, handlers)
+        handleAgentSessionSSEBlock(raw, handlers)
         sep = buffer.indexOf('\n\n')
       }
     }
-  }
-
-  private handleSSEBlock(raw: string, handlers: AgentSessionStreamHandlers) {
-    const lines = raw.split(/\r?\n/)
-    let event = 'message'
-    const dataLines: string[] = []
-    for (const line of lines) {
-      if (line.startsWith('event:')) event = line.slice('event:'.length).trim()
-      if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trimStart())
-    }
-    if (dataLines.length === 0) return
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(dataLines.join('\n')) as Record<string, unknown>
-    } catch {
-      return
-    }
-    if (event === 'session') {
-      const payload = parsed as unknown as AgentSessionStreamEvent
-      handlers.onEvent?.(event, parsed)
-      if (payload.session) handlers.onSession?.(payload.session)
-      return
-    }
-    if (event === 'activity') {
-      const activity = parsed.activity as AgentActivity | undefined
-      handlers.onEvent?.(event, parsed)
-      if (activity) handlers.onActivity?.(activity)
-      return
-    }
-    if (event === 'ping') {
-      const time = typeof parsed.time === 'string' ? parsed.time : new Date().toISOString()
-      handlers.onEvent?.(event, parsed)
-      handlers.onPing?.(time)
-      return
-    }
-    if (event === 'error') {
-      const error = parsed.error as ApiErrorPayload | undefined
-      handlers.onEvent?.(event, parsed)
-      handlers.onError?.(error || { code: 'stream_error', message: 'stream error' })
-      return
-    }
-    handlers.onEvent?.(event, parsed)
   }
 
   async pingStatus(): Promise<DaemonConnectionStatus> {
