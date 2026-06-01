@@ -1176,6 +1176,7 @@ export interface AgentSessionStreamHandlers {
   onActivity?: (activity: AgentActivity) => void
   onPing?: (time: string) => void
   onError?: (error: ApiErrorPayload) => void
+  onEvent?: (event: string, payload: Record<string, unknown>) => void
 }
 
 export interface AgentProviderConfig {
@@ -1302,6 +1303,7 @@ export interface Schedule {
   cron: string
   action: ScheduleAction
   enabled: boolean
+  active?: boolean
   created_at: string
   updated_at: string
   session_id?: string
@@ -1311,6 +1313,7 @@ export interface Schedule {
   target?: string
   scope?: string
   profile?: string
+  ops_level?: string
   last_run_at?: string
   last_status?: string
   last_error?: string
@@ -1325,6 +1328,7 @@ export interface ScheduleInput {
   cron: string
   action: ScheduleAction
   enabled?: boolean
+  active?: boolean
   session_id?: string
   operator?: string
   language?: string
@@ -1332,6 +1336,7 @@ export interface ScheduleInput {
   target?: string
   scope?: string
   profile?: string
+  ops_level?: string
 }
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -1431,23 +1436,29 @@ export class ApiClient {
     }
     if (event === 'session') {
       const payload = parsed as unknown as AgentSessionStreamEvent
+      handlers.onEvent?.(event, parsed)
       if (payload.session) handlers.onSession?.(payload.session)
       return
     }
     if (event === 'activity') {
       const activity = parsed.activity as AgentActivity | undefined
+      handlers.onEvent?.(event, parsed)
       if (activity) handlers.onActivity?.(activity)
       return
     }
     if (event === 'ping') {
       const time = typeof parsed.time === 'string' ? parsed.time : new Date().toISOString()
+      handlers.onEvent?.(event, parsed)
       handlers.onPing?.(time)
       return
     }
     if (event === 'error') {
       const error = parsed.error as ApiErrorPayload | undefined
+      handlers.onEvent?.(event, parsed)
       handlers.onError?.(error || { code: 'stream_error', message: 'stream error' })
+      return
     }
+    handlers.onEvent?.(event, parsed)
   }
 
   async pingStatus(): Promise<DaemonConnectionStatus> {
