@@ -32,6 +32,31 @@ export interface AgentProviderSettings {
   maxTurns: number
 }
 
+export interface WebSearchConfig {
+  provider: string
+  apiKey: string
+  baseUrl: string
+  maxResults: number
+}
+
+export const defaultWebSearchConfig: WebSearchConfig = {
+  provider: 'disabled',
+  apiKey: '',
+  baseUrl: '',
+  maxResults: 5,
+}
+
+function normalizeWebSearchConfig(value: unknown): WebSearchConfig {
+  const item = (value && typeof value === 'object' ? value : {}) as Partial<WebSearchConfig> & Record<string, unknown>
+  const parsedMaxResults = Number(item.maxResults ?? item.max_results)
+  return {
+    provider: stringOrDefault(item.provider, defaultWebSearchConfig.provider),
+    apiKey: stringOrDefault(item.apiKey ?? item.api_key, ''),
+    baseUrl: stringOrDefault(item.baseUrl ?? item.base_url, ''),
+    maxResults: Number.isFinite(parsedMaxResults) ? Math.min(10, Math.max(1, Math.round(parsedMaxResults))) : defaultWebSearchConfig.maxResults,
+  }
+}
+
 export interface AgentAuthorizationRequest {
   id: string
   action_name: string
@@ -335,7 +360,7 @@ function shouldSkipLocalDaemonBootstrap() {
   // `/api/local/daemon-config` only exists on the bundled Go dashboard. Vite
   // dev/preview runs the frontend standalone, so probing this endpoint creates
   // noisy 500/404 console errors before the user has configured a daemon.
-  return port === '5173' || port === '5174' || port === '5175' || port === '4173'
+  return port === '5173' || port === '5174' || port === '4173'
 }
 
 export async function loadLocalDaemonBootstrap(): Promise<LocalDaemonBootstrap | null> {
@@ -684,6 +709,16 @@ export interface AgentMessage {
   tool_calls?: AgentToolCall[]
   links?: AgentLink[]
   reasoning?: string
+  suggested_prompts?: string[]
+  recommendation_options?: AgentRecommendationOption[]
+}
+
+export interface AgentRecommendationOption {
+  id: string
+  title: string
+  detail?: string
+  prompt?: string
+  command?: string
 }
 
 export interface AgentTask {
@@ -1259,6 +1294,46 @@ export interface ApiClientConfig {
   token: string
 }
 
+export type ScheduleAction = 'agent_prompt' | 'scan_web'
+
+export interface Schedule {
+  id: string
+  name: string
+  cron: string
+  action: ScheduleAction
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  session_id?: string
+  operator?: string
+  language?: string
+  prompt?: string
+  target?: string
+  scope?: string
+  profile?: string
+  last_run_at?: string
+  last_status?: string
+  last_error?: string
+  last_job_id?: string
+  last_message_id?: string
+  next_run_at?: string
+  in_flight?: boolean
+}
+
+export interface ScheduleInput {
+  name?: string
+  cron: string
+  action: ScheduleAction
+  enabled?: boolean
+  session_id?: string
+  operator?: string
+  language?: string
+  prompt?: string
+  target?: string
+  scope?: string
+  profile?: string
+}
+
 function joinUrl(baseUrl: string, path: string): string {
   const base = baseUrl.trim().replace(/\/+$/, '')
   return `${base}${path}`
@@ -1759,15 +1834,17 @@ export class ApiClient {
     return this.request<Provider[]>('/api/providers')
   }
 
-  async getProviderProfiles(): Promise<{ providers: AgentProviderProfile[]; activeId: string }> {
-    const cfg = await this.request<{ providers?: unknown; active_id?: string }>('/api/provider-profiles')
+  async getProviderProfiles(): Promise<{ providers: AgentProviderProfile[]; activeId: string; webSearch: WebSearchConfig }> {
+    const cfg = await this.request<{ providers?: unknown; active_id?: string; web_search?: unknown }>('/api/provider-profiles')
     return {
       providers: normalizeAgentProviderProfiles(cfg?.providers, defaultAgentProvider),
       activeId: stringOrDefault(cfg?.active_id, ''),
+      webSearch: normalizeWebSearchConfig(cfg?.web_search),
     }
   }
 
-  async saveProviderProfiles(providers: AgentProviderProfile[], activeId: string) {
+  async saveProviderProfiles(providers: AgentProviderProfile[], activeId: string, webSearch?: WebSearchConfig) {
+    const normalizedWebSearch = normalizeWebSearchConfig(webSearch)
     const body = {
       providers: providers.map((p) => ({
         id: p.id,
@@ -1780,6 +1857,14 @@ export class ApiClient {
         max_turns: p.maxTurns,
       })),
       active_id: activeId,
+      web_search: normalizedWebSearch.provider === 'disabled'
+        ? undefined
+        : {
+          provider: normalizedWebSearch.provider,
+          api_key: normalizedWebSearch.apiKey,
+          base_url: normalizedWebSearch.baseUrl,
+          max_results: normalizedWebSearch.maxResults,
+        },
     }
     return this.request<unknown>('/api/provider-profiles', { method: 'PUT', body: JSON.stringify(body) })
   }
@@ -1797,6 +1882,48 @@ export class ApiClient {
 
   eventsUrl(id: string) {
     return `${this.baseUrl.replace(/\/+$/, '')}/api/scans/${encodeURIComponent(id)}/events`
+  }
+
+  listSchedules() {
+    return this.request<{ schedules: Schedule[] }>('/api/v1/schedules')
+  }
+
+  createSchedule(body: ScheduleInput) {
+    return this.request<{ schedule: Schedule }>('/api/v1/schedules', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  }
+
+  updateSchedule(id: string, body: ScheduleInput) {
+    return this.request<{ schedule: Schedule }>(`/api/v1/schedules/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    })
+  }
+
+  deleteSchedule(id: string) {
+    return this.request<{ id: string; deleted: boolean }>(`/api/v1/schedules/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+  }
+
+  enableSchedule(id: string) {
+    return this.request<{ schedule: Schedule }>(`/api/v1/schedules/${encodeURIComponent(id)}/enable`, {
+      method: 'POST',
+    })
+  }
+
+  disableSchedule(id: string) {
+    return this.request<{ schedule: Schedule }>(`/api/v1/schedules/${encodeURIComponent(id)}/disable`, {
+      method: 'POST',
+    })
+  }
+
+  runScheduleNow(id: string) {
+    return this.request<{ schedule: Schedule }>(`/api/v1/schedules/${encodeURIComponent(id)}/run`, {
+      method: 'POST',
+    })
   }
 }
 

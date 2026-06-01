@@ -5,10 +5,10 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  Clock,
   Crosshair,
   FileWarning,
   FileSearch,
-  Radar,
   RefreshCcw,
   X,
   ShieldCheck,
@@ -19,13 +19,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MetricCard, Section, SectionHeader, SectionTitle } from '@/components/layout-primitives'
+import { SchedulesPanel } from '@/components/schedules-panel'
 import { rememberJob, type ScanListItem } from '@/lib/api'
 import { text, useConsole } from '@/lib/console'
 import { saveAgentDraft } from '@/lib/agent-draft'
 import { cn } from '@/lib/utils'
 import { hostLabel, statusLabel, statusTone } from '@/lib/view'
 
-type TaskTab = 'running' | 'completed' | 'failed'
+type TaskTab = 'running' | 'completed' | 'failed' | 'scheduled'
+type CreateTab = 'scan' | 'schedule'
 
 export function NewScanPage() {
   const navigate = useNavigate()
@@ -40,6 +42,9 @@ export function NewScanPage() {
   const [tasks, setTasks] = useState<ScanListItem[]>([])
   const [taskTab, setTaskTab] = useState<TaskTab>('running')
   const [createOpen, setCreateOpen] = useState(false)
+  const [createTab, setCreateTab] = useState<CreateTab>('scan')
+  const [cron, setCron] = useState('0 * * * *')
+  const [scheduleName, setScheduleName] = useState('')
   const [error, setError] = useState('')
 
   const refreshTasks = useCallback(async () => {
@@ -71,10 +76,6 @@ export function NewScanPage() {
     return () => window.clearInterval(id)
   }, [refreshTasks])
 
-  const mode = interactive ? 'interactive' : multiAgent ? 'multi-agent' : 'single'
-
-  const prompt = buildAgentPrompt(language, target, scope, multiAgent, interactive)
-
   const taskMetrics = useMemo(() => {
     const running = tasks.filter((task) => task.status === 'running' || task.status === 'queued').length
     const completed = tasks.filter((task) => task.status === 'completed' || task.status === 'succeeded').length
@@ -93,6 +94,25 @@ export function NewScanPage() {
     setLoading(true)
     setError('')
     try {
+      if (createTab === 'schedule') {
+        if (!cron.trim()) {
+          throw new Error(text(language, '请填写 Cron 表达式', 'Cron expression is required'))
+        }
+        await client.createSchedule({
+          name: scheduleName.trim() || (target ? `scan ${target}` : text(language, '定时扫描', 'scheduled scan')),
+          cron: cron.trim(),
+          action: 'scan_web',
+          enabled: true,
+          target,
+          scope,
+          profile: 'safe',
+          language,
+          operator: 'web-console',
+        })
+        setCreateOpen(false)
+        setTaskTab('scheduled')
+        return
+      }
       const response = await client.startWebScan({
         target,
         scope,
@@ -115,7 +135,7 @@ export function NewScanPage() {
 
   const handoffToAgent = () => {
     saveAgentDraft({
-      prompt,
+      prompt: buildAgentPrompt(language, target, scope, multiAgent, interactive),
       source: 'new-scan',
       target,
     })
@@ -156,6 +176,7 @@ export function NewScanPage() {
             ['running', t('running')],
             ['completed', t('completed')],
             ['failed', t('failed')],
+            ['scheduled', text(language, '定时', 'Scheduled')],
           ] as Array<[TaskTab, string]>).map(([id, label]) => (
             <button
               key={id}
@@ -170,6 +191,9 @@ export function NewScanPage() {
             </button>
           ))}
         </div>
+        {taskTab === 'scheduled' ? (
+          <SchedulesPanel hideCreate />
+        ) : (
         <div className="space-y-2">
           {visibleTasks.map((task) => (
             <Link key={task.id} to={`/scan/${task.id}`} className="group grid gap-3 rounded-2xl p-3 list-item sm:grid-cols-[minmax(0,1fr)_auto]">
@@ -194,188 +218,191 @@ export function NewScanPage() {
             </div>
           )}
         </div>
+        )}
       </Section>
 
       {createOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 p-4 backdrop-blur-sm">
-          <div className="mx-auto my-8 max-w-6xl rounded-[2rem] border border-white/10 bg-background p-4 shadow-2xl shadow-black/40 sm:p-5">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 font-mono text-xs text-primary">
-                  <Crosshair className="h-3.5 w-3.5" />
-                  {text(language, '新增任务', 'New task')}
-                </div>
-                <h2 className="text-xl font-semibold tracking-tight">{text(language, '手动发起 Scan', 'Launch scan manually')}</h2>
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:items-center">
+          <div className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-background shadow-2xl shadow-black/40">
+            <div className="flex items-center justify-between gap-3 border-b border-white/5 px-5 py-3">
+              <div className="flex items-center gap-2">
+                <Crosshair className="h-4 w-4 text-primary" />
+                <h2 className="text-sm font-semibold tracking-tight">
+                  {createTab === 'schedule'
+                    ? text(language, '定时任务', 'Scheduled task')
+                    : text(language, '新增任务', 'New task')}
+                </h2>
               </div>
-              <Button type="button" variant="ghost" size="icon" className="rounded-2xl" onClick={() => setCreateOpen(false)}>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 rounded-xl" onClick={() => setCreateOpen(false)}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
-      <form onSubmit={start} className="space-y-6">
-        <section className="relative overflow-hidden rounded-[1.75rem] border border-white/[0.08] bg-white/[0.03] p-5 sm:p-7">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgba(59,130,246,0.22),transparent_38%)]" />
-          <div className="relative mb-7 flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 font-mono text-xs text-primary">
-                <Crosshair className="h-3.5 w-3.5" />
-                {text(language, '任务输入', 'Task input')}
-              </div>
-              <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">{t('start')}</h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-                {text(
-                  language,
-                  '这里只填写本次授权目标、范围和执行模式。Provider、模型、密钥等全局能力统一在设置页维护。',
-                  'Only enter the authorized target, scope and run mode here. Provider, model, key and other global capabilities are maintained in Settings.',
-                )}
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-1">
+              {([
+                ['scan', text(language, '普通任务', 'One-off'), text(language, '立即执行一次', 'Run immediately')],
+                ['schedule', text(language, '定时任务', 'Scheduled'), text(language, '按 Cron 周期触发', 'Run on a cron schedule')],
+              ] as Array<[CreateTab, string, string]>).map(([id, label, hint]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setCreateTab(id)}
+                  className={cn(
+                    'rounded-xl px-3 py-2 text-left transition',
+                    createTab === id ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <div className="text-sm font-semibold">{label}</div>
+                  <div className="font-mono text-[11px] opacity-80">{hint}</div>
+                </button>
+              ))}
+            </div>
+            <form onSubmit={start} className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                {createTab === 'schedule'
+                  ? text(
+                      language,
+                      '配置周期触发的安全扫描；目标/范围与普通任务一致，由 daemon 内部执行 scan_web。',
+                      'Configure a recurring safe scan. Target/scope are the same as a one-off task; executed as scan_web inside the daemon.',
+                    )
+                  : text(
+                      language,
+                      '只填本次授权目标、范围和执行模式。Provider/模型/密钥在设置页配置。',
+                      'Enter authorized target, scope and run mode. Provider/model/keys live in Settings.',
+                    )}
               </p>
-            </div>
-            <div className="hidden h-16 w-16 place-items-center rounded-[1.5rem] border border-primary/25 bg-primary/10 sm:grid">
-              <Radar className="h-8 w-8 text-primary" />
-            </div>
-          </div>
-
-          <div className="relative grid gap-5">
-            <Field
-              label={t('target')}
-              htmlFor="target"
-              helper={text(
-                language,
-                '本次要分析的授权 Web/API 入口 URL。',
-                'Authorized Web/API entry URL for this run.',
+              <Field
+                label={t('target')}
+                htmlFor="target"
+                helper={text(language, '本次授权 Web/API 入口 URL。', 'Authorized Web/API entry URL.')}
+              >
+                <Input
+                  id="target"
+                  value={target}
+                  onChange={(event) => setTarget(event.target.value)}
+                  placeholder="http://127.0.0.1:18080"
+                  required
+                  className="h-10 rounded-xl font-mono"
+                />
+              </Field>
+              <Field
+                label={t('scope')}
+                htmlFor="scope"
+                helper={text(language, '授权边界，例如主机/域名/URL 前缀。', 'Authorization boundary: host / domain / URL prefix.')}
+              >
+                <Input
+                  id="scope"
+                  value={scope}
+                  onChange={(event) => setScope(event.target.value)}
+                  placeholder="127.0.0.1"
+                  className="h-10 rounded-xl font-mono"
+                />
+              </Field>
+              {createTab === 'schedule' ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field
+                    label={text(language, '名称', 'Name')}
+                    htmlFor="schedule-name"
+                    helper={text(language, '可选；缺省按目标自动生成。', 'Optional; defaults to target.')}
+                  >
+                    <Input
+                      id="schedule-name"
+                      value={scheduleName}
+                      onChange={(event) => setScheduleName(event.target.value)}
+                      placeholder={text(language, '夜间巡检', 'nightly scan')}
+                      className="h-10 rounded-xl"
+                    />
+                  </Field>
+                  <Field
+                    label="Cron"
+                    htmlFor="schedule-cron"
+                    helper={text(language, '5 字段或 @every 1h / @daily。', '5-field cron, or @every 1h / @daily.')}
+                  >
+                    <Input
+                      id="schedule-cron"
+                      value={cron}
+                      onChange={(event) => setCron(event.target.value)}
+                      placeholder="0 * * * *"
+                      required
+                      className="h-10 rounded-xl font-mono"
+                    />
+                  </Field>
+                </div>
+              ) : (
+                <div>
+                  <div className="mb-2 flex items-center gap-2">
+                    <Bot className="h-4 w-4 text-emerald-300" />
+                    <span className="text-xs font-semibold">{text(language, 'Agent 模式', 'Agent mode')}</span>
+                    <span className="font-mono text-[11px] text-muted-foreground">safe / HITL</span>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <ModeButton
+                      active={!multiAgent && !interactive}
+                      icon={ShieldCheck}
+                      label={text(language, '单 Agent', 'Single Agent')}
+                      detail={text(language, '标准自主扫描', 'Autonomous')}
+                      onClick={() => {
+                        setMultiAgent(false)
+                        setInteractive(false)
+                      }}
+                    />
+                    <ModeButton
+                      active={multiAgent}
+                      icon={Sparkles}
+                      label={t('multiAgent')}
+                      detail={text(language, '编排扩展', 'Orchestration')}
+                      onClick={() => {
+                        setMultiAgent(true)
+                        setInteractive(false)
+                      }}
+                    />
+                    <ModeButton
+                      active={interactive}
+                      icon={Bot}
+                      label={t('interactive')}
+                      detail={text(language, '对话驾驶', 'Chat driven')}
+                      onClick={() => {
+                        setInteractive(true)
+                        setMultiAgent(false)
+                      }}
+                    />
+                  </div>
+                </div>
               )}
-            >
-              <Input
-                id="target"
-                value={target}
-                onChange={(event) => setTarget(event.target.value)}
-                placeholder="http://127.0.0.1:18080"
-                required
-                className="h-12 rounded-2xl font-mono"
-              />
-            </Field>
-            <Field
-              label={t('scope')}
-              htmlFor="scope"
-              helper={text(
-                language,
-                '授权边界，用于限制扫描范围，例如主机、域名或 URL 前缀。',
-                'Authorization boundary used to constrain scanning, such as host, domain or URL prefix.',
+              {error && (
+                <div className="flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
               )}
-            >
-              <Input
-                id="scope"
-                value={scope}
-                onChange={(event) => setScope(event.target.value)}
-                placeholder="127.0.0.1"
-                className="h-12 rounded-2xl font-mono"
-              />
-            </Field>
-          </div>
-        </section>
-
-        <section className="rounded-[1.75rem] border border-white/[0.08] bg-white/[0.03] p-5 sm:p-7">
-          <div className="mb-4 flex items-center gap-3">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl border border-emerald-400/20 bg-emerald-400/10 text-emerald-300">
-              <Bot className="h-5 w-5" />
-            </span>
-            <div>
-              <h2 className="text-sm font-semibold">{text(language, 'Agent 模式', 'Agent mode')}</h2>
-              <p className="font-mono text-xs text-muted-foreground">safe profile / HITL</p>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <Button
+                  type="submit"
+                  disabled={loading || !target.trim() || (createTab === 'schedule' && !cron.trim())}
+                  className="h-11 rounded-xl text-sm"
+                >
+                  {createTab === 'schedule' ? (
+                    <Clock className={cn('mr-2 h-4 w-4', loading && 'animate-pulse')} />
+                  ) : (
+                    <Sparkles className={cn('mr-2 h-4 w-4', loading && 'animate-pulse')} />
+                  )}
+                  {loading
+                    ? text(language, '处理中...', 'Working...')
+                    : createTab === 'schedule'
+                      ? text(language, '创建定时任务', 'Create schedule')
+                      : t('start')}
+                </Button>
+                {createTab === 'scan' && (
+                  <Button type="button" variant="outline" onClick={handoffToAgent} disabled={!target.trim()} className="h-11 rounded-xl bg-transparent px-4 text-sm">
+                    <Bot className="mr-2 h-4 w-4" />
+                    {text(language, '交给 Agent', 'Ask Agent')}
+                  </Button>
+                )}
+              </div>
+            </form>
             </div>
           </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <ModeButton
-              active={!multiAgent && !interactive}
-              icon={ShieldCheck}
-              label={text(language, '单 Agent', 'Single Agent')}
-              detail={text(language, '标准自主扫描', 'Standard autonomous run')}
-              onClick={() => {
-                setMultiAgent(false)
-                setInteractive(false)
-              }}
-            />
-            <ModeButton
-              active={multiAgent}
-              icon={Sparkles}
-              label={t('multiAgent')}
-              detail={text(language, '后续编排扩展', 'Future orchestration')}
-              onClick={() => {
-                setMultiAgent(true)
-                setInteractive(false)
-              }}
-            />
-            <ModeButton
-              active={interactive}
-              icon={Bot}
-              label={t('interactive')}
-              detail={text(language, '交给对话驾驶', 'Drive via chat')}
-              onClick={() => {
-                setInteractive(true)
-                setMultiAgent(false)
-              }}
-            />
-          </div>
-
-          <div className="mt-4 rounded-3xl subtle-surface p-4 text-sm leading-6 text-muted-foreground">
-            {text(
-              language,
-              'MVP 会直接调用 daemon 的 safe Web Scan；交互/多 Agent 模式会作为 Agent Cockpit 的任务意图继续演进。',
-              'MVP calls the daemon safe Web Scan directly; interactive / multi-agent modes continue as Agent Cockpit task intents.',
-            )}
-          </div>
-        </section>
-
-        {error && (
-          <div className="flex items-center gap-3 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-          <Button type="submit" disabled={loading || !target.trim()} className="h-14 rounded-2xl text-base">
-            <Sparkles className={cn('mr-2 h-5 w-5', loading && 'animate-pulse')} />
-            {loading ? text(language, '启动中...', 'Starting...') : t('start')}
-          </Button>
-          <Button type="button" variant="outline" onClick={handoffToAgent} disabled={!target.trim()} className="h-14 rounded-2xl bg-transparent px-5">
-            <Bot className="mr-2 h-5 w-5" />
-            {text(language, '交给 Agent', 'Ask Agent')}
-          </Button>
         </div>
-      </form>
-
-      <aside className="space-y-4">
-        <div className="rounded-[2rem] border border-white/10 bg-black/25 p-5">
-          <div className="mb-4 flex items-center gap-2">
-            <Target className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold">{text(language, '请求预览', 'Request Preview')}</h2>
-          </div>
-          <div className="space-y-2 font-mono text-xs text-muted-foreground">
-            <PreviewLine label="POST" value="/api/v1/scans/web" />
-            <PreviewLine label={t('target')} value={target || '—'} />
-            <PreviewLine label={t('scope')} value={scope || '—'} />
-            <PreviewLine label={t('profile')} value="safe" />
-            <PreviewLine
-              label={text(language, '外部工具', 'External tools')}
-              value={text(language, '默认禁用', 'disabled by default')}
-            />
-            <PreviewLine label={text(language, '模式', 'Mode')} value={mode} />
-          </div>
-        </div>
-
-        <div className="rounded-[2rem] subtle-surface p-5">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-            <FileSearch className="h-4 w-4 text-primary" />
-            Agent Prompt
-          </div>
-          <p className="font-mono text-xs leading-6 text-muted-foreground">{prompt}</p>
-        </div>
-            </aside>
-          </div>
-        </div>
-      </div>
       )}
     </div>
   )
@@ -446,11 +473,3 @@ function ModeButton({
   )
 }
 
-function PreviewLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="truncate text-right text-foreground">{value}</span>
-    </div>
-  )
-}

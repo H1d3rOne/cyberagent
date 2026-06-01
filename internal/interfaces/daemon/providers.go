@@ -29,6 +29,14 @@ func newProviderStore(path string) *providerStore {
 	return &providerStore{path: path}
 }
 
+// NewDefaultProviderStore returns a ProviderStore backed by the per-user JSON
+// file. An empty path falls back to the default location resolved by
+// defaultProviderStorePath. Exposed so the CLI dashboard can share the same
+// persistence as the daemon.
+func NewDefaultProviderStore(path string) web.ProviderStore {
+	return newProviderStore(path)
+}
+
 func (s *providerStore) Load() (web.ProviderConfig, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

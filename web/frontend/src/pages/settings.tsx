@@ -23,8 +23,8 @@ import { Button } from '@/components/ui/button'
 import { PageDescription, PageHeader, PageTitle, Section, SectionHeader, SectionTitle } from '@/components/layout-primitives'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import type { AgentProviderProfile, AgentProviderType, ApiAuthProfile, ApiAuthProfileType, Provider } from '@/lib/api'
-import { normalizeAgentOperationLevel, type AgentOperationLevel } from '@/lib/api'
+import type { AgentProviderProfile, AgentProviderType, ApiAuthProfile, ApiAuthProfileType, Provider, WebSearchConfig } from '@/lib/api'
+import { defaultWebSearchConfig, normalizeAgentOperationLevel, type AgentOperationLevel } from '@/lib/api'
 import { text, useConsole } from '@/lib/console'
 import { cn } from '@/lib/utils'
 
@@ -35,6 +35,12 @@ const PROVIDER_TYPES: { id: AgentProviderType; name: string; defaultModel: strin
 
 const OPERATION_LEVELS: AgentOperationLevel[] = ['read_only', 'workspace', 'safe_scan', 'approval_ops', 'advanced', 'bypass']
 const AUTH_PROFILE_TYPES: ApiAuthProfileType[] = ['bearer', 'basic', 'api_key', 'cookie', 'custom']
+const WEB_SEARCH_PROVIDERS = [
+  { id: 'disabled', name: 'Disabled' },
+  { id: 'tavily', name: 'Tavily' },
+  { id: 'brave', name: 'Brave' },
+  { id: 'serpapi', name: 'SerpAPI' },
+]
 
 function operationLevelLabel(level: string, language: 'zh' | 'en') {
   const labels: Record<AgentOperationLevel, { zh: string; en: string }> = {
@@ -91,6 +97,10 @@ export function SettingsPage() {
   const [connected, setConnected] = useState(false)
   const [providers, setProviders] = useState<Provider[]>([])
   const [savingProviders, setSavingProviders] = useState(false)
+  const [providerSaveResult, setProviderSaveResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [webSearch, setWebSearch] = useState<WebSearchConfig>(defaultWebSearchConfig)
+  const [savingWebSearch, setSavingWebSearch] = useState(false)
+  const [webSearchSaveResult, setWebSearchSaveResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestUrl?: string } | null>(null)
 
@@ -98,6 +108,8 @@ export function SettingsPage() {
   const activeProvider = aiProviders.find((p) => p.id === settings.activeAiProviderId) || aiProviders[0]
   const providerType = PROVIDER_TYPES.find((tp) => tp.id === activeProvider?.type)
   const providerReady = Boolean(activeProvider?.apiKey.trim() || activeProvider?.baseUrl.trim())
+  const webSearchEnabled = webSearch.provider !== 'disabled'
+  const webSearchReady = webSearchEnabled && Boolean(webSearch.apiKey.trim() || webSearch.baseUrl.trim())
 
   const check = useCallback(async () => {
     setChecking(true)
@@ -108,6 +120,7 @@ export function SettingsPage() {
       setConnected(true)
       try {
         const remote = await client.getProviderProfiles()
+        setWebSearch(remote.webSearch || defaultWebSearchConfig)
         if (remote.providers.length && shouldHydrateProviderProfiles(settings.aiProviders || [])) {
           updateSettings({ aiProviders: remote.providers, activeAiProviderId: remote.activeId || remote.providers[0].id })
         }
@@ -136,6 +149,7 @@ export function SettingsPage() {
   const updateActiveProvider = (patch: Partial<AgentProviderProfile>) => {
     if (!activeProvider) return
     setTestResult(null)
+    setProviderSaveResult(null)
     updateSettings({
       aiProviders: aiProviders.map((p) => (p.id === activeProvider.id ? { ...p, ...patch } : p)),
     })
@@ -171,15 +185,58 @@ export function SettingsPage() {
   }
 
   const saveProviders = async () => {
-    if (!connected) return
     setSavingProviders(true)
+    setProviderSaveResult(null)
+    setError('')
+    if (!connected) {
+      setSavingProviders(false)
+      setProviderSaveResult({
+        ok: false,
+        message: text(language, '后端未连接，先点连接', 'Backend offline — click Connect first'),
+      })
+      return
+    }
     try {
-      await client.saveProviderProfiles(aiProviders, settings.activeAiProviderId)
+      await client.saveProviderProfiles(aiProviders, settings.activeAiProviderId, webSearch)
+      setProviderSaveResult({
+        ok: true,
+        message: text(language, '已写入后端', 'Persisted to backend'),
+      })
       save()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'save failed')
+      const message = err instanceof Error ? err.message : 'save failed'
+      setProviderSaveResult({ ok: false, message })
+      setError(message)
     } finally {
       setSavingProviders(false)
+    }
+  }
+
+  const saveWebSearch = async () => {
+    setSavingWebSearch(true)
+    setWebSearchSaveResult(null)
+    setError('')
+    if (!connected) {
+      setSavingWebSearch(false)
+      setWebSearchSaveResult({
+        ok: false,
+        message: text(language, '后端未连接，先点连接', 'Backend offline — click Connect first'),
+      })
+      return
+    }
+    try {
+      await client.saveProviderProfiles(aiProviders, settings.activeAiProviderId, webSearch)
+      setWebSearchSaveResult({
+        ok: true,
+        message: text(language, '已写入后端', 'Persisted to backend'),
+      })
+      save()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'save failed'
+      setWebSearchSaveResult({ ok: false, message })
+      setError(message)
+    } finally {
+      setSavingWebSearch(false)
     }
   }
 
@@ -187,6 +244,7 @@ export function SettingsPage() {
     if (!activeProvider) return
     setTesting(true)
     setTestResult(null)
+    setProviderSaveResult(null)
     try {
       const res = await client.testProvider({
         type: activeProvider.type,
@@ -342,6 +400,111 @@ export function SettingsPage() {
 
         <div className="rounded-[1.5rem] border border-white/[0.08] bg-white/[0.03] p-4 sm:p-5">
           <SectionHeader>
+            <SectionTitle icon={Globe2}>{text(language, 'Web Search', 'Web Search')}</SectionTitle>
+            <span className="font-mono text-xs text-muted-foreground">web.search</span>
+          </SectionHeader>
+
+          <p className="mb-3 text-xs leading-5 text-muted-foreground">
+            {text(
+              language,
+              '用于 Agent 的 web.search 工具。密钥只保存到 daemon provider 配置；未配置时 Agent 会返回 not_configured。',
+              'Used by the Agent web.search tool. The key is saved only in daemon provider config; when unset, the Agent returns not_configured.',
+            )}
+          </p>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field icon={PlugZap} label={text(language, 'Search Provider', 'Search provider')} htmlFor="web-search-provider">
+              <select
+                id="web-search-provider"
+                value={webSearch.provider}
+                onChange={(event) => {
+                  setWebSearch({ ...webSearch, provider: event.target.value })
+                  setWebSearchSaveResult(null)
+                }}
+                className="h-10 w-full rounded-xl border border-input bg-background px-3 py-2 font-mono text-sm text-foreground ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                {WEB_SEARCH_PROVIDERS.map((provider) => (
+                  <option key={provider.id} value={provider.id}>{provider.name}</option>
+                ))}
+              </select>
+            </Field>
+
+            <Field icon={SlidersHorizontal} label={text(language, 'Max Results', 'Max results')} htmlFor="web-search-max-results">
+              <Input
+                id="web-search-max-results"
+                type="number"
+                value={webSearch.maxResults}
+                onChange={(event) => {
+                  const parsed = Number(event.target.value)
+                  setWebSearch({ ...webSearch, maxResults: Number.isFinite(parsed) ? Math.min(10, Math.max(1, Math.round(parsed))) : 5 })
+                  setWebSearchSaveResult(null)
+                }}
+                min={1}
+                max={10}
+                className="h-10 rounded-xl font-mono"
+              />
+            </Field>
+
+            <Field icon={KeyRound} label="API Key" htmlFor="web-search-api-key">
+              <Input
+                id="web-search-api-key"
+                value={webSearch.apiKey}
+                onChange={(event) => {
+                  setWebSearch({ ...webSearch, apiKey: event.target.value })
+                  setWebSearchSaveResult(null)
+                }}
+                placeholder={webSearch.provider === 'tavily' ? 'tvly-...' : 'api key'}
+                type="password"
+                disabled={!webSearchEnabled}
+                className="h-10 rounded-xl font-mono"
+              />
+            </Field>
+
+            <Field icon={Globe2} label="Base URL" htmlFor="web-search-base-url">
+              <Input
+                id="web-search-base-url"
+                value={webSearch.baseUrl}
+                onChange={(event) => {
+                  setWebSearch({ ...webSearch, baseUrl: event.target.value })
+                  setWebSearchSaveResult(null)
+                }}
+                placeholder="https://api.tavily.com/search"
+                disabled={!webSearchEnabled}
+                className="h-10 rounded-xl font-mono"
+              />
+              <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                {text(language, '可留空使用 provider 默认 endpoint；自定义 URL 会经过 SSRF 防护。', 'Leave blank for the provider default endpoint; custom URLs pass SSRF checks.')}
+              </div>
+            </Field>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button type="button" onClick={saveWebSearch} disabled={savingWebSearch} className="rounded-2xl">
+              {saved ? <Check className="mr-2 h-4 w-4" /> : <Save className={cn('mr-2 h-4 w-4', savingWebSearch && 'animate-spin')} />}
+              {saved ? text(language, '已保存', 'Saved') : t('save')}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setWebSearch(defaultWebSearchConfig)
+                setWebSearchSaveResult(null)
+              }}
+              className="rounded-2xl"
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              {text(language, '重置', 'Reset')}
+            </Button>
+            {webSearchSaveResult && (
+              <span className={cn('max-w-full break-all font-mono text-xs', webSearchSaveResult.ok ? 'text-emerald-300' : 'text-red-300')}>
+                {webSearchSaveResult.ok ? '✓ ' : '✗ '}{webSearchSaveResult.message}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-[1.5rem] border border-white/[0.08] bg-white/[0.03] p-4 sm:p-5">
+          <SectionHeader>
             <SectionTitle icon={Bot}>{text(language, 'AI Provider', 'AI Provider')}</SectionTitle>
             <Button type="button" variant="outline" size="sm" onClick={addProvider} className="h-8 rounded-xl bg-transparent px-2">
               <Plus className="mr-1 h-3.5 w-3.5" />
@@ -463,11 +626,11 @@ export function SettingsPage() {
             </Field>
 
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" onClick={saveProviders} disabled={!connected || savingProviders} className="rounded-2xl">
+              <Button type="button" onClick={saveProviders} disabled={savingProviders} className="rounded-2xl">
                 {saved ? <Check className="mr-2 h-4 w-4" /> : <Save className={cn('mr-2 h-4 w-4', savingProviders && 'animate-spin')} />}
                 {saved ? text(language, '已保存', 'Saved') : t('save')}
               </Button>
-              <Button type="button" variant="outline" onClick={testProvider} disabled={!connected || testing} className="rounded-2xl bg-transparent">
+              <Button type="button" variant="outline" onClick={testProvider} disabled={testing} className="rounded-2xl bg-transparent">
                 <Activity className={cn('mr-2 h-4 w-4', testing && 'animate-spin')} />
                 {text(language, '测试连通性', 'Test connection')}
               </Button>
@@ -476,6 +639,11 @@ export function SettingsPage() {
                   <Trash2 className="mr-2 h-4 w-4" />
                   {text(language, '删除', 'Delete')}
                 </Button>
+              )}
+              {providerSaveResult && (
+                <span className={cn('max-w-full break-all font-mono text-xs', providerSaveResult.ok ? 'text-emerald-300' : 'text-red-300')}>
+                  {providerSaveResult.ok ? '✓ ' : '✗ '}{providerSaveResult.message}
+                </span>
               )}
               {testResult && (
                 <span className={cn('max-w-full break-all font-mono text-xs', testResult.ok ? 'text-emerald-300' : 'text-red-300')}>
@@ -724,6 +892,13 @@ export function SettingsPage() {
           ok={providerReady}
           value={activeProvider?.type || '—'}
           detail={activeProvider?.model || providerType?.defaultModel || text(language, '默认模型', 'default model')}
+        />
+        <StatusCard
+          icon={Globe2}
+          label={text(language, 'Web Search', 'Web Search')}
+          ok={!webSearchEnabled || webSearchReady}
+          value={webSearchEnabled ? webSearch.provider : text(language, '禁用', 'disabled')}
+          detail={webSearchEnabled ? `${webSearch.maxResults} max results` : text(language, '未启用联网搜索', 'Web search disabled')}
         />
         <StatusCard
           icon={KeyRound}

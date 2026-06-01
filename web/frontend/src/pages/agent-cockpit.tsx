@@ -45,34 +45,11 @@ import { cn } from '@/lib/utils'
 
 type StreamStatus = 'offline' | 'connecting' | 'online' | 'error'
 
-interface PlannerPayload {
-  answer?: string
-  suggest_prompt?: string
-  suggested_prompt?: string
-  suggested_prompts?: string[]
-  suggestions?: string[]
-  recommendation_options?: unknown[]
-  recommendationOptions?: unknown[]
-  recommendations?: unknown[]
-  options?: unknown[]
-  task?: {
-    goal?: string
-    kind?: string
-    status?: string
-    summary?: string
-  }
-  todos?: AgentTodo[]
-  next_action?: AgentNextAction
-  reasoning?: string
-}
-
 interface DisplayContent {
   text: string
-  planner?: PlannerPayload
   command?: CommandSummary
   suggestions?: string[]
   recommendationOptions?: RecommendationOption[]
-  raw?: string
 }
 
 interface RecommendationOption {
@@ -1167,8 +1144,7 @@ function traceItemDetail(item: Record<string, unknown>) {
   }
   const content = item.content
   if (typeof content === 'string') {
-    const display = normalizeDisplayContent(content)
-    return display.text || content
+    return displayTextFromContent(content)
   }
   return ''
 }
@@ -1224,7 +1200,7 @@ function MessageBubble({
   onFillPrompt?: (prompt: string) => void
   onExecutePrompt?: (prompt: string) => void
 }) {
-  const display = useMemo(() => normalizeDisplayContent(message.content), [message.content])
+  const display = useMemo(() => displayContentForMessage(message), [message])
   const isUser = message.role === 'user'
   const isTool = message.role === 'tool'
   const isSystem = message.role === 'system'
@@ -1274,10 +1250,6 @@ function MessageBubble({
           <div className="whitespace-pre-wrap break-words">{display.text || '—'}</div>
         )}
 
-        {display.planner && (
-          <PlannerSummary payload={display.planner} language={language} />
-        )}
-
         {isAgent && display.suggestions?.length ? (
           <SuggestedPromptActions
             prompts={display.suggestions}
@@ -1313,39 +1285,6 @@ function MessageBubble({
         ) : null}
       </div>
     </div>
-  )
-}
-
-function PlannerSummary({ payload, language }: { payload: PlannerPayload; language: 'zh' | 'en' }) {
-  const todos = payload.todos || []
-  const suggestedPrompt = extractSuggestedPrompts(payload)[0]
-  if (!payload.task && !todos.length && !payload.next_action) return null
-  return (
-    <details className="mt-2 rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-xs" open={false}>
-      <summary className="cursor-pointer text-muted-foreground">{text(language, '任务结构', 'Task structure')}</summary>
-      <div className="mt-2 space-y-2">
-        {payload.task && (
-          <div className="rounded-lg bg-white/[0.04] p-2">
-            <div className="font-medium text-foreground">{payload.task.goal || payload.task.summary || 'Task'}</div>
-            <div className="mt-1 font-mono text-[10px] text-muted-foreground">{payload.task.kind || 'task'} · {payload.task.status || '—'}</div>
-          </div>
-        )}
-        {todos.slice(0, 4).map((todo, index) => (
-          <div key={todo.id || `${todo.title}_${index}`} className="flex gap-2 rounded-lg bg-white/[0.04] p-2">
-            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-            <div className="min-w-0">
-              <div className="truncate text-foreground">{todo.title}</div>
-              {todo.detail && <div className="mt-0.5 line-clamp-2 text-muted-foreground">{todo.detail}</div>}
-            </div>
-          </div>
-        ))}
-        {suggestedPrompt && (
-          <div className="rounded-lg border border-primary/20 bg-primary/10 p-2 text-primary">
-            {suggestedPrompt}
-          </div>
-        )}
-      </div>
-    </details>
   )
 }
 
@@ -1625,515 +1564,35 @@ function OutputBlock({ label, value }: { label: string; value: string }) {
   )
 }
 
-function normalizeDisplayContent(content: string): DisplayContent {
-  const raw = String(content || '').trim()
-  const envelopeSuggestions = extractEnvelopeSuggestedPrompts(raw)
-  const command = parseCommandSummary(raw)
-  if (command) {
-    const recommendationOptions = collectRecommendationOptions(raw)
-    return { text: `${command.command} executed`, command, suggestions: envelopeSuggestions, recommendationOptions, raw }
+function displayContentForMessage(message: AgentMessage): DisplayContent {
+  const text = displayTextFromContent(message.content || '')
+  const command = parseCommandSummary(message.content || '')
+  return {
+    text: command ? `${command.command} executed` : text,
+    command: command || undefined,
+    suggestions: (message.suggested_prompts || []).map((value) => String(value || '').trim()).filter(Boolean),
+    recommendationOptions: (message.recommendation_options || [])
+      .filter((opt) => opt && (opt.title || opt.detail || opt.prompt))
+      .map((opt) => ({
+        id: opt.id || `recommendation_${hashString(opt.title || opt.detail || opt.prompt || '')}`,
+        title: String(opt.title || opt.detail || '').trim(),
+        detail: String(opt.detail || '').trim(),
+        prompt: String(opt.prompt || opt.detail || opt.title || '').trim(),
+        command: opt.command ? String(opt.command).trim() : undefined,
+      })),
   }
-
-  const unwrapped = unwrapChatCompletionContent(raw)
-  if (unwrapped && unwrapped.trim() && unwrapped.trim() !== raw) {
-    const nested = normalizeDisplayContent(unwrapped)
-    return {
-      ...nested,
-      suggestions: mergeStringLists(nested.suggestions || [], envelopeSuggestions),
-      raw,
-    }
-  }
-
-  const planner = parsePlannerPayload(raw)
-  if (planner) {
-    const suggestions = mergeStringLists(extractSuggestedPrompts(planner), envelopeSuggestions)
-    const textValue = (planner.answer || '').trim() || stripJsonObjects(raw).trim() || (suggestions.length ? '建议下一步操作' : raw)
-    const recommendationOptions = collectRecommendationOptions(raw, planner)
-    return { text: textValue, planner, suggestions, recommendationOptions, raw }
-  }
-
-  const recommendationOptions = collectRecommendationOptions(raw)
-  return { text: raw, suggestions: envelopeSuggestions, recommendationOptions, raw }
 }
 
-function parsePlannerPayload(raw: string): PlannerPayload | null {
-  for (const candidate of extractJsonCandidates(raw)) {
-    const parsed = parseJson(candidate)
-    if (typeof parsed === 'string') {
-      const nested = parsePlannerPayload(parsed)
-      if (nested) return nested
-    }
-    const unwrapped = unwrapOpenAIChatCompletion(parsed)
-    if (unwrapped) {
-      const nested = parsePlannerPayload(unwrapped)
-      if (nested) return nested
-    }
-    if (isPlannerPayload(parsed)) return parsed
-  }
-  return null
+function displayTextFromContent(content: string): string {
+  return String(content || '').trim()
 }
 
-function unwrapOpenAIChatCompletion(value: unknown): string | null {
-  if (!value || typeof value !== 'object') return null
-  const choices = (value as { choices?: unknown }).choices
-  if (!Array.isArray(choices) || !choices.length) return null
-  const first = choices[0] as { message?: { content?: unknown }; delta?: { content?: unknown }; text?: unknown }
-  return chatContentToText(first?.message?.content ?? first?.delta?.content ?? first?.text)
-}
-
-function unwrapChatCompletionContent(raw: string): string | null {
-  for (const candidate of extractJsonCandidates(raw)) {
-    const parsed = parseJson(candidate)
-    const unwrapped = unwrapOpenAIChatCompletion(parsed)
-    if (unwrapped) return unwrapped
-  }
-  return null
-}
-
-function chatContentToText(content: unknown): string | null {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return null
-  const parts = content.map((part) => {
-    if (typeof part === 'string') return part
-    if (!part || typeof part !== 'object') return ''
-    const record = part as Record<string, unknown>
-    const value = record.text ?? record.content
-    return typeof value === 'string' ? value : ''
-  }).map((part) => part.trim()).filter(Boolean)
-  return parts.length ? parts.join('\n') : null
-}
-
-function extractEnvelopeSuggestedPrompts(raw: string): string[] {
-  const prompts: string[] = []
-  const add = (value: unknown) => {
-    if (typeof value === 'string' && value.trim()) prompts.push(value.trim())
-  }
-  const addList = (value: unknown) => {
-    if (Array.isArray(value)) value.forEach(add)
-  }
-  const addFromRecord = (record: Record<string, unknown>) => {
-    add(record.suggest_prompt)
-    add(record.suggested_prompt)
-    add(record.prompt)
-    addList(record.suggested_prompts)
-    addList(record.suggestions)
-  }
-
-  for (const candidate of extractJsonCandidates(raw)) {
-    const parsed = parseJson(candidate)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
-    const root = parsed as Record<string, unknown>
-    addFromRecord(root)
-    const choices = root.choices
-    if (!Array.isArray(choices)) continue
-    choices.forEach((choice) => {
-      if (!choice || typeof choice !== 'object' || Array.isArray(choice)) return
-      const choiceRecord = choice as Record<string, unknown>
-      addFromRecord(choiceRecord)
-      const message = choiceRecord.message
-      if (message && typeof message === 'object' && !Array.isArray(message)) addFromRecord(message as Record<string, unknown>)
-      const delta = choiceRecord.delta
-      if (delta && typeof delta === 'object' && !Array.isArray(delta)) addFromRecord(delta as Record<string, unknown>)
-    })
-  }
-  return mergeStringLists(prompts)
-}
-
-function isPlannerPayload(value: unknown): value is PlannerPayload {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const payload = value as PlannerPayload
-  return Boolean(
-    typeof payload.answer === 'string' ||
-    typeof payload.suggest_prompt === 'string' ||
-    typeof payload.suggested_prompt === 'string' ||
-    Array.isArray(payload.suggested_prompts) ||
-    Array.isArray(payload.suggestions) ||
-    Array.isArray(payload.recommendation_options) ||
-    Array.isArray(payload.recommendationOptions) ||
-    Array.isArray(payload.recommendations) ||
-    Array.isArray(payload.options) ||
-    payload.task ||
-    Array.isArray(payload.todos) ||
-    payload.next_action ||
-    typeof payload.reasoning === 'string',
-  )
-}
-
-function extractSuggestedPrompts(payload: PlannerPayload): string[] {
-  const prompts: string[] = []
-  const add = (value: unknown) => {
-    if (typeof value === 'string' && value.trim()) prompts.push(value.trim())
-  }
-  const addList = (value: unknown) => {
-    if (!Array.isArray(value)) return
-    value.forEach((item) => {
-      if (typeof item === 'string') {
-        add(item)
-      } else if (item && typeof item === 'object') {
-        const record = item as Record<string, unknown>
-        add(record.prompt ?? record.suggest_prompt ?? record.suggested_prompt ?? record.title)
-      }
-    })
-  }
-
-  const root = payload as Record<string, unknown>
-  add(root.suggest_prompt)
-  add(root.suggested_prompt)
-  addList(root.suggested_prompts)
-  addList(root.suggestions)
-
-  const nextAction = recordFromUnknown(root.next_action)
-  add(nextAction.suggested_prompt)
-  add(nextAction.suggest_prompt)
-  add(nextAction.prompt)
-  addList(nextAction.suggested_prompts)
-  addList(nextAction.suggestions)
-
-  return Array.from(new Set(prompts.map((prompt) => prompt.trim()).filter(Boolean))).slice(0, 6)
-}
-
-function mergeStringLists(...lists: string[][]): string[] {
-  const values = lists.flat().map((value) => String(value || '').trim()).filter(Boolean)
-  return Array.from(new Set(values)).slice(0, 6)
-}
-
-function collectRecommendationOptions(raw: string, planner?: PlannerPayload): RecommendationOption[] {
-  const options: RecommendationOption[] = []
-  if (planner) collectRecommendationOptionsFromRecord(planner as Record<string, unknown>, options)
-
-  for (const candidate of extractJsonCandidates(raw)) {
-    const parsed = parseJson(candidate)
-    collectRecommendationOptionsFromUnknown(parsed, options)
-  }
-
-  return dedupeRecommendationOptions(options).slice(0, 6)
-}
-
-function collectRecommendationOptionsFromUnknown(value: unknown, options: RecommendationOption[]) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return
-  const record = value as Record<string, unknown>
-  collectRecommendationOptionsFromRecord(record, options)
-  const choices = record.choices
-  if (!Array.isArray(choices)) return
-  choices.forEach((choice) => {
-    if (!choice || typeof choice !== 'object' || Array.isArray(choice)) return
-    const choiceRecord = choice as Record<string, unknown>
-    collectRecommendationOptionsFromRecord(choiceRecord, options)
-    collectRecommendationOptionsFromUnknown(choiceRecord.message, options)
-    collectRecommendationOptionsFromUnknown(choiceRecord.delta, options)
-  })
-}
-
-function collectRecommendationOptionsFromRecord(record: Record<string, unknown>, options: RecommendationOption[]) {
-  addStructuredRecommendationList(record.recommendation_options, options)
-  addStructuredRecommendationList(record.recommendationOptions, options)
-  addStructuredRecommendationList(record.recommendations, options)
-  addStructuredRecommendationList(record.options, options)
-  addStructuredRecommendationList(record.choices, options)
-  const nextAction = recordFromUnknown(record.next_action)
-  addStructuredRecommendationList(nextAction.recommendation_options, options)
-  addStructuredRecommendationList(nextAction.recommendationOptions, options)
-  addStructuredRecommendationList(nextAction.recommendations, options)
-  addStructuredRecommendationList(nextAction.options, options)
-}
-
-function addStructuredRecommendationList(value: unknown, options: RecommendationOption[]) {
-  if (!Array.isArray(value)) return
-  value.forEach((item, index) => addStructuredRecommendationOption(item, options, index))
-}
-
-function addStructuredRecommendationOption(value: unknown, options: RecommendationOption[], index: number) {
-  if (typeof value === 'string') {
-    const nested = extractRecommendationOptions(value)
-    if (nested.length > 1) {
-      options.push(...nested)
-      return
-    }
-    const detail = cleanRecommendationText(value)
-    if (!detail || looksLikePassiveKeyValue(detail)) return
-    const command = extractCommandFromRecommendation(detail)
-    options.push({
-      id: `recommendation_${index + 1}_${hashString(detail)}`,
-      title: recommendationTitle(detail, command),
-      detail,
-      prompt: command ? buildRecommendationPrompt(detail, command) : detail,
-      command,
-    })
-    return
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return
-  const record = value as Record<string, unknown>
-  const prompt = firstStringField(record.prompt, record.suggest_prompt, record.suggested_prompt, record.command, record.action)
-  const detail = cleanRecommendationText(firstStringField(
-    record.detail,
-    record.description,
-    record.text,
-    record.content,
-    record.title,
-    record.label,
-    prompt,
-  ))
-  if (!detail || looksLikePassiveKeyValue(detail)) return
-  const command = firstStringField(record.command, extractCommandFromRecommendation(detail))
-  const title = firstStringField(record.title, record.label, record.name, recommendationTitle(detail, command))
-  options.push({
-    id: firstStringField(record.id, `recommendation_${index + 1}_${hashString(detail)}`),
-    title: truncate(title, 42),
-    detail,
-    prompt: prompt || buildRecommendationPrompt(detail, command),
-    command,
-  })
-}
-
-function firstStringField(...values: unknown[]) {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim()) return value.trim()
-  }
-  return ''
-}
-
-function extractRecommendationOptions(raw: string): RecommendationOption[] {
-  const textValue = decodeEscapedRecommendationText(String(raw || '').trim())
-  if (!textValue) return []
-  if (!hasRecommendationIntent(textValue)) return []
-  const source = recommendationSourceText(textValue)
-  const markerPattern = /(?:^|[\s:：;；,，。.\n])(?:(?:方法|方案|选项|建议|Option|Method|Choice)\s*)?((?:\d{1,2}|[一二三四五六七八九十]|[①②③④⑤⑥⑦⑧⑨⑩]))\s*[)）.、:：]\s*/gi
-  let matches = Array.from(source.matchAll(markerPattern))
-  if (matches.length < 2) {
-    matches = Array.from(source.matchAll(/(?:^|\n)\s*[-*•]\s+/g))
-  }
-  if (matches.length < 2) return []
-
-  const options: RecommendationOption[] = []
-  for (let i = 0; i < matches.length; i += 1) {
-    const marker = matches[i]
-    const start = (marker.index || 0) + marker[0].length
-    const end = i + 1 < matches.length ? matches[i + 1].index || source.length : source.length
-    const detail = cleanRecommendationText(source.slice(start, end))
-    if (!detail || detail.length < 4) continue
-    if (!isActionableRecommendationDetail(detail)) continue
-    const command = extractCommandFromRecommendation(detail)
-    const prompt = buildRecommendationPrompt(detail, command)
-    options.push({
-      id: `recommendation_${i + 1}_${hashString(detail)}`,
-      title: recommendationTitle(detail, command),
-      detail,
-      prompt,
-      command,
-    })
-  }
-  return dedupeRecommendationOptions(options).slice(0, 6)
-}
-
-function isActionableRecommendationDetail(detail: string) {
-  const normalized = detail
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!normalized) return false
-  if (looksLikePassiveKeyValue(normalized)) return false
-  if (/^(?:curl|nmap|ffuf|nuclei|go|npm|pnpm|yarn|python|python3|uv|docker|kubectl)\b/i.test(normalized)) return true
-  if (/^(?:GET|POST|HEAD|OPTIONS|PUT|PATCH|DELETE)\s+https?:\/\//i.test(normalized)) return true
-  if (extractCommandFromRecommendation(detail)) return true
-  return /执行|运行|使用|安装|启用|打开|选择|查询|检查|继续|重试|修复|分析|总结|确认|配置|切换|授权|扫描|枚举|读取|列出|生成|发送|补充|更新|恢复|apply|run|execute|use|install|enable|open|choose|query|check|continue|retry|fix|scan|read|list|send|configure|update|resume/i.test(normalized)
-}
-
-function looksLikePassiveKeyValue(value: string) {
-  const match = value.match(/^([a-zA-Z][a-zA-Z0-9_-]{1,48}|[\u4e00-\u9fa5A-Za-z0-9_-]{1,30})\s*[:：]\s*(.+)$/)
-  if (!match) return false
-  const key = match[1].trim().toLowerCase()
-  const rest = match[2].trim()
-  const passiveKeys = new Set([
-    'target',
-    'url',
-    'host',
-    'hostname',
-    'domain',
-    'method',
-    'status',
-    'status_code',
-    'code',
-    'server',
-    'content-type',
-    'content_type',
-    'content-length',
-    'content_length',
-    'x-cache',
-    'cache-control',
-    'etag',
-    'date',
-    'via',
-    'location',
-    'scheme',
-    'protocol',
-    'ip',
-    'port',
-    'title',
-    'body',
-    'headers',
-    'stdout',
-    'stderr',
-    'exit_code',
-    'workdir',
-    'duration',
-  ])
-  if (passiveKeys.has(key)) return true
-  return !/执行|运行|使用|安装|启用|打开|选择|查询|检查|继续|重试|修复|分析|总结|确认|配置|切换|授权|扫描|枚举|读取|列出|生成|发送|补充|更新|恢复|apply|run|execute|use|install|enable|open|choose|query|check|continue|retry|fix|scan|read|list|send|configure|update|resume/i.test(rest)
-}
-
-function decodeEscapedRecommendationText(value: string) {
-  return String(value || '')
-    .replace(/\\r\\n/g, '\n')
-    .replace(/\\n/g, '\n')
-    .replace(/\\t/g, ' ')
-    .replace(/\\"/g, '"')
-}
-
-function recommendationSourceText(raw: string) {
-  const markers = [
-    '建议操作者',
-    '建议用户',
-    '建议你',
-    '建议',
-    '建议：',
-    '可选方案',
-    '选项',
-    '下一步建议',
-    'Recommended options',
-    'Recommendations',
-  ]
-  const lower = raw.toLowerCase()
-  for (const marker of markers) {
-    const index = lower.indexOf(marker.toLowerCase())
-    if (index >= 0) return raw.slice(index)
-  }
-  return raw
-}
-
-function hasRecommendationIntent(raw: string) {
-  return /建议|可选方案|方案|选项|方法|可选步骤|可执行步骤|下一步建议|请选择|可选择|recommended options?|recommendations?|suggested options?|options?|choices?|methods?/i.test(raw)
-}
-
-function cleanRecommendationText(value: string) {
-  return String(value || '')
-    .replace(/^[：:，,；;\s-]+/, '')
-    .replace(/[；;]\s*$/, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function extractCommandFromRecommendation(detail: string) {
-  const fenced = detail.match(/```(?:bash|shell|sh)?\s*([\s\S]+?)```/i)?.[1]?.trim()
-  if (fenced) return fenced.split('\n').map((line) => line.trim()).filter(Boolean)[0] || fenced
-  const inline = detail.match(/`([^`]+)`/)?.[1]?.trim()
-  if (inline) return inline
-  const nmap = detail.match(/\bnmap\s+[^\n；;。)）]+/i)?.[0]?.trim()
-  if (nmap) return nmap
-  const commandAfterLike = detail.match(/(?:如|例如|example:?)\s*([a-z0-9_./-]+(?:\s+-{1,2}[^\s；;。)）]+|\s+[^\s；;。)）]+){1,12})/i)?.[1]?.trim()
-  return commandAfterLike || ''
-}
-
-function buildRecommendationPrompt(detail: string, command: string) {
-  if (command) return `请按以下建议执行或给出可执行步骤：${command}`
-  return `请按以下建议继续处理：${detail}`
-}
-
-function recommendationTitle(detail: string, command: string) {
-  const clean = detail
-    .replace(/（[^）]*）/g, '')
-    .replace(/\([^)]*\)/g, '')
-    .replace(/^(或|或者|and|or)\s*/i, '')
-    .trim()
-  if (command) {
-    const beforeCommand = clean.split(command)[0]?.trim()
-    if (beforeCommand) return truncate(beforeCommand, 42)
-    return truncate(command, 42)
-  }
-  return truncate(clean.split(/[，,。.;；]/)[0] || clean, 42)
-}
-
-function dedupeRecommendationOptions(options: RecommendationOption[]) {
-  const seen = new Set<string>()
-  return options.filter((item) => {
-    const key = item.detail.toLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
-function hashString(value: string) {
+function hashString(value: string): string {
   let hash = 0
   for (let i = 0; i < value.length; i += 1) {
     hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0
   }
   return Math.abs(hash).toString(36)
-}
-
-function extractJsonCandidates(raw: string): string[] {
-  const textValue = raw.trim()
-  const candidates: string[] = []
-  if (textValue.startsWith('```')) {
-    const stripped = textValue.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
-    if (stripped) candidates.push(stripped)
-  }
-  candidates.push(textValue)
-
-  const ranges: Array<[number, number]> = []
-  let depth = 0
-  let start = -1
-  let inString = false
-  let escape = false
-  for (let i = 0; i < raw.length; i += 1) {
-    const char = raw[i]
-    if (inString) {
-      if (escape) {
-        escape = false
-      } else if (char === '\\') {
-        escape = true
-      } else if (char === '"') {
-        inString = false
-      }
-      continue
-    }
-    if (char === '"') {
-      inString = true
-      continue
-    }
-    if (char === '{') {
-      if (depth === 0) start = i
-      depth += 1
-    } else if (char === '}') {
-      depth -= 1
-      if (depth === 0 && start >= 0) {
-        ranges.push([start, i + 1])
-        start = -1
-      }
-    }
-  }
-
-  for (const [from, to] of ranges.reverse()) {
-    const candidate = raw.slice(from, to).trim()
-    if (candidate) candidates.push(candidate)
-  }
-
-  return Array.from(new Set(candidates))
-}
-
-function stripJsonObjects(raw: string) {
-  let output = raw
-  for (const candidate of extractJsonCandidates(raw)) {
-    if (candidate !== raw.trim()) output = output.replace(candidate, '')
-  }
-  return output.replace(/```json|```/gi, '').trim()
-}
-
-function parseJson(value: string): unknown {
-  try {
-    return JSON.parse(value)
-  } catch {
-    return null
-  }
 }
 
 function parseCommandSummary(content: string): CommandSummary | null {

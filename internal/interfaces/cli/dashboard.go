@@ -28,14 +28,27 @@ func newDashboardCommand() *cobra.Command {
 			daemonURL, _ := cmd.Flags().GetString("daemon-url")
 			daemonTokenFile, _ := cmd.Flags().GetString("daemon-token-file")
 
+			if !cmd.Flags().Changed("daemon-url") {
+				daemonURL = "http://" + dashboardLoopbackAddr(addr)
+			}
+
 			manager := web.NewScanManager(func(name string, cfg llm.ProviderConfig) llm.Provider {
 				return buildProvider(name, cfg)
 			})
 
-			apiServer := web.NewAPIServer(manager, nil)
+			apiServer := web.NewAPIServer(manager, daemonapi.NewDefaultProviderStore(""))
+
+			daemonSrv, err := daemonapi.NewServer(daemonapi.Config{
+				Listen:    addr,
+				TokenFile: daemonTokenFile,
+			})
+			if err != nil {
+				return fmt.Errorf("init embedded daemon: %w", err)
+			}
 
 			mux := http.NewServeMux()
 			mux.HandleFunc("/api/local/daemon-config", handleLocalDaemonBootstrap(daemonURL, daemonTokenFile))
+			mux.Handle("/api/v1/", daemonSrv.Handler())
 			mux.Handle("/api/", apiServer.Handler())
 
 			if dev {
@@ -67,7 +80,7 @@ func newDashboardCommand() *cobra.Command {
 	}
 
 	cmd.Flags().String("addr", "127.0.0.1:8080", "listen address")
-	cmd.Flags().String("daemon-url", "http://"+daemonapi.DefaultListen, "default local daemon URL exposed to the dashboard bootstrap endpoint")
+	cmd.Flags().String("daemon-url", "http://"+daemonapi.DefaultListen, "default local daemon URL exposed to the dashboard bootstrap endpoint (defaults to the dashboard's own listen address)")
 	cmd.Flags().String("daemon-token-file", daemonapi.DefaultTokenFile(), "local daemon bearer token file exposed only to loopback dashboard clients")
 	cmd.Flags().Bool("dev", false, "development mode (frontend served by Vite)")
 	return cmd
@@ -144,6 +157,23 @@ func osReadFileTrimmed(path string) (string, error) {
 		return "", fmt.Errorf("token file is empty")
 	}
 	return token, nil
+}
+
+// dashboardLoopbackAddr returns a loopback host:port suitable for the bootstrap
+// base URL. If the listen address binds to a wildcard host (empty or 0.0.0.0),
+// it is rewritten to 127.0.0.1 so that browsers on the same machine can reach
+// the dashboard.
+func dashboardLoopbackAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	host = strings.TrimSpace(host)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func openBrowser(url string) {

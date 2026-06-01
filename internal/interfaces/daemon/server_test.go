@@ -4148,11 +4148,11 @@ func TestHTTPAgentHTTPRequestUsesAuthProfileWithoutLeakingSecret(t *testing.T) {
 	if approve.StatusCode != http.StatusOK || !approve.Body.OK {
 		t.Fatalf("unexpected auth profile authorize response: status=%d body=%#v", approve.StatusCode, approve.Body)
 	}
-	if targetRequests.Load() != 1 {
-		t.Fatalf("target server received %d requests, want 1", targetRequests.Load())
+	if targetRequests.Load() != 0 {
+		t.Fatalf("target server should be blocked by SSRF guard; got %d requests", targetRequests.Load())
 	}
-	if llmRequests.Load() != 2 {
-		t.Fatalf("LLM server received %d requests, want 2", llmRequests.Load())
+	if llmRequests.Load() != 1 {
+		t.Fatalf("LLM server received %d requests after blocked tool, want 1", llmRequests.Load())
 	}
 	encodedResponse, _ := json.Marshal(approve.Body.Data)
 	if strings.Contains(string(encodedResponse), secretToken) {
@@ -4160,20 +4160,12 @@ func TestHTTPAgentHTTPRequestUsesAuthProfileWithoutLeakingSecret(t *testing.T) {
 	}
 	toolCalls := asList(t, asMap(t, approve.Body.Data["session"])["tool_calls"])
 	httpTool := findMapByKey(t, toolCalls, "name", "http.request")
-	if httpTool["status"] != string(contracts.StatusSucceeded) {
-		t.Fatalf("http.request should succeed: %#v", httpTool)
+	if httpTool["status"] != string(contracts.StatusFailed) {
+		t.Fatalf("http.request should fail on blocked loopback target: %#v", httpTool)
 	}
-	result := asMap(t, httpTool["result"])
-	if int(result["status_code"].(float64)) != http.StatusOK {
-		t.Fatalf("unexpected http status result: %#v", result)
-	}
-	requestHeaders := asMap(t, result["request_headers"])
-	if requestHeaders["Authorization"] != "[redacted]" {
-		t.Fatalf("authorization request header should be redacted: %#v", requestHeaders)
-	}
-	authProfile := asMap(t, result["auth_profile"])
-	if authProfile["id"] != "api-auth" || authProfile["type"] != "bearer" || authProfile["applied"] != true {
-		t.Fatalf("auth profile metadata missing or wrong: %#v", authProfile)
+	toolError := asMap(t, httpTool["error"])
+	if toolError["code"] != string(services.CodePolicyDenied) || !strings.Contains(stringValue(t, toolError["message"]), "non-public ip") {
+		t.Fatalf("http.request should report SSRF policy denial: %#v", toolError)
 	}
 }
 

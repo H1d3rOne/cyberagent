@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
+	"github.com/H1d3rOne/cyberagent/internal/agent/search"
 	"github.com/H1d3rOne/cyberagent/internal/command"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
@@ -63,14 +64,27 @@ type agentSession struct {
 }
 
 type agentMessage struct {
-	ID        string          `json:"id"`
-	Role      string          `json:"role"`
-	Content   string          `json:"content"`
-	Timestamp time.Time       `json:"timestamp"`
-	Phase     string          `json:"phase,omitempty"`
-	ToolCalls []agentToolCall `json:"tool_calls,omitempty"`
-	Links     []agentLink     `json:"links,omitempty"`
-	Reasoning string          `json:"reasoning,omitempty"`
+	ID                    string                   `json:"id"`
+	Role                  string                   `json:"role"`
+	Content               string                   `json:"content"`
+	Timestamp             time.Time                `json:"timestamp"`
+	Phase                 string                   `json:"phase,omitempty"`
+	ToolCalls             []agentToolCall          `json:"tool_calls,omitempty"`
+	Links                 []agentLink              `json:"links,omitempty"`
+	Reasoning             string                   `json:"reasoning,omitempty"`
+	SuggestedPrompts      []string                 `json:"suggested_prompts,omitempty"`
+	RecommendationOptions []agentRecommendationOpt `json:"recommendation_options,omitempty"`
+}
+
+// agentRecommendationOpt is a structured next-step option emitted by the
+// planner. The frontend renders these as clickable cards. Fields mirror the
+// frontend RecommendationOption type.
+type agentRecommendationOpt struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Detail  string `json:"detail,omitempty"`
+	Prompt  string `json:"prompt,omitempty"`
+	Command string `json:"command,omitempty"`
 }
 
 type agentToolCall struct {
@@ -466,18 +480,19 @@ type agentCapabilityItem struct {
 }
 
 type agentPlannerResponse struct {
-	Phase            string               `json:"phase,omitempty"`
-	Answer           string               `json:"answer"`
-	SuggestedPrompt  string               `json:"suggested_prompt,omitempty"`
-	SuggestPrompt    string               `json:"suggest_prompt,omitempty"`
-	SuggestedPrompts []string             `json:"suggested_prompts,omitempty"`
-	Task             *agentPlannerTask    `json:"task,omitempty"`
-	Todos            []agentPlannerTodo   `json:"todos,omitempty"`
-	ContextRefs      []agentContextRef    `json:"context_refs,omitempty"`
-	NextAction       *agentNextAction     `json:"next_action,omitempty"`
-	Reasoning        string               `json:"reasoning,omitempty"`
-	Actions          []agentPlannerAction `json:"actions,omitempty"`
-	ToolCalls        []agentPlannerAction `json:"tool_calls,omitempty"`
+	Phase                 string                   `json:"phase,omitempty"`
+	Answer                string                   `json:"answer"`
+	SuggestedPrompt       string                   `json:"suggested_prompt,omitempty"`
+	SuggestPrompt         string                   `json:"suggest_prompt,omitempty"`
+	SuggestedPrompts      []string                 `json:"suggested_prompts,omitempty"`
+	RecommendationOptions []agentRecommendationOpt `json:"recommendation_options,omitempty"`
+	Task                  *agentPlannerTask        `json:"task,omitempty"`
+	Todos                 []agentPlannerTodo       `json:"todos,omitempty"`
+	ContextRefs           []agentContextRef        `json:"context_refs,omitempty"`
+	NextAction            *agentNextAction         `json:"next_action,omitempty"`
+	Reasoning             string                   `json:"reasoning,omitempty"`
+	Actions               []agentPlannerAction     `json:"actions,omitempty"`
+	ToolCalls             []agentPlannerAction     `json:"tool_calls,omitempty"`
 }
 
 type agentPlannerAction struct {
@@ -786,6 +801,8 @@ func agentCapabilityToolPolicy(name string) (string, bool) {
 	case "ports.scan.safe":
 		return "medium", false
 	case "runs.approvals.approve", "runs.approvals.deny", "runs.resume_approved":
+		return "medium", false
+	case "schedule.create", "schedule.delete":
 		return "medium", false
 	default:
 		return "low", true
@@ -1730,6 +1747,18 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 		tool.Result["planner_native_tool_calls"] = len(nativeActions)
 		tool.Result["planner_actions"] = len(agentPlannerActions(plan))
 	}
+	latestPrompt := agentLatestUserPrompt(history)
+	if plan != nil && len(agentPlannerActions(plan)) == 0 && agentIsScheduleExecutionIntent(latestPrompt) {
+		if fallback := agentFallbackPlannerFromPrompt(latestPrompt, "", language); fallback != nil && len(agentPlannerActions(fallback)) > 0 {
+			plan = fallback
+			content = strings.TrimSpace(fallback.Answer)
+			tool.Result["planner"] = true
+			tool.Result["planner_fallback"] = true
+			tool.Result["planner_schedule_override"] = true
+			tool.Result["planner_todos"] = len(plan.Todos)
+			tool.Result["planner_actions"] = len(agentPlannerActions(plan))
+		}
+	}
 	if strings.TrimSpace(content) == "" {
 		if len(nativeActions) > 0 {
 			content = agentText(language, "我将先调用低风险内置工具检查当前上下文。", "I will first call low-risk built-in tools to inspect the current context.")
@@ -1752,6 +1781,7 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, language string, 
 	if plan != nil {
 		message.Reasoning = trimSummary(plan.Reasoning, 800)
 	}
+	applyAgentPlannerToMessage(&message, plan)
 	return []agentMessage{message}, []agentToolCall{tool}, plan, nil
 }
 
@@ -1837,6 +1867,7 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, language 
 	if plan != nil {
 		message.Reasoning = trimSummary(plan.Reasoning, 800)
 	}
+	applyAgentPlannerToMessage(&message, plan)
 	return []agentMessage{message}, []agentToolCall{tool}, plan, nil
 }
 
@@ -2685,6 +2716,16 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 			prompt = "恢复已批准运行 " + runID
 		}
 		return m.handleAgentResumeApproved(ctx, sessionID, prompt, language, operator, svc)
+	case "schedule.create":
+		return m.handleAgentScheduleCreate(sessionID, language, operator, svc, args)
+	case "schedule.list":
+		return m.handleAgentScheduleList(language, svc)
+	case "schedule.delete":
+		return m.handleAgentScheduleDelete(language, svc, args)
+	case "web.search":
+		return m.handleAgentWebSearch(ctx, language, svc, args)
+	case "web.fetch":
+		return m.handleAgentWebFetch(ctx, language, args)
 	default:
 		return nil, nil, services.NewError(services.CodeUnsupported, "unsupported planner action", map[string]any{"action": action.Name}, nil)
 	}
@@ -2702,6 +2743,12 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 		)}, nil, nil
 	}
 	switch {
+	case agentIsScheduleCreateIntent(prompt):
+		return m.handleAgentScheduleCreate(sessionID, language, operator, svc, agentScheduleArgsFromPrompt(prompt, language))
+	case agentIsScheduleListIntent(prompt):
+		return m.handleAgentScheduleList(language, svc)
+	case agentIsScheduleDeleteIntent(prompt):
+		return m.handleAgentScheduleDelete(language, svc, map[string]any{"id": agentExtractScheduleID(prompt)})
 	case agentIsResumeApprovedIntent(prompt):
 		return m.handleAgentResumeApproved(ctx, sessionID, prompt, language, operator, svc)
 	case agentIsApprovalDecisionIntent(prompt):
@@ -3631,6 +3678,96 @@ func (m *agentManager) newMessageLocked(_ string, role, content string, toolCall
 	}
 }
 
+// applyAgentPlannerToMessage promotes planner-declared suggestions and
+// recommendation options onto the agentMessage so the frontend can render them
+// from authoritative fields instead of re-parsing the message content.
+func applyAgentPlannerToMessage(message *agentMessage, plan *agentPlannerResponse) {
+	if message == nil || plan == nil {
+		return
+	}
+	prompts := collectAgentPlannerSuggestedPrompts(plan)
+	if len(prompts) > 0 {
+		message.SuggestedPrompts = prompts
+	}
+	options := dedupeAgentRecommendationOptions(plan.RecommendationOptions)
+	if len(options) > 0 {
+		message.RecommendationOptions = options
+	}
+}
+
+func collectAgentPlannerSuggestedPrompts(plan *agentPlannerResponse) []string {
+	if plan == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, 4)
+	out := make([]string, 0, 4)
+	add := func(value string) {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	add(plan.SuggestedPrompt)
+	add(plan.SuggestPrompt)
+	for _, prompt := range plan.SuggestedPrompts {
+		add(prompt)
+	}
+	if plan.NextAction != nil {
+		add(plan.NextAction.SuggestedPrompt)
+	}
+	if len(out) > 6 {
+		out = out[:6]
+	}
+	return out
+}
+
+func dedupeAgentRecommendationOptions(options []agentRecommendationOpt) []agentRecommendationOpt {
+	if len(options) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(options))
+	out := make([]agentRecommendationOpt, 0, len(options))
+	for i, opt := range options {
+		title := strings.TrimSpace(opt.Title)
+		detail := strings.TrimSpace(opt.Detail)
+		prompt := strings.TrimSpace(opt.Prompt)
+		if title == "" && detail == "" && prompt == "" {
+			continue
+		}
+		key := strings.ToLower(detail)
+		if key == "" {
+			key = strings.ToLower(title)
+		}
+		if key == "" {
+			key = strings.ToLower(prompt)
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		id := strings.TrimSpace(opt.ID)
+		if id == "" {
+			id = fmt.Sprintf("recommendation_%d", i+1)
+		}
+		out = append(out, agentRecommendationOpt{
+			ID:      id,
+			Title:   title,
+			Detail:  detail,
+			Prompt:  prompt,
+			Command: strings.TrimSpace(opt.Command),
+		})
+	}
+	if len(out) > 6 {
+		out = out[:6]
+	}
+	return out
+}
+
 func agentNormalizePhase(phase string) string {
 	switch strings.ToLower(strings.TrimSpace(phase)) {
 	case "plan", "planning":
@@ -3821,7 +3958,7 @@ func agentOperationLevelAtLeast(level, required string) bool {
 
 func agentOperationLevelRequiredForAction(actionName string) string {
 	switch normalizeAgentPlannerActionName(actionName) {
-	case "scan.web.safe", "ports.scan.safe", "http.request":
+	case "scan.web.safe", "ports.scan.safe", "http.request", "web.search", "web.fetch":
 		return "safe_scan"
 	case "workspace.files.write",
 		"workspace.files.patch",
@@ -3840,6 +3977,10 @@ func agentOperationLevelRequiredForAction(actionName string) string {
 		"runs.approvals.deny",
 		"runs.resume_approved":
 		return "approval_ops"
+	case "schedule.create", "schedule.delete":
+		return "advanced"
+	case "schedule.list":
+		return "read_only"
 	default:
 		return "read_only"
 	}
@@ -3886,6 +4027,8 @@ func agentOperationLevelRequiredForPrompt(prompt string) string {
 	switch {
 	case agentIsApprovalDecisionIntent(prompt) || agentIsResumeApprovedIntent(prompt):
 		return "approval_ops"
+	case agentIsScheduleCreateIntent(prompt) || agentIsScheduleDeleteIntent(prompt):
+		return "advanced"
 	case agentIsReportDraftIntent(prompt):
 		return "workspace_write"
 	case (agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt)) && !agentHTTPMethodIsSafe(agentExtractHTTPMethod(prompt)):
@@ -4312,7 +4455,7 @@ func agentPlannerSystemPrompt(language, instructions, operationLevel string) str
   "context_refs": [],
   "actions": [
     {
-      "name": "scan.web.safe|ports.scan.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "name": "scan.web.safe|ports.scan.safe|http.request|web.search|web.fetch|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved|schedule.create|schedule.list|schedule.delete",
       "arguments": {"url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path": ".", "query":"TODO", "command": "pwd", "content": "notes", "old": "before", "new": "after", "changes": [{"path": "a.md", "old": "before", "new": "after"}], "change_id": "change_xxx", "group_id": "changeset_xxx", "all": true, "run_id": "job_xxx", "approval_id": "approval_xxx", "step_id": "step_xxx", "comment": "operator comment"}
     }
   ],
@@ -4332,7 +4475,8 @@ func agentPlannerSystemPrompt(language, instructions, operationLevel string) str
 - 工具选择前必须先做“任务意图 → 能力匹配”：区分 web_vulnerability_scan、port_scan、http_probe、content_discovery、js_route_analysis、api_auth_test、api_functional_test、run_context、workspace、approval、report、health、plugins、general_chat。只有当用户目标与工具能力等价时才调用工具；如果没有等价工具，必须说明能力缺口并给出选项，不允许用相似但不等价的工具替代。
 - auto_continue：当任务尚未完成、有明确下一步、且不需要人工审批或确认时设为 true；当任务已完成、需要人工输入、或存在不确定风险时设为 false。
 - reasoning：简要说明你的思考过程，包括任务选择理由、规划理由、下一步理由和风险考虑。
-- 可直接请求内置工具：scan.web.safe、ports.scan.safe、http.request、workspace.command、workspace.files.list、workspace.files.tree、workspace.files.read、workspace.search、workspace.files.write、workspace.files.patch、workspace.files.diff、workspace.files.diff_many、workspace.files.rebase、workspace.files.apply、workspace.files.discard、workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir、daemon.health、plugins.list、runs.list、runs.context、reports.draft、runs.approvals.list、runs.approvals.approve、runs.approvals.deny、runs.resume_approved。只有用户明确要求且动作属于这些内置工具时，才写入 actions 或 tool_calls；approval approve/deny 与 resume-approved 必须来自最新用户消息的显式指令；当用户给出明确授权目标/scope 且当前权限允许 safe_scan 时，可以直接输出 scan.web.safe、ports.scan.safe 或 GET/HEAD/OPTIONS http.request；POST/PUT/PATCH/DELETE http.request 需要 advanced；workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir 和 reports.draft 需要 workspace_write；外部插件和高风险命令不要自动执行，应等待用户确认或建议使用对应 Runtime 指令。
+- 可直接请求内置工具：scan.web.safe、ports.scan.safe、http.request、web.search、web.fetch、workspace.command、workspace.files.list、workspace.files.tree、workspace.files.read、workspace.search、workspace.files.write、workspace.files.patch、workspace.files.diff、workspace.files.diff_many、workspace.files.rebase、workspace.files.apply、workspace.files.discard、workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir、daemon.health、plugins.list、runs.list、runs.context、reports.draft、runs.approvals.list、runs.approvals.approve、runs.approvals.deny、runs.resume_approved、schedule.create、schedule.list、schedule.delete。只有用户明确要求且动作属于这些内置工具时，才写入 actions 或 tool_calls；approval approve/deny 与 resume-approved 必须来自最新用户消息的显式指令；当用户给出明确授权目标/scope 且当前权限允许 safe_scan 时，可以直接输出 scan.web.safe、ports.scan.safe、web.search、web.fetch 或 GET/HEAD/OPTIONS http.request；POST/PUT/PATCH/DELETE http.request 需要 advanced；workspace.files.delete、workspace.files.move、workspace.files.copy、workspace.files.mkdir 和 reports.draft 需要 workspace_write；schedule.create 与 schedule.delete 需要 advanced；外部插件和高风险命令不要自动执行，应等待用户确认或建议使用对应 Runtime 指令。
+- 当用户出现“定时/周期性/每天/每小时/每隔/每周/cron/scheduled/recurring/7:20执行”等关键词且明确要让某动作在未来或循环执行时，使用 schedule.create，不能调用立即执行工具。参数必须含 cron（5 字段标准 cron 或 @every 1h/@daily 这类宏）+ action。默认 action=agent_prompt，并把 prompt 设为去掉定时描述后的可执行指令（例如“端口扫描 example.com ports=80,443”）；这条路径可定时执行任意 Agent 能力。只有明确要求 recurring safe Web/API vulnerability scan 时才用 action=scan_web + target（可选 scope/profile）。"列出所有定时/查看定时/有哪些定时" → schedule.list；"删除定时 X/取消定时 X" → schedule.delete + id。
 - 端口枚举/开放端口查询（如“开了哪些端口”“open ports”“nmap”）必须归类为 port_scan，不要用 scan.web.safe 代替。可用 ports.scan.safe 做有界 TCP connect 安全探测；如果用户要求 nmap 全量服务识别、UDP 或超大范围扫描，必须说明内置工具限制并建议接入 nmap/masscan 插件。
 - 内容发现/目录枚举（ffuf/gobuster/dirsearch/隐藏目录/路径爆破）、JS 路由提取、认证/鉴权矩阵测试都不是 scan.web.safe 的等价能力；缺少对应插件或具体 endpoint/method/Auth Profile 时必须停在 Plan/wait_user，不要申请授权去执行错误工具。
 - 固定执行范式：Plan=分析任务全貌/选择工具/制定顺序；Step=逐步执行工具；StepReplan=每步后根据 observation 评估并调整后续；FinalAnswer=独立评估完成度，若遗漏则回流 Plan。
@@ -4364,7 +4508,7 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
   "context_refs": [],
   "actions": [
     {
-      "name": "scan.web.safe|ports.scan.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "name": "scan.web.safe|ports.scan.safe|http.request|web.search|web.fetch|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved|schedule.create|schedule.list|schedule.delete",
       "arguments": {"url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path": ".", "query":"TODO", "command": "pwd", "content": "notes", "old": "before", "new": "after", "changes": [{"path": "a.md", "old": "before", "new": "after"}], "change_id": "change_xxx", "group_id": "changeset_xxx", "all": true, "run_id": "job_xxx", "approval_id": "approval_xxx", "step_id": "step_xxx", "comment": "operator comment"}
     }
   ],
@@ -4384,7 +4528,8 @@ Constraints:
 - Before choosing tools, perform "task intent → capability matching": distinguish web_vulnerability_scan, port_scan, http_probe, content_discovery, js_route_analysis, api_auth_test, api_functional_test, run_context, workspace, approval, report, health, plugins, and general_chat. Only call a tool when the operator goal is equivalent to that tool's capability; if no equivalent tool exists, explain the capability gap and offer options. Never substitute a similar but non-equivalent tool.
 - auto_continue: set to true when the task is not finished, there is a clear next step, and no human approval or confirmation is needed; set to false when the task is complete, human input is required, or there is uncertain risk.
 - reasoning: briefly explain your thinking process, including task selection reason, planning reason, next step reason, and risk considerations.
-- You may request built-in tools directly: scan.web.safe, ports.scan.safe, http.request, workspace.command, workspace.files.list, workspace.files.tree, workspace.files.read, workspace.search, workspace.files.write, workspace.files.patch, workspace.files.diff, workspace.files.diff_many, workspace.files.rebase, workspace.files.apply, workspace.files.discard, workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir, daemon.health, plugins.list, runs.list, runs.context, reports.draft, runs.approvals.list, runs.approvals.approve, runs.approvals.deny, runs.resume_approved. Only populate actions or tool_calls when the user clearly asks for it and the action is one of these built-ins; approval approve/deny and resume-approved must come from an explicit instruction in the latest user message; when the operator provides an explicitly authorized target/scope and the current permission allows safe_scan, you may directly output scan.web.safe, ports.scan.safe, or GET/HEAD/OPTIONS http.request; POST/PUT/PATCH/DELETE http.request requires advanced; workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir and reports.draft require workspace_write; do not auto-run external plugins or high-risk commands.
+- You may request built-in tools directly: scan.web.safe, ports.scan.safe, http.request, web.search, web.fetch, workspace.command, workspace.files.list, workspace.files.tree, workspace.files.read, workspace.search, workspace.files.write, workspace.files.patch, workspace.files.diff, workspace.files.diff_many, workspace.files.rebase, workspace.files.apply, workspace.files.discard, workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir, daemon.health, plugins.list, runs.list, runs.context, reports.draft, runs.approvals.list, runs.approvals.approve, runs.approvals.deny, runs.resume_approved, schedule.create, schedule.list, schedule.delete. Only populate actions or tool_calls when the user clearly asks for it and the action is one of these built-ins; approval approve/deny and resume-approved must come from an explicit instruction in the latest user message; when the operator provides an explicitly authorized target/scope and the current permission allows safe_scan, you may directly output scan.web.safe, ports.scan.safe, web.search, web.fetch, or GET/HEAD/OPTIONS http.request; POST/PUT/PATCH/DELETE http.request requires advanced; workspace.files.delete, workspace.files.move, workspace.files.copy, workspace.files.mkdir and reports.draft require workspace_write; schedule.create and schedule.delete require advanced; do not auto-run external plugins or high-risk commands.
+- When the user asks for a scheduled / recurring / every-N / cron / daily / hourly / weekly action, or a future-time trigger like "run at 7:20", use schedule.create and do not call the immediate tool. Required args: cron (standard 5-field cron, or @every 1h / @daily macros) and action. Default to action=agent_prompt with prompt set to the executable instruction after stripping schedule wording (for example: "port scan example.com ports=80,443"); this supports arbitrary scheduled Agent capabilities. Use action=scan_web + target only for an explicit recurring safe Web/API vulnerability scan. "list schedules / show schedules" → schedule.list; "delete schedule X / cancel schedule X" → schedule.delete with id.
 - Port enumeration / open-port requests (for example "open ports", "which ports", "nmap") must be classified as port_scan and must not be substituted with scan.web.safe. Use ports.scan.safe for bounded TCP connect safe probes; if the operator asks for full nmap service fingerprinting, UDP, or very large ranges, state the built-in limitation and suggest an nmap/masscan plugin.
 - Content discovery/directory enumeration (ffuf/gobuster/dirsearch/hidden directories/path brute force), JS route extraction, and auth/authorization matrix testing are not equivalent to scan.web.safe; without the matching plugin or exact endpoint/method/Auth Profile, stop at Plan/wait_user instead of asking approval for the wrong tool.
 - Fixed execution pattern: Plan=analyze full task/select tools/order steps; Step=execute tools step by step; StepReplan=after each step, evaluate observations and adjust remaining steps; FinalAnswer=independently evaluate completion, and if something is missing, flow back to Plan.
@@ -4429,7 +4574,7 @@ func agentToolSynthesisSystemPrompt(language, instructions, operationLevel strin
   "context_refs": [],
   "actions": [
     {
-      "name": "scan.web.safe|ports.scan.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "name": "scan.web.safe|ports.scan.safe|http.request|web.search|web.fetch|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved|schedule.create|schedule.list|schedule.delete",
       "arguments": {"target":"https://example.com","scope":"https://example.com","url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path":".","query":"TODO","command":"pwd","run_id":"job_xxx"}
     }
   ],
@@ -4478,7 +4623,7 @@ Return exactly one JSON object. Do not use Markdown, code fences, or text before
   "context_refs": [],
   "actions": [
     {
-      "name": "scan.web.safe|ports.scan.safe|http.request|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved",
+      "name": "scan.web.safe|ports.scan.safe|http.request|web.search|web.fetch|workspace.command|workspace.files.list|workspace.files.tree|workspace.files.read|workspace.search|workspace.files.write|workspace.files.patch|workspace.files.diff|workspace.files.diff_many|workspace.files.rebase|workspace.files.apply|workspace.files.discard|workspace.files.delete|workspace.files.move|workspace.files.copy|workspace.files.mkdir|daemon.health|plugins.list|runs.list|runs.context|reports.draft|runs.approvals.list|runs.approvals.approve|runs.approvals.deny|runs.resume_approved|schedule.create|schedule.list|schedule.delete",
       "arguments": {"target":"https://example.com","scope":"https://example.com","url":"https://example.com","method":"GET","auth_profile_id":"optional_profile_id","headers":{"X-Test":"value"},"body":"optional POST body","content_type":"application/json","path":".","query":"TODO","command":"pwd","run_id":"job_xxx"}
     }
   ],
@@ -4528,6 +4673,16 @@ func agentLLMToolDefinitions() []llm.ToolDef {
 			Name:        "http.request",
 			Description: "Make an HTTP request to an explicitly authorized http/https URL and return status, headers, and a truncated body. GET/HEAD/OPTIONS require safe_scan; POST/PUT/PATCH/DELETE require advanced.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"Authorized http/https URL"},"method":{"type":"string","enum":["GET","HEAD","OPTIONS","POST","PUT","PATCH","DELETE"],"description":"HTTP method; defaults to GET"},"auth_profile_id":{"type":"string","description":"Optional configured API auth profile ID/name; secrets are resolved by the daemon and are not exposed to the model"},"headers":{"type":"object","description":"Optional request headers for authorized testing; sensitive values are redacted in stored results","additionalProperties":{"type":"string"}},"body":{"type":"string","description":"Optional request body for POST/PUT/PATCH/DELETE"},"content_type":{"type":"string","description":"Optional Content-Type header when body is provided"}},"required":["url"],"additionalProperties":false}`),
+		},
+		{
+			Name:        "web.search",
+			Description: "Search the public web for lookup/research queries using the configured Web Search provider. Use for search/query intents, not for probing a specific target. Requires safe_scan operation level and configured Web Search settings.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query"},"max_results":{"type":"integer","minimum":1,"maximum":10,"description":"Maximum results to return; defaults to configured value or 5"},"locale":{"type":"string","description":"Optional locale/language hint such as en-US or zh-CN"}},"required":["query"],"additionalProperties":false}`),
+		},
+		{
+			Name:        "web.fetch",
+			Description: "Fetch and read a specific public http/https URL with SSRF protections. Use for reading a known page URL, not for arbitrary API testing or non-GET HTTP requests. Requires safe_scan operation level.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"Public http/https URL to fetch"},"mode":{"type":"string","enum":["readable","raw"],"description":"readable extracts text from HTML; raw returns truncated response text. Defaults to readable"},"max_chars":{"type":"integer","minimum":1,"maximum":20000,"description":"Maximum response characters to return; defaults to 8000"}},"required":["url"],"additionalProperties":false}`),
 		},
 		{
 			Name:        "workspace.command",
@@ -4653,6 +4808,21 @@ func agentLLMToolDefinitions() []llm.ToolDef {
 			Name:        "runs.resume_approved",
 			Description: "Resume approved steps for a run when the operator explicitly asks to resume approved work.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"run_id":{"type":"string","description":"Run ID to resume; defaults to active run when omitted"}},"additionalProperties":false}`),
+		},
+		{
+			Name:        "schedule.create",
+			Description: "Create a recurring schedule. Prefer action=agent_prompt with the executable instruction for arbitrary scheduled Agent work (including port scans, HTTP checks, searches, workspace tasks); use action=scan_web only for an explicit recurring safe Web/API vulnerability scan. Do NOT call the immediate tool for scheduled requests. Requires advanced operation level.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"cron":{"type":"string","description":"Standard 5-field cron expression or @every / @hourly / @daily / @weekly / @monthly macro"},"action":{"type":"string","enum":["agent_prompt","scan_web"],"description":"What the schedule fires: agent_prompt sends an executable instruction into the Agent session and supports arbitrary future Agent work; scan_web is only for recurring safe Web/API vulnerability scans"},"name":{"type":"string","description":"Optional schedule name; defaults are derived from action+target/prompt"},"target":{"type":"string","description":"Authorized http/https target URL (required when action=scan_web)"},"scope":{"type":"string","description":"Authorization boundary; defaults to target"},"profile":{"type":"string","description":"Scan profile (defaults to safe)"},"prompt":{"type":"string","description":"Executable prompt to dispatch at trigger time (required when action=agent_prompt). Strip schedule wording; keep only the action to perform."},"session_id":{"type":"string","description":"Target agent session id; defaults to the current session for agent_prompt"},"enabled":{"type":"boolean","description":"Whether the schedule is enabled on creation; defaults to true"}},"required":["cron","action"],"additionalProperties":false}`),
+		},
+		{
+			Name:        "schedule.list",
+			Description: "List currently configured schedules together with their cron expression, action, last run, and next-run time.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		},
+		{
+			Name:        "schedule.delete",
+			Description: "Delete an existing schedule by id when the operator explicitly asks to cancel/remove it. Requires advanced operation level.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"Schedule id returned by schedule.list"}},"required":["id"],"additionalProperties":false}`),
 		},
 	}
 }
@@ -4802,11 +4972,14 @@ func agentFallbackPlannerFromPrompt(prompt, modelAnswer, language string) *agent
 	if prompt == "" {
 		return agentPlannerFromPlainAnswer(modelAnswer, "final_answer", language)
 	}
-	if gap := agentCapabilityGapPlannerFromPrompt(prompt, modelAnswer, language); gap != nil {
-		return gap
-	}
 
 	actions := agentHeuristicActionsFromPrompt(prompt)
+	if len(actions) == 0 {
+		if gap := agentCapabilityGapPlannerFromPrompt(prompt, modelAnswer, language); gap != nil {
+			return gap
+		}
+	}
+
 	if len(actions) == 0 {
 		if modelAnswer != "" {
 			return agentPlannerFromPlainAnswer(modelAnswer, "final_answer", language)
@@ -4889,6 +5062,12 @@ func agentPortScanPlannerFromPrompt(prompt, modelAnswer, language string) *agent
 
 func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 	switch {
+	case agentIsScheduleCreateIntent(prompt):
+		return []agentPlannerAction{{Name: "schedule.create", Arguments: agentScheduleArgsFromPrompt(prompt, "")}}
+	case agentIsScheduleListIntent(prompt):
+		return []agentPlannerAction{{Name: "schedule.list", Arguments: map[string]any{}}}
+	case agentIsScheduleDeleteIntent(prompt):
+		return []agentPlannerAction{{Name: "schedule.delete", Arguments: map[string]any{"id": agentExtractScheduleID(prompt)}}}
 	case agentIsPortScanIntent(prompt):
 		return agentPortScanActionsFromPrompt(prompt)
 	case agentHasCapabilityGapIntent(prompt):
@@ -5066,6 +5245,9 @@ func agentShouldRouteBeforeLLMSynthesis(prompt string) bool {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return false
+	}
+	if agentIsScheduleExecutionIntent(prompt) {
+		return true
 	}
 	// When the operator explicitly names simple allowlisted shell commands,
 	// execute those exact deterministic steps first and ask the LLM to synthesize
@@ -5841,6 +6023,8 @@ const (
 	agentIntentJSRouteAnalysis      = "js_route_analysis"
 	agentIntentAPIAuthTest          = "api_auth_test"
 	agentIntentAPIFunctionalTest    = "api_functional_test"
+	agentIntentWebSearch            = "web_search"
+	agentIntentWebFetch             = "web_fetch"
 	agentIntentRunContext           = "run_context"
 	agentIntentReportGeneration     = "report_generation"
 	agentIntentWorkspace            = "workspace"
@@ -5848,6 +6032,9 @@ const (
 	agentIntentHealth               = "health"
 	agentIntentPlugins              = "plugins"
 	agentIntentRuns                 = "runs"
+	agentIntentScheduleCreate       = "schedule_create"
+	agentIntentScheduleList         = "schedule_list"
+	agentIntentScheduleDelete       = "schedule_delete"
 )
 
 type agentCapabilityIntentDecision struct {
@@ -5865,6 +6052,23 @@ func agentClassifyCapabilityIntent(prompt string) agentCapabilityIntentDecision 
 	prompt = strings.TrimSpace(prompt)
 	target := agentExtractURL(prompt)
 	switch {
+	case agentIsScheduleCreateIntent(prompt):
+		return agentCapabilityIntentDecision{
+			ID:        agentIntentScheduleCreate,
+			Kind:      "schedule",
+			Target:    target,
+			Supported: true,
+			Tools:     []string{"schedule.create"},
+			Reason:    "configure cron-driven recurring action",
+		}
+	case agentIsScheduleListIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentScheduleList, Kind: "schedule", Supported: true, Tools: []string{"schedule.list"}}
+	case agentIsScheduleDeleteIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentScheduleDelete, Kind: "schedule", Supported: true, Tools: []string{"schedule.delete"}}
+	case agentIsWebSearchIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentWebSearch, Kind: "web_search", Supported: true, Tools: []string{"web.search"}, Reason: "public web search / lookup"}
+	case agentIsWebFetchIntent(prompt):
+		return agentCapabilityIntentDecision{ID: agentIntentWebFetch, Kind: "web_fetch", Target: target, Supported: target != "", Tools: []string{"web.fetch"}, Reason: "read a specific public URL"}
 	case agentIsPortScanIntent(prompt):
 		if target == "" {
 			target = agentExtractPortScanHostFromPrompt(prompt)
@@ -6053,6 +6257,10 @@ func agentCapabilityGoal(language string, decision agentCapabilityIntentDecision
 		return agentText(language, "提取 JS 路由和前端接口 "+target, "Extract JS routes and front-end endpoints for "+target)
 	case agentIntentAPIAuthTest:
 		return agentText(language, "测试 API 认证/鉴权 "+target, "Test API authentication/authorization for "+target)
+	case agentIntentWebSearch:
+		return agentText(language, "搜索公开 Web 信息", "Search public web information")
+	case agentIntentWebFetch:
+		return agentText(language, "读取公开 URL "+target, "Read public URL "+target)
 	case agentIntentPortScan:
 		return agentText(language, "枚举开放端口 "+target, "Enumerate open ports for "+target)
 	default:
@@ -6068,10 +6276,20 @@ func agentPlannerActionCapabilityMismatch(prompt, actionName, language string) (
 	}
 	allowed := false
 	switch decision.ID {
+	case agentIntentScheduleCreate:
+		allowed = actionName == "schedule.create"
+	case agentIntentScheduleList:
+		allowed = actionName == "schedule.list"
+	case agentIntentScheduleDelete:
+		allowed = actionName == "schedule.delete"
 	case agentIntentWebVulnerabilityScan:
 		allowed = actionName == "scan.web.safe" || actionName == "http.request" || agentPlannerActionAllowedByPrompt(prompt, actionName)
 	case agentIntentHTTPProbe:
 		allowed = actionName == "http.request" || actionName == "plugins.list" || agentPlannerActionAllowedByPrompt(prompt, actionName)
+	case agentIntentWebSearch:
+		allowed = actionName == "web.search"
+	case agentIntentWebFetch:
+		allowed = actionName == "web.fetch"
 	case agentIntentPortScan:
 		allowed = actionName == "ports.scan.safe" || actionName == "plugins.list" || (actionName == "http.request" && agentIsHTTPPortFallbackIntent(prompt))
 	case agentIntentContentDiscovery:
@@ -6110,8 +6328,167 @@ func agentIsReportDraftIntent(prompt string) bool {
 	return regexp.MustCompile(`(?i)(report\s*draft|draft\s*report|write\s+(?:a\s+)?report|generate\s+(?:a\s+)?report|报告草稿|生成报告|报告初稿|撰写报告|输出报告)`).MatchString(prompt)
 }
 
+var (
+	agentScheduleVerbRe   = regexp.MustCompile(`(?i)(定时|周期(?:性)?|每\s*(?:天|日|小时|分钟|周|月|个小时)|每\s*\d+\s*(?:分钟|小时|天|秒|min|hour|day|s)|cron|schedule|scheduled|recurring|every\s+\d+\s*(?:m|min|minute|h|hr|hour|d|day|s|sec|second)s?|every\s+(?:day|hour|minute|week|month|night|morning)|nightly|hourly|daily|weekly|monthly)`)
+	agentScheduleTimeRe   = regexp.MustCompile(`(?i)(?:上午|下午|晚上|早上|凌晨)?\s*\d{1,2}[:：]\d{2}\s*(?:执行|运行|触发|开始|run|start)`)
+	agentScheduleListRe   = regexp.MustCompile(`(?i)(列出.*定时|查看.*定时|有哪些定时|定时任务列表|所有定时|list\s+schedules?|show\s+schedules?|schedules\s*\?)`)
+	agentScheduleDeleteRe = regexp.MustCompile(`(?i)(删除.*定时|取消.*定时|移除.*定时|delete\s+schedule|remove\s+schedule|cancel\s+schedule)`)
+	agentCronExprRe       = regexp.MustCompile(`(?i)(@(?:every\s+\S+|hourly|daily|weekly|monthly|yearly|annually|midnight|reboot))|(\b(?:\*|\d+|\*/\d+|\d+(?:[,-]\d+)*)\s+(?:\*|\d+|\*/\d+|\d+(?:[,-]\d+)*)\s+(?:\*|\d+|\*/\d+|\d+(?:[,-]\d+)*)\s+(?:\*|\d+|\*/\d+|\d+(?:[,-]\d+)*)\s+(?:\*|\?|\d+|\*/\d+|\d+(?:[,-]\d+)*|MON|TUE|WED|THU|FRI|SAT|SUN)\b)`)
+	agentScheduleIDRe     = regexp.MustCompile(`(?i)(?:schedule|定时(?:任务)?|cron)\s*(?:id\s*[:=]?\s*)?([A-Za-z0-9][A-Za-z0-9\-_]{2,})`)
+)
+
+func agentIsScheduleExecutionIntent(prompt string) bool {
+	return agentIsScheduleCreateIntent(prompt) || agentIsScheduleListIntent(prompt) || agentIsScheduleDeleteIntent(prompt)
+}
+
+func agentIsScheduleCreateIntent(prompt string) bool {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return false
+	}
+	if agentScheduleListRe.MatchString(prompt) || agentScheduleDeleteRe.MatchString(prompt) {
+		return false
+	}
+	return agentScheduleVerbRe.MatchString(prompt) || agentScheduleTimeRe.MatchString(prompt)
+}
+
+func agentIsScheduleListIntent(prompt string) bool {
+	return agentScheduleListRe.MatchString(prompt)
+}
+
+func agentIsScheduleDeleteIntent(prompt string) bool {
+	return agentScheduleDeleteRe.MatchString(prompt)
+}
+
+func agentExtractCronExpression(prompt string) string {
+	if m := agentCronExprRe.FindString(prompt); m != "" {
+		return strings.TrimSpace(m)
+	}
+	low := strings.ToLower(prompt)
+	if m := regexp.MustCompile(`(?i)(上午|下午|晚上|早上|凌晨)?\s*(\d{1,2})[:：](\d{2})\s*(?:执行|运行|触发|开始|run|start)?`).FindStringSubmatch(prompt); len(m) == 4 && (agentScheduleVerbRe.MatchString(prompt) || agentScheduleTimeRe.MatchString(prompt)) {
+		hour, _ := strconv.Atoi(m[2])
+		minute, _ := strconv.Atoi(m[3])
+		period := strings.TrimSpace(m[1])
+		if (period == "下午" || period == "晚上") && hour >= 1 && hour < 12 {
+			hour += 12
+		}
+		if hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 {
+			return fmt.Sprintf("%d %d * * *", minute, hour)
+		}
+	}
+	switch {
+	case regexp.MustCompile(`(?i)每\s*分钟|every\s+minute|nightly|每分钟`).MatchString(low):
+		return "* * * * *"
+	case regexp.MustCompile(`(?i)每\s*小时|每\s*个\s*小时|every\s+hour|hourly`).MatchString(low):
+		return "0 * * * *"
+	case regexp.MustCompile(`(?i)每\s*(?:天|日)|every\s+day|daily`).MatchString(low):
+		return "0 0 * * *"
+	case regexp.MustCompile(`(?i)每\s*周|every\s+week|weekly`).MatchString(low):
+		return "0 0 * * 0"
+	case regexp.MustCompile(`(?i)每\s*月|every\s+month|monthly`).MatchString(low):
+		return "0 0 1 * *"
+	}
+	if m := regexp.MustCompile(`(?i)每\s*(\d+)\s*(分钟|小时|天|min|minute|hour|day)`).FindStringSubmatch(prompt); len(m) == 3 {
+		unit := strings.ToLower(m[2])
+		switch unit {
+		case "分钟", "min", "minute":
+			return "@every " + m[1] + "m"
+		case "小时", "hour":
+			return "@every " + m[1] + "h"
+		case "天", "day":
+			return "@every " + m[1] + "h"
+		}
+	}
+	if m := regexp.MustCompile(`(?i)every\s+(\d+)\s*(m|min|minute|h|hr|hour|d|day)s?`).FindStringSubmatch(prompt); len(m) == 3 {
+		unit := strings.ToLower(m[2])
+		switch unit {
+		case "m", "min", "minute":
+			return "@every " + m[1] + "m"
+		case "h", "hr", "hour":
+			return "@every " + m[1] + "h"
+		case "d", "day":
+			return "@every " + (func() string {
+				if n, err := strconv.Atoi(m[1]); err == nil {
+					return strconv.Itoa(n*24) + "h"
+				}
+				return m[1] + "h"
+			})()
+		}
+	}
+	return ""
+}
+
+func agentExtractScheduleID(prompt string) string {
+	if m := agentScheduleIDRe.FindStringSubmatch(prompt); len(m) >= 2 {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+func agentScheduleExecutionPrompt(prompt string) string {
+	cleaned := strings.TrimSpace(prompt)
+	if cleaned == "" {
+		return cleaned
+	}
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`(?i)@(?:every\s+\S+|hourly|daily|weekly|monthly|yearly|annually|midnight|reboot)`),
+		regexp.MustCompile(`(?i)\b(?:\*|\d+|\*/\d+|\d+(?:[,-]\d+)*)\s+(?:\*|\d+|\*/\d+|\d+(?:[,-]\d+)*)\s+(?:\*|\d+|\*/\d+|\d+(?:[,-]\d+)*)\s+(?:\*|\d+|\*/\d+|\d+(?:[,-]\d+)*)\s+(?:\*|\?|\d+|\*/\d+|\d+(?:[,-]\d+)*|MON|TUE|WED|THU|FRI|SAT|SUN)\b`),
+		regexp.MustCompile(`(?i)(?:每天|每日|每晚|每小时|每分钟|每周|每月|周期(?:性)?|定时|scheduled|recurring|hourly|daily|weekly|monthly|nightly)`),
+		regexp.MustCompile(`(?i)每\s*\d+\s*(?:分钟|小时|天|秒|min|hour|day|s)`),
+		regexp.MustCompile(`(?i)every\s+\d+\s*(?:m|min|minute|h|hr|hour|d|day|s|sec|second)s?`),
+		regexp.MustCompile(`(?i)every\s+(?:day|hour|minute|week|month|night|morning)`),
+		regexp.MustCompile(`(?i)(?:上午|下午|晚上|早上|凌晨)?\s*\d{1,2}[:：]\d{2}\s*(?:执行|运行|触发|开始|run|start)?`),
+		regexp.MustCompile(`(?i)(?:执行|运行|触发|开始)\s*$`),
+	} {
+		cleaned = re.ReplaceAllString(cleaned, " ")
+	}
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	cleaned = strings.Trim(cleaned, " ，,。.;；:-")
+	if cleaned == "" {
+		return strings.TrimSpace(prompt)
+	}
+	return cleaned
+}
+
+func agentScheduleArgsFromPrompt(prompt, language string) map[string]any {
+	args := map[string]any{
+		"cron":     agentExtractCronExpression(prompt),
+		"language": language,
+	}
+	target := agentExtractURL(prompt)
+	if target != "" && agentIsScanIntent(prompt) {
+		args["target"] = target
+		args["action"] = "scan_web"
+		args["profile"] = "safe"
+		return args
+	}
+	args["action"] = "agent_prompt"
+	args["prompt"] = agentScheduleExecutionPrompt(prompt)
+	return args
+}
+
+func agentIsWebSearchIntent(prompt string) bool {
+	if agentExtractURL(prompt) != "" {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(web\s*search|internet\s*search|search\s+(?:the\s+)?web|look\s*up|查询|搜索|检索|联网搜索|网上搜索|查一下|搜一下)`).MatchString(prompt)
+}
+
+func agentIsWebFetchIntent(prompt string) bool {
+	if agentExtractURL(prompt) == "" {
+		return false
+	}
+	if agentIsScanIntent(prompt) || agentIsPortScanIntent(prompt) || agentIsContentDiscoveryIntent(prompt) || agentIsJSRouteAnalysisIntent(prompt) || agentIsAPIAuthTestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt) {
+		return false
+	}
+	return regexp.MustCompile(`(?i)(read\s+(?:this\s+)?(?:url|page|article)|fetch\s+(?:this\s+)?(?:url|page|article)|summari[sz]e\s+(?:this\s+)?(?:url|page|article)|open\s+(?:this\s+)?url|读取|阅读|获取页面|抓取页面|总结.*(?:链接|网页|文章)|读一下|看一下)`).MatchString(prompt)
+}
+
 func agentIsScanIntent(prompt string) bool {
 	if agentExtractURL(prompt) == "" {
+		return false
+	}
+	if agentIsScheduleCreateIntent(prompt) {
 		return false
 	}
 	if agentIsPortScanIntent(prompt) || agentIsContentDiscoveryIntent(prompt) || agentIsJSRouteAnalysisIntent(prompt) {
@@ -9324,6 +9701,10 @@ func agentTaskSummary(language, kind string) string {
 		return agentText(language, "Agent 会识别这是 JS 路由/前端接口提取任务；缺少分析器时等待插件或 JS 文件。", "The Agent will classify this as JS route/front-end endpoint extraction; without an analyzer it waits for a plugin or JS files.")
 	case "api_auth_test":
 		return agentText(language, "Agent 会识别这是认证/鉴权测试；需要具体 endpoint、凭据/Auth Profile 或专用流程。", "The Agent will classify this as auth/authorization testing; it needs exact endpoints, credentials/Auth Profile, or a dedicated workflow.")
+	case "web_search":
+		return agentText(language, "Agent 将使用配置的 Web Search provider 检索公开信息并返回来源摘要。", "The Agent will use the configured Web Search provider to look up public information and summarize sourced results.")
+	case "web_fetch":
+		return agentText(language, "Agent 将读取指定公开 URL，并在 SSRF 防护下返回可读内容摘要。", "The Agent will read the specified public URL and return readable content under SSRF protections.")
 	case "context_analysis":
 		return agentText(language, "Agent 将读取 run / artifact / finding 上下文并给出下一步建议。", "The Agent will read run / artifact / finding context and suggest next actions.")
 	default:
@@ -9372,6 +9753,18 @@ func agentInitialTodos(language, kind string, now time.Time) []agentTodo {
 			agentText(language, "确认认证/鉴权测试目标", "Confirm auth/authorization test target"),
 			agentText(language, "收集 endpoint、method、Auth Profile/凭据上下文", "Collect endpoint, method, Auth Profile/credential context"),
 			agentText(language, "选择 http.request 验证或专用插件流程", "Choose http.request validation or dedicated plugin workflow"),
+		}
+	case "web_search":
+		titles = []string{
+			agentText(language, "确认检索问题", "Confirm search query"),
+			agentText(language, "使用 Web Search provider 检索", "Search with the Web Search provider"),
+			agentText(language, "汇总来源和关键信息", "Summarize sources and key information"),
+		}
+	case "web_fetch":
+		titles = []string{
+			agentText(language, "确认要读取的 URL", "Confirm URL to read"),
+			agentText(language, "获取并提取页面内容", "Fetch and extract page content"),
+			agentText(language, "总结页面要点", "Summarize page takeaways"),
 		}
 	case "context_analysis":
 		titles = []string{
@@ -9702,7 +10095,7 @@ func normalizeAgentPlannerActionName(raw string) string {
 		return "scan.web.safe"
 	case "ports.scan.safe", "port.scan.safe", "ports.scan", "port.scan", "portscan", "port.scan.tcp", "tcp.scan", "scan.ports", "nmap":
 		return "ports.scan.safe"
-	case "http.request", "http", "request", "fetch", "curl", "web.request", "web.fetch", "http.get", "http.head":
+	case "http.request", "http", "request", "curl", "web.request", "http.get", "http.head":
 		return "http.request"
 	case "workspace.command", "workspace.commands.run", "workspace.run.command", "command", "commands.run", "shell", "terminal":
 		return "workspace.command"
@@ -9754,6 +10147,16 @@ func normalizeAgentPlannerActionName(raw string) string {
 		return "runs.resume_approved"
 	case "reports.draft", "report.draft", "draft.report", "report.generate", "reports.generate", "generate.report", "write.report":
 		return "reports.draft"
+	case "schedule.create", "schedule.add", "schedule.set", "create.schedule", "set.schedule", "cron.create", "cron.add", "schedules.create", "add.schedule":
+		return "schedule.create"
+	case "schedule.list", "schedules.list", "list.schedules", "list.schedule", "cron.list", "schedules":
+		return "schedule.list"
+	case "schedule.delete", "schedule.remove", "schedules.delete", "delete.schedule", "remove.schedule", "cron.delete", "cron.remove":
+		return "schedule.delete"
+	case "web.search", "websearch", "search.web", "google.search", "google", "search.engine", "tavily.search":
+		return "web.search"
+	case "web.fetch", "webfetch", "fetch.url", "fetch.page", "fetch.web", "page.fetch", "open.url", "fetch":
+		return "web.fetch"
 	default:
 		return name
 	}
@@ -10235,6 +10638,60 @@ func agentRedactHTTPHeaders(headers map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+// agentURLOutboundAllowed rejects URLs whose host resolves to non-public IP
+// space (loopback, RFC1918, link-local, CGNAT, multicast, unspecified) or to
+// the well-known cloud metadata endpoints. Used by web.fetch / web.search /
+// http.request to keep the agent from probing the host's internal network.
+func agentURLOutboundAllowed(parsed *url.URL) error {
+	if parsed == nil {
+		return services.NewError(services.CodeBadRequest, "missing url", nil, nil)
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host == "" {
+		return services.NewError(services.CodeBadRequest, "url has no host", map[string]any{"url": parsed.String()}, nil)
+	}
+	switch host {
+	case "localhost", "metadata", "metadata.google.internal", "metadata.goog", "instance-data":
+		return services.NewError(services.CodePolicyDenied, "outbound to internal host blocked", map[string]any{"host": host}, nil)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if err := agentIPOutboundAllowed(ip, host); err != nil {
+			return err
+		}
+		return nil
+	}
+	resolveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIPAddr(resolveCtx, host)
+	if err != nil {
+		return services.NewError(services.CodeBadRequest, "dns resolution failed: "+err.Error(), map[string]any{"host": host}, err)
+	}
+	if len(ips) == 0 {
+		return services.NewError(services.CodeBadRequest, "host did not resolve", map[string]any{"host": host}, nil)
+	}
+	for _, addr := range ips {
+		if err := agentIPOutboundAllowed(addr.IP, host); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func agentIPOutboundAllowed(ip net.IP, host string) error {
+	if ip == nil {
+		return services.NewError(services.CodeBadRequest, "invalid ip", map[string]any{"host": host}, nil)
+	}
+	if ip.IsUnspecified() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsPrivate() || ip.IsInterfaceLocalMulticast() {
+		return services.NewError(services.CodePolicyDenied, "outbound to non-public ip blocked", map[string]any{"host": host, "ip": ip.String()}, nil)
+	}
+	// CGNAT 100.64.0.0/10
+	if ip4 := ip.To4(); ip4 != nil && ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+		return services.NewError(services.CodePolicyDenied, "outbound to CGNAT ip blocked", map[string]any{"host": host, "ip": ip.String()}, nil)
+	}
+	// 169.254.169.254 covered by IsLinkLocalUnicast above.
+	return nil
 }
 
 func agentHTTPAuthProfileEnabled(profile agentHTTPAuthProfile) bool {
@@ -10960,14 +11417,23 @@ func agentFormatHTTPRequest(language string, result map[string]any) string {
 	method := stringFromAny(result["method"])
 	targetURL := stringFromAny(result["url"])
 	status := stringFromAny(result["status"])
-	body := stringFromAny(result["body"])
+	body := strings.TrimSpace(stringFromAny(result["body"]))
 	truncated := boolFromAny(result["body_truncated"])
-	if truncated {
-		body += agentText(language, "\n…（响应体已截断）", "\n…(response body truncated)")
+	if body != "" {
+		body = agentLimitBlock(body, 900)
+		if truncated {
+			body += agentText(language, "\n…（响应体已截断）", "\n…(response body truncated)")
+		}
+	}
+	if body == "" {
+		return agentText(language,
+			fmt.Sprintf("HTTP 响应：`%s %s`，status: `%s`。", method, targetURL, status),
+			fmt.Sprintf("HTTP response: `%s %s`, status: `%s`.", method, targetURL, status),
+		)
 	}
 	return agentText(language,
-		fmt.Sprintf("HTTP 请求已完成。\n\n- method: `%s`\n- url: `%s`\n- status: `%s`\n\nbody:\n```text\n%s\n```", method, targetURL, status, agentLimitBlock(body, 8000)),
-		fmt.Sprintf("HTTP request completed.\n\n- method: `%s`\n- url: `%s`\n- status: `%s`\n\nbody:\n```text\n%s\n```", method, targetURL, status, agentLimitBlock(body, 8000)),
+		fmt.Sprintf("HTTP 响应：`%s %s`，status: `%s`。\n\nbody 预览：\n```text\n%s\n```", method, targetURL, status, body),
+		fmt.Sprintf("HTTP response: `%s %s`, status: `%s`.\n\nBody preview:\n```text\n%s\n```", method, targetURL, status, body),
 	)
 }
 
@@ -11613,6 +12079,9 @@ func (m *agentManager) handleAgentHTTPRequest(ctx context.Context, method, targe
 	parsed, err := url.Parse(strings.TrimSpace(targetURL))
 	if err != nil || parsed == nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return nil, nil, services.NewError(services.CodeBadRequest, "http.request requires an http/https url", map[string]any{"url": targetURL}, err)
+	}
+	if err := agentURLOutboundAllowed(parsed); err != nil {
+		return nil, nil, err
 	}
 
 	tool := runningAgentToolCall("http.request", method+" "+parsed.String())
@@ -12887,4 +13356,477 @@ func agentDiffPreview(path, oldText, newText string) string {
 		lines = append(lines, "+"+line)
 	}
 	return agentLimitBlock(strings.Join(lines, "\n"), 1600)
+}
+
+func (m *agentManager) handleAgentScheduleCreate(sessionID, language, operator string, svc routerServices, args map[string]any) ([]agentMessage, []agentToolCall, error) {
+	if svc.schedules == nil {
+		return nil, nil, services.NewError(services.CodeUnsupported, "scheduler not available", nil, nil)
+	}
+	tool := runningAgentToolCall("POST /api/v1/schedules", "from_agent")
+
+	rawAction := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		stringFromAny(args["action"]),
+		stringFromAny(args["kind"]),
+		stringFromAny(args["type"]),
+	)))
+	cron := strings.TrimSpace(firstNonEmpty(
+		stringFromAny(args["cron"]),
+		stringFromAny(args["expression"]),
+		stringFromAny(args["schedule"]),
+	))
+	if cron == "" {
+		err := services.NewError(services.CodeBadRequest, "schedule.create requires cron expression", map[string]any{"action": "schedule.create"}, nil)
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+
+	spec := scheduleSpec{
+		Cron:      cron,
+		Name:      strings.TrimSpace(stringFromAny(args["name"])),
+		Operator:  firstNonEmpty(operator, "agent"),
+		Language:  firstNonEmpty(stringFromAny(args["language"]), language),
+		SessionID: strings.TrimSpace(firstNonEmpty(stringFromAny(args["session_id"]), sessionID)),
+		Prompt:    strings.TrimSpace(stringFromAny(args["prompt"])),
+		Target:    strings.TrimSpace(firstNonEmpty(stringFromAny(args["target"]), stringFromAny(args["url"]))),
+		Scope:     strings.TrimSpace(stringFromAny(args["scope"])),
+		Profile:   strings.TrimSpace(stringFromAny(args["profile"])),
+	}
+	if v, ok := args["enabled"].(bool); ok {
+		spec.Enabled = v
+	} else {
+		spec.Enabled = true
+	}
+
+	switch rawAction {
+	case "scan_web", "scan.web", "scan", "web_scan", "web.scan", "scanweb":
+		spec.Action = scheduleActionScanWeb
+	case "agent_prompt", "agent.prompt", "prompt", "chat", "ask", "agent", "":
+		spec.Action = scheduleActionAgentPrompt
+	case "ports.scan.safe", "port.scan", "port_scan", "ports_scan", "ports.scan":
+		spec.Action = scheduleActionAgentPrompt
+		if spec.Prompt == "" {
+			target := strings.TrimSpace(firstNonEmpty(spec.Target, stringFromAny(args["host"]), stringFromAny(args["input"])))
+			if target != "" {
+				spec.Prompt = "扫描 " + target + " 开放端口"
+				if portsSpec := agentPortSpecFromPlannerArgument(args["ports"]); portsSpec != "" {
+					spec.Prompt += " ports=" + portsSpec
+				}
+			}
+		}
+	case "http.request", "web.search", "web.fetch", "workspace.command", "workspace.files.list", "workspace.files.tree", "workspace.files.read", "workspace.search", "reports.draft":
+		spec.Action = scheduleActionAgentPrompt
+	default:
+		if spec.Prompt != "" {
+			spec.Action = scheduleActionAgentPrompt
+		} else {
+			spec.Action = scheduleAction(rawAction)
+		}
+	}
+
+	if spec.Action == scheduleActionAgentPrompt && spec.Prompt == "" {
+		err := services.NewError(services.CodeBadRequest, "schedule.create with action=agent_prompt requires prompt", map[string]any{"action": "schedule.create"}, nil)
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	if spec.Action == scheduleActionScanWeb && spec.Target == "" {
+		err := services.NewError(services.CodeBadRequest, "schedule.create with action=scan_web requires target", map[string]any{"action": "schedule.create"}, nil)
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	if spec.Name == "" {
+		switch spec.Action {
+		case scheduleActionScanWeb:
+			spec.Name = "scan " + spec.Target
+		default:
+			spec.Name = agentText(language, "定时对话", "scheduled prompt")
+		}
+	}
+
+	created, err := svc.schedules.Create(spec)
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	next := ""
+	if created.NextRunAt != nil {
+		next = created.NextRunAt.Local().Format(time.RFC3339)
+	}
+	tool.Result = map[string]any{
+		"id":          created.ID,
+		"action":      string(created.Action),
+		"cron":        created.Cron,
+		"enabled":     created.Enabled,
+		"next_run_at": next,
+	}
+	content := agentText(
+		language,
+		fmt.Sprintf("已创建定时任务 %s（%s，cron=%s）。下次触发：%s", created.Name, created.Action, created.Cron, firstNonEmpty(next, agentText(language, "未排定", "not scheduled"))),
+		fmt.Sprintf("Created schedule %s (%s, cron=%s). Next fire: %s", created.Name, created.Action, created.Cron, firstNonEmpty(next, "not scheduled")),
+	)
+	links := []agentLink{{To: "/tasks", Label: agentText(language, "查看定时任务", "View schedules"), Kind: "schedules"}}
+	return []agentMessage{m.message(language, "tool", content, []agentToolCall{tool}, links)}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentScheduleList(language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	if svc.schedules == nil {
+		return nil, nil, services.NewError(services.CodeUnsupported, "scheduler not available", nil, nil)
+	}
+	tool := runningAgentToolCall("GET /api/v1/schedules", "")
+	items := svc.schedules.List()
+	tool = finishAgentToolCall(tool, nil)
+	tool.Result = map[string]any{"count": len(items)}
+
+	if len(items) == 0 {
+		content := agentText(language, "当前没有定时任务。", "No schedules configured.")
+		return []agentMessage{m.message(language, "tool", content, []agentToolCall{tool}, []agentLink{{To: "/tasks", Label: agentText(language, "任务页", "Tasks"), Kind: "schedules"}})}, []agentToolCall{tool}, nil
+	}
+	limit := len(items)
+	if limit > 5 {
+		limit = 5
+	}
+	lines := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		s := items[i]
+		next := "-"
+		if s.NextRunAt != nil {
+			next = s.NextRunAt.Local().Format(time.RFC3339)
+		}
+		flag := agentText(language, "启用", "on")
+		if !s.Enabled {
+			flag = agentText(language, "停用", "off")
+		}
+		lines = append(lines, fmt.Sprintf("%s [%s] %s cron=%s next=%s (%s)", s.ID, s.Action, s.Name, s.Cron, next, flag))
+	}
+	more := ""
+	if len(items) > limit {
+		more = agentText(language, fmt.Sprintf(" 等共 %d 条。", len(items)), fmt.Sprintf(" of %d total.", len(items)))
+	}
+	content := agentText(language, "定时任务："+strings.Join(lines, "; ")+more, "Schedules: "+strings.Join(lines, "; ")+more)
+	links := []agentLink{{To: "/tasks", Label: agentText(language, "管理定时任务", "Manage schedules"), Kind: "schedules"}}
+	return []agentMessage{m.message(language, "tool", content, []agentToolCall{tool}, links)}, []agentToolCall{tool}, nil
+}
+
+func (m *agentManager) handleAgentScheduleDelete(language string, svc routerServices, args map[string]any) ([]agentMessage, []agentToolCall, error) {
+	if svc.schedules == nil {
+		return nil, nil, services.NewError(services.CodeUnsupported, "scheduler not available", nil, nil)
+	}
+	id := strings.TrimSpace(firstNonEmpty(
+		stringFromAny(args["id"]),
+		stringFromAny(args["schedule_id"]),
+		stringFromAny(args["name"]),
+	))
+	tool := runningAgentToolCall("DELETE /api/v1/schedules/"+shortAgentID(id, 22), "")
+	if id == "" {
+		err := services.NewError(services.CodeBadRequest, "schedule.delete requires id", map[string]any{"action": "schedule.delete"}, nil)
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	err := svc.schedules.Delete(id)
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	tool.Result = map[string]any{"id": id, "deleted": true}
+	content := agentText(language, "已删除定时任务 "+id+"。", "Deleted schedule "+id+".")
+	links := []agentLink{{To: "/tasks", Label: agentText(language, "任务页", "Tasks"), Kind: "schedules"}}
+	return []agentMessage{m.message(language, "tool", content, []agentToolCall{tool}, links)}, []agentToolCall{tool}, nil
+}
+
+func agentLoadWebSearchConfig(svc routerServices) (search.Config, bool, error) {
+	if svc.providers == nil {
+		return search.Config{}, false, nil
+	}
+	cfg, err := svc.providers.Load()
+	if err != nil {
+		return search.Config{}, false, err
+	}
+	if cfg.WebSearch == nil {
+		return search.Config{}, false, nil
+	}
+	return search.Config{
+		Provider:   cfg.WebSearch.Provider,
+		APIKey:     cfg.WebSearch.APIKey,
+		BaseURL:    cfg.WebSearch.BaseURL,
+		MaxResults: cfg.WebSearch.MaxResults,
+	}, true, nil
+}
+
+func (m *agentManager) handleAgentWebSearch(ctx context.Context, language string, svc routerServices, args map[string]any) ([]agentMessage, []agentToolCall, error) {
+	query := strings.TrimSpace(firstNonEmpty(
+		stringFromAny(args["query"]),
+		stringFromAny(args["q"]),
+		stringFromAny(args["input"]),
+	))
+	tool := runningAgentToolCall("web.search", query)
+	if query == "" {
+		err := services.NewError(services.CodeBadRequest, "web.search requires query", map[string]any{"action": "web.search"}, nil)
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	cfg, ok, loadErr := agentLoadWebSearchConfig(svc)
+	if loadErr != nil {
+		tool = finishAgentToolCall(tool, loadErr)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(loadErr), Message: loadErr.Error()}
+		return []agentMessage{m.message(language, "tool", loadErr.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	if !ok {
+		err := services.NewError(services.CodeBadRequest, "web.search not configured; open Settings → Web Search and set a provider + api key", map[string]any{"action": "web.search"}, nil)
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	provider, err := search.NewFromConfig(cfg)
+	if err != nil {
+		if errors.Is(err, search.ErrNotConfigured) {
+			err = services.NewError(services.CodeBadRequest, "web.search not configured; open Settings → Web Search and set a provider + api key", map[string]any{"action": "web.search"}, err)
+		}
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	if cfg.BaseURL != "" {
+		if parsed, parseErr := url.Parse(cfg.BaseURL); parseErr == nil && parsed != nil {
+			if guardErr := agentURLOutboundAllowed(parsed); guardErr != nil {
+				tool = finishAgentToolCall(tool, guardErr)
+				tool.Error = &daemonJobError{Code: services.ErrorCodeOf(guardErr), Message: guardErr.Error()}
+				return []agentMessage{m.message(language, "tool", guardErr.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+			}
+		}
+	}
+	max := intFromAny(args["max_results"])
+	if max <= 0 {
+		max = cfg.MaxResults
+	}
+	if max <= 0 {
+		max = 5
+	}
+	if max > 10 {
+		max = 10
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	result, err := provider.Search(reqCtx, search.Query{
+		Query:      query,
+		MaxResults: max,
+		Locale:     stringFromAny(args["locale"]),
+	})
+	tool = finishAgentToolCall(tool, err)
+	if err != nil {
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	tool.Result = map[string]any{
+		"provider": result.Provider,
+		"query":    result.Query,
+		"items":    result.Items,
+	}
+	return []agentMessage{m.message(language, "tool", agentFormatWebSearch(language, result), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+}
+
+func agentFormatWebSearch(language string, result search.Result) string {
+	if len(result.Items) == 0 {
+		return agentText(language,
+			"web.search 没有结果。",
+			"web.search returned no results.",
+		)
+	}
+	var b strings.Builder
+	header := agentText(language,
+		fmt.Sprintf("web.search via %s — %d 条结果：", result.Provider, len(result.Items)),
+		fmt.Sprintf("web.search via %s — %d results:", result.Provider, len(result.Items)),
+	)
+	b.WriteString(header)
+	b.WriteString("\n")
+	for i, item := range result.Items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = item.URL
+		}
+		snippet := strings.TrimSpace(item.Snippet)
+		if len(snippet) > 320 {
+			snippet = snippet[:320] + "…"
+		}
+		fmt.Fprintf(&b, "%d. %s\n   %s\n", i+1, title, item.URL)
+		if snippet != "" {
+			fmt.Fprintf(&b, "   %s\n", snippet)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (m *agentManager) handleAgentWebFetch(ctx context.Context, language string, args map[string]any) ([]agentMessage, []agentToolCall, error) {
+	rawURL := strings.TrimSpace(firstNonEmpty(
+		stringFromAny(args["url"]),
+		stringFromAny(args["target"]),
+		stringFromAny(args["input"]),
+	))
+	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(stringFromAny(args["mode"]), "readable")))
+	if mode != "readable" && mode != "raw" {
+		mode = "readable"
+	}
+	maxChars := intFromAny(args["max_chars"])
+	if maxChars <= 0 {
+		maxChars = 8000
+	}
+	if maxChars > 20000 {
+		maxChars = 20000
+	}
+	tool := runningAgentToolCall("web.fetch", rawURL)
+	if rawURL == "" {
+		err := services.NewError(services.CodeBadRequest, "web.fetch requires url", map[string]any{"action": "web.fetch"}, nil)
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	rawURL = agentNormalizeURLInput(rawURL)
+	parsed, perr := url.Parse(rawURL)
+	if perr != nil || parsed == nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		err := services.NewError(services.CodeBadRequest, "web.fetch requires an http/https url", map[string]any{"url": rawURL}, perr)
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	if guardErr := agentURLOutboundAllowed(parsed); guardErr != nil {
+		tool = finishAgentToolCall(tool, guardErr)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(guardErr), Message: guardErr.Error()}
+		return []agentMessage{m.message(language, "tool", guardErr.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, parsed.String(), nil)
+	if err == nil {
+		req.Header.Set("User-Agent", "CyberAgent/agent-web-fetch")
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8")
+	}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return http.ErrUseLastResponse
+			}
+			if req.URL != nil {
+				if guardErr := agentURLOutboundAllowed(req.URL); guardErr != nil {
+					return guardErr
+				}
+			}
+			return nil
+		},
+	}
+	var resp *http.Response
+	if err == nil {
+		resp, err = client.Do(req)
+	}
+	if err != nil {
+		tool = finishAgentToolCall(tool, err)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
+		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	defer resp.Body.Close()
+	limited := io.LimitReader(resp.Body, 1<<20+1)
+	bodyBytes, readErr := io.ReadAll(limited)
+	if readErr != nil {
+		tool = finishAgentToolCall(tool, readErr)
+		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(readErr), Message: readErr.Error()}
+		return []agentMessage{m.message(language, "tool", readErr.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+	}
+	contentType := resp.Header.Get("Content-Type")
+	body := string(bodyBytes)
+	title := ""
+	content := body
+	if mode == "readable" && strings.Contains(strings.ToLower(contentType), "html") {
+		title, content = htmlToReadable(body)
+	}
+	truncated := false
+	if len(content) > maxChars {
+		content = content[:maxChars]
+		truncated = true
+	}
+	tool = finishAgentToolCall(tool, nil)
+	tool.Result = map[string]any{
+		"url":           parsed.String(),
+		"mode":          mode,
+		"status":        resp.Status,
+		"status_code":   resp.StatusCode,
+		"content_type":  contentType,
+		"title":         title,
+		"content":       content,
+		"content_chars": len(content),
+		"truncated":     truncated,
+	}
+	return []agentMessage{m.message(language, "tool", agentFormatWebFetch(language, parsed.String(), title, content, contentType, truncated), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
+}
+
+func agentFormatWebFetch(language, target, title, content, contentType string, truncated bool) string {
+	var b strings.Builder
+	header := agentText(language,
+		fmt.Sprintf("web.fetch %s (%s)", target, strings.TrimSpace(contentType)),
+		fmt.Sprintf("web.fetch %s (%s)", target, strings.TrimSpace(contentType)),
+	)
+	b.WriteString(header)
+	b.WriteString("\n")
+	if title != "" {
+		fmt.Fprintf(&b, "title: %s\n", title)
+	}
+	b.WriteString(content)
+	if truncated {
+		b.WriteString(agentText(language, "\n... (已截断)", "\n... (truncated)"))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+var (
+	htmlScriptRe   = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	htmlStyleRe    = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	htmlCommentRe  = regexp.MustCompile(`(?s)<!--.*?-->`)
+	htmlTitleRe    = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	htmlTagRe      = regexp.MustCompile(`(?s)<[^>]+>`)
+	htmlBlockRe    = regexp.MustCompile(`(?i)</?(p|div|section|article|li|tr|h[1-6]|br|hr|blockquote|pre)[^>]*>`)
+	htmlEntitySpRe = regexp.MustCompile(`&nbsp;`)
+	whitespaceRe   = regexp.MustCompile(`[\t \x00-\x08\x0b\x0c]+`)
+	multiNewlineRe = regexp.MustCompile(`\n{3,}`)
+)
+
+// htmlToReadable strips scripts/styles/comments and collapses tags into plain
+// text, preserving paragraph boundaries. Returns (title, body).
+func htmlToReadable(html string) (string, string) {
+	cleaned := htmlScriptRe.ReplaceAllString(html, "")
+	cleaned = htmlStyleRe.ReplaceAllString(cleaned, "")
+	cleaned = htmlCommentRe.ReplaceAllString(cleaned, "")
+	title := ""
+	if m := htmlTitleRe.FindStringSubmatch(cleaned); len(m) == 2 {
+		title = strings.TrimSpace(htmlDecodeBasic(htmlTagRe.ReplaceAllString(m[1], "")))
+	}
+	cleaned = htmlBlockRe.ReplaceAllString(cleaned, "\n")
+	cleaned = htmlTagRe.ReplaceAllString(cleaned, "")
+	cleaned = htmlEntitySpRe.ReplaceAllString(cleaned, " ")
+	cleaned = htmlDecodeBasic(cleaned)
+	cleaned = whitespaceRe.ReplaceAllString(cleaned, " ")
+	lines := strings.Split(cleaned, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, strings.TrimSpace(line))
+	}
+	body := strings.Join(out, "\n")
+	body = multiNewlineRe.ReplaceAllString(body, "\n\n")
+	return title, strings.TrimSpace(body)
+}
+
+func htmlDecodeBasic(s string) string {
+	r := strings.NewReplacer(
+		"&amp;", "&",
+		"&lt;", "<",
+		"&gt;", ">",
+		"&quot;", "\"",
+		"&#39;", "'",
+		"&apos;", "'",
+	)
+	return r.Replace(s)
 }

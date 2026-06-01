@@ -142,6 +142,28 @@ func agentBuiltinSkills(language string) []agentSkillSpec {
 			Examples:        []string{agentText(language, "测试 /api/user 是否存在越权", "test whether /api/user has authorization bypass")},
 		},
 		{
+			ID:            "web_search",
+			Label:         agentText(language, "Web 搜索", "Web search"),
+			Description:   agentText(language, "使用配置的 Web Search provider 检索公开 Web 信息；需要先在 Settings 配置 provider/API key。", "Search public web information through the configured Web Search provider; requires provider/API key configuration in Settings."),
+			IntentTags:    []string{"web_search", "search", "lookup", "查询", "搜索"},
+			RequiredTools: []string{"web.search"},
+			Risk:          "safe_scan",
+			Examples: []string{
+				agentText(language, "查一下 CVE-2024-1234 的细节", "look up details for CVE-2024-1234"),
+			},
+		},
+		{
+			ID:            "web_fetch",
+			Label:         agentText(language, "读取 Web 页面", "Web page fetch"),
+			Description:   agentText(language, "读取一个明确给出的公开 HTTP(S) URL，并返回可读文本或 raw 内容；只做 GET，带 SSRF 防护。", "Read an explicitly provided public HTTP(S) URL and return readable text or raw content; GET-only with SSRF protections."),
+			IntentTags:    []string{"web_fetch", "page_read", "read_url", "读取网页"},
+			RequiredTools: []string{"web.fetch"},
+			Risk:          "safe_scan",
+			Examples: []string{
+				agentText(language, "读取 https://example.com/blog/x 并总结", "read https://example.com/blog/x and summarize it"),
+			},
+		},
+		{
 			ID:            "workspace_ops",
 			Label:         agentText(language, "工作区分析/变更", "Workspace analysis/changes"),
 			Description:   agentText(language, "在 Agent 工作区列文件、搜索、读取、生成 diff、patch 和应用变更。", "List, search, read, diff, patch, and apply changes in the Agent workspace."),
@@ -149,6 +171,20 @@ func agentBuiltinSkills(language string) []agentSkillSpec {
 			RequiredTools: []string{"workspace.files.list", "workspace.search", "workspace.files.read"},
 			OptionalTools: []string{"workspace.files.diff", "workspace.files.apply"},
 			Risk:          "workspace_write",
+		},
+		{
+			ID:            "schedule_management",
+			Label:         agentText(language, "定时任务管理", "Schedule management"),
+			Description:   agentText(language, "把任意 Agent 指令或明确的 safe Web 扫描注册为按 cron 触发的定时任务，并可列出/删除既有定时任务；不会立即执行扫描。", "Register any Agent instruction or an explicit safe Web scan as a cron-driven schedule, and list or cancel existing schedules; does not execute the scan immediately."),
+			IntentTags:    []string{"schedule", "cron", "recurring", "periodic", "scheduled_scan", "scheduled_prompt"},
+			RequiredTools: []string{"schedule.create"},
+			OptionalTools: []string{"schedule.list", "schedule.delete"},
+			Risk:          "advanced",
+			Examples: []string{
+				agentText(language, "每天 7:20 扫描 example.com 开放端口 → schedule.create cron=\"20 7 * * *\" action=agent_prompt prompt=\"扫描 example.com 开放端口\"", "daily 7:20 scan open ports for example.com → schedule.create cron=\"20 7 * * *\" action=agent_prompt prompt=\"scan open ports for example.com\""),
+				agentText(language, "每小时对 https://example.com 做 safe 漏扫 → schedule.create cron=\"0 * * * *\" action=scan_web target=https://example.com", "every hour run a safe vulnerability scan against https://example.com → schedule.create cron=\"0 * * * *\" action=scan_web target=https://example.com"),
+				agentText(language, "列出/删除现有定时 → schedule.list / schedule.delete id=...", "list/cancel schedules → schedule.list / schedule.delete id=..."),
+			},
 		},
 	})
 }
@@ -160,7 +196,10 @@ func attachAgentSkillFileSources(skills []agentSkillSpec) []agentSkillSpec {
 		"content_discovery":      "skills/content-discovery/SKILL.md",
 		"js_route_analysis":      "skills/js-route-analysis/SKILL.md",
 		"api_auth_test":          "skills/api-auth-test/SKILL.md",
+		"web_search":             "skills/web-search/SKILL.md",
+		"web_fetch":              "skills/web-fetch/SKILL.md",
 		"workspace_ops":          "skills/workspace-ops/SKILL.md",
+		"schedule_management":    "skills/schedule-management/SKILL.md",
 	}
 	for idx := range skills {
 		path := paths[skills[idx].ID]
@@ -235,6 +274,18 @@ func agentToolCapabilityMetadataByName(language string) map[string]agentToolCapa
 			CannotDo:   []string{"crawl", "port_scan", "full auth workflow"},
 			Examples:   []string{agentText(language, "获取目标响应头和状态码", "fetch headers and status code")},
 		},
+		"web.search": {
+			IntentTags: []string{"web_search", "search", "lookup", "查询", "搜索"},
+			CanDo:      []string{"search public web information through the configured provider", "return title/url/snippet/source results"},
+			CannotDo:   []string{"read a known URL directly", "scan or probe a target", "work without Web Search settings"},
+			Examples:   []string{agentText(language, "搜索 CVE 详情和参考来源", "search for CVE details and references")},
+		},
+		"web.fetch": {
+			IntentTags: []string{"web_fetch", "page_read", "read_url", "读取网页"},
+			CanDo:      []string{"GET a specific public http/https URL", "extract readable text from HTML", "return truncated raw content"},
+			CannotDo:   []string{"POST/PUT/PATCH/DELETE", "fetch private/internal/metadata URLs", "search the web by query"},
+			Examples:   []string{agentText(language, "读取指定网页并总结", "read a specified web page and summarize it")},
+		},
 		"plugins.list": {
 			IntentTags: []string{"plugins", "tools", "capability_discovery"},
 			CanDo:      []string{"list available plugins/tools"},
@@ -246,6 +297,23 @@ func agentToolCapabilityMetadataByName(language string) map[string]agentToolCapa
 		"reports.draft": {
 			IntentTags: []string{"report_generation", "workspace"},
 			CanDo:      []string{"generate markdown report draft into workspace"},
+		},
+		"schedule.create": {
+			IntentTags: []string{"schedule", "cron", "recurring", "periodic", "scheduled_scan", "scheduled_prompt"},
+			CanDo:      []string{"register a cron-driven recurring agent_prompt for arbitrary Agent work", "register optimized scan_web schedules for explicit recurring safe Web/API scans"},
+			CannotDo:   []string{"run scan immediately (use the immediate tool for one-off work)"},
+			Examples: []string{
+				agentText(language, "每天 7:20 扫描 example.com 开放端口 → schedule.create cron=\"20 7 * * *\" action=agent_prompt", "daily 7:20 scan open ports for example.com → schedule.create cron=\"20 7 * * *\" action=agent_prompt"),
+				agentText(language, "每小时安全漏扫 https://example.com → schedule.create cron=\"0 * * * *\" action=scan_web", "every hour vulnerability scan https://example.com → schedule.create cron=\"0 * * * *\" action=scan_web"),
+			},
+		},
+		"schedule.list": {
+			IntentTags: []string{"schedule", "cron", "list_schedules"},
+			CanDo:      []string{"list configured schedules with cron, action, last/next run"},
+		},
+		"schedule.delete": {
+			IntentTags: []string{"schedule", "cron", "cancel_schedule"},
+			CanDo:      []string{"cancel a configured schedule by id"},
 		},
 	}
 }

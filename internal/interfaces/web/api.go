@@ -27,6 +27,17 @@ type ProviderProfile struct {
 type ProviderConfig struct {
 	Providers []ProviderProfile `json:"providers"`
 	ActiveID  string            `json:"active_id"`
+	WebSearch *WebSearchConfig  `json:"web_search,omitempty"`
+}
+
+// WebSearchConfig is the persisted web-search backend used by the agent's
+// `web.search` tool. Provider names are lowercase ("tavily" today; future:
+// "brave", "serpapi"). Empty Provider or APIKey means the tool is disabled.
+type WebSearchConfig struct {
+	Provider   string `json:"provider,omitempty"`
+	APIKey     string `json:"api_key,omitempty"`
+	BaseURL    string `json:"base_url,omitempty"`
+	MaxResults int    `json:"max_results,omitempty"`
 }
 
 // ProviderStore persists provider configurations.

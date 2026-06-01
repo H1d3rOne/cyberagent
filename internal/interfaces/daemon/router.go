@@ -25,6 +25,8 @@ type routerServices struct {
 	jobs        *jobManager
 	agent       *agentManager
 	scanManager *web.ScanManager
+	schedules   *scheduleManager
+	providers   web.ProviderStore
 }
 
 func newRouter(svc routerServices, token string) http.Handler {
@@ -34,11 +36,14 @@ func newRouter(svc routerServices, token string) http.Handler {
 	if svc.agent == nil {
 		svc.agent = newAgentManager(svc.runs.RunsDir)
 	}
+	if svc.providers == nil {
+		svc.providers = newProviderStore("")
+	}
 	mux := http.NewServeMux()
 
 	// Register /api/scans endpoints from the web API server
 	if svc.scanManager != nil {
-		scanAPI := web.NewAPIServer(svc.scanManager, newProviderStore(""))
+		scanAPI := web.NewAPIServer(svc.scanManager, svc.providers)
 		mux.Handle("/api/scans", scanAPI.Handler())
 		mux.Handle("/api/scans/", scanAPI.Handler())
 		mux.Handle("/api/providers", scanAPI.Handler())
@@ -113,6 +118,12 @@ func newRouter(svc routerServices, token string) http.Handler {
 	})
 	mux.HandleFunc("/api/v1/jobs/", func(w http.ResponseWriter, r *http.Request) {
 		handleJobRoute(w, r, svc)
+	})
+	mux.HandleFunc("/api/v1/schedules", func(w http.ResponseWriter, r *http.Request) {
+		handleScheduleRoute(w, r, svc)
+	})
+	mux.HandleFunc("/api/v1/schedules/", func(w http.ResponseWriter, r *http.Request) {
+		handleScheduleRoute(w, r, svc)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Serve frontend for non-API routes
@@ -1578,5 +1589,112 @@ func handleWorkspaceRoute(w http.ResponseWriter, r *http.Request, svc routerServ
 
 	default:
 		writeServiceError(w, services.NewError(services.CodeNotFound, "workspace action not found", map[string]any{"action": action}, nil))
+	}
+}
+
+func handleScheduleRoute(w http.ResponseWriter, r *http.Request, svc routerServices) {
+	if svc.schedules == nil {
+		writeServiceError(w, services.NewError(services.CodeInternal, "scheduler not initialized", nil, nil))
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/schedules")
+	path = strings.Trim(path, "/")
+
+	if path == "" {
+		switch r.Method {
+		case http.MethodGet:
+			writeOK(w, http.StatusOK, map[string]any{"schedules": svc.schedules.List()})
+		case http.MethodPost:
+			var body scheduleSpec
+			if err := decodeJSONBody(r, &body); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			created, err := svc.schedules.Create(body)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusCreated, map[string]any{"schedule": created})
+		default:
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+		}
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	id := parts[0]
+	if strings.TrimSpace(id) == "" {
+		writeServiceError(w, services.NewError(services.CodeBadRequest, "schedule id required", nil, nil))
+		return
+	}
+
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodGet:
+			spec, err := svc.schedules.Get(id)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, map[string]any{"schedule": spec})
+		case http.MethodPut:
+			var body scheduleSpec
+			if err := decodeJSONBody(r, &body); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			updated, err := svc.schedules.Update(id, body)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, map[string]any{"schedule": updated})
+		case http.MethodDelete:
+			if err := svc.schedules.Delete(id); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeOK(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
+		default:
+			writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+		}
+		return
+	}
+
+	if len(parts) != 2 {
+		writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+		return
+	}
+
+	action := parts[1]
+	if r.Method != http.MethodPost {
+		writeServiceError(w, services.NewError(services.CodeBadRequest, "method not allowed", map[string]any{"method": r.Method}, nil))
+		return
+	}
+	switch action {
+	case "enable":
+		spec, err := svc.schedules.SetEnabled(id, true)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{"schedule": spec})
+	case "disable":
+		spec, err := svc.schedules.SetEnabled(id, false)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{"schedule": spec})
+	case "run":
+		spec, err := svc.schedules.RunNow(r.Context(), id)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeOK(w, http.StatusOK, map[string]any{"schedule": spec})
+	default:
+		writeServiceError(w, services.NewError(services.CodeNotFound, "schedule action not found", map[string]any{"action": action}, nil))
 	}
 }

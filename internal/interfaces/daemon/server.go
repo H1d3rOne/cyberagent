@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
@@ -13,9 +14,10 @@ import (
 
 // Server owns the local daemon HTTP adapter.
 type Server struct {
-	cfg     Config
-	token   string
-	handler http.Handler
+	cfg       Config
+	token     string
+	handler   http.Handler
+	scheduler *scheduleManager
 }
 
 // NewServer creates a configured local daemon server and ensures a bearer token exists.
@@ -35,18 +37,56 @@ func NewServer(cfg Config) (*Server, error) {
 	scanManager := web.NewScanManager(func(name string, cfg llm.ProviderConfig) llm.Provider {
 		return buildAgentLLMProvider(name, cfg)
 	})
+	scheduler := newScheduleManager(cfg.RunsDir)
+
+	svc := routerServices{
+		version:     version,
+		plugins:     services.NewPluginService(),
+		runs:        runs,
+		approvals:   services.NewApprovalService(cfg.RunsDir),
+		jobs:        jobs,
+		scanManager: scanManager,
+		schedules:   scheduler,
+	}
+	if svc.agent == nil {
+		svc.agent = newAgentManager(cfg.RunsDir)
+	}
+	scheduler.BindRunner(scheduleRunner{
+		SendAgentPrompt: func(ctx context.Context, s scheduleSpec) (string, error) {
+			req := sendAgentMessageRequest{
+				Message:  s.Prompt,
+				Operator: s.Operator,
+				Language: s.Language,
+			}
+			resp, err := svc.agent.SendMessage(ctx, s.SessionID, req, svc)
+			if err != nil {
+				return "", err
+			}
+			if len(resp.Messages) == 0 {
+				return "", nil
+			}
+			return resp.Messages[len(resp.Messages)-1].ID, nil
+		},
+		StartScanWeb: func(ctx context.Context, s scheduleSpec) (string, error) {
+			profile := strings.TrimSpace(s.Profile)
+			req := startWebScanJobRequest{
+				Target:  s.Target,
+				Scope:   s.Scope,
+				Profile: profile,
+			}
+			resp, err := svc.jobs.StartWebScan(ctx, req)
+			if err != nil {
+				return "", err
+			}
+			return resp.JobID, nil
+		},
+	})
 
 	return &Server{
-		cfg:   cfg,
-		token: token,
-		handler: newRouter(routerServices{
-			version:      version,
-			plugins:      services.NewPluginService(),
-			runs:         runs,
-			approvals:    services.NewApprovalService(cfg.RunsDir),
-			jobs:         jobs,
-			scanManager:  scanManager,
-		}, token),
+		cfg:       cfg,
+		token:     token,
+		handler:   newRouter(svc, token),
+		scheduler: scheduler,
 	}, nil
 }
 
@@ -69,6 +109,14 @@ func (s *Server) TokenFile() string {
 func (s *Server) ListenAndServe(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if s.scheduler != nil {
+		s.scheduler.Start()
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.scheduler.Stop(stopCtx)
+		}()
 	}
 	httpServer := &http.Server{
 		Addr:              s.cfg.Listen,
