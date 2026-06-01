@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
+	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/agent/search"
 	"github.com/H1d3rOne/cyberagent/internal/command"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
@@ -41,6 +42,58 @@ type agentManager struct {
 	approvals services.ApprovalService
 	workspace *workspace.Manager
 	command   *command.Executor
+	// engine is the optional runtime.Engine used to drive streaming event
+	// output for sessions. nil-safe; set via AttachEngine.
+	engine *runtime.Engine
+}
+
+// AttachEngine wires a runtime.Engine into the agent manager. Once attached,
+// the manager exposes Subscribe(ctx, sessionID) so router-side SSE handlers
+// can stream model_token / tool_* / approval_required events instead of
+// polling GetSession.
+func (m *agentManager) AttachEngine(e *runtime.Engine) {
+	m.mu.Lock()
+	m.engine = e
+	m.mu.Unlock()
+}
+
+// Subscribe fans all engine events out as a per-session channel. Caller
+// cancels the ctx to unsubscribe. Filters on sessionID's owned Task/Run —
+// when the manager has no engine, the channel is closed immediately.
+//
+// Note: today's Engine exposes a single broadcast channel, so this is a
+// best-effort, single-subscriber implementation. Phase 3 step 2 will
+// promote the engine to a fan-out pub/sub once multiple SSE consumers
+// (cockpit + webhooks + audit taps) need to co-exist.
+func (m *agentManager) Subscribe(ctx context.Context, sessionID string) <-chan runtime.Event {
+	out := make(chan runtime.Event, 64)
+	m.mu.Lock()
+	eng := m.engine
+	m.mu.Unlock()
+	if eng == nil {
+		close(out)
+		return out
+	}
+	src := eng.Stream()
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-src:
+				if !ok {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case out <- ev:
+				}
+			}
+		}
+	}()
+	return out
 }
 
 type agentSession struct {
