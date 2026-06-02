@@ -416,6 +416,7 @@ func agentSessionStatePayload(r *http.Request, svc routerServices, session agent
 		"memory_summary":        cloneAgentMemorySummary(session.MemorySummary),
 		"next_action":           cloneAgentNextAction(session.NextAction),
 		"run_summary":           svc.agent.agentSessionRunSummary(r.Context(), &session),
+		"ui_state":              deriveAgentUIState(&session),
 	}
 }
 
@@ -428,6 +429,7 @@ func agentSessionContextPayload(r *http.Request, svc routerServices, session age
 		"pending_authorization": cloneAgentAuthorizationRequest(session.PendingAuthorization),
 		"memory_summary":        cloneAgentMemorySummary(session.MemorySummary),
 		"run_summary":           svc.agent.agentSessionRunSummary(r.Context(), &session),
+		"ui_state":              deriveAgentUIState(&session),
 	}
 }
 
@@ -457,6 +459,7 @@ func agentSessionTracePayload(r *http.Request, svc routerServices, session agent
 		"memory_summary":        cloneAgentMemorySummary(session.MemorySummary),
 		"next_action":           cloneAgentNextAction(session.NextAction),
 		"run_summary":           svc.agent.agentSessionRunSummary(r.Context(), &session),
+		"ui_state":              deriveAgentUIState(&session),
 		"messages":              cloneAgentMessages(session.Messages),
 		"tool_calls":            cloneAgentToolCalls(session.ToolCalls),
 		"timeline":              timeline,

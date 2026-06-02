@@ -119,6 +119,7 @@ func buildAgentSendResponse(sessionID string, messages []agentMessage, toolCalls
 		PendingAuthorization: cloneAgentAuthorizationRequest(session.PendingAuthorization),
 		MemorySummary:        cloneAgentMemorySummary(session.MemorySummary),
 		NextAction:           cloneAgentNextAction(session.NextAction),
+		UIState:              deriveAgentUIState(&session),
 	}
 }
 
@@ -214,6 +215,8 @@ func cloneAgentSession(session *agentSession) agentSession {
 	cloned.PendingAuthorization = cloneAgentAuthorizationRequest(session.PendingAuthorization)
 	cloned.MemorySummary = cloneAgentMemorySummary(session.MemorySummary)
 	cloned.NextAction = cloneAgentNextAction(session.NextAction)
+	cloned.RunSummary = cloneAgentRunSummary(session.RunSummary)
+	cloned.UIState = deriveAgentUIState(&cloned)
 	return cloned
 }
 
@@ -246,6 +249,14 @@ func cloneAgentMemorySummary(summary *agentMemorySummary) *agentMemorySummary {
 		last := *summary.LastMessageAt
 		cloned.LastMessageAt = &last
 	}
+	return &cloned
+}
+
+func cloneAgentRunSummary(summary *agentSessionRunSummary) *agentSessionRunSummary {
+	if summary == nil {
+		return nil
+	}
+	cloned := *summary
 	return &cloned
 }
 

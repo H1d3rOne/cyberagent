@@ -60,6 +60,7 @@ type agentSession struct {
 	MemorySummary        *agentMemorySummary        `json:"memory_summary,omitempty"`
 	NextAction           *agentNextAction           `json:"next_action,omitempty"`
 	RunSummary           *agentSessionRunSummary    `json:"run_summary,omitempty"`
+	UIState              *agentUIState              `json:"ui_state,omitempty"`
 }
 
 type agentMessage struct {
@@ -222,6 +223,7 @@ type agentSessionSummary struct {
 	PendingAuthorization *agentAuthorizationRequest `json:"pending_authorization,omitempty"`
 	RunSummary           *agentSessionRunSummary    `json:"run_summary,omitempty"`
 	MemorySummary        *agentMemorySummary        `json:"memory_summary,omitempty"`
+	UIState              *agentUIState              `json:"ui_state,omitempty"`
 	LastMessage          string                     `json:"last_message,omitempty"`
 	MessageCount         int                        `json:"message_count"`
 	ToolCallCount        int                        `json:"tool_call_count"`
@@ -374,6 +376,7 @@ type sendAgentMessageResponse struct {
 	PendingAuthorization *agentAuthorizationRequest `json:"pending_authorization,omitempty"`
 	MemorySummary        *agentMemorySummary        `json:"memory_summary,omitempty"`
 	NextAction           *agentNextAction           `json:"next_action,omitempty"`
+	UIState              *agentUIState              `json:"ui_state,omitempty"`
 }
 
 func newAgentManager(runsDir string) *agentManager {
@@ -516,6 +519,7 @@ func agentSessionSummaryFrom(session *agentSession) agentSessionSummary {
 		NextAction:           cloneAgentNextAction(session.NextAction),
 		PendingAuthorization: cloneAgentAuthorizationRequest(session.PendingAuthorization),
 		MemorySummary:        cloneAgentMemorySummary(session.MemorySummary),
+		UIState:              deriveAgentUIState(session),
 		LastMessage:          lastMessage,
 		MessageCount:         len(session.Messages),
 		ToolCallCount:        len(session.ToolCalls),
@@ -604,5 +608,6 @@ func (m *agentManager) GetSession(ctx context.Context, sessionID string) (agentS
 	}
 	cloned := cloneAgentSession(session)
 	cloned.RunSummary = m.agentSessionRunSummary(ctx, session)
+	cloned.UIState = deriveAgentUIState(&cloned)
 	return cloned, nil
 }
