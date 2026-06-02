@@ -1,0 +1,89 @@
+[
+  {
+    "schema_version": "runtime.event.v1",
+    "seq": 20,
+    "event_id": "runtime:20",
+    "type": "approval_required",
+    "category": "approval",
+    "phase": "approval",
+    "status": "pending",
+    "severity": "warning",
+    "source": "runtime_engine",
+    "session_id": "session-approval",
+    "task_id": "task-approval",
+    "run_id": "run-approval",
+    "approval_id": "auth-1",
+    "approval_kind": "agent_authorization",
+    "timestamp": "2026-06-02T09:00:20Z",
+    "message": "needs write approval",
+    "data": {
+      "action_name": "workspace.files.write",
+      "approval_id": "auth-1",
+      "approval_kind": "agent_authorization",
+      "reason": "needs write approval",
+      "required_level": "write",
+      "session_id": "session-approval"
+    },
+    "links": [
+      {
+        "kind": "session",
+        "id": "session-approval"
+      },
+      {
+        "kind": "task",
+        "id": "task-approval"
+      },
+      {
+        "kind": "run",
+        "id": "run-approval"
+      },
+      {
+        "kind": "approval",
+        "id": "auth-1"
+      }
+    ]
+  },
+  {
+    "schema_version": "runtime.event.v1",
+    "seq": 21,
+    "event_id": "runtime:21",
+    "type": "approval_resolved",
+    "category": "approval",
+    "phase": "approval",
+    "status": "approved",
+    "severity": "success",
+    "source": "runtime_engine",
+    "session_id": "session-approval",
+    "task_id": "task-approval",
+    "run_id": "run-approval",
+    "approval_id": "auth-1",
+    "approval_kind": "agent_authorization",
+    "timestamp": "2026-06-02T09:00:21Z",
+    "message": "approval_resolved",
+    "data": {
+      "action_name": "workspace.files.write",
+      "approval_id": "auth-1",
+      "approval_kind": "agent_authorization",
+      "decision": "approved",
+      "session_id": "session-approval"
+    },
+    "links": [
+      {
+        "kind": "session",
+        "id": "session-approval"
+      },
+      {
+        "kind": "task",
+        "id": "task-approval"
+      },
+      {
+        "kind": "run",
+        "id": "run-approval"
+      },
+      {
+        "kind": "approval",
+        "id": "auth-1"
+      }
+    ]
+  }
+]

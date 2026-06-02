@@ -1,0 +1,52 @@
+{
+  "schema_version": "runtime.event.v1",
+  "seq": 2,
+  "event_id": "runtime:2",
+  "type": "tool_finished",
+  "category": "tool",
+  "phase": "tool",
+  "status": "succeeded",
+  "severity": "success",
+  "source": "runtime_engine",
+  "session_id": "session-tool",
+  "task_id": "task-tool",
+  "run_id": "run-tool",
+  "turn_id": "turn-tool",
+  "tool_call_id": "tool-call-1",
+  "timestamp": "2026-06-02T09:00:01Z",
+  "duration_ms": 123,
+  "message": "workspace.command",
+  "data": {
+    "duration_ms": 123,
+    "ok": true,
+    "session_id": "session-tool",
+    "status": "succeeded",
+    "tool": "workspace.command",
+    "tool_call": {
+      "id": "tool-call-1",
+      "status": "succeeded"
+    }
+  },
+  "links": [
+    {
+      "kind": "session",
+      "id": "session-tool"
+    },
+    {
+      "kind": "task",
+      "id": "task-tool"
+    },
+    {
+      "kind": "run",
+      "id": "run-tool"
+    },
+    {
+      "kind": "turn",
+      "id": "turn-tool"
+    },
+    {
+      "kind": "tool_call",
+      "id": "tool-call-1"
+    }
+  ]
+}

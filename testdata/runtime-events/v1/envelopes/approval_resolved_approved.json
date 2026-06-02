@@ -1,0 +1,43 @@
+{
+  "schema_version": "runtime.event.v1",
+  "seq": 4,
+  "event_id": "runtime:4",
+  "type": "approval_resolved",
+  "category": "approval",
+  "phase": "approval",
+  "status": "approved",
+  "severity": "success",
+  "source": "runtime_engine",
+  "session_id": "session-approval",
+  "task_id": "task-approval",
+  "run_id": "run-approval",
+  "approval_id": "auth-1",
+  "approval_kind": "agent_authorization",
+  "timestamp": "2026-06-02T09:00:03Z",
+  "message": "approval_resolved",
+  "data": {
+    "action_name": "workspace.files.write",
+    "approval_id": "auth-1",
+    "approval_kind": "agent_authorization",
+    "decision": "approved",
+    "session_id": "session-approval"
+  },
+  "links": [
+    {
+      "kind": "session",
+      "id": "session-approval"
+    },
+    {
+      "kind": "task",
+      "id": "task-approval"
+    },
+    {
+      "kind": "run",
+      "id": "run-approval"
+    },
+    {
+      "kind": "approval",
+      "id": "auth-1"
+    }
+  ]
+}

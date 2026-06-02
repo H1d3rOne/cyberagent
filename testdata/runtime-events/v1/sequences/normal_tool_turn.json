@@ -1,0 +1,222 @@
+[
+  {
+    "schema_version": "runtime.event.v1",
+    "seq": 10,
+    "event_id": "runtime:10",
+    "type": "turn_started",
+    "category": "turn",
+    "phase": "step",
+    "status": "running",
+    "severity": "info",
+    "source": "runtime_engine",
+    "session_id": "session-normal",
+    "task_id": "task-normal",
+    "run_id": "run-normal",
+    "turn_id": "turn-normal",
+    "timestamp": "2026-06-02T09:00:10Z",
+    "message": "turn_started",
+    "data": {
+      "message_id": "msg-normal",
+      "origin": "user",
+      "session_id": "session-normal"
+    },
+    "links": [
+      {
+        "kind": "session",
+        "id": "session-normal"
+      },
+      {
+        "kind": "task",
+        "id": "task-normal"
+      },
+      {
+        "kind": "run",
+        "id": "run-normal"
+      },
+      {
+        "kind": "turn",
+        "id": "turn-normal"
+      }
+    ]
+  },
+  {
+    "schema_version": "runtime.event.v1",
+    "seq": 11,
+    "event_id": "runtime:11",
+    "type": "model_token",
+    "category": "model",
+    "phase": "plan",
+    "status": "streaming",
+    "severity": "info",
+    "source": "runtime_engine",
+    "session_id": "session-normal",
+    "task_id": "task-normal",
+    "run_id": "run-normal",
+    "turn_id": "turn-normal",
+    "timestamp": "2026-06-02T09:00:11Z",
+    "message": "Hello",
+    "data": {
+      "delta": "Hello",
+      "phase": "plan",
+      "session_id": "session-normal",
+      "text": "Hello"
+    },
+    "links": [
+      {
+        "kind": "session",
+        "id": "session-normal"
+      },
+      {
+        "kind": "task",
+        "id": "task-normal"
+      },
+      {
+        "kind": "run",
+        "id": "run-normal"
+      },
+      {
+        "kind": "turn",
+        "id": "turn-normal"
+      }
+    ]
+  },
+  {
+    "schema_version": "runtime.event.v1",
+    "seq": 12,
+    "event_id": "runtime:12",
+    "type": "tool_started",
+    "category": "tool",
+    "phase": "tool",
+    "status": "running",
+    "severity": "info",
+    "source": "runtime_engine",
+    "session_id": "session-normal",
+    "task_id": "task-normal",
+    "run_id": "run-normal",
+    "turn_id": "turn-normal",
+    "tool_call_id": "tool-call-normal",
+    "timestamp": "2026-06-02T09:00:12Z",
+    "message": "workspace.command",
+    "data": {
+      "session_id": "session-normal",
+      "status": "running",
+      "tool": "workspace.command",
+      "tool_call": {
+        "id": "tool-call-normal",
+        "status": "running"
+      }
+    },
+    "links": [
+      {
+        "kind": "session",
+        "id": "session-normal"
+      },
+      {
+        "kind": "task",
+        "id": "task-normal"
+      },
+      {
+        "kind": "run",
+        "id": "run-normal"
+      },
+      {
+        "kind": "turn",
+        "id": "turn-normal"
+      },
+      {
+        "kind": "tool_call",
+        "id": "tool-call-normal"
+      }
+    ]
+  },
+  {
+    "schema_version": "runtime.event.v1",
+    "seq": 13,
+    "event_id": "runtime:13",
+    "type": "tool_finished",
+    "category": "tool",
+    "phase": "tool",
+    "status": "succeeded",
+    "severity": "success",
+    "source": "runtime_engine",
+    "session_id": "session-normal",
+    "task_id": "task-normal",
+    "run_id": "run-normal",
+    "turn_id": "turn-normal",
+    "tool_call_id": "tool-call-normal",
+    "timestamp": "2026-06-02T09:00:13Z",
+    "message": "workspace.command",
+    "data": {
+      "ok": true,
+      "session_id": "session-normal",
+      "status": "succeeded",
+      "tool": "workspace.command",
+      "tool_call": {
+        "id": "tool-call-normal",
+        "status": "succeeded"
+      }
+    },
+    "links": [
+      {
+        "kind": "session",
+        "id": "session-normal"
+      },
+      {
+        "kind": "task",
+        "id": "task-normal"
+      },
+      {
+        "kind": "run",
+        "id": "run-normal"
+      },
+      {
+        "kind": "turn",
+        "id": "turn-normal"
+      },
+      {
+        "kind": "tool_call",
+        "id": "tool-call-normal"
+      }
+    ]
+  },
+  {
+    "schema_version": "runtime.event.v1",
+    "seq": 14,
+    "event_id": "runtime:14",
+    "type": "turn_finished",
+    "category": "turn",
+    "phase": "step",
+    "status": "finished",
+    "severity": "success",
+    "source": "runtime_engine",
+    "session_id": "session-normal",
+    "task_id": "task-normal",
+    "run_id": "run-normal",
+    "turn_id": "turn-normal",
+    "timestamp": "2026-06-02T09:00:14Z",
+    "message": "done",
+    "data": {
+      "reason": "done",
+      "session_id": "session-normal",
+      "status": "finished"
+    },
+    "links": [
+      {
+        "kind": "session",
+        "id": "session-normal"
+      },
+      {
+        "kind": "task",
+        "id": "task-normal"
+      },
+      {
+        "kind": "run",
+        "id": "run-normal"
+      },
+      {
+        "kind": "turn",
+        "id": "turn-normal"
+      }
+    ]
+  }
+]

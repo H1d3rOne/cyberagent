@@ -102,12 +102,25 @@ func TestHTTPAgentSessionStreamForwardsRuntimeEvents(t *testing.T) {
 		dataLine, err := reader.ReadString('\n')
 		require.NoError(t, err)
 		require.True(t, strings.HasPrefix(dataLine, "data: "), "unexpected data line %q", dataLine)
+		payloadJSON := []byte(strings.TrimSpace(strings.TrimPrefix(dataLine, "data: ")))
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal(payloadJSON, &raw))
+		require.NotContains(t, raw, "schema_version", "SSE should keep legacy runtime.Event wire payload")
+
 		var payload runtime.Event
-		require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(dataLine, "data: "))), &payload))
+		require.NoError(t, json.Unmarshal(payloadJSON, &payload))
 		require.Equal(t, "model_token", payload.Type)
 		require.Equal(t, sessionID, payload.SessionID)
 		require.Equal(t, sessionID, payload.Data["session_id"])
 		require.Equal(t, "hello", payload.Data["text"])
+
+		envelope := runtime.NormalizeEventEnvelopeWithSource(payload, runtime.EventSourceDaemonBridge)
+		require.Equal(t, runtime.RuntimeEventSchemaVersion, envelope.SchemaVersion)
+		require.Equal(t, runtime.EventSourceDaemonBridge, envelope.Source)
+		require.Equal(t, "model", envelope.Category)
+		require.Equal(t, "plan", envelope.Phase)
+		require.Equal(t, "streaming", envelope.Status)
+		require.Equal(t, sessionID, envelope.SessionID)
 		return
 	}
 }

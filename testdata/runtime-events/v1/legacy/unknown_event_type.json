@@ -1,0 +1,29 @@
+{
+  "schema_version": "runtime.event.v1",
+  "seq": 6,
+  "event_id": "runtime:6",
+  "type": "legacy.custom",
+  "category": "system",
+  "phase": "system",
+  "status": "unknown",
+  "severity": "neutral",
+  "source": "core_run_event",
+  "session_id": "session-legacy",
+  "task_id": "task-legacy",
+  "timestamp": "2026-06-02T09:00:05Z",
+  "message": "legacy event payload",
+  "data": {
+    "message": "legacy event payload",
+    "session_id": "session-legacy"
+  },
+  "links": [
+    {
+      "kind": "session",
+      "id": "session-legacy"
+    },
+    {
+      "kind": "task",
+      "id": "task-legacy"
+    }
+  ]
+}

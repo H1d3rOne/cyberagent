@@ -1,0 +1,59 @@
+{
+  "schema_version": "runtime.event.v1",
+  "seq": 7,
+  "event_id": "runtime:7",
+  "type": "tool_finished",
+  "category": "tool",
+  "phase": "tool",
+  "status": "failed",
+  "severity": "error",
+  "source": "runtime_engine",
+  "session_id": "session-tool",
+  "task_id": "task-tool",
+  "run_id": "run-tool",
+  "turn_id": "turn-tool",
+  "tool_call_id": "tool-call-2",
+  "timestamp": "2026-06-02T09:00:06Z",
+  "duration_ms": 456,
+  "message": "workspace.command",
+  "data": {
+    "duration_ms": 456,
+    "error": "command failed",
+    "error_code": "exit_2",
+    "session_id": "session-tool",
+    "status": "failed",
+    "tool": "workspace.command",
+    "tool_call": {
+      "id": "tool-call-2",
+      "status": "failed"
+    },
+    "ui_hint": "Show command stderr."
+  },
+  "error": {
+    "code": "exit_2",
+    "message": "command failed",
+    "ui_hint": "Show command stderr."
+  },
+  "links": [
+    {
+      "kind": "session",
+      "id": "session-tool"
+    },
+    {
+      "kind": "task",
+      "id": "task-tool"
+    },
+    {
+      "kind": "run",
+      "id": "run-tool"
+    },
+    {
+      "kind": "turn",
+      "id": "turn-tool"
+    },
+    {
+      "kind": "tool_call",
+      "id": "tool-call-2"
+    }
+  ]
+}

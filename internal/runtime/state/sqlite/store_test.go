@@ -3,7 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -233,6 +236,74 @@ func TestEngineSeedsEventSeqFromSQLiteStore(t *testing.T) {
 	}
 }
 
+func TestStoreListEventsNormalizesSQLiteReplayEnvelope(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "runtime.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	base := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
+	for _, ev := range []agentruntime.Event{
+		{
+			Seq:       40,
+			Type:      agentruntime.EventModelToken,
+			SessionID: "session-other",
+			TaskID:    "task-other",
+			Data:      map[string]any{"session_id": "session-other", "text": "one"},
+			Timestamp: base.Add(40 * time.Second),
+		},
+		{
+			Seq:       41,
+			Type:      agentruntime.EventModelToken,
+			SessionID: "session-replay",
+			TaskID:    "task-replay",
+			RunID:     "run-replay",
+			TurnID:    "turn-replay",
+			Data:      map[string]any{"session_id": "session-replay", "phase": "plan", "delta": "two", "text": "two"},
+			Timestamp: base.Add(41 * time.Second),
+		},
+		{
+			Seq:       42,
+			Type:      agentruntime.EventModelToken,
+			SessionID: "session-replay",
+			TaskID:    "task-replay",
+			RunID:     "run-replay",
+			TurnID:    "turn-replay",
+			Data:      map[string]any{"session_id": "session-replay", "phase": "plan", "delta": "three", "text": "three"},
+			Timestamp: base.Add(42 * time.Second),
+		},
+	} {
+		if err := store.AppendEvent(ctx, ev); err != nil {
+			t.Fatalf("AppendEvent(seq=%d) error = %v", ev.Seq, err)
+		}
+	}
+
+	events, err := store.ListEvents(ctx, agentruntime.EventFilter{SessionID: "session-replay", FromSeq: 40}, 10)
+	if err != nil {
+		t.Fatalf("ListEvents(replay) error = %v", err)
+	}
+	if len(events) != 2 || events[0].Seq != 41 || events[1].Seq != 42 {
+		t.Fatalf("replay events = %#v, want seq 41,42", events)
+	}
+
+	envelopes := make([]agentruntime.EventEnvelopeV1, 0, len(events))
+	for _, ev := range events {
+		envelope := agentruntime.NormalizeEventEnvelopeWithSource(ev, agentruntime.EventSourceSQLiteReplay)
+		if envelope.SchemaVersion != agentruntime.RuntimeEventSchemaVersion {
+			t.Fatalf("schema_version = %q, want %q", envelope.SchemaVersion, agentruntime.RuntimeEventSchemaVersion)
+		}
+		if envelope.Source != agentruntime.EventSourceSQLiteReplay {
+			t.Fatalf("source = %q, want sqlite replay", envelope.Source)
+		}
+		if envelope.SessionID != "session-replay" || envelope.Data["session_id"] != "session-replay" {
+			t.Fatalf("session id compatibility missing: %#v", envelope)
+		}
+		envelopes = append(envelopes, envelope)
+	}
+	assertSQLiteRuntimeEventsFixtureJSON(t, filepath.Join("sequences", "stream_replay_from_seq.json"), envelopes)
+}
 
 func TestListRunsByState(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "runtime.db"))
@@ -326,4 +397,29 @@ func sqliteTableExists(t *testing.T, db *sql.DB, table string) bool {
 	}
 	t.Fatalf("query sqlite_master for %s: %v", table, err)
 	return false
+}
+
+func assertSQLiteRuntimeEventsFixtureJSON(t *testing.T, rel string, actual any) {
+	t.Helper()
+	actualBytes, err := json.MarshalIndent(actual, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal actual fixture %s: %v", rel, err)
+	}
+	actualBytes = append(actualBytes, '\n')
+	path := filepath.Join("..", "..", "..", "..", "testdata", "runtime-events", "v1", rel)
+	wantBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", path, err)
+	}
+	var wantJSON any
+	var actualJSON any
+	if err := json.Unmarshal(wantBytes, &wantJSON); err != nil {
+		t.Fatalf("fixture %s is invalid JSON: %v", path, err)
+	}
+	if err := json.Unmarshal(actualBytes, &actualJSON); err != nil {
+		t.Fatalf("actual fixture %s is invalid JSON: %v", rel, err)
+	}
+	if !reflect.DeepEqual(wantJSON, actualJSON) {
+		t.Fatalf("fixture %s mismatch\nactual:\n%s", path, string(actualBytes))
+	}
 }

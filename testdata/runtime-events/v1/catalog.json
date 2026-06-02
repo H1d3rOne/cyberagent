@@ -1,0 +1,209 @@
+[
+  {
+    "type": "approval_cancelled",
+    "category": "approval",
+    "phase": "approval",
+    "status": "cancelled",
+    "severity": "warning",
+    "producer_status": "reserved",
+    "description": "Approval cancelled."
+  },
+  {
+    "type": "approval_required",
+    "category": "approval",
+    "phase": "approval",
+    "status": "pending",
+    "severity": "warning",
+    "producer_status": "emitted",
+    "description": "Approval or authorization required."
+  },
+  {
+    "type": "approval_resolved",
+    "category": "approval",
+    "phase": "approval",
+    "status": "resolved",
+    "severity": "info",
+    "producer_status": "emitted",
+    "description": "Approval or authorization resolved."
+  },
+  {
+    "type": "memory_compacted",
+    "category": "memory",
+    "phase": "memory",
+    "status": "compacted",
+    "severity": "info",
+    "producer_status": "emitted",
+    "description": "Session memory compacted."
+  },
+  {
+    "type": "model_reasoning",
+    "category": "model",
+    "phase": "plan",
+    "status": "available",
+    "severity": "info",
+    "producer_status": "emitted",
+    "description": "Model reasoning summary."
+  },
+  {
+    "type": "model_token",
+    "category": "model",
+    "phase": "plan",
+    "status": "streaming",
+    "severity": "info",
+    "producer_status": "emitted",
+    "description": "Model token or text delta."
+  },
+  {
+    "type": "run_recovered",
+    "category": "recovery",
+    "phase": "recovery",
+    "status": "recovered",
+    "severity": "warning",
+    "producer_status": "reserved",
+    "description": "Runtime run recovered after interruption."
+  },
+  {
+    "type": "run_started",
+    "category": "run",
+    "phase": "run",
+    "status": "running",
+    "severity": "info",
+    "producer_status": "emitted",
+    "description": "Runtime run started."
+  },
+  {
+    "type": "runtime_error",
+    "category": "system",
+    "phase": "system",
+    "status": "failed",
+    "severity": "error",
+    "producer_status": "reserved",
+    "description": "Runtime system error."
+  },
+  {
+    "type": "stream_gap_detected",
+    "category": "stream",
+    "phase": "stream",
+    "status": "stale",
+    "severity": "warning",
+    "producer_status": "reserved",
+    "description": "Runtime stream gap detected."
+  },
+  {
+    "type": "stream_replay_complete",
+    "category": "stream",
+    "phase": "stream",
+    "status": "live",
+    "severity": "success",
+    "producer_status": "reserved",
+    "description": "Runtime stream replay complete."
+  },
+  {
+    "type": "stream_replay_started",
+    "category": "stream",
+    "phase": "stream",
+    "status": "replaying",
+    "severity": "info",
+    "producer_status": "reserved",
+    "description": "Runtime stream replay started."
+  },
+  {
+    "type": "task_cancelled",
+    "category": "task",
+    "phase": "system",
+    "status": "cancelled",
+    "severity": "warning",
+    "producer_status": "reserved",
+    "description": "Agent task cancelled."
+  },
+  {
+    "type": "task_created",
+    "category": "task",
+    "phase": "task",
+    "status": "created",
+    "severity": "info",
+    "producer_status": "emitted",
+    "description": "Agent task created."
+  },
+  {
+    "type": "task_failed",
+    "category": "task",
+    "phase": "final_answer",
+    "status": "failed",
+    "severity": "error",
+    "producer_status": "emitted",
+    "description": "Agent task failed."
+  },
+  {
+    "type": "task_finished",
+    "category": "task",
+    "phase": "final_answer",
+    "status": "succeeded",
+    "severity": "success",
+    "producer_status": "emitted",
+    "description": "Agent task finished successfully."
+  },
+  {
+    "type": "todo_updated",
+    "category": "todo",
+    "phase": "runbook",
+    "status": "updated",
+    "severity": "info",
+    "producer_status": "emitted",
+    "description": "Runbook TODO list updated."
+  },
+  {
+    "type": "tool_failed",
+    "category": "tool",
+    "phase": "tool",
+    "status": "failed",
+    "severity": "error",
+    "producer_status": "reserved",
+    "description": "Tool execution failed."
+  },
+  {
+    "type": "tool_finished",
+    "category": "tool",
+    "phase": "tool",
+    "status": "succeeded",
+    "severity": "success",
+    "producer_status": "emitted",
+    "description": "Tool execution finished."
+  },
+  {
+    "type": "tool_started",
+    "category": "tool",
+    "phase": "tool",
+    "status": "running",
+    "severity": "info",
+    "producer_status": "emitted",
+    "description": "Tool execution started."
+  },
+  {
+    "type": "turn_failed",
+    "category": "turn",
+    "phase": "step",
+    "status": "failed",
+    "severity": "error",
+    "producer_status": "emitted",
+    "description": "Runtime turn failed."
+  },
+  {
+    "type": "turn_finished",
+    "category": "turn",
+    "phase": "step",
+    "status": "succeeded",
+    "severity": "success",
+    "producer_status": "emitted",
+    "description": "Runtime turn finished."
+  },
+  {
+    "type": "turn_started",
+    "category": "turn",
+    "phase": "step",
+    "status": "running",
+    "severity": "info",
+    "producer_status": "emitted",
+    "description": "Runtime turn started."
+  }
+]

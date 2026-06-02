@@ -1,0 +1,84 @@
+[
+  {
+    "schema_version": "runtime.event.v1",
+    "seq": 41,
+    "event_id": "runtime:41",
+    "type": "model_token",
+    "category": "model",
+    "phase": "plan",
+    "status": "streaming",
+    "severity": "info",
+    "source": "sqlite_replay",
+    "session_id": "session-replay",
+    "task_id": "task-replay",
+    "run_id": "run-replay",
+    "turn_id": "turn-replay",
+    "timestamp": "2026-06-02T09:00:41Z",
+    "message": "two",
+    "data": {
+      "delta": "two",
+      "phase": "plan",
+      "session_id": "session-replay",
+      "text": "two"
+    },
+    "links": [
+      {
+        "kind": "session",
+        "id": "session-replay"
+      },
+      {
+        "kind": "task",
+        "id": "task-replay"
+      },
+      {
+        "kind": "run",
+        "id": "run-replay"
+      },
+      {
+        "kind": "turn",
+        "id": "turn-replay"
+      }
+    ]
+  },
+  {
+    "schema_version": "runtime.event.v1",
+    "seq": 42,
+    "event_id": "runtime:42",
+    "type": "model_token",
+    "category": "model",
+    "phase": "plan",
+    "status": "streaming",
+    "severity": "info",
+    "source": "sqlite_replay",
+    "session_id": "session-replay",
+    "task_id": "task-replay",
+    "run_id": "run-replay",
+    "turn_id": "turn-replay",
+    "timestamp": "2026-06-02T09:00:42Z",
+    "message": "three",
+    "data": {
+      "delta": "three",
+      "phase": "plan",
+      "session_id": "session-replay",
+      "text": "three"
+    },
+    "links": [
+      {
+        "kind": "session",
+        "id": "session-replay"
+      },
+      {
+        "kind": "task",
+        "id": "task-replay"
+      },
+      {
+        "kind": "run",
+        "id": "run-replay"
+      },
+      {
+        "kind": "turn",
+        "id": "turn-replay"
+      }
+    ]
+  }
+]

@@ -1,0 +1,39 @@
+{
+  "schema_version": "runtime.event.v1",
+  "seq": 5,
+  "event_id": "runtime:5",
+  "type": "task_failed",
+  "category": "recovery",
+  "phase": "final_answer",
+  "status": "failed",
+  "severity": "error",
+  "source": "runtime_engine",
+  "session_id": "session-recovery",
+  "task_id": "task-recovery",
+  "run_id": "run-recovery",
+  "timestamp": "2026-06-02T09:00:04Z",
+  "message": "daemon_restarted",
+  "data": {
+    "previous_state": "running",
+    "reason": "daemon_restarted",
+    "recoverable": true,
+    "recovery": true,
+    "run_id": "run-recovery",
+    "session_id": "session-recovery",
+    "task_id": "task-recovery"
+  },
+  "links": [
+    {
+      "kind": "session",
+      "id": "session-recovery"
+    },
+    {
+      "kind": "task",
+      "id": "task-recovery"
+    },
+    {
+      "kind": "run",
+      "id": "run-recovery"
+    }
+  ]
+}
