@@ -354,7 +354,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		m.emitRuntimeApprovalResolved(ctx, sessionID, sessionState, *pending, "denied")
 		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
 		m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, sessionState, message)
-		return agentControlResponse{Session: sessionState, Message: message}, nil
+		return agentControlResponse{Session: sessionState, Message: message, ApprovalState: canonicalAgentAuthorizationApproval(pending, "denied")}, nil
 	case "approve":
 		pending.Status = "approved"
 		pending.UpdatedAt = now
@@ -468,7 +468,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		return agentControlResponse{}, getErr
 	}
 	_ = responseToolCalls
-	return agentControlResponse{Session: sessionState, Message: message}, nil
+	return agentControlResponse{Session: sessionState, Message: message, ApprovalState: canonicalAgentAuthorizationApproval(pending, "approved")}, nil
 }
 
 func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (resp sendAgentMessageResponse, err error) {

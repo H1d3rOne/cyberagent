@@ -413,6 +413,7 @@ func agentSessionStatePayload(r *http.Request, svc routerServices, session agent
 		"context_refs":          cloneAgentContextRefs(session.ContextRefs),
 		"pending_changes":       cloneAgentWorkspaceChanges(session.PendingChanges),
 		"pending_authorization": cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		"approval_state":        deriveAgentApprovalState(&session),
 		"memory_summary":        cloneAgentMemorySummary(session.MemorySummary),
 		"next_action":           cloneAgentNextAction(session.NextAction),
 		"run_summary":           svc.agent.agentSessionRunSummary(r.Context(), &session),
@@ -427,6 +428,7 @@ func agentSessionContextPayload(r *http.Request, svc routerServices, session age
 		"context_refs":          cloneAgentContextRefs(session.ContextRefs),
 		"pending_changes":       cloneAgentWorkspaceChanges(session.PendingChanges),
 		"pending_authorization": cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		"approval_state":        deriveAgentApprovalState(&session),
 		"memory_summary":        cloneAgentMemorySummary(session.MemorySummary),
 		"run_summary":           svc.agent.agentSessionRunSummary(r.Context(), &session),
 		"ui_state":              deriveAgentUIState(&session),
@@ -456,6 +458,7 @@ func agentSessionTracePayload(r *http.Request, svc routerServices, session agent
 		"context_refs":          cloneAgentContextRefs(session.ContextRefs),
 		"pending_changes":       cloneAgentWorkspaceChanges(session.PendingChanges),
 		"pending_authorization": cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		"approval_state":        deriveAgentApprovalState(&session),
 		"memory_summary":        cloneAgentMemorySummary(session.MemorySummary),
 		"next_action":           cloneAgentNextAction(session.NextAction),
 		"run_summary":           svc.agent.agentSessionRunSummary(r.Context(), &session),
@@ -923,7 +926,7 @@ func handleRunRead(w http.ResponseWriter, r *http.Request, svc routerServices) {
 			writeServiceError(w, err)
 			return
 		}
-		writeOK(w, http.StatusOK, map[string]any{"approvals": approvals})
+		writeOK(w, http.StatusOK, map[string]any{"approvals": runHITLApprovalResponses(runID, approvals)})
 	default:
 		writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
 	}
@@ -975,7 +978,7 @@ func handleRunWrite(w http.ResponseWriter, r *http.Request, svc routerServices) 
 			return
 		}
 		emitApprovalRuntimeResolved(r.Context(), svc, runID, action, resolved)
-		writeOK(w, http.StatusOK, resolved)
+		writeOK(w, http.StatusOK, runHITLApprovalResponseFor(runID, resolved))
 		return
 	}
 
@@ -1081,7 +1084,10 @@ func approvalRuntimeSessionTask(agent *agentManager, runID string) (string, stri
 }
 
 func approvalRuntimeResolvedData(runID, action string, resolved contracts.HITLRequest) map[string]any {
+	canonical := canonicalRunHITLApproval(runID, resolved)
 	data := map[string]any{
+		"approval_kind":    approvalKindRunHITL,
+		"approval_state":   canonical,
 		"approval_id":      resolved.ID,
 		"step_id":          resolved.StepID,
 		"run_id":           strings.TrimSpace(runID),

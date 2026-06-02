@@ -117,6 +117,7 @@ func buildAgentSendResponse(sessionID string, messages []agentMessage, toolCalls
 		ContextRefs:          cloneAgentContextRefs(session.ContextRefs),
 		PendingChanges:       cloneAgentWorkspaceChanges(session.PendingChanges),
 		PendingAuthorization: cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		ApprovalState:        deriveAgentApprovalState(&session),
 		MemorySummary:        cloneAgentMemorySummary(session.MemorySummary),
 		NextAction:           cloneAgentNextAction(session.NextAction),
 		UIState:              deriveAgentUIState(&session),
@@ -213,6 +214,7 @@ func cloneAgentSession(session *agentSession) agentSession {
 	cloned.ContextRefs = cloneAgentContextRefs(session.ContextRefs)
 	cloned.PendingChanges = cloneAgentWorkspaceChanges(session.PendingChanges)
 	cloned.PendingAuthorization = cloneAgentAuthorizationRequest(session.PendingAuthorization)
+	cloned.ApprovalState = deriveAgentApprovalState(&cloned)
 	cloned.MemorySummary = cloneAgentMemorySummary(session.MemorySummary)
 	cloned.NextAction = cloneAgentNextAction(session.NextAction)
 	cloned.RunSummary = cloneAgentRunSummary(session.RunSummary)

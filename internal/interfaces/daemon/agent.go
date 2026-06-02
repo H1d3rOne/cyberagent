@@ -57,6 +57,7 @@ type agentSession struct {
 	ContextRefs          []agentContextRef          `json:"context_refs,omitempty"`
 	PendingChanges       []agentWorkspaceChange     `json:"pending_changes,omitempty"`
 	PendingAuthorization *agentAuthorizationRequest `json:"pending_authorization,omitempty"`
+	ApprovalState        *approvalCanonicalState    `json:"approval_state,omitempty"`
 	MemorySummary        *agentMemorySummary        `json:"memory_summary,omitempty"`
 	NextAction           *agentNextAction           `json:"next_action,omitempty"`
 	RunSummary           *agentSessionRunSummary    `json:"run_summary,omitempty"`
@@ -221,6 +222,7 @@ type agentSessionSummary struct {
 	ActiveTask           *agentTask                 `json:"active_task,omitempty"`
 	NextAction           *agentNextAction           `json:"next_action,omitempty"`
 	PendingAuthorization *agentAuthorizationRequest `json:"pending_authorization,omitempty"`
+	ApprovalState        *approvalCanonicalState    `json:"approval_state,omitempty"`
 	RunSummary           *agentSessionRunSummary    `json:"run_summary,omitempty"`
 	MemorySummary        *agentMemorySummary        `json:"memory_summary,omitempty"`
 	UIState              *agentUIState              `json:"ui_state,omitempty"`
@@ -344,8 +346,9 @@ type agentControlRequest struct {
 }
 
 type agentControlResponse struct {
-	Session agentSession `json:"session"`
-	Message agentMessage `json:"message"`
+	Session       agentSession            `json:"session"`
+	Message       agentMessage            `json:"message"`
+	ApprovalState *approvalCanonicalState `json:"approval_state,omitempty"`
 }
 
 type agentAuthorizationDecisionRequest struct {
@@ -374,6 +377,7 @@ type sendAgentMessageResponse struct {
 	ContextRefs          []agentContextRef          `json:"context_refs,omitempty"`
 	PendingChanges       []agentWorkspaceChange     `json:"pending_changes,omitempty"`
 	PendingAuthorization *agentAuthorizationRequest `json:"pending_authorization,omitempty"`
+	ApprovalState        *approvalCanonicalState    `json:"approval_state,omitempty"`
 	MemorySummary        *agentMemorySummary        `json:"memory_summary,omitempty"`
 	NextAction           *agentNextAction           `json:"next_action,omitempty"`
 	UIState              *agentUIState              `json:"ui_state,omitempty"`
@@ -518,6 +522,7 @@ func agentSessionSummaryFrom(session *agentSession) agentSessionSummary {
 		ActiveTask:           cloneAgentTask(session.ActiveTask),
 		NextAction:           cloneAgentNextAction(session.NextAction),
 		PendingAuthorization: cloneAgentAuthorizationRequest(session.PendingAuthorization),
+		ApprovalState:        deriveAgentApprovalState(session),
 		MemorySummary:        cloneAgentMemorySummary(session.MemorySummary),
 		UIState:              deriveAgentUIState(session),
 		LastMessage:          lastMessage,

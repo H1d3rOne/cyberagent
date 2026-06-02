@@ -89,6 +89,19 @@ func TestHTTPApprovalDecisionPublishesRuntimeEvents(t *testing.T) {
 			if resp.StatusCode != http.StatusOK || !resp.Body.OK || resp.Body.Data["status"] != string(tt.wantStatus) {
 				t.Fatalf("unexpected approval response: status=%d body=%#v", resp.StatusCode, resp.Body)
 			}
+			responseState := asMap(t, resp.Body.Data["approval_state"])
+			wantCanonicalState := canonicalApprovalState(string(tt.wantStatus))
+			wantCanonicalDecision := canonicalApprovalDecision(tt.wantDecision)
+			if responseState["approval_kind"] != approvalKindRunHITL ||
+				responseState["state"] != wantCanonicalState ||
+				responseState["decision"] != wantCanonicalDecision ||
+				responseState["resume_available"] != (wantCanonicalState == approvalCanonicalStateApproved) ||
+				responseState["approval_id"] != approvalID ||
+				responseState["run_id"] != runID ||
+				responseState["step_id"] != stepID ||
+				responseState["action_name"] != "execute_step" {
+				t.Fatalf("unexpected approval response canonical state: %#v", responseState)
+			}
 
 			events, err := store.ListEvents(context.Background(), agentruntime.EventFilter{RunID: runID}, 10)
 			if err != nil {
@@ -102,6 +115,7 @@ func TestHTTPApprovalDecisionPublishesRuntimeEvents(t *testing.T) {
 				t.Fatalf("unexpected approval_resolved envelope: %#v", *resolved)
 			}
 			if resolved.Data["approval_id"] != approvalID ||
+				resolved.Data["approval_kind"] != approvalKindRunHITL ||
 				resolved.Data["step_id"] != stepID ||
 				resolved.Data["run_id"] != runID ||
 				resolved.Data["decision"] != tt.wantDecision ||
@@ -113,6 +127,7 @@ func TestHTTPApprovalDecisionPublishesRuntimeEvents(t *testing.T) {
 			if _, ok := resolved.Data["comment"]; !ok {
 				t.Fatalf("approval_resolved data should include comment key: %#v", resolved.Data)
 			}
+			assertApprovalCanonicalState(t, "approval_resolved event", approvalCanonicalFromEventData(t, resolved.Data["approval_state"]), approvalKindRunHITL, wantCanonicalState, wantCanonicalDecision, wantCanonicalState == approvalCanonicalStateApproved, approvalID, runID, stepID, "execute_step", "")
 			if tt.wantEditArgs {
 				editArgs, ok := resolved.Data["edit_args"].(map[string]any)
 				if !ok || editArgs["target"] != "https://example.com/edited" || editArgs["method"] != "POST" {
@@ -166,6 +181,15 @@ func TestHTTPApprovalDecisionRuntimeEngineAbsentNoOp(t *testing.T) {
 	resp := doDaemonRequestWithBody(t, http.MethodPost, api.URL+"/api/v1/runs/"+runID+"/approvals/"+approvalID+"/approve", "test-token", `{"operator":"local-user","comment":"approve without engine"}`)
 	if resp.StatusCode != http.StatusOK || !resp.Body.OK || resp.Body.Data["status"] != string(contracts.HITLApproved) {
 		t.Fatalf("unexpected approval response without engine: status=%d body=%#v", resp.StatusCode, resp.Body)
+	}
+	responseState := asMap(t, resp.Body.Data["approval_state"])
+	if responseState["approval_kind"] != approvalKindRunHITL ||
+		responseState["state"] != approvalCanonicalStateApproved ||
+		responseState["decision"] != approvalCanonicalStateApproved ||
+		responseState["resume_available"] != true ||
+		responseState["approval_id"] != approvalID ||
+		responseState["run_id"] != runID {
+		t.Fatalf("unexpected approval response canonical state without engine: %#v", responseState)
 	}
 	resolution := asMap(t, resp.Body.Data["resolution"])
 	if resolution["decision"] != "approve" || resolution["resolved_by"] != "local-user" || resolution["comment"] != "approve without engine" {

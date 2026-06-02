@@ -119,6 +119,7 @@ func (s *agentSession) normalize() {
 		s.Status = "idle"
 	}
 	s.UIState = nil
+	s.ApprovalState = nil
 	s.OperationLevel = normalizeAgentOperationLevel(s.OperationLevel)
 	if s.Messages == nil {
 		s.Messages = []agentMessage{}

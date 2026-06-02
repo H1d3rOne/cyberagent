@@ -169,12 +169,14 @@ func (m *agentManager) emitAgentRuntimeEvents(ctx context.Context, eng *runtime.
 		})
 	}
 	if session.PendingAuthorization != nil && strings.EqualFold(session.PendingAuthorization.Status, "pending") {
+		canonical := canonicalAgentAuthorizationApproval(session.PendingAuthorization, "")
 		eng.Publish(ctx, runtime.Event{
 			Type:   "approval_required",
 			TaskID: taskID,
 			Data: map[string]any{
 				"session_id":     sessionID,
-				"approval_kind":  "agent_authorization",
+				"approval_kind":  approvalKindAgentAuthorization,
+				"approval_state": canonical,
 				"authorization":  cloneAgentAuthorizationRequest(session.PendingAuthorization),
 				"approval_id":    session.PendingAuthorization.ID,
 				"action_name":    session.PendingAuthorization.ActionName,
@@ -191,12 +193,14 @@ func (m *agentManager) emitRuntimeApprovalResolved(ctx context.Context, sessionI
 	if eng == nil {
 		return
 	}
+	canonical := canonicalAgentAuthorizationApproval(&auth, decision)
 	eng.Publish(ctx, runtime.Event{
 		Type:   "approval_resolved",
 		TaskID: agentRuntimeTaskID(sessionID, session),
 		Data: map[string]any{
 			"session_id":     sessionID,
-			"approval_kind":  "agent_authorization",
+			"approval_kind":  approvalKindAgentAuthorization,
+			"approval_state": canonical,
 			"approval_id":    auth.ID,
 			"action_name":    auth.ActionName,
 			"decision":       decision,
