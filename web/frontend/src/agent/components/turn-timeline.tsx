@@ -161,9 +161,8 @@ function TurnGroup({
                 as="button"
                 type="button"
                 onClick={() => onSelectTool(tool.id)}
-                interactive
                 selected={state.selectedToolCallId === tool.id}
-                className="p-3 text-left"
+                className="p-3 text-left transition-colors hover:border-primary/25 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <div className="flex items-start gap-2">
                   <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', toolDotClass(tool.status))} />

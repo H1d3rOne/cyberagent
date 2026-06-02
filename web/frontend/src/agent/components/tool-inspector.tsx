@@ -1,5 +1,4 @@
 import { Copy, FileText, Layers3, RotateCcw, Wrench } from 'lucide-react'
-import { GlassCard } from '@/components/glass'
 import { Button } from '@/components/ui/button'
 import { text, type Language } from '@/lib/console'
 import { cn } from '@/lib/utils'
@@ -19,10 +18,10 @@ export function ToolInspector({
   onClear?: () => void
 }) {
   return (
-    <GlassCard variant="subtle" className="flex min-h-full flex-col gap-3 p-3">
-      <div className="flex items-center justify-between gap-2">
+    <div className="flex min-h-full flex-col gap-2.5">
+      <div className="flex items-center justify-between gap-2 px-1">
         <div className="min-w-0">
-          <div className="text-sm font-medium">{text(language, 'Tool Inspector', 'Tool Inspector')}</div>
+          <div className="text-sm font-medium">{text(language, '当前工具', 'Current tool')}</div>
           <div className="mt-0.5 text-[10px] text-muted-foreground">{text(language, '查看当前选中的工具调用、结果与元数据。', 'Inspect the selected tool call, result and metadata.')}</div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -54,7 +53,7 @@ export function ToolInspector({
       </div>
 
       {tool ? (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           <InspectorBlock icon={Wrench} title={text(language, '调用摘要', 'Call summary')}>
             <div className="flex items-start gap-2">
               <span className={cn('mt-1 h-2.5 w-2.5 shrink-0 rounded-full', toolDotClass(tool.status))} />
@@ -101,10 +100,10 @@ export function ToolInspector({
           </InspectorBlock>
         </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-muted-foreground">
+        <div className="rounded-2xl border border-dashed border-white/10 bg-black/10 p-4 text-sm leading-6 text-muted-foreground">
           {text(language, '未选择工具调用。点击时间线中的工具卡片后，这里会显示完整结果。', 'No tool selected. Click a tool card in the timeline to inspect it here.')}
         </div>
       )}
-    </GlassCard>
+    </div>
   )
 }
