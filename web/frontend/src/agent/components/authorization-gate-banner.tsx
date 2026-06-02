@@ -17,6 +17,9 @@ export interface AuthorizationGate {
   requiredLevel: AgentOperationLevel
   source: 'pending' | 'legacy'
   messageIndex?: number
+  stateLabel?: string
+  stateDetail?: string
+  uiHint?: string
 }
 
 export function AuthorizationGateBanner({
@@ -44,6 +47,11 @@ export function AuthorizationGateBanner({
         <span className="rounded-full border border-amber-200/20 bg-black/15 px-2 py-0.5 font-mono text-[10px] text-amber-100/85">
           {gate.action}
         </span>
+        {gate.stateLabel && (
+          <span className="rounded-full border border-amber-200/20 bg-amber-200/10 px-2 py-0.5 text-[10px] text-amber-50">
+            {gate.stateLabel}
+          </span>
+        )}
         {gate.target && <span className="min-w-0 truncate font-mono text-[10px] text-amber-100/80">{gate.target}</span>}
         {running && !busy && (
           <span className="rounded-full border border-amber-200/20 bg-black/15 px-2 py-0.5 text-[10px] text-amber-100/70">
@@ -68,10 +76,13 @@ export function AuthorizationGateBanner({
       <div className="mt-1 line-clamp-3 text-[11px] leading-5 text-amber-100/75">
         {text(
           language,
-          `${gate.reason || 'Agent 已暂停执行，等待操作者确认。'} 本次需要「${operationLevelLabel(gate.requiredLevel, language)}」权限。`,
-          `${gate.reason || 'The Agent paused execution and is waiting for operator approval.'} Required: ${operationLevelLabel(gate.requiredLevel, language)}.`,
+          `${gate.reason || gate.stateDetail || 'Agent 已暂停执行，等待操作者确认。'} 本次需要「${operationLevelLabel(gate.requiredLevel, language)}」权限。`,
+          `${gate.reason || gate.stateDetail || 'The Agent paused execution and is waiting for operator approval.'} Required: ${operationLevelLabel(gate.requiredLevel, language)}.`,
         )}
       </div>
+      {gate.uiHint && gate.uiHint !== gate.reason && gate.uiHint !== gate.stateDetail && (
+        <div className="mt-1 text-[10px] leading-4 text-amber-100/60">{gate.uiHint}</div>
+      )}
       {gate.arguments && (
         <details className="mt-1.5 rounded-xl border border-amber-200/15 bg-black/10 px-2 py-1.5 text-[11px]">
           <summary className="cursor-pointer text-amber-100/75">{text(language, '动作参数', 'Action args')}</summary>

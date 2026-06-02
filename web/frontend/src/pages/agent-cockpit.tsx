@@ -34,6 +34,7 @@ import {
   formatError,
   nextActionSuggestedPrompt,
   operationLevelLabel,
+  sessionDisplayHint,
   sessionTitle,
   statusLabel,
 } from '@/agent/utils'
@@ -229,18 +230,22 @@ export function AgentCockpitPage() {
   const nextAction = state.session?.next_action
   const suggestedNextPrompt = nextActionSuggestedPrompt(nextAction)
   const runSummary = sessionRunSummary(state.session, state.sessions, state.activeSessionId)
+  const displayHint = sessionDisplayHint(state.session, language)
   const toolCalls = useMemo(() => sessionToolCalls(state.session), [state.session])
   const selectedTool = useMemo(
     () => toolCalls.find((tool) => tool.id === state.selectedToolCallId) || toolCalls[0],
     [state.selectedToolCallId, toolCalls],
   )
   const authorizationGate = useMemo(() => {
-    const pendingGate = buildPendingAuthorizationGate(state.session?.pending_authorization, language)
+    const pendingGate = buildPendingAuthorizationGate(state.session?.pending_authorization, language, {
+      approvalState: state.session?.approval_state,
+      uiState: state.session?.ui_state,
+    })
     if (pendingGate) return pendingGate
     const gate = buildLegacyAuthorizationGate(messages, language)
     if (!gate) return null
     return dismissedAuthorizationGates.includes(authorizationGateKey(gate)) ? null : gate
-  }, [dismissedAuthorizationGates, language, messages, state.session?.pending_authorization])
+  }, [dismissedAuthorizationGates, language, messages, state.session?.approval_state, state.session?.pending_authorization, state.session?.ui_state])
 
   const refreshCurrentSession = useCallback(async () => {
     if (state.activeSessionId) await loadSession(state.activeSessionId)
@@ -257,6 +262,8 @@ export function AgentCockpitPage() {
     context_refs: response.context_refs || base.context_refs,
     pending_changes: response.pending_changes || base.pending_changes,
     pending_authorization: response.pending_authorization,
+    approval_state: response.approval_state,
+    ui_state: response.ui_state,
     memory_summary: response.memory_summary || base.memory_summary,
     next_action: response.next_action || base.next_action,
   }), [])
@@ -477,6 +484,17 @@ export function AgentCockpitPage() {
                     <span>{statusLabel(state.session.active_task.status, language)}</span>
                   </>
                 )}
+                {displayHint && (
+                  <>
+                    <span>·</span>
+                    <span
+                      className={cn('max-w-[13rem] truncate', displayHintClass(displayHint.tone))}
+                      title={[displayHint.detail, displayHint.source].filter(Boolean).join(' · ') || undefined}
+                    >
+                      {displayHint.label}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -614,6 +632,14 @@ function streamDotClass(status: CockpitStreamStatus) {
   if (status === 'degraded') return 'bg-amber-300 shadow-[0_0_12px_rgba(252,211,77,0.65)]'
   if (status === 'error') return 'bg-red-300 shadow-[0_0_12px_rgba(252,165,165,0.75)]'
   return 'bg-slate-500'
+}
+
+function displayHintClass(tone: 'muted' | 'info' | 'success' | 'warning' | 'danger') {
+  if (tone === 'success') return 'inline-block text-emerald-200'
+  if (tone === 'warning') return 'inline-block text-amber-200'
+  if (tone === 'danger') return 'inline-block text-red-200'
+  if (tone === 'info') return 'inline-block text-cyan-200'
+  return 'inline-block text-muted-foreground'
 }
 
 function runSummaryLine(summary: NonNullable<ReturnType<typeof sessionRunSummary>>, language: Language) {

@@ -70,6 +70,36 @@ export interface AgentAuthorizationRequest {
   updated_at: string
 }
 
+export interface AgentApprovalState {
+  approval_kind?: 'agent_authorization' | 'run_hitl' | string
+  state?: 'pending' | 'approved' | 'denied' | 'cancelled' | 'modified' | 'expired' | 'unknown' | string
+  decision?: 'approved' | 'denied' | 'cancelled' | 'modified' | string
+  resume_available?: boolean
+  approval_id?: string
+  run_id?: string
+  step_id?: string
+  action_name?: string
+  required_level?: AgentOperationLevel | string
+  reason?: string
+  [key: string]: unknown
+}
+
+export interface AgentUIState {
+  state?: 'idle' | 'running' | 'failed' | 'done' | 'approval' | 'tool_running' | string
+  phase?: string
+  tone?: 'neutral' | 'muted' | 'info' | 'success' | 'warning' | 'danger' | string
+  busy?: boolean
+  requires_action?: boolean
+  has_error?: boolean
+  source?: string
+  message?: string
+  task_id?: string
+  tool_call_id?: string
+  tool_name?: string
+  approval_id?: string
+  [key: string]: unknown
+}
+
 export interface ScanDraft {
   target: string
   scope: string
@@ -803,6 +833,8 @@ export interface AgentSession {
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
   pending_authorization?: AgentAuthorizationRequest
+  approval_state?: AgentApprovalState
+  ui_state?: AgentUIState
   memory_summary?: AgentMemorySummary
   next_action?: AgentNextAction
   run_summary?: AgentSessionRunSummary
@@ -819,6 +851,8 @@ export interface AgentSessionSummary {
   active_task?: AgentTask
   next_action?: AgentNextAction
   pending_authorization?: AgentAuthorizationRequest
+  approval_state?: AgentApprovalState
+  ui_state?: AgentUIState
   memory_summary?: AgentMemorySummary
   run_summary?: AgentSessionRunSummary
   last_message?: string
@@ -867,6 +901,8 @@ export interface SendAgentMessageResponse {
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
   pending_authorization?: AgentAuthorizationRequest
+  approval_state?: AgentApprovalState
+  ui_state?: AgentUIState
   memory_summary?: AgentMemorySummary
   next_action?: AgentNextAction
 }
@@ -881,6 +917,8 @@ export interface AgentSessionStateResponse {
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
   pending_authorization?: AgentAuthorizationRequest
+  approval_state?: AgentApprovalState
+  ui_state?: AgentUIState
   memory_summary?: AgentMemorySummary
   next_action?: AgentNextAction
   run_summary?: AgentSessionRunSummary
@@ -892,6 +930,8 @@ export interface AgentSessionContextResponse {
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
   pending_authorization?: AgentAuthorizationRequest
+  approval_state?: AgentApprovalState
+  ui_state?: AgentUIState
   memory_summary?: AgentMemorySummary
   run_summary?: AgentSessionRunSummary
 }
@@ -911,6 +951,8 @@ export interface AgentTraceResponse {
   context_refs?: AgentContextRef[]
   pending_changes?: AgentWorkspaceChange[]
   pending_authorization?: AgentAuthorizationRequest
+  approval_state?: AgentApprovalState
+  ui_state?: AgentUIState
   memory_summary?: AgentMemorySummary
   next_action?: AgentNextAction
   run_summary?: AgentSessionRunSummary

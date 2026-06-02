@@ -1,4 +1,4 @@
-import { ApiError, normalizeAgentOperationLevel, type AgentAuthorizationRequest, type AgentMessage, type AgentNextAction, type AgentOperationLevel, type AgentSession, type AgentSessionSummary, type AgentToolCall, type AgentTodo } from '@/lib/api'
+import { ApiError, normalizeAgentOperationLevel, type AgentApprovalState, type AgentAuthorizationRequest, type AgentMessage, type AgentNextAction, type AgentOperationLevel, type AgentSession, type AgentSessionSummary, type AgentToolCall, type AgentTodo, type AgentUIState } from '@/lib/api'
 import { text, type Language } from '@/lib/console'
 
 export type CommandSummary = {
@@ -22,6 +22,16 @@ export interface AuthorizationGate {
   requiredLevel: AgentOperationLevel
   source: 'pending' | 'legacy'
   messageIndex?: number
+  stateLabel?: string
+  stateDetail?: string
+  uiHint?: string
+}
+
+export interface AgentSessionDisplayHint {
+  label: string
+  detail?: string
+  tone: 'muted' | 'info' | 'success' | 'warning' | 'danger'
+  source?: string
 }
 
 export function sessionTitle(item: AgentSessionSummary | AgentSession, language: Language) {
@@ -229,12 +239,47 @@ export function nextActionSuggestedPrompt(nextAction: AgentNextAction | undefine
   return ''
 }
 
-export function buildPendingAuthorizationGate(auth: AgentAuthorizationRequest | undefined, language: Language): AuthorizationGate | null {
+export function sessionDisplayHint(session: AgentSession | undefined | null, language: Language): AgentSessionDisplayHint | null {
+  const uiState = session?.ui_state
+  const approvalState = session?.approval_state
+  if (!uiState && !approvalState) return null
+
+  const uiLabel = uiState?.state ? uiStateLabel(uiState.state, language) : ''
+  const approvalLabel = approvalState?.state || approvalState?.decision
+    ? approvalStateLabel(approvalState.state || approvalState.decision, language)
+    : ''
+  const label = approvalState && String(uiState?.state || '').toLowerCase() === 'approval'
+    ? approvalLabel || uiLabel
+    : uiLabel || approvalLabel
+  if (!label) return null
+
+  const detail = firstDisplayText(
+    uiState?.message,
+    approvalState?.reason,
+    approvalState?.action_name,
+    uiState?.tool_name,
+    uiState?.phase,
+  )
+  if (!approvalState && String(uiState?.state || '').toLowerCase() === 'idle' && !detail) return null
+  return {
+    label,
+    detail: detail ? truncate(detail, 96) : undefined,
+    tone: uiStateTone(uiState, approvalState),
+    source: firstDisplayText(uiState?.source, approvalState?.approval_kind),
+  }
+}
+
+export function buildPendingAuthorizationGate(
+  auth: AgentAuthorizationRequest | undefined,
+  language: Language,
+  hints?: { approvalState?: AgentApprovalState; uiState?: AgentUIState },
+): AuthorizationGate | null {
   if (!auth || String(auth.status || '').toLowerCase() !== 'pending') return null
   const args = recordFromUnknown(auth.arguments)
   const action = String(auth.action_name || 'agent.action')
   const target = agentAuthorizationTargetFromArgs(args)
   const scope = String(args.scope || args.scope_url || '').trim()
+  const stateHint = authorizationStateHint(hints?.approvalState, hints?.uiState, language)
   return {
     id: auth.id,
     action,
@@ -246,6 +291,9 @@ export function buildPendingAuthorizationGate(auth: AgentAuthorizationRequest | 
     requiredLevel: normalizeAgentOperationLevel(auth.required_level || requiredLevelForDeniedAction(action)),
     prompt: auth.original_prompt || buildAuthorizationRetryPrompt('', action, target, scope, language),
     source: 'pending',
+    stateLabel: stateHint?.label,
+    stateDetail: stateHint?.detail,
+    uiHint: stateHint?.hint,
   }
 }
 
@@ -286,6 +334,98 @@ export function buildLegacyAuthorizationGate(messages: AgentMessage[], language:
 
 export function authorizationGateKey(gate: AuthorizationGate) {
   return gate.id || [gate.source, gate.messageIndex ?? '', gate.action, gate.target || '', gate.scope || ''].join('|')
+}
+
+function authorizationStateHint(approvalState: AgentApprovalState | undefined, uiState: AgentUIState | undefined, language: Language) {
+  if (!approvalState && !uiState) return null
+  const label = approvalState?.state || approvalState?.decision
+    ? approvalStateLabel(approvalState.state || approvalState.decision, language)
+    : uiState?.state
+      ? uiStateLabel(uiState.state, language)
+      : ''
+  const detail = firstDisplayText(approvalState?.reason, approvalState?.action_name, uiState?.message)
+  const hint = firstDisplayText(uiState?.message)
+  return label || detail || hint
+    ? {
+        label,
+        detail: detail ? truncate(detail, 96) : undefined,
+        hint: hint ? truncate(hint, 96) : undefined,
+      }
+    : null
+}
+
+function uiStateLabel(state: unknown, language: Language) {
+  const raw = String(state || '').trim()
+  const normalized = raw.toLowerCase()
+  const zh: Record<string, string> = {
+    idle: '空闲',
+    running: '运行中',
+    failed: '失败',
+    done: '完成',
+    approval: '待审批',
+    tool_running: '工具运行中',
+  }
+  const en: Record<string, string> = {
+    idle: 'Idle',
+    running: 'Running',
+    failed: 'Failed',
+    done: 'Done',
+    approval: 'Approval',
+    tool_running: 'Tool running',
+  }
+  return language === 'zh' ? zh[normalized] || raw : en[normalized] || raw
+}
+
+function approvalStateLabel(state: unknown, language: Language) {
+  const raw = String(state || '').trim()
+  const normalized = raw.toLowerCase()
+  const zh: Record<string, string> = {
+    pending: '审批待处理',
+    approved: '已批准',
+    denied: '已拒绝',
+    cancelled: '已取消',
+    canceled: '已取消',
+    modified: '已修改',
+    expired: '已过期',
+    unknown: '审批状态未知',
+  }
+  const en: Record<string, string> = {
+    pending: 'Approval pending',
+    approved: 'Approved',
+    denied: 'Denied',
+    cancelled: 'Cancelled',
+    canceled: 'Cancelled',
+    modified: 'Modified',
+    expired: 'Expired',
+    unknown: 'Approval unknown',
+  }
+  return language === 'zh' ? zh[normalized] || raw : en[normalized] || raw
+}
+
+function uiStateTone(uiState: AgentUIState | undefined, approvalState: AgentApprovalState | undefined): AgentSessionDisplayHint['tone'] {
+  const explicit = String(uiState?.tone || '').toLowerCase()
+  if (['info', 'success', 'warning', 'danger', 'muted'].includes(explicit)) return explicit as AgentSessionDisplayHint['tone']
+  if (explicit === 'neutral') return 'muted'
+
+  const approval = String(approvalState?.state || approvalState?.decision || '').toLowerCase()
+  if (approval === 'pending') return 'warning'
+  if (['approved', 'modified'].includes(approval)) return 'success'
+  if (['denied', 'cancelled', 'canceled', 'expired'].includes(approval)) return 'danger'
+
+  const state = String(uiState?.state || '').toLowerCase()
+  if (['approval'].includes(state)) return 'warning'
+  if (['failed'].includes(state)) return 'danger'
+  if (['done'].includes(state)) return 'success'
+  if (['running', 'tool_running'].includes(state)) return 'info'
+  return 'muted'
+}
+
+function firstDisplayText(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  }
+  return ''
 }
 
 function matchLine(value: string, pattern: RegExp) {
