@@ -1,4 +1,5 @@
 import { Loader2, ShieldCheck } from 'lucide-react'
+import { GlassAlert } from '@/components/glass'
 import { Button } from '@/components/ui/button'
 import { text, type Language } from '@/lib/console'
 import type { AgentAuthorizationRequest, AgentOperationLevel } from '@/lib/api'
@@ -36,7 +37,7 @@ export function AuthorizationGateBanner({
   onDeny: () => void
 }) {
   return (
-    <div className="mb-2 rounded-2xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-50 shadow-[0_0_24px_rgba(251,191,36,0.08)]">
+    <GlassAlert tone="warning" className="mb-2 px-3 py-2 text-xs shadow-[0_0_24px_rgba(251,191,36,0.08)]">
       <div className="flex flex-wrap items-center gap-2">
         <ShieldCheck className="h-4 w-4 text-amber-200" />
         <span className="font-medium">{text(language, '需要授权确认', 'Authorization required')}</span>
@@ -77,7 +78,7 @@ export function AuthorizationGateBanner({
           <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap font-mono text-amber-50/80">{safeJson(gate.arguments)}</pre>
         </details>
       )}
-    </div>
+    </GlassAlert>
   )
 }
 

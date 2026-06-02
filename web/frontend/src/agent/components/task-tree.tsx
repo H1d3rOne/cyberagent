@@ -1,4 +1,5 @@
 import { Loader2, MessageSquare, Plus, RefreshCcw, Trash2 } from 'lucide-react'
+import { GlassPanel, GlassToolbar } from '@/components/glass'
 import { Button } from '@/components/ui/button'
 import { text, type Language } from '@/lib/console'
 import { cn } from '@/lib/utils'
@@ -30,7 +31,7 @@ export function TaskTree({
 }) {
   if (collapsed) {
     return (
-      <aside className="glass-panel flex min-h-0 w-12 shrink-0 flex-col items-center gap-2 overflow-hidden py-2">
+      <GlassPanel as="aside" variant="panel" className="flex min-h-0 w-12 shrink-0 flex-col items-center gap-2 overflow-hidden py-2">
         <button
           type="button"
           onClick={onToggleCollapsed}
@@ -55,13 +56,13 @@ export function TaskTree({
         >
           <RefreshCcw className={cn('h-4 w-4', loading && 'animate-spin')} />
         </button>
-      </aside>
+      </GlassPanel>
     )
   }
 
   return (
-    <aside className="glass-panel flex min-h-0 w-[282px] shrink-0 flex-col overflow-hidden">
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3">
+    <GlassPanel as="aside" variant="panel" className="flex min-h-0 w-[282px] shrink-0 flex-col overflow-hidden">
+      <GlassToolbar as="header" className="flex h-12 shrink-0 items-center justify-between border-b px-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-medium">
             <MessageSquare className="h-4 w-4 text-primary" />
@@ -77,7 +78,7 @@ export function TaskTree({
         >
           ×
         </button>
-      </header>
+      </GlassToolbar>
 
       <div className="grid grid-cols-2 gap-2 border-b border-white/10 p-2">
         <Button type="button" onClick={onCreate} disabled={loading} className="h-9 rounded-xl">
@@ -142,6 +143,6 @@ export function TaskTree({
           </div>
         )}
       </div>
-    </aside>
+    </GlassPanel>
   )
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { AlertTriangle, Bot, Code2, Download, Loader2, RefreshCcw, ShieldCheck } from 'lucide-react'
+import { GlassAlert, GlassPanel, GlassToolbar } from '@/components/glass'
 import { Button } from '@/components/ui/button'
 import type {
   AgentOperationLevel,
@@ -454,8 +455,8 @@ export function AgentCockpitPage() {
         onDelete={(sessionId) => { void deleteSession(sessionId) }}
       />
 
-      <section className="agent-console flex min-h-0 min-w-0 flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-white/10 px-3 sm:px-4">
+      <GlassPanel as="section" variant="elevated" className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+        <GlassToolbar as="header" className="flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3 sm:px-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="relative grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-primary/30 bg-primary/10">
               <Bot className="h-4 w-4 text-primary" />
@@ -494,20 +495,20 @@ export function AgentCockpitPage() {
               <Download className="h-3.5 w-3.5" />
             </Button>
           </div>
-        </header>
+        </GlassToolbar>
 
         {state.error && (
-          <div className="flex shrink-0 items-center gap-2 border-b border-red-400/20 bg-red-500/10 px-4 py-2 text-xs text-red-100">
+          <GlassAlert tone="danger" className="flex shrink-0 items-center gap-2 rounded-none border-x-0 border-t-0 px-4 py-2 text-xs">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 truncate">{state.error}</span>
-          </div>
+          </GlassAlert>
         )}
 
         {runSummary && (
-          <div className="flex shrink-0 items-center gap-2 border-b border-cyan-400/15 bg-cyan-400/10 px-4 py-2 text-xs text-cyan-50">
+          <GlassAlert tone="info" className="flex shrink-0 items-center gap-2 rounded-none border-x-0 border-t-0 px-4 py-2 text-xs">
             <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-cyan-200" />
             <span className="min-w-0 truncate">{runSummaryLine(runSummary, language)}</span>
-          </div>
+          </GlassAlert>
         )}
 
         <div className="agent-scroll-area min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
@@ -554,10 +555,10 @@ export function AgentCockpitPage() {
           sending={state.sending}
           disabled={state.loadingSession}
         />
-      </section>
+      </GlassPanel>
 
-      <aside className="glass-panel hidden min-h-0 flex-col overflow-hidden xl:flex">
-        <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
+      <GlassPanel as="aside" variant="panel" className="hidden min-h-0 flex-col overflow-hidden xl:flex">
+        <GlassToolbar className="flex h-12 shrink-0 items-center justify-between border-b px-4">
           <div className="min-w-0">
             <div className="text-sm font-medium">Tool Inspector</div>
             <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
@@ -574,7 +575,7 @@ export function AgentCockpitPage() {
           >
             ×
           </Button>
-        </div>
+        </GlassToolbar>
         <div className="agent-scroll-area min-h-0 flex-1 overflow-y-auto p-3">
           <ToolInspector
             tool={selectedTool}
@@ -583,7 +584,7 @@ export function AgentCockpitPage() {
             onClear={() => dispatch({ type: 'ui/selectTool', toolCallId: undefined })}
           />
         </div>
-      </aside>
+      </GlassPanel>
 
       {traceOpen && (
         <TraceViewerDrawer

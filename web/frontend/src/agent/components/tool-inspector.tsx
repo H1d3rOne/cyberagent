@@ -1,4 +1,5 @@
 import { Copy, FileText, Layers3, RotateCcw, Wrench } from 'lucide-react'
+import { GlassCard } from '@/components/glass'
 import { Button } from '@/components/ui/button'
 import { text, type Language } from '@/lib/console'
 import { cn } from '@/lib/utils'
@@ -18,7 +19,7 @@ export function ToolInspector({
   onClear?: () => void
 }) {
   return (
-    <div className="flex min-h-0 flex-col gap-3">
+    <GlassCard variant="subtle" className="flex min-h-full flex-col gap-3 p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="text-sm font-medium">{text(language, 'Tool Inspector', 'Tool Inspector')}</div>
@@ -104,6 +105,6 @@ export function ToolInspector({
           {text(language, '未选择工具调用。点击时间线中的工具卡片后，这里会显示完整结果。', 'No tool selected. Click a tool card in the timeline to inspect it here.')}
         </div>
       )}
-    </div>
+    </GlassCard>
   )
 }

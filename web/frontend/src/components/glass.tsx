@@ -1,8 +1,9 @@
-import { forwardRef, type HTMLAttributes } from 'react'
+import { forwardRef, type HTMLAttributes, type Ref } from 'react'
 import { cn } from '@/lib/utils'
 
 export type GlassVariant = 'subtle' | 'panel' | 'elevated'
 export type GlassTone = 'muted' | 'info' | 'success' | 'warning' | 'danger'
+type GlassElement = 'div' | 'section' | 'aside' | 'article' | 'header' | 'footer'
 
 const variantClass: Record<GlassVariant, string> = {
   subtle: 'glass-surface-subtle',
@@ -26,19 +27,20 @@ const statusToneClass: Record<GlassTone, string> = {
   danger: 'glass-status-pill-danger',
 }
 
-export interface GlassSurfaceProps extends HTMLAttributes<HTMLDivElement> {
+export interface GlassSurfaceProps extends HTMLAttributes<HTMLElement> {
+  as?: GlassElement
   variant?: GlassVariant
   interactive?: boolean
   selected?: boolean
 }
 
-export const GlassPanel = forwardRef<HTMLDivElement, GlassSurfaceProps>(function GlassPanel(
-  { className, variant = 'panel', interactive, selected, ...props },
+export const GlassPanel = forwardRef<HTMLElement, GlassSurfaceProps>(function GlassPanel(
+  { as: Component = 'div', className, variant = 'panel', interactive, selected, ...props },
   ref,
 ) {
   return (
-    <div
-      ref={ref}
+    <Component
+      ref={ref as Ref<never>}
       className={cn(
         'glass-surface rounded-3xl',
         variantClass[variant],
@@ -51,13 +53,13 @@ export const GlassPanel = forwardRef<HTMLDivElement, GlassSurfaceProps>(function
   )
 })
 
-export const GlassCard = forwardRef<HTMLDivElement, GlassSurfaceProps>(function GlassCard(
-  { className, variant = 'subtle', interactive, selected, ...props },
+export const GlassCard = forwardRef<HTMLElement, GlassSurfaceProps>(function GlassCard(
+  { as: Component = 'div', className, variant = 'subtle', interactive, selected, ...props },
   ref,
 ) {
   return (
-    <div
-      ref={ref}
+    <Component
+      ref={ref as Ref<never>}
       className={cn(
         'glass-surface rounded-2xl',
         variantClass[variant],
@@ -70,22 +72,27 @@ export const GlassCard = forwardRef<HTMLDivElement, GlassSurfaceProps>(function 
   )
 })
 
-export const GlassToolbar = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(function GlassToolbar(
-  { className, ...props },
+export interface GlassToolbarProps extends HTMLAttributes<HTMLElement> {
+  as?: GlassElement
+}
+
+export const GlassToolbar = forwardRef<HTMLElement, GlassToolbarProps>(function GlassToolbar(
+  { as: Component = 'div', className, ...props },
   ref,
 ) {
-  return <div ref={ref} className={cn('glass-toolbar', className)} {...props} />
+  return <Component ref={ref as Ref<never>} className={cn('glass-toolbar', className)} {...props} />
 })
 
-export interface GlassAlertProps extends HTMLAttributes<HTMLDivElement> {
+export interface GlassAlertProps extends HTMLAttributes<HTMLElement> {
+  as?: GlassElement
   tone?: GlassTone
 }
 
-export const GlassAlert = forwardRef<HTMLDivElement, GlassAlertProps>(function GlassAlert(
-  { className, tone = 'muted', ...props },
+export const GlassAlert = forwardRef<HTMLElement, GlassAlertProps>(function GlassAlert(
+  { as: Component = 'div', className, tone = 'muted', ...props },
   ref,
 ) {
-  return <div ref={ref} className={cn('glass-alert', toneClass[tone], className)} {...props} />
+  return <Component ref={ref as Ref<never>} className={cn('glass-alert', toneClass[tone], className)} {...props} />
 })
 
 export interface GlassDialogProps extends HTMLAttributes<HTMLDivElement> {
