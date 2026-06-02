@@ -146,6 +146,15 @@ export function SettingsPage() {
     window.setTimeout(() => setSaved(false), 1600)
   }
 
+  const clearLocalSettings = () => {
+    resetSettings()
+    setError('')
+    setProviderSaveResult(null)
+    setWebSearchSaveResult(null)
+    setTestResult(null)
+    save()
+  }
+
   const updateActiveProvider = (patch: Partial<AgentProviderProfile>) => {
     if (!activeProvider) return
     setTestResult(null)
@@ -319,12 +328,25 @@ export function SettingsPage() {
               <PageDescription className="mt-2">
                 {text(
                   language,
-                  '所有控制台设置都会自动保存到本地浏览器：daemon 连接、Agent 操作员、AI Provider 和语言。',
-                  'All console settings are auto-saved in this browser: daemon connection, Agent operator, AI provider and language.',
+                  '控制台设置会自动保存到当前浏览器 localStorage，包括 daemon token、AI Provider API Key、API Auth Profile 的 Token/密码/Header/Cookie。这里不是密钥保险箱；共享浏览器或演示结束后请清除本地配置。',
+                  'Console settings are auto-saved to this browser localStorage, including daemon tokens, AI Provider API keys, and API Auth Profile tokens/passwords/headers/cookies. This is not a secret vault; clear local settings after using a shared browser or demo environment.',
                 )}
               </PageDescription>
             </div>
           </PageHeader>
+          <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-400/10 p-3 text-xs leading-5 text-amber-50">
+            <div className="mb-1 flex items-center gap-2 font-semibold">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-200" />
+              {text(language, '密钥存储说明', 'Secret storage note')}
+            </div>
+            <p className="text-amber-100/80">
+              {text(
+                language,
+                '本地持久化键为 cyberagent_console_settings。点击“清除本地配置”会把本地控制台设置恢复为默认值并清空已填的本地 token/API key/API auth secret；不会删除已保存到 daemon 的 provider 配置。',
+                'The local persistence key is cyberagent_console_settings. “Clear local settings” restores local console settings to defaults and clears locally entered tokens/API keys/API auth secrets; it does not delete provider config already saved to the daemon.',
+              )}
+            </p>
+          </div>
         </Section>
 
         <div className="rounded-[1.5rem] border border-white/[0.08] bg-white/[0.03] p-4 sm:p-5">
@@ -353,6 +375,9 @@ export function SettingsPage() {
                 type="password"
                 className="h-10 rounded-xl font-mono"
               />
+              <div className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                {text(language, '该 daemon token 会自动保存到当前浏览器 localStorage。', 'This daemon token is auto-saved to this browser localStorage.')}
+              </div>
             </Field>
 
             <Field icon={UserRound} label={t('operator')} htmlFor="operator">
@@ -391,9 +416,15 @@ export function SettingsPage() {
               <RefreshCcw className={cn('mr-2 h-4 w-4', checking && 'animate-spin')} />
               {t('connect')}
             </Button>
-            <Button type="button" variant="ghost" onClick={resetSettings} className="rounded-2xl">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={clearLocalSettings}
+              className="rounded-2xl text-amber-100/85 hover:text-amber-50"
+              title={text(language, '恢复默认并清空本地 token/API key/API auth secret', 'Restore defaults and clear locally stored tokens/API keys/API auth secrets')}
+            >
               <RotateCcw className="mr-2 h-4 w-4" />
-              {text(language, '重置', 'Reset')}
+              {text(language, '清除本地配置', 'Clear local settings')}
             </Button>
           </div>
         </div>
@@ -407,8 +438,8 @@ export function SettingsPage() {
           <p className="mb-3 text-xs leading-5 text-muted-foreground">
             {text(
               language,
-              '用于 Agent 的 web.search 工具。密钥只保存到 daemon provider 配置；未配置时 Agent 会返回 not_configured。',
-              'Used by the Agent web.search tool. The key is saved only in daemon provider config; when unset, the Agent returns not_configured.',
+              '用于 Agent 的 web.search 工具。该 API Key 不写入控制台 settings localStorage；点击保存后写入 daemon provider 配置。未配置时 Agent 会返回 not_configured。',
+              'Used by the Agent web.search tool. This API key is not written to console settings localStorage; clicking Save writes it to daemon provider config. When unset, the Agent returns not_configured.',
             )}
           </p>
 
@@ -512,6 +543,14 @@ export function SettingsPage() {
             </Button>
           </SectionHeader>
 
+          <p className="mb-3 text-xs leading-5 text-muted-foreground">
+            {text(
+              language,
+              'Provider 字段会随控制台设置自动保存到当前浏览器 localStorage；点击保存会同时把 Provider profile 写入 daemon。',
+              'Provider fields are auto-saved with console settings to this browser localStorage; clicking Save also writes provider profiles to the daemon.',
+            )}
+          </p>
+
           <div className="grid gap-4">
             <div className="grid gap-4 lg:grid-cols-2">
               <Field icon={PlugZap} label={text(language, '选择 Provider', 'Select provider')} htmlFor="provider-select">
@@ -572,6 +611,9 @@ export function SettingsPage() {
                   type="password"
                   className="h-10 rounded-xl font-mono"
                 />
+                <div className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                  {text(language, '该 API Key 会自动保存到当前浏览器 localStorage；保存 Provider 时也会发送到 daemon。', 'This API key is auto-saved to this browser localStorage; saving the provider also sends it to the daemon.')}
+                </div>
               </Field>
 
               <Field icon={Globe2} label="Provider Base URL" htmlFor="provider-base-url">
@@ -686,8 +728,8 @@ export function SettingsPage() {
           <p className="mb-3 text-xs leading-5 text-muted-foreground">
             {text(
               language,
-              '用于 http.request 工具的授权上下文。密钥只发给 daemon，LLM 只看到 profile ID；默认 profile 仅在 Base URL host 匹配时自动附加。',
-              'Authorization context for the http.request tool. Secrets are sent only to the daemon; the LLM sees profile IDs only. The default profile is attached only when the Base URL host matches.',
+              '用于 http.request 工具的授权上下文。Profile secret 会随控制台设置自动保存到当前浏览器 localStorage；Agent 调用时只把启用的 profile 发给 daemon，LLM 只看到 profile ID。默认 profile 仅在 Base URL host 匹配时自动附加。',
+              'Authorization context for the http.request tool. Profile secrets are auto-saved with console settings to this browser localStorage; during Agent calls, enabled profiles are sent to the daemon and the LLM sees profile IDs only. The default profile is attached only when the Base URL host matches.',
             )}
           </p>
 
@@ -919,7 +961,7 @@ export function SettingsPage() {
           label={text(language, '持久化', 'Persistence')}
           ok
           value="localStorage"
-          detail="cyberagent_console_settings"
+          detail={text(language, 'cyberagent_console_settings · 含本地 secret', 'cyberagent_console_settings · includes local secrets')}
         />
       </aside>
     </div>
