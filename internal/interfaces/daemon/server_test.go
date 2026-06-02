@@ -20,6 +20,7 @@ import (
 	"time"
 
 	agentllm "github.com/H1d3rOne/cyberagent/internal/agent/llm"
+	agentruntime "github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	"github.com/H1d3rOne/cyberagent/internal/core/events"
 	"github.com/H1d3rOne/cyberagent/internal/core/reporting"
@@ -28,6 +29,7 @@ import (
 	webiface "github.com/H1d3rOne/cyberagent/internal/interfaces/web"
 	artifactruntime "github.com/H1d3rOne/cyberagent/internal/runtime/artifacts"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
+	runtimesqlite "github.com/H1d3rOne/cyberagent/internal/runtime/state/sqlite"
 )
 
 func TestNewServerCreatesTokenFileAndNormalizesDefaults(t *testing.T) {
@@ -58,6 +60,81 @@ func TestNewServerCreatesTokenFileAndNormalizesDefaults(t *testing.T) {
 			t.Fatalf("token file permissions = %o, want 600", got)
 		}
 	}
+}
+
+func TestNewServerEngineRuntimeRecoversInterruptedRuns(t *testing.T) {
+	t.Setenv("CYBERAGENT_RUNTIME", "engine")
+	runsDir := t.TempDir()
+	tokenFile := filepath.Join(t.TempDir(), "config", "token")
+	ctx := context.Background()
+
+	store, err := runtimesqlite.Open(agentRuntimeSQLitePath(runsDir))
+	if err != nil {
+		t.Fatalf("open runtime store: %v", err)
+	}
+	task := agentruntime.Task{
+		ID:        "task-daemon-recover",
+		SessionID: "session-daemon-recover",
+		Origin:    "user",
+		Goal:      "recover interrupted daemon run",
+		Created:   time.Now().UTC().Add(-2 * time.Minute),
+	}
+	if err := store.SaveTask(ctx, task); err != nil {
+		t.Fatalf("SaveTask() error = %v", err)
+	}
+	run := agentruntime.Run{
+		ID:        "run-daemon-recover",
+		TaskID:    task.ID,
+		State:     string(agentruntime.RunRunning),
+		CreatedAt: time.Now().UTC().Add(-time.Minute),
+	}
+	if err := store.SaveRun(ctx, run); err != nil {
+		t.Fatalf("SaveRun() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close seed runtime store: %v", err)
+	}
+
+	server, err := NewServer(Config{RunsDir: runsDir, TokenFile: tokenFile})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := runtimesqlite.Open(agentRuntimeSQLitePath(runsDir))
+	if err != nil {
+		t.Fatalf("reopen runtime store: %v", err)
+	}
+	defer reopened.Close()
+	recovered, err := reopened.LoadRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("LoadRun() error = %v", err)
+	}
+	if recovered.State != string(agentruntime.RunFailed) {
+		t.Fatalf("recovered run state = %q, want %q", recovered.State, agentruntime.RunFailed)
+	}
+	events, err := reopened.ListEvents(ctx, agentruntime.EventFilter{TaskID: task.ID}, 10)
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	for _, ev := range events {
+		if ev.Type != "task_failed" || ev.RunID != run.ID {
+			continue
+		}
+		if ev.SessionID != task.SessionID {
+			t.Fatalf("recovery event SessionID = %q, want %q", ev.SessionID, task.SessionID)
+		}
+		if got, _ := ev.Data["previous_state"].(string); got != string(agentruntime.RunRunning) {
+			t.Fatalf("recovery event previous_state = %q, want %q", got, agentruntime.RunRunning)
+		}
+		if got, _ := ev.Data["recovery"].(bool); !got {
+			t.Fatalf("recovery event recovery flag = %v, want true", got)
+		}
+		return
+	}
+	t.Fatalf("missing task_failed recovery event in %#v", events)
 }
 
 func TestParseAgentPlannerResponseUnwrapsOpenAIChatCompletions(t *testing.T) {

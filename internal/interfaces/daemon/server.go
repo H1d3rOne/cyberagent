@@ -69,6 +69,10 @@ func NewServer(cfg Config) (*Server, error) {
 		runtimeStore = store
 		engine = agentruntime.NewEngine(store)
 		svc.agent.AttachEngine(engine)
+		if _, err := engine.RecoverInterruptedRuns(context.Background()); err != nil {
+			_ = runtimeStore.Close()
+			return nil, err
+		}
 	}
 	scheduler.BindRunner(scheduleRunner{
 		SendAgentPrompt: func(ctx context.Context, s scheduleSpec) (string, error) {
