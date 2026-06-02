@@ -1,9 +1,9 @@
-import { forwardRef, type HTMLAttributes, type Ref } from 'react'
+import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type Ref } from 'react'
 import { cn } from '@/lib/utils'
 
 export type GlassVariant = 'subtle' | 'panel' | 'elevated'
 export type GlassTone = 'muted' | 'info' | 'success' | 'warning' | 'danger'
-type GlassElement = 'div' | 'section' | 'aside' | 'article' | 'header' | 'footer'
+type GlassElement = 'div' | 'section' | 'aside' | 'article' | 'header' | 'footer' | 'button'
 
 const variantClass: Record<GlassVariant, string> = {
   subtle: 'glass-surface-subtle',
@@ -32,6 +32,8 @@ export interface GlassSurfaceProps extends HTMLAttributes<HTMLElement> {
   variant?: GlassVariant
   interactive?: boolean
   selected?: boolean
+  type?: ButtonHTMLAttributes<HTMLButtonElement>['type']
+  disabled?: ButtonHTMLAttributes<HTMLButtonElement>['disabled']
 }
 
 export const GlassPanel = forwardRef<HTMLElement, GlassSurfaceProps>(function GlassPanel(

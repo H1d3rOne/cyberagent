@@ -1,4 +1,5 @@
 import { Bot, CheckCircle2, Clock, Loader2, MessageSquare, ShieldCheck, Sparkles, Wrench } from 'lucide-react'
+import { GlassAlert, GlassCard, StatusPill } from '@/components/glass'
 import { Button } from '@/components/ui/button'
 import { text, type Language } from '@/lib/console'
 import { cn } from '@/lib/utils'
@@ -55,10 +56,10 @@ export function TurnTimeline({
         ))}
         {state.sending && !state.optimisticMessages.some((item) => item.status === 'sending') && (
           <div className="flex justify-start">
-            <div className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2 text-xs text-muted-foreground">
+            <GlassAlert tone="muted" className="inline-flex items-center gap-2 px-3 py-2 text-xs">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {text(language, 'Agent 正在处理...', 'Agent is working...')}
-            </div>
+            </GlassAlert>
           </div>
         )}
       </div>
@@ -69,7 +70,7 @@ export function TurnTimeline({
 function EmptyAgentState({ language, onCreate }: { language: Language; onCreate: () => void }) {
   return (
     <div className="grid h-full place-items-center">
-      <div className="max-w-md text-center">
+      <GlassCard variant="panel" className="max-w-md p-6 text-center">
         <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-3xl border border-primary/25 bg-primary/10">
           <Bot className="h-8 w-8 text-primary" />
         </div>
@@ -81,7 +82,7 @@ function EmptyAgentState({ language, onCreate }: { language: Language; onCreate:
           <Sparkles className="mr-2 h-4 w-4" />
           {text(language, '创建会话', 'Create session')}
         </Button>
-      </div>
+      </GlassCard>
     </div>
   )
 }
@@ -109,7 +110,7 @@ function TurnGroup({
   const approvalEvents = state.events.filter((event) => turn.eventIds.includes(event.id) && (event.type === 'approval_required' || event.type === 'approval_resolved'))
 
   return (
-    <section className="relative rounded-3xl border border-white/10 bg-white/[0.025] p-3 shadow-[0_18px_50px_rgba(0,0,0,.16)]">
+    <GlassCard as="section" variant="panel" className="relative p-3 shadow-[0_18px_50px_rgba(0,0,0,.16)]">
       <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-white/10 pb-2">
         <span className={cn('grid h-7 w-7 place-items-center rounded-full border', statusPillClass(turn.status))}>
           {turn.status === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -119,9 +120,9 @@ function TurnGroup({
           <div className="font-mono text-[10px] text-muted-foreground">{formatTime(turn.startedAt)} · {statusLabel(turn.status, language)}</div>
         </div>
         <div className="flex flex-wrap gap-1.5 font-mono text-[10px] text-muted-foreground">
-          <span className="rounded-full border border-white/10 bg-black/10 px-2 py-1">messages {turn.messages.length}</span>
-          <span className="rounded-full border border-white/10 bg-black/10 px-2 py-1">tools {tools.length}</span>
-          <span className="rounded-full border border-white/10 bg-black/10 px-2 py-1">todos {todos.length}</span>
+          <StatusPill tone="muted">messages {turn.messages.length}</StatusPill>
+          <StatusPill tone="muted">tools {tools.length}</StatusPill>
+          <StatusPill tone="muted">todos {todos.length}</StatusPill>
         </div>
       </div>
 
@@ -139,10 +140,10 @@ function TurnGroup({
         ))}
 
         {!turn.messages.length && turn.modelText && (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3 text-sm leading-6">
+          <GlassCard variant="subtle" className="p-3 text-sm leading-6">
             <div className="mb-2 flex items-center gap-2 font-mono text-[10px] text-muted-foreground"><Bot className="h-3 w-3" />model token stream</div>
             <div className="whitespace-pre-wrap">{turn.modelText}</div>
-          </div>
+          </GlassCard>
         )}
 
         {turn.reasoning && (
@@ -155,14 +156,14 @@ function TurnGroup({
         {tools.length ? (
           <div className="grid gap-2 sm:grid-cols-2">
             {tools.map((tool) => tool && (
-              <button
+              <GlassCard
                 key={tool.id}
+                as="button"
                 type="button"
                 onClick={() => onSelectTool(tool.id)}
-                className={cn(
-                  'rounded-2xl border p-3 text-left transition hover:border-primary/30 hover:bg-white/[0.055]',
-                  state.selectedToolCallId === tool.id ? 'border-primary/35 bg-primary/10' : 'border-white/10 bg-black/10',
-                )}
+                interactive
+                selected={state.selectedToolCallId === tool.id}
+                className="p-3 text-left"
               >
                 <div className="flex items-start gap-2">
                   <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', toolDotClass(tool.status))} />
@@ -172,25 +173,25 @@ function TurnGroup({
                   </div>
                   <span className={cn('rounded-full border px-1.5 py-0.5 font-mono text-[10px]', statusPillClass(tool.status))}>{statusLabel(tool.status, language)}</span>
                 </div>
-              </button>
+              </GlassCard>
             ))}
           </div>
         ) : null}
 
         {approvalEvents.map((event) => (
-          <div key={event.id} className="rounded-2xl border border-amber-300/20 bg-amber-400/10 px-3 py-2 text-xs text-amber-50">
+          <GlassAlert key={event.id} tone="warning" className="px-3 py-2 text-xs">
             <div className="flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4 text-amber-200" />{event.type === 'approval_required' ? text(language, '等待审批', 'Approval required') : text(language, '审批已处理', 'Approval resolved')}</div>
             <div className="mt-1 text-amber-100/75">{event.message || event.detail || safeJson(event.data || {})}</div>
-          </div>
+          </GlassAlert>
         ))}
 
         {memoryEvents.map((event) => (
-          <div key={event.id} className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-50">
+          <GlassAlert key={event.id} tone="info" className="px-3 py-2 text-xs">
             {text(language, '记忆已压缩：', 'Memory compacted: ')}{event.message || event.detail || formatTime(event.timestamp)}
-          </div>
+          </GlassAlert>
         ))}
       </div>
-    </section>
+    </GlassCard>
   )
 }
 
@@ -219,7 +220,7 @@ function MessageBubble({
 
   return (
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
-      <div className={cn(
+      <GlassCard as="article" variant="subtle" className={cn(
         'max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm',
         isUser && 'bg-primary/20 text-foreground',
         isAgent && 'border border-white/10 bg-white/[0.055] text-foreground/90',
@@ -284,7 +285,7 @@ function MessageBubble({
             </div>
           </div>
         ) : null}
-      </div>
+      </GlassCard>
     </div>
   )
 }
@@ -292,13 +293,13 @@ function MessageBubble({
 function OptimisticBubble({ message, language }: { message: OptimisticMessage; language: Language }) {
   return (
     <div className="flex justify-end">
-      <div className={cn('max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-6', message.status === 'failed' ? 'border border-red-300/25 bg-red-400/10' : 'bg-primary/20')}>
+      <GlassCard as="article" variant="subtle" className={cn('max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-6', message.status === 'failed' ? 'border border-red-300/25 bg-red-400/10' : 'bg-primary/20')}>
         <div className="mb-1 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
           <MessageSquare className="h-3 w-3" />{text(language, '你', 'You')} · {formatTime(message.timestamp)}
           {message.status === 'sending' && <Loader2 className="ml-auto h-3 w-3 animate-spin" />}
         </div>
         <div className="whitespace-pre-wrap break-words">{message.content}</div>
-      </div>
+      </GlassCard>
     </div>
   )
 }

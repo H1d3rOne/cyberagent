@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { ChevronDown, Play, Plus, Send, Sparkles, X } from 'lucide-react'
+import { GlassAlert, GlassCard, GlassToolbar, StatusPill } from '@/components/glass'
 import { Button } from '@/components/ui/button'
 import { text, type Language } from '@/lib/console'
 import { cn } from '@/lib/utils'
@@ -58,40 +59,42 @@ export function Composer({
 }) {
   const prompts = useMemo(() => QUICK_PROMPTS[language], [language])
   return (
-    <footer className="shrink-0 border-t border-white/10 bg-[#050816]/70 p-2">
+    <GlassToolbar as="footer" className="shrink-0 border-t p-2">
       {suggestedPrompt && (
-        <div className="mb-2 flex items-center gap-2 rounded-2xl border border-primary/20 bg-primary/10 px-3 py-2 text-xs text-primary">
+        <GlassAlert tone="info" className="mb-2 flex items-center gap-2 px-3 py-2 text-xs">
           <Sparkles className="h-3.5 w-3.5" />
           <span className="min-w-0 flex-1 truncate">{suggestedPrompt}</span>
           <Button type="button" variant="ghost" size="sm" onClick={() => onQuickPrompt(suggestedPrompt)} className="h-7 rounded-xl px-2 text-primary">
             {text(language, '填入', 'Fill')}
           </Button>
-        </div>
+        </GlassAlert>
       )}
 
-      <div className="mb-1.5 flex h-8 items-center gap-2 overflow-x-auto rounded-xl border border-white/10 bg-white/[0.03] px-2">
+      <GlassToolbar className="mb-1.5 flex h-8 items-center gap-2 overflow-x-auto rounded-xl border px-2">
         {prompts.map((prompt) => (
-          <button
+          <GlassCard
             key={prompt}
+            as="button"
             type="button"
             onClick={() => onQuickPrompt(prompt)}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-muted-foreground hover:border-primary/30 hover:text-foreground"
+            interactive
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
           >
             <Sparkles className="h-3.5 w-3.5" />
             {prompt}
-          </button>
+          </GlassCard>
         ))}
-      </div>
+      </GlassToolbar>
 
-      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-2.5 py-1.5 text-xs">
+      <GlassCard variant="subtle" className="mb-1.5 flex flex-wrap items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-xs">
         <div className="min-w-0 truncate font-medium text-muted-foreground">
           {text(language, '输入指令继续，事件流实时更新', 'Type a command to continue; events update live')}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <span className={cn('rounded-full border px-2 py-1 font-mono text-[10px]', statusPillClass(streamStatus))}>
+          <StatusPill className={cn('px-2 py-1', statusPillClass(streamStatus))}>
             {statusLabel(streamStatus, language)}
-          </span>
-          <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1 font-mono text-[10px]">{operationLevelLabel(operationLevel, language)}</span>
+          </StatusPill>
+          <StatusPill tone="muted" className="px-2 py-1">{operationLevelLabel(operationLevel, language)}</StatusPill>
           {suggestedPrompt && (
             <Button type="button" variant="ghost" size="sm" onClick={() => onQuickPrompt(suggestedPrompt)} className="h-7 rounded-lg px-2">
               {text(language, '下一步', 'Next')}
@@ -104,7 +107,7 @@ export function Composer({
             <Plus className="h-3.5 w-3.5" />
           </Button>
         </div>
-      </div>
+      </GlassCard>
 
       <div className="space-y-1.5">
         <textarea
@@ -164,6 +167,6 @@ export function Composer({
           </Button>
         </div>
       </div>
-    </footer>
+    </GlassToolbar>
   )
 }
