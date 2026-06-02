@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -950,7 +951,7 @@ func handleRunWrite(w http.ResponseWriter, r *http.Request, svc routerServices) 
 			EditArgs:           body.EditArgs,
 		}
 		var (
-			resolved any
+			resolved contracts.HITLRequest
 			err      error
 		)
 		switch action {
@@ -970,6 +971,7 @@ func handleRunWrite(w http.ResponseWriter, r *http.Request, svc routerServices) 
 			writeServiceError(w, err)
 			return
 		}
+		emitApprovalRuntimeResolved(r.Context(), svc, runID, action, resolved)
 		writeOK(w, http.StatusOK, resolved)
 		return
 	}
@@ -993,6 +995,133 @@ func handleRunWrite(w http.ResponseWriter, r *http.Request, svc routerServices) 
 	}
 
 	writeServiceError(w, services.NewError(services.CodeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path}, nil))
+}
+
+func emitApprovalRuntimeResolved(ctx context.Context, svc routerServices, runID, action string, resolved contracts.HITLRequest) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runID = strings.TrimSpace(runID)
+	if svc.agent == nil {
+		return
+	}
+	engine := svc.agent.runtimeEngine()
+	if engine == nil {
+		return
+	}
+	sessionID, taskID := approvalRuntimeSessionTask(svc.agent, runID)
+	data := approvalRuntimeResolvedData(runID, action, resolved)
+	if sessionID != "" {
+		data["session_id"] = sessionID
+	}
+	if taskID != "" {
+		data["task_id"] = taskID
+	}
+	now := time.Now().UTC()
+	engine.Publish(ctx, agentruntime.Event{
+		Type:      "approval_resolved",
+		SessionID: sessionID,
+		TaskID:    taskID,
+		RunID:     runID,
+		Data:      data,
+		Timestamp: now,
+	})
+	if approvalRuntimeDecision(action, resolved) != "cancel" {
+		return
+	}
+	failedData := map[string]any{
+		"reason":      "approval_cancelled",
+		"approval_id": resolved.ID,
+		"step_id":     resolved.StepID,
+		"run_id":      runID,
+		"status":      string(resolved.Status),
+	}
+	if sessionID != "" {
+		failedData["session_id"] = sessionID
+	}
+	if taskID != "" {
+		failedData["task_id"] = taskID
+	}
+	engine.Publish(ctx, agentruntime.Event{
+		Type:      "task_failed",
+		SessionID: sessionID,
+		TaskID:    taskID,
+		RunID:     runID,
+		Data:      failedData,
+		Timestamp: now,
+	})
+}
+
+func approvalRuntimeSessionTask(agent *agentManager, runID string) (string, string) {
+	if agent == nil || strings.TrimSpace(runID) == "" {
+		return "", ""
+	}
+	// Keep the lookup in sync with persisted sessions after a daemon restart;
+	// failures are non-fatal because runtime event publication is best-effort.
+	_ = agent.loadSessions()
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+	for id, session := range agent.sessions {
+		if session == nil || session.ActiveTask == nil {
+			continue
+		}
+		if strings.TrimSpace(session.ActiveTask.ActiveRunID) != runID {
+			continue
+		}
+		sessionID := strings.TrimSpace(session.SessionID)
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(id)
+		}
+		return sessionID, agentRuntimeTaskID(sessionID, *session)
+	}
+	return "", ""
+}
+
+func approvalRuntimeResolvedData(runID, action string, resolved contracts.HITLRequest) map[string]any {
+	data := map[string]any{
+		"approval_id":      resolved.ID,
+		"step_id":          resolved.StepID,
+		"run_id":           strings.TrimSpace(runID),
+		"decision":         approvalRuntimeDecision(action, resolved),
+		"status":           string(resolved.Status),
+		"requested_action": resolved.RequestedAction,
+		"resolved_by":      approvalRuntimeResolutionString(resolved.Resolution, "resolved_by"),
+		"comment":          approvalRuntimeResolutionString(resolved.Resolution, "comment"),
+	}
+	if resolved.Resolution != nil {
+		if editArgs, ok := resolved.Resolution["edit_args"]; ok {
+			data["edit_args"] = editArgs
+		}
+	}
+	return data
+}
+
+func approvalRuntimeDecision(action string, resolved contracts.HITLRequest) string {
+	if resolved.Resolution != nil {
+		if decision := approvalRuntimeResolutionString(resolved.Resolution, "decision"); decision != "" {
+			return decision
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "edit-args":
+		return "edit_args"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
+}
+
+func approvalRuntimeResolutionString(resolution map[string]any, key string) string {
+	if resolution == nil {
+		return ""
+	}
+	value, ok := resolution[key]
+	if !ok || value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 type startWebScanHTTPBody struct {
