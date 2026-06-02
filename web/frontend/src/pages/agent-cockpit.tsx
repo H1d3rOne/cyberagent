@@ -482,12 +482,15 @@ export function AgentCockpitPage() {
 
           <div className="flex shrink-0 items-center gap-1.5">
             <Button type="button" variant="ghost" size="sm" onClick={() => { void refreshCurrentSession() }} disabled={!state.activeSessionId || state.loadingSession} className="h-8 rounded-xl px-2.5 text-muted-foreground">
+              <span className="sr-only">{text(language, '刷新当前会话', 'Refresh current session')}</span>
               <RefreshCcw className={cn('h-3.5 w-3.5', state.loadingSession && 'animate-spin')} />
             </Button>
             <Button type="button" variant="ghost" size="sm" onClick={openTraceViewer} disabled={!state.session || traceLoading} className="h-8 rounded-xl px-2.5 text-muted-foreground">
+              <span className="sr-only">{text(language, '打开 Trace', 'Open trace')}</span>
               {traceLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Code2 className="h-3.5 w-3.5" />}
             </Button>
             <Button type="button" variant="outline" size="sm" onClick={downloadTrace} disabled={!state.session} className="h-8 rounded-xl bg-transparent px-2.5">
+              <span className="sr-only">{text(language, '下载 Trace', 'Download trace')}</span>
               <Download className="h-3.5 w-3.5" />
             </Button>
           </div>
@@ -561,7 +564,14 @@ export function AgentCockpitPage() {
               {selectedTool?.id || text(language, '未选择工具调用', 'No tool selected')}
             </div>
           </div>
-          <Button type="button" variant="ghost" size="sm" onClick={() => dispatch({ type: 'ui/selectTool', toolCallId: undefined })} className="h-8 rounded-xl px-2 text-muted-foreground">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => dispatch({ type: 'ui/selectTool', toolCallId: undefined })}
+            className="h-8 rounded-xl px-2 text-muted-foreground"
+            aria-label={text(language, '清除工具选择', 'Clear tool selection')}
+          >
             ×
           </Button>
         </div>

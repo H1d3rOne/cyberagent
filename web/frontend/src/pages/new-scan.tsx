@@ -233,7 +233,14 @@ export function NewScanPage() {
                     : text(language, '新增任务', 'New task')}
                 </h2>
               </div>
-              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 rounded-xl" onClick={() => setCreateOpen(false)}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-xl"
+                onClick={() => setCreateOpen(false)}
+                aria-label={text(language, '关闭创建任务弹窗', 'Close create task dialog')}
+              >
                 <X className="h-4 w-4" />
               </Button>
             </div>
@@ -472,4 +479,3 @@ function ModeButton({
     </button>
   )
 }
-

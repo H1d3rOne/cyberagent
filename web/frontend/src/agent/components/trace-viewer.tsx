@@ -22,20 +22,48 @@ export function TraceViewerDrawer({
   const items = (trace?.timeline || []).slice(0, 120)
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm">
-      <aside className="flex h-full w-full max-w-2xl flex-col border-l border-white/10 bg-[#050816] shadow-2xl">
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="Agent Trace"
+        className="flex h-full w-full max-w-2xl flex-col border-l border-white/10 bg-[#050816] shadow-2xl"
+      >
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/10 px-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm font-semibold"><Code2 className="h-4 w-4 text-primary" />Agent Trace</div>
             <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{trace?.session_id || text(language, '加载中', 'Loading')}</div>
           </div>
           <div className="flex items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" onClick={onRefresh} disabled={loading} className="h-8 rounded-xl px-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onRefresh}
+              disabled={loading}
+              className="h-8 rounded-xl px-2"
+              aria-label={text(language, '刷新 Trace', 'Refresh trace')}
+            >
               <RefreshCcw className={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={onDownload} disabled={!trace} className="h-8 rounded-xl bg-transparent px-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onDownload}
+              disabled={!trace}
+              className="h-8 rounded-xl bg-transparent px-2"
+              aria-label={text(language, '下载 Trace', 'Download trace')}
+            >
               <Download className="h-3.5 w-3.5" />
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={onClose} className="h-8 rounded-xl px-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              className="h-8 rounded-xl px-2"
+              aria-label={text(language, '关闭 Trace', 'Close trace')}
+            >
               <X className="h-3.5 w-3.5" />
             </Button>
           </div>

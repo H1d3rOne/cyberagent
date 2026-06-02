@@ -26,12 +26,26 @@ export function ToolInspector({
         </div>
         <div className="flex items-center gap-1.5">
           {onRefresh && (
-            <Button type="button" variant="outline" size="sm" onClick={onRefresh} className="h-8 rounded-xl bg-transparent px-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onRefresh}
+              className="h-8 rounded-xl bg-transparent px-2"
+              aria-label={text(language, '刷新工具详情', 'Refresh tool details')}
+            >
               <RotateCcw className="h-3.5 w-3.5" />
             </Button>
           )}
           {onClear && (
-            <Button type="button" variant="ghost" size="sm" onClick={onClear} className="h-8 rounded-xl px-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onClear}
+              className="h-8 rounded-xl px-2"
+              aria-label={text(language, '清除工具选择', 'Clear tool selection')}
+            >
               ×
             </Button>
           )}

@@ -126,15 +126,39 @@ export function Composer({
             <Send className="mr-2 h-4 w-4" />
             {text(language, '发送', 'Send')}
           </Button>
-          <Button type="button" variant="outline" onClick={onContinue} disabled={disabled || sending} className="h-8 rounded-lg bg-transparent px-2.5" title={text(language, '继续', 'Continue')}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onContinue}
+            disabled={disabled || sending}
+            className="h-8 rounded-lg bg-transparent px-2.5"
+            title={text(language, '继续', 'Continue')}
+            aria-label={text(language, '继续', 'Continue')}
+          >
             <Play className="h-3.5 w-3.5 sm:mr-1.5" />
             <span className="hidden sm:inline">{text(language, '继续', 'Continue')}</span>
           </Button>
-          <Button type="button" variant="ghost" onClick={onPause} disabled={disabled || sending} className="h-8 rounded-lg px-2.5" title={text(language, '暂停', 'Pause')}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onPause}
+            disabled={disabled || sending}
+            className="h-8 rounded-lg px-2.5"
+            title={text(language, '暂停', 'Pause')}
+            aria-label={text(language, '暂停', 'Pause')}
+          >
             <ChevronDown className="h-3.5 w-3.5 rotate-90 sm:mr-1.5" />
             <span className="hidden sm:inline">{text(language, '暂停', 'Pause')}</span>
           </Button>
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={disabled || sending} className="h-8 rounded-lg px-2.5 text-red-200 hover:text-red-100" title={text(language, '取消', 'Cancel')}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCancel}
+            disabled={disabled || sending}
+            className="h-8 rounded-lg px-2.5 text-red-200 hover:text-red-100"
+            title={text(language, '取消', 'Cancel')}
+            aria-label={text(language, '取消', 'Cancel')}
+          >
             <X className="h-3.5 w-3.5 sm:mr-1.5" />
             <span className="hidden sm:inline">{text(language, '取消', 'Cancel')}</span>
           </Button>
