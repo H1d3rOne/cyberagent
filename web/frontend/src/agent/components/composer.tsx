@@ -106,7 +106,7 @@ export function Composer({
         </div>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+      <div className="space-y-1.5">
         <textarea
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -121,25 +121,23 @@ export function Composer({
           className="command-input min-h-[44px] max-h-28 w-full resize-y rounded-xl px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground"
           disabled={disabled || sending}
         />
-        <div className="flex flex-row gap-2 sm:flex-col">
-          <Button type="button" onClick={onSubmit} disabled={disabled || sending || !value.trim()} className="h-11 rounded-xl px-4">
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <Button type="button" onClick={onSubmit} disabled={disabled || sending || !value.trim()} className="h-8 rounded-lg px-3">
             <Send className="mr-2 h-4 w-4" />
             {text(language, '发送', 'Send')}
           </Button>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-1">
-            <Button type="button" variant="outline" onClick={onContinue} disabled={disabled || sending} className="h-9 rounded-xl bg-transparent px-3">
-              <Play className="mr-2 h-4 w-4" />
-              {text(language, '继续', 'Continue')}
-            </Button>
-            <Button type="button" variant="ghost" onClick={onPause} disabled={disabled || sending} className="h-9 rounded-xl px-3">
-              <ChevronDown className="mr-2 h-4 w-4 rotate-90" />
-              {text(language, '暂停', 'Pause')}
-            </Button>
-            <Button type="button" variant="ghost" onClick={onCancel} disabled={disabled || sending} className="h-9 rounded-xl px-3 text-red-200 hover:text-red-100">
-              ×
-              <span className="ml-2">{text(language, '取消', 'Cancel')}</span>
-            </Button>
-          </div>
+          <Button type="button" variant="outline" onClick={onContinue} disabled={disabled || sending} className="h-8 rounded-lg bg-transparent px-2.5" title={text(language, '继续', 'Continue')}>
+            <Play className="h-3.5 w-3.5 sm:mr-1.5" />
+            <span className="hidden sm:inline">{text(language, '继续', 'Continue')}</span>
+          </Button>
+          <Button type="button" variant="ghost" onClick={onPause} disabled={disabled || sending} className="h-8 rounded-lg px-2.5" title={text(language, '暂停', 'Pause')}>
+            <ChevronDown className="h-3.5 w-3.5 rotate-90 sm:mr-1.5" />
+            <span className="hidden sm:inline">{text(language, '暂停', 'Pause')}</span>
+          </Button>
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={disabled || sending} className="h-8 rounded-lg px-2.5 text-red-200 hover:text-red-100" title={text(language, '取消', 'Cancel')}>
+            <X className="h-3.5 w-3.5 sm:mr-1.5" />
+            <span className="hidden sm:inline">{text(language, '取消', 'Cancel')}</span>
+          </Button>
         </div>
       </div>
     </footer>
