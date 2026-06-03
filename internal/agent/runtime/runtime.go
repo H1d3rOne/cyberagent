@@ -323,6 +323,41 @@ func (e *Engine) RecoverInterruptedRuns(ctx context.Context) (int, error) {
 				e.mu.Unlock()
 			}
 		}
+		if previousState == string(RunAwaitingApproval) {
+			if e.runHasRecoveryMarker(ctx, run.ID) {
+				continue
+			}
+			approvalKind := e.recoveryApprovalKind(ctx, run, sessionID)
+			recoveryAction := "approval_preserved"
+			if approvalKind == "agent_authorization" {
+				recoveryAction = "authorization_preserved"
+			}
+			e.mu.Lock()
+			runCopy := run
+			e.runs[run.ID] = &runCopy
+			e.mu.Unlock()
+			e.publish(ctx, Event{
+				Type:      EventRunRecovered,
+				SessionID: sessionID,
+				RunID:     run.ID,
+				TaskID:    run.TaskID,
+				Data: map[string]any{
+					"recovery":         true,
+					"recoverable":      true,
+					"previous_state":   previousState,
+					"reason":           "daemon_restarted",
+					"run_id":           run.ID,
+					"task_id":          run.TaskID,
+					"approval_kind":    approvalKind,
+					"approval_pending": true,
+					"recovery_action":  recoveryAction,
+					"terminal_emitted": false,
+				},
+				Timestamp: time.Now().UTC(),
+			})
+			recovered++
+			continue
+		}
 		run.State = string(RunFailed)
 		if err := e.store.SaveRun(ctx, run); err != nil {
 			return recovered, fmt.Errorf("mark interrupted run %s failed: %w", run.ID, err)
@@ -349,6 +384,71 @@ func (e *Engine) RecoverInterruptedRuns(ctx context.Context) (int, error) {
 		recovered++
 	}
 	return recovered, nil
+}
+
+func (e *Engine) runHasRecoveryMarker(ctx context.Context, runID string) bool {
+	if e == nil || e.store == nil || strings.TrimSpace(runID) == "" {
+		return false
+	}
+	events, err := e.store.ListEvents(ctx, EventFilter{RunID: strings.TrimSpace(runID)}, 0)
+	if err != nil {
+		return false
+	}
+	for _, ev := range events {
+		if ev.Type == EventRunRecovered && boolFromData(ev.Data, "recovery") {
+			return true
+		}
+		if ev.Type == EventTaskFailed && boolFromData(ev.Data, "recovery") {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) recoveryApprovalKind(ctx context.Context, run Run, sessionID string) string {
+	for _, filter := range []EventFilter{
+		{RunID: strings.TrimSpace(run.ID)},
+		{TaskID: strings.TrimSpace(run.TaskID)},
+		{SessionID: strings.TrimSpace(sessionID)},
+	} {
+		if filter.RunID == "" && filter.TaskID == "" && filter.SessionID == "" {
+			continue
+		}
+		events, err := e.store.ListEvents(ctx, filter, 0)
+		if err != nil {
+			continue
+		}
+		if hasPendingAgentAuthorizationEvent(events) {
+			return "agent_authorization"
+		}
+	}
+	return "run_hitl"
+}
+
+func hasPendingAgentAuthorizationEvent(events []Event) bool {
+	pending := map[string]bool{}
+	anonymousPending := false
+	for _, ev := range events {
+		if stringFromData(ev.Data, "approval_kind") != "agent_authorization" {
+			continue
+		}
+		approvalID := firstNonEmptyString(stringFromData(ev.Data, "approval_id"), stringFromData(ev.Data, "authorization_id"))
+		switch ev.Type {
+		case EventApprovalRequired:
+			if approvalID == "" {
+				anonymousPending = true
+			} else {
+				pending[approvalID] = true
+			}
+		case EventApprovalResolved:
+			if approvalID == "" {
+				anonymousPending = false
+			} else {
+				delete(pending, approvalID)
+			}
+		}
+	}
+	return anonymousPending || len(pending) > 0
 }
 
 // SubmitRun registers a Run for an existing Task and emits run_started.

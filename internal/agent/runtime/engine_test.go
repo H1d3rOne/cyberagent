@@ -385,77 +385,174 @@ func TestMemStoreLoadListAndStateValidation(t *testing.T) {
 	}
 }
 
-func TestRecoverInterruptedRunsMarksFailedAndPublishesReplayableEvent(t *testing.T) {
+func TestRecoverInterruptedRunsMarksPendingRunningFailedAndPreservesAwaitingApproval(t *testing.T) {
 	e, store := newRecoverableTestEngine()
 	ctx := context.Background()
 	task := Task{ID: "task-recovery", SessionID: "session-recovery", Origin: "user", Goal: "resume after crash"}
 	if _, err := e.Submit(ctx, task); err != nil {
 		t.Fatalf("Submit() error = %v", err)
 	}
-	if _, err := e.SubmitRun(ctx, Run{ID: "run-recovery", TaskID: task.ID, State: string(RunRunning), CreatedAt: time.Now().UTC().Add(-time.Minute)}); err != nil {
-		t.Fatalf("SubmitRun() error = %v", err)
+	if _, err := e.SubmitRun(ctx, Run{ID: "run-pending-recovery", TaskID: task.ID, State: string(RunPending), CreatedAt: time.Now().UTC().Add(-2 * time.Minute)}); err != nil {
+		t.Fatalf("SubmitRun(pending) error = %v", err)
 	}
-	if _, err := e.SubmitRun(ctx, Run{ID: "run-recovery-nolink", State: string(RunAwaitingApproval), CreatedAt: time.Now().UTC().Add(-2 * time.Minute)}); err != nil {
-		t.Fatalf("SubmitRun(no-link) error = %v", err)
+	if _, err := e.SubmitRun(ctx, Run{ID: "run-running-recovery", TaskID: task.ID, State: string(RunRunning), CreatedAt: time.Now().UTC().Add(-time.Minute)}); err != nil {
+		t.Fatalf("SubmitRun(running) error = %v", err)
+	}
+	if _, err := e.SubmitRun(ctx, Run{ID: "run-awaiting-recovery", TaskID: task.ID, State: string(RunAwaitingApproval), CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("SubmitRun(awaiting) error = %v", err)
 	}
 
 	recovered, err := e.RecoverInterruptedRuns(ctx)
 	if err != nil {
 		t.Fatalf("RecoverInterruptedRuns() error = %v", err)
 	}
-	if recovered != 2 {
-		t.Fatalf("RecoverInterruptedRuns() recovered = %d, want 2", recovered)
+	if recovered != 3 {
+		t.Fatalf("RecoverInterruptedRuns() recovered = %d, want 3", recovered)
 	}
 
-	run, err := store.LoadRun(ctx, "run-recovery")
+	for _, runID := range []string{"run-pending-recovery", "run-running-recovery"} {
+		run, err := store.LoadRun(ctx, runID)
+		if err != nil {
+			t.Fatalf("LoadRun(%s) error = %v", runID, err)
+		}
+		if run.State != string(RunFailed) {
+			t.Fatalf("%s state = %q, want %q", runID, run.State, RunFailed)
+		}
+	}
+
+	awaiting, err := store.LoadRun(ctx, "run-awaiting-recovery")
 	if err != nil {
-		t.Fatalf("LoadRun(run-recovery) error = %v", err)
+		t.Fatalf("LoadRun(run-awaiting-recovery) error = %v", err)
 	}
-	if run.State != string(RunFailed) {
-		t.Fatalf("run-recovery state = %q, want %q", run.State, RunFailed)
-	}
-
-	runNoLink, err := store.LoadRun(ctx, "run-recovery-nolink")
-	if err != nil {
-		t.Fatalf("LoadRun(run-recovery-nolink) error = %v", err)
-	}
-	if runNoLink.State != string(RunFailed) {
-		t.Fatalf("run-recovery-nolink state = %q, want %q", runNoLink.State, RunFailed)
+	if awaiting.State != string(RunAwaitingApproval) {
+		t.Fatalf("run-awaiting-recovery state = %q, want %q", awaiting.State, RunAwaitingApproval)
 	}
 
-	events, err := store.ListEvents(ctx, EventFilter{FromSeq: 0, SessionID: "session-recovery"}, 20)
+	events, err := store.ListEvents(ctx, EventFilter{FromSeq: 0, SessionID: "session-recovery"}, 50)
 	if err != nil {
 		t.Fatalf("ListEvents() error = %v", err)
 	}
-	var recoveryEvents []Event
+	taskFailedByRun := map[string]Event{}
+	var awaitingMarker *Event
 	for _, ev := range events {
-		if ev.Type == "task_failed" {
-			recoveryEvents = append(recoveryEvents, ev)
+		switch ev.Type {
+		case EventTaskFailed:
+			if boolFromData(ev.Data, "recovery") {
+				taskFailedByRun[ev.RunID] = ev
+			}
+		case EventRunRecovered:
+			if ev.RunID == "run-awaiting-recovery" {
+				copy := ev
+				awaitingMarker = &copy
+			}
 		}
 	}
-	if len(recoveryEvents) != 1 {
-		t.Fatalf("recovery task_failed events = %#v, want 1", recoveryEvents)
+	if len(taskFailedByRun) != 2 {
+		t.Fatalf("recovery task_failed by run = %#v, want pending+running only; events=%#v", taskFailedByRun, events)
 	}
-	ev := recoveryEvents[0]
-	if ev.SessionID != task.SessionID || ev.TaskID != task.ID || ev.RunID != "run-recovery" {
-		t.Fatalf("recovery event envelope = %#v, want task/run/session linked", ev)
+	for runID, previousState := range map[string]RunState{
+		"run-pending-recovery": RunPending,
+		"run-running-recovery": RunRunning,
+	} {
+		ev, ok := taskFailedByRun[runID]
+		if !ok {
+			t.Fatalf("missing recovery task_failed for %s in %#v", runID, events)
+		}
+		if ev.SessionID != task.SessionID || ev.TaskID != task.ID || ev.RunID != runID {
+			t.Fatalf("recovery event envelope = %#v, want task/run/session linked", ev)
+		}
+		if ev.Data["recovery"] != true || ev.Data["recoverable"] != true || ev.Data["reason"] != "daemon_restarted" {
+			t.Fatalf("recovery event data = %#v, want recovery metadata", ev.Data)
+		}
+		if ev.Data["previous_state"] != string(previousState) {
+			t.Fatalf("recovery previous_state for %s = %#v, want %q", runID, ev.Data["previous_state"], previousState)
+		}
+		if ev.Data["run_id"] != runID || ev.Data["task_id"] != task.ID {
+			t.Fatalf("recovery ids = %#v, want run/task ids", ev.Data)
+		}
 	}
-	if ev.Data["recovery"] != true || ev.Data["recoverable"] != true || ev.Data["reason"] != "daemon_restarted" {
-		t.Fatalf("recovery event data = %#v, want recovery metadata", ev.Data)
+	if _, ok := taskFailedByRun["run-awaiting-recovery"]; ok {
+		t.Fatalf("awaiting approval recovery should not emit terminal task_failed: %#v", taskFailedByRun["run-awaiting-recovery"])
 	}
-	if ev.Data["previous_state"] != string(RunRunning) {
-		t.Fatalf("recovery previous_state = %#v, want %q", ev.Data["previous_state"], RunRunning)
+	if awaitingMarker == nil {
+		t.Fatalf("missing non-terminal run_recovered marker for awaiting approval: events=%#v", events)
 	}
-	if ev.Data["run_id"] != "run-recovery" || ev.Data["task_id"] != task.ID {
-		t.Fatalf("recovery ids = %#v, want run/task ids", ev.Data)
+	if awaitingMarker.SessionID != task.SessionID || awaitingMarker.TaskID != task.ID {
+		t.Fatalf("awaiting marker envelope = %#v, want task/session linked", *awaitingMarker)
+	}
+	if awaitingMarker.Data["recovery"] != true ||
+		awaitingMarker.Data["recoverable"] != true ||
+		awaitingMarker.Data["previous_state"] != string(RunAwaitingApproval) ||
+		awaitingMarker.Data["reason"] != "daemon_restarted" ||
+		awaitingMarker.Data["approval_kind"] != "run_hitl" ||
+		awaitingMarker.Data["approval_pending"] != true ||
+		awaitingMarker.Data["recovery_action"] != "approval_preserved" ||
+		awaitingMarker.Data["terminal_emitted"] != false {
+		t.Fatalf("unexpected awaiting marker data: %#v", awaitingMarker.Data)
 	}
 
-	replayed, err := store.ListEvents(ctx, EventFilter{FromSeq: ev.Seq - 1, SessionID: task.SessionID}, 10)
+	replayed, err := store.ListEvents(ctx, EventFilter{FromSeq: awaitingMarker.Seq - 1, RunID: awaitingMarker.RunID}, 10)
 	if err != nil {
 		t.Fatalf("ListEvents(replay) error = %v", err)
 	}
-	if len(replayed) == 0 || replayed[len(replayed)-1].Seq != ev.Seq {
-		t.Fatalf("replayed events = %#v, want recovery event replayed", replayed)
+	if len(replayed) == 0 || replayed[len(replayed)-1].Seq != awaitingMarker.Seq {
+		t.Fatalf("replayed events = %#v, want awaiting recovery marker replayed", replayed)
+	}
+}
+
+func TestRecoverInterruptedRunsIsIdempotentForAwaitingApproval(t *testing.T) {
+	e, store := newRecoverableTestEngine()
+	ctx := context.Background()
+	task := Task{ID: "task-recovery-idempotent", SessionID: "session-recovery-idempotent", Origin: "user", Goal: "resume after crash"}
+	if _, err := e.Submit(ctx, task); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if _, err := e.SubmitRun(ctx, Run{ID: "run-awaiting-idempotent", TaskID: task.ID, State: string(RunAwaitingApproval), CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("SubmitRun(awaiting) error = %v", err)
+	}
+
+	recovered, err := e.RecoverInterruptedRuns(ctx)
+	if err != nil {
+		t.Fatalf("RecoverInterruptedRuns(first) error = %v", err)
+	}
+	if recovered != 1 {
+		t.Fatalf("RecoverInterruptedRuns(first) recovered = %d, want 1", recovered)
+	}
+	recovered, err = e.RecoverInterruptedRuns(ctx)
+	if err != nil {
+		t.Fatalf("RecoverInterruptedRuns(second) error = %v", err)
+	}
+	if recovered != 0 {
+		t.Fatalf("RecoverInterruptedRuns(second) recovered = %d, want 0", recovered)
+	}
+	run, err := store.LoadRun(ctx, "run-awaiting-idempotent")
+	if err != nil {
+		t.Fatalf("LoadRun(awaiting) error = %v", err)
+	}
+	if run.State != string(RunAwaitingApproval) {
+		t.Fatalf("awaiting state after repeated recovery = %q, want %q", run.State, RunAwaitingApproval)
+	}
+
+	events, err := store.ListEvents(ctx, EventFilter{RunID: run.ID}, 20)
+	if err != nil {
+		t.Fatalf("ListEvents(awaiting) error = %v", err)
+	}
+	recoveryMarkers := 0
+	terminalFailures := 0
+	for _, ev := range events {
+		switch ev.Type {
+		case EventRunRecovered:
+			if boolFromData(ev.Data, "recovery") {
+				recoveryMarkers++
+			}
+		case EventTaskFailed:
+			if boolFromData(ev.Data, "recovery") {
+				terminalFailures++
+			}
+		}
+	}
+	if recoveryMarkers != 1 || terminalFailures != 0 {
+		t.Fatalf("awaiting recovery markers=%d terminalFailures=%d events=%#v, want 1/0", recoveryMarkers, terminalFailures, events)
 	}
 }
 
