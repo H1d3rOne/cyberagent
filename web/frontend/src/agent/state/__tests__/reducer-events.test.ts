@@ -51,6 +51,35 @@ describe('agent cockpit reducer runtime event handling', () => {
     expect(state.tasks['task-1'].status).toBe('done')
   })
 
+  it('does not clear agent pending authorization for run HITL approval resolution', () => {
+    const pendingAuthorization = {
+      id: 'agent-approval-1',
+      action_name: 'http.request',
+      status: 'pending',
+      created_at: '2026-06-01T00:00:00.000Z',
+      updated_at: '2026-06-01T00:00:00.000Z',
+    }
+    let state = agentCockpitReducer(initialAgentCockpitState, {
+      type: 'session/loaded',
+      session: sampleSession({ pending_authorization: pendingAuthorization }),
+    })
+
+    state = agentCockpitReducer(state, {
+      type: 'stream/event',
+      event: runtimeEvent('approval_resolved', 7, {
+        approval_id: 'run-hitl-approval-1',
+        decision: 'approved',
+        approval_state: {
+          approval_kind: 'run_hitl',
+          state: 'approved',
+          approval_id: 'run-hitl-approval-1',
+        },
+      }),
+    })
+
+    expect(state.session?.pending_authorization?.id).toBe('agent-approval-1')
+  })
+
   it('records task_failed as error state', () => {
     let state = initialAgentCockpitState
     state = agentCockpitReducer(state, { type: 'stream/event', event: runtimeEvent('turn_started', 1) })

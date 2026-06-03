@@ -356,7 +356,9 @@ function applyRuntimeEvent(state: AgentCockpitState, incoming: AgentRuntimeEvent
       break
     }
     case 'approval_resolved':
-      session = session ? { ...session, pending_authorization: undefined, updated_at: timestamp } : session
+      session = shouldClearAgentPendingAuthorization(event) && session
+        ? { ...session, pending_authorization: undefined, updated_at: timestamp }
+        : session
       turns = patchTurn(turns, eventTurnId(event, turns), (turn) => ({
         ...turn,
         status: event.status || 'running',
@@ -510,7 +512,13 @@ export function normalizeRuntimeEvent(type: string, payload: Record<string, unkn
   const toolCall = objectFromFirst(record.tool_call, data.tool_call) as AgentToolCall | undefined
   const todo = objectFromFirst(record.todo, data.todo) as AgentTodo | undefined
   const approval = objectFromFirst(record.approval, record.authorization, data.approval, data.authorization) as AgentAuthorizationRequest | undefined
-  const normalizedData = Object.keys(data).length ? data : payloadDataFromEnvelope(record)
+  let normalizedData = Object.keys(data).length ? data : payloadDataFromEnvelope(record)
+  if (record.approval_kind !== undefined && normalizedData.approval_kind === undefined) {
+    normalizedData = { ...normalizedData, approval_kind: record.approval_kind }
+  }
+  if (record.approval_state !== undefined && normalizedData.approval_state === undefined) {
+    normalizedData = { ...normalizedData, approval_state: record.approval_state }
+  }
   const timestamp = validTimestamp(record.timestamp ?? data.timestamp ?? record.created_at ?? data.created_at ?? record.time ?? data.time)
 
   return {
@@ -749,6 +757,18 @@ function approvalFromEvent(event: TimelineEventView, fallbackStatus: string): Ag
     created_at: event.timestamp,
     updated_at: event.timestamp,
   }
+}
+
+function shouldClearAgentPendingAuthorization(event: TimelineEventView) {
+  const kind = approvalKindFromEvent(event)
+  if (kind === 'run_hitl') return false
+  return kind === 'agent_authorization' || !kind
+}
+
+function approvalKindFromEvent(event: TimelineEventView) {
+  const payload = event.data || {}
+  const approvalState = recordFrom(payload.approval_state)
+  return stringFrom(payload.approval_kind ?? approvalState?.approval_kind).toLowerCase()
 }
 
 function applyMemorySummary(session: AgentSession | null, event: TimelineEventView, timestamp: string): AgentSession | null {
