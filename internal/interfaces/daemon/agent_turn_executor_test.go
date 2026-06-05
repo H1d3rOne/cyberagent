@@ -16,6 +16,7 @@ func TestAgentManagerAttachEngineWiresDaemonTurnExecutor(t *testing.T) {
 
 	require.NotNil(t, eng.LLMTurnRunner())
 	require.NotNil(t, eng.LLMStageRunner())
+	require.NotNil(t, eng.SessionMutator())
 
 	result, err := eng.ExecuteTurn(context.Background(), runtime.TurnContext{
 		SessionID:      "session-legacy-executor",

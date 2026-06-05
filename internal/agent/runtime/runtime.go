@@ -95,8 +95,8 @@ type Store interface {
 }
 
 // Engine is the central coordinator. Submit/Stream are live today; optional
-// turn-execution seams let callers attach the legacy daemon executor / LLM
-// tool loop before the planner loop is fully migrated into Engine.
+// turn/session seams let callers attach the legacy daemon executor / LLM tool
+// loop / session mutator before the planner loop is fully migrated into Engine.
 type Engine struct {
 	store          Store
 	mu             sync.Mutex
@@ -106,6 +106,7 @@ type Engine struct {
 	turnExecutor   TurnExecutor
 	llmTurnRunner  LLMTurnRunner
 	llmStageRunner LLMStageRunner
+	sessionMutator SessionMutator
 
 	events  chan Event // legacy single-consumer stream; prefer Subscribe.
 	nextSeq atomic.Int64

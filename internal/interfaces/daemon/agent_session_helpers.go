@@ -244,12 +244,19 @@ func (m *agentManager) appendMessages(sessionID string, messages ...agentMessage
 }
 
 func (m *agentManager) appendMessagesWithPlanner(sessionID string, plan *agentPlannerResponse, messages ...agentMessage) {
+	if m.runRuntimeAppendMessagesMutation(context.Background(), sessionID, plan, messages...) {
+		return
+	}
+	_, _ = m.appendMessagesWithPlannerLegacy(sessionID, plan, messages...)
+}
+
+func (m *agentManager) appendMessagesWithPlannerLegacy(sessionID string, plan *agentPlannerResponse, messages ...agentMessage) (daemonAppendMessagesMutationResultPayload, bool) {
 	eng := m.runtimeEngine()
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
 	if !ok {
 		m.mu.Unlock()
-		return
+		return daemonAppendMessagesMutationResultPayload{}, false
 	}
 	session.Messages = append(session.Messages, messages...)
 	m.applyAgentMessagesLocked(session, messages...)
@@ -265,6 +272,11 @@ func (m *agentManager) appendMessagesWithPlanner(sessionID string, plan *agentPl
 	m.mu.Unlock()
 	m.emitRuntimeMemoryCompacted(context.Background(), sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
 	m.emitAgentRuntimeEvents(context.Background(), eng, sessionID, sessionState, messages...)
+	return daemonAppendMessagesMutationResultPayload{
+		Session:    sessionState,
+		Compaction: compaction,
+		Mutated:    true,
+	}, true
 }
 
 func (m *agentManager) message(language, role, content string, toolCalls []agentToolCall, links []agentLink) agentMessage {

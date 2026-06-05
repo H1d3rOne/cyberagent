@@ -327,6 +327,86 @@ func TestRunLLMStageWithoutRunnerReturnsStableError(t *testing.T) {
 	}
 }
 
+func TestMutateSessionDispatchesAttachedMutator(t *testing.T) {
+	e, _ := newTestEngine()
+	ctx := context.WithValue(context.Background(), struct{}{}, "ctx-value")
+	expectedTurn := TurnContext{
+		SessionID:      "session-mutation",
+		TaskID:         "task-mutation",
+		RunID:          "run-mutation",
+		TurnID:         "turn-mutation",
+		Prompt:         "append session messages",
+		Origin:         "user",
+		OperationLevel: "safe_scan",
+		Metadata:       map[string]any{"source": "test"},
+	}
+	expectedPayload := map[string]any{"opaque": "daemon-private-session"}
+	called := false
+	e.AttachSessionMutator(SessionMutatorFunc(func(gotCtx context.Context, got SessionMutationRequest) (SessionMutationResult, error) {
+		called = true
+		if gotCtx != ctx {
+			t.Fatalf("MutateSession ctx = %#v, want original ctx", gotCtx)
+		}
+		if got.Kind != SessionMutationAppendMessages {
+			t.Fatalf("SessionMutationRequest.Kind = %q, want %q", got.Kind, SessionMutationAppendMessages)
+		}
+		if got.Turn.SessionID != expectedTurn.SessionID ||
+			got.Turn.TaskID != expectedTurn.TaskID ||
+			got.Turn.RunID != expectedTurn.RunID ||
+			got.Turn.TurnID != expectedTurn.TurnID ||
+			got.Turn.Prompt != expectedTurn.Prompt ||
+			got.Turn.Origin != expectedTurn.Origin ||
+			got.Turn.OperationLevel != expectedTurn.OperationLevel ||
+			got.Turn.Metadata["source"] != expectedTurn.Metadata["source"] {
+			t.Fatalf("SessionMutationRequest.Turn = %#v, want %#v", got.Turn, expectedTurn)
+		}
+		payload, ok := got.Payload.(map[string]any)
+		if !ok || payload["opaque"] != expectedPayload["opaque"] {
+			t.Fatalf("SessionMutationRequest.Payload = %#v, want %#v", got.Payload, expectedPayload)
+		}
+		if got.Metadata["phase"] != "session_append" {
+			t.Fatalf("SessionMutationRequest.Metadata = %#v, want phase=session_append", got.Metadata)
+		}
+		return SessionMutationResult{
+			Status:  TurnResultFinished,
+			Reason:  "done",
+			Payload: "session-result-payload",
+			Data:    map[string]any{"mutator": "test-session"},
+		}, nil
+	}))
+
+	result, err := e.MutateSession(ctx, SessionMutationRequest{
+		Turn:     expectedTurn,
+		Kind:     SessionMutationAppendMessages,
+		Payload:  expectedPayload,
+		Metadata: map[string]any{"phase": "session_append"},
+	})
+	if err != nil {
+		t.Fatalf("MutateSession() error = %v", err)
+	}
+	if !called {
+		t.Fatalf("MutateSession() did not call attached mutator")
+	}
+	if result.Status != TurnResultFinished || result.Reason != "done" || result.Payload != "session-result-payload" || result.Data["mutator"] != "test-session" {
+		t.Fatalf("MutateSession() result = %#v", result)
+	}
+}
+
+func TestMutateSessionWithoutMutatorReturnsStableError(t *testing.T) {
+	e, _ := newTestEngine()
+
+	result, err := e.MutateSession(context.Background(), SessionMutationRequest{
+		Turn: TurnContext{SessionID: "session-mutation"},
+		Kind: SessionMutationAppendMessages,
+	})
+	if !errors.Is(err, ErrSessionMutatorNotAttached) {
+		t.Fatalf("MutateSession() error = %v, want ErrSessionMutatorNotAttached", err)
+	}
+	if result.Status != TurnResultBlocked || !errors.Is(result.Error, ErrSessionMutatorNotAttached) || result.Reason == "" {
+		t.Fatalf("MutateSession() result = %#v, want blocked missing-mutator result", result)
+	}
+}
+
 func TestBeginTurnPublishesLegacyLifecycleEvents(t *testing.T) {
 	e, store := newTestEngine()
 	ctx := context.Background()

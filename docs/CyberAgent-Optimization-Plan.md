@@ -220,7 +220,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam 与 `RunLLMStage`/`LLMStageRunner` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，且 loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`。下一步继续拆 session mutation。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`，`appendMessagesWithPlanner` 的 append messages + optional planner apply 已经 engine session mutation dispatch。下一步继续拆剩余 session mutation，并准备收敛 no-LLM route/authorization resume/auto-continue 分支。
 4. 最后收敛 `SendMessage` 中的 no-LLM route、LLM route、authorization resume、auto-continue 分支为 engine turn lifecycle。
 
 已完成的 seam 边界：
@@ -247,6 +247,12 @@ engine-native turn lifecycle 下沉入口建议：
 - 已接入 stage 为 `planner_chat` 与 `tool_synthesis`。
 - daemon `AttachEngine` 会挂接 `daemon_legacy_llm_stage`；`runAgentLLMToolLoop` 首个 planner chat 已改为调用 `runRuntimeAgentLLMPlannerChat`，内部 tool synthesis、`runAgentReplanActionContinuation` 的 auto-continue synthesis、authorization approve resume synthesis、route-before-LLM/standalone route synthesis 已改为调用 `runRuntimeAgentLLMToolSynthesis`。
 - 实际执行仍复用原 `handleAgentLLMChat` / `synthesizeAgentToolResults`，保持 provider fallback、model_token/model_reasoning streaming、planner JSON parsing、native tool call extraction、StepReplan/final_answer 解析与 planner/tool_synthesis metadata 语义不变。
+
+已完成的 session mutation seam 边界：
+
+- `runtime.Engine` 新增可选 `SessionMutator`，`MutateSession` 只负责 dispatch 单个 bounded session mutation，不发布 lifecycle events。
+- 已接入 mutation 为 `append_messages`，覆盖 legacy `appendMessagesWithPlanner` 的 messages append、tool/link/planner state apply、session persist、memory compaction 与 runtime events 发布。
+- daemon `AttachEngine` 会挂接 `daemon_legacy_session`；实际执行仍复用原 `appendMessagesWithPlannerLegacy`，保持 session lock 顺序、planner apply、compaction、persist、`memory_compacted` 与 message runtime events 语义不变。
 
 ---
 
@@ -1016,6 +1022,7 @@ Glass surface：
 | v7 | 扩展 LLM stage runner seam：`LLMStageToolSynthesis` 已接入 `runAgentLLMToolLoop` 内部 synthesis 调用，实际执行仍复用 daemon legacy synthesis。 |
 | v8 | 扩展 StepReplan continuation seam：`runAgentReplanActionContinuation` 的 auto-continue synthesis 已复用 `LLMStageToolSynthesis`。 |
 | v9 | 扩展 session-flow synthesis seam：authorization approve resume、route-before-LLM 与 standalone route synthesis 分支已统一经 `runRuntimeAgentLLMToolSynthesis` 调度。 |
+| v10 | 新增 session mutation seam：`runtime.Engine.MutateSession` / `SessionMutator` 已可调度 `append_messages`，`appendMessagesWithPlanner` 经 engine dispatch 后仍复用 daemon legacy session mutation。 |
 
 ---
 
