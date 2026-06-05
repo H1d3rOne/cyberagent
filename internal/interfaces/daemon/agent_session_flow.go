@@ -288,104 +288,22 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 	language := normalizeAgentLanguage(req.Language)
 	operator := normalizeAgentOperator(req.Operator)
 	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
-	now := time.Now().UTC()
 
-	m.mu.Lock()
-	session, ok := m.sessions[sessionID]
-	if !ok {
-		loaded, loadErr := m.loadSessionLocked(sessionID)
-		if loadErr != nil {
-			m.mu.Unlock()
-			return agentControlResponse{}, loadErr
-		}
-		session = loaded
+	resolved, handled, resolveErr := m.runRuntimeResolveAuthorizationMutation(ctx, sessionID, decision, req, operator, language, operationLevel)
+	if resolveErr != nil {
+		return agentControlResponse{}, resolveErr
 	}
-	pending := cloneAgentAuthorizationRequest(session.PendingAuthorization)
-	if pending == nil || !strings.EqualFold(pending.Status, "pending") {
-		m.mu.Unlock()
-		return agentControlResponse{}, services.NewError(services.CodeConflict, "no pending agent authorization", map[string]any{"session_id": sessionID}, nil)
+	if !handled {
+		resolved, resolveErr = m.resolveAuthorizationLegacy(ctx, sessionID, decision, req.AuthorizationID, req.Reason, operator, language, operationLevel, strings.TrimSpace(req.OperationLevel) != "")
+		if resolveErr != nil {
+			return agentControlResponse{}, resolveErr
+		}
 	}
-	if requestedID := strings.TrimSpace(req.AuthorizationID); requestedID != "" && requestedID != pending.ID {
-		m.mu.Unlock()
-		return agentControlResponse{}, services.NewError(services.CodeConflict, "authorization id does not match pending request", map[string]any{"authorization_id": requestedID, "pending_authorization_id": pending.ID}, nil)
-	}
-	session.Operator = operator
-	session.Language = language
-	if strings.TrimSpace(req.OperationLevel) == "" {
-		operationLevel = normalizeAgentOperationLevel(session.OperationLevel)
-	}
-	if decision == "approve" && !agentOperationLevelAtLeast(operationLevel, pending.RequiredLevel) {
-		operationLevel = normalizeAgentOperationLevel(pending.RequiredLevel)
-	}
-	session.OperationLevel = operationLevel
-
-	var message agentMessage
-	switch decision {
-	case "deny":
-		pending.Status = "denied"
-		pending.UpdatedAt = now
-		session.PendingAuthorization = nil
-		session.Status = "blocked"
-		if session.ActiveTask != nil {
-			session.ActiveTask.Status = "blocked"
-			session.ActiveTask.UpdatedAt = now
-		}
-		for idx := range session.Todos {
-			if session.Todos[idx].Status == "running" || session.Todos[idx].Status == "pending" {
-				markAgentTodoByIndex(session.Todos, idx, "blocked", now, "", agentText(language, "操作者拒绝授权该工具动作。", "Operator denied authorization for this tool action."))
-			}
-		}
-		reason := firstNonEmpty(strings.TrimSpace(req.Reason), agentText(language, "操作者拒绝授权，挂起动作未执行。", "Operator denied authorization; the pending action was not executed."))
-		session.NextAction = &agentNextAction{
-			Type:            "blocked",
-			Reason:          reason,
-			SuggestedPrompt: agentText(language, "换一个低风险方案或重新说明授权边界。", "Choose a lower-risk alternative or restate the authorization boundary."),
-		}
-		message = agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, fmt.Sprintf("已拒绝授权：`%s` 未执行。", pending.ActionName), fmt.Sprintf("Authorization denied: `%s` was not executed.", pending.ActionName)), nil, nil), "step")
-		session.Messages = append(session.Messages, message)
-		session.UpdatedAt = now
-		compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
-		if err := m.persistSessionLocked(session); err != nil {
-			m.mu.Unlock()
-			return agentControlResponse{}, err
-		}
-		sessionState := cloneAgentSession(session)
-		m.mu.Unlock()
-		m.emitRuntimeApprovalResolved(ctx, sessionID, sessionState, *pending, "denied")
-		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
-		m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, sessionState, message)
-		return agentControlResponse{Session: sessionState, Message: message, ApprovalState: canonicalAgentAuthorizationApproval(pending, "denied")}, nil
-	case "approve":
-		pending.Status = "approved"
-		pending.UpdatedAt = now
-		session.PendingAuthorization = nil
-		session.Status = "running"
-		if session.ActiveTask != nil {
-			session.ActiveTask.Status = "running"
-			session.ActiveTask.UpdatedAt = now
-		}
-		session.NextAction = &agentNextAction{
-			Type:            "continue",
-			Reason:          agentText(language, "授权已通过，继续执行挂起工具动作。", "Authorization approved; continuing the pending tool action."),
-			SuggestedPrompt: pending.OriginalPrompt,
-			AutoContinue:    true,
-		}
-		message = agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, fmt.Sprintf("已授权，继续执行挂起动作：`%s`。", pending.ActionName), fmt.Sprintf("Authorized. Continuing pending action: `%s`.", pending.ActionName)), nil, nil), "step")
-		session.Messages = append(session.Messages, message)
-		session.UpdatedAt = now
-		compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
-		if err := m.persistSessionLocked(session); err != nil {
-			m.mu.Unlock()
-			return agentControlResponse{}, err
-		}
-		approvedSessionState := cloneAgentSession(session)
-		m.mu.Unlock()
-		m.emitRuntimeApprovalResolved(ctx, sessionID, approvedSessionState, *pending, "approved")
-		m.emitRuntimeMemoryCompacted(ctx, sessionID, approvedSessionState, agentRuntimeTurnRef{}, compaction)
-		m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, approvedSessionState, message)
-	default:
-		m.mu.Unlock()
-		return agentControlResponse{}, services.NewError(services.CodeBadRequest, "unsupported authorization decision", map[string]any{"action": req.Action}, nil)
+	pending := resolved.Pending
+	message := resolved.Message
+	operationLevel = resolved.OperationLevel
+	if decision == "deny" {
+		return agentControlResponse{Session: resolved.Session, Message: message, ApprovalState: canonicalAgentAuthorizationApproval(&pending, "denied")}, nil
 	}
 
 	action := agentPlannerAction{Name: pending.ActionName, Arguments: cloneMapStringAny(pending.Arguments)}
@@ -468,7 +386,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		return agentControlResponse{}, getErr
 	}
 	_ = responseToolCalls
-	return agentControlResponse{Session: sessionState, Message: message, ApprovalState: canonicalAgentAuthorizationApproval(pending, "approved")}, nil
+	return agentControlResponse{Session: sessionState, Message: message, ApprovalState: canonicalAgentAuthorizationApproval(&pending, "approved")}, nil
 }
 
 func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (resp sendAgentMessageResponse, err error) {

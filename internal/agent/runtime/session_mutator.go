@@ -11,14 +11,15 @@ var (
 	ErrSessionMutatorNotAttached = errors.New("runtime: session mutator not attached")
 )
 
-// SessionMutationKind identifies one bounded session state mutation. The
-// initial migration slice only moves legacy append-messages + optional planner
-// apply behind this engine seam.
+// SessionMutationKind identifies one bounded session state mutation. During
+// migration, daemon-private payloads keep legacy append/user/authorization
+// state changes behind this engine seam until those types move runtime-side.
 type SessionMutationKind string
 
 const (
-	SessionMutationAppendMessages    SessionMutationKind = "append_messages"
-	SessionMutationRecordUserMessage SessionMutationKind = "record_user_message"
+	SessionMutationAppendMessages       SessionMutationKind = "append_messages"
+	SessionMutationRecordUserMessage    SessionMutationKind = "record_user_message"
+	SessionMutationResolveAuthorization SessionMutationKind = "resolve_authorization"
 )
 
 // SessionMutationRequest is the engine-owned boundary for one bounded session
