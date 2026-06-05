@@ -316,7 +316,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		actionMessages = agentMessagesWithPhase(actionMessages, "step")
 		actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
 		if len(actionMessages) > 0 {
-			m.appendMessages(sessionID, actionMessages...)
+			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "planner_loop", operationLevel, actionMessages...)
 			responseMessages = append(responseMessages, actionMessages...)
 			loopHistory = append(loopHistory, actionMessages...)
 		}
@@ -339,7 +339,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 				[]agentToolCall{warningTool},
 				nil,
 			), "step_replan")
-			m.appendMessages(sessionID, warningMessage)
+			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "planner_loop", operationLevel, warningMessage)
 			responseMessages = append(responseMessages, warningMessage)
 			toolCalls = append(toolCalls, warningTool)
 			break
@@ -385,7 +385,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 		if len(actionMessages) == 0 {
 			break
 		}
-		m.appendMessages(sessionID, actionMessages...)
+		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionReplanActionContinuation, operationLevel, actionMessages...)
 		responseMessages = append(responseMessages, actionMessages...)
 		toolCalls = append(toolCalls, actionToolCalls...)
 		loopHistory = append(loopHistory, actionMessages...)
@@ -404,7 +404,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 				[]agentToolCall{warningTool},
 				nil,
 			), "step_replan")
-			m.appendMessages(sessionID, warningMessage)
+			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionReplanActionContinuation, operationLevel, warningMessage)
 			responseMessages = append(responseMessages, warningMessage)
 			toolCalls = append(toolCalls, warningTool)
 			break

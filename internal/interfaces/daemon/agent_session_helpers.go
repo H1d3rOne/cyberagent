@@ -250,6 +250,17 @@ func (m *agentManager) appendMessagesWithPlanner(sessionID string, plan *agentPl
 	_, _ = m.appendMessagesWithPlannerLegacy(sessionID, plan, messages...)
 }
 
+func (m *agentManager) appendMessagesForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, origin, operationLevel string, messages ...agentMessage) {
+	m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, origin, operationLevel, nil, messages...)
+}
+
+func (m *agentManager) appendMessagesWithPlannerForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, origin, operationLevel string, plan *agentPlannerResponse, messages ...agentMessage) {
+	if m.runRuntimeAppendMessagesMutationForTurn(ctx, sessionID, turnRef, prompt, origin, operationLevel, plan, messages...) {
+		return
+	}
+	_, _ = m.appendMessagesWithPlannerLegacy(sessionID, plan, messages...)
+}
+
 func (m *agentManager) appendMessagesWithPlannerLegacy(sessionID string, plan *agentPlannerResponse, messages ...agentMessage) (daemonAppendMessagesMutationResultPayload, bool) {
 	eng := m.runtimeEngine()
 	m.mu.Lock()

@@ -217,6 +217,35 @@ func daemonSessionMutationErrorResult(req runtime.SessionMutationRequest, err er
 }
 
 func (m *agentManager) runRuntimeAppendMessagesMutation(ctx context.Context, sessionID string, plan *agentPlannerResponse, messages ...agentMessage) bool {
+	return m.runRuntimeAppendMessagesMutationWithTurn(ctx, runtime.TurnContext{
+		SessionID: sessionID,
+		Metadata: map[string]any{
+			"mutator": "session_mutation",
+			"kind":    string(runtime.SessionMutationAppendMessages),
+		},
+	}, plan, messages...)
+}
+
+func (m *agentManager) runRuntimeAppendMessagesMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, origin, operationLevel string, plan *agentPlannerResponse, messages ...agentMessage) bool {
+	return m.runRuntimeAppendMessagesMutationWithTurn(ctx, runtime.TurnContext{
+		SessionID:      sessionID,
+		TaskID:         turnRef.TaskID,
+		RunID:          turnRef.RunID,
+		TurnID:         turnRef.TurnID,
+		Prompt:         prompt,
+		Origin:         origin,
+		OperationLevel: operationLevel,
+		Metadata: map[string]any{
+			"mutator":         "session_mutation",
+			"kind":            string(runtime.SessionMutationAppendMessages),
+			"message_count":   len(messages),
+			"planner_apply":   plan != nil,
+			"operation_level": operationLevel,
+		},
+	}, plan, messages...)
+}
+
+func (m *agentManager) runRuntimeAppendMessagesMutationWithTurn(ctx context.Context, turn runtime.TurnContext, plan *agentPlannerResponse, messages ...agentMessage) bool {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.SessionMutator() == nil {
 		return false
@@ -224,17 +253,21 @@ func (m *agentManager) runRuntimeAppendMessagesMutation(ctx context.Context, ses
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if turn.Metadata == nil {
+		turn.Metadata = map[string]any{}
+	}
+	turn.Metadata["mutator"] = "session_mutation"
+	turn.Metadata["kind"] = string(runtime.SessionMutationAppendMessages)
+	turn.Metadata["message_count"] = len(messages)
+	turn.Metadata["planner_apply"] = plan != nil
+	if turn.OperationLevel != "" {
+		turn.Metadata["operation_level"] = turn.OperationLevel
+	}
 	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
-		Turn: runtime.TurnContext{
-			SessionID: sessionID,
-			Metadata: map[string]any{
-				"mutator": "session_mutation",
-				"kind":    string(runtime.SessionMutationAppendMessages),
-			},
-		},
+		Turn: turn,
 		Kind: runtime.SessionMutationAppendMessages,
 		Payload: daemonAppendMessagesMutationPayload{
-			SessionID: sessionID,
+			SessionID: turn.SessionID,
 			Plan:      plan,
 			Messages:  append([]agentMessage(nil), messages...),
 		},

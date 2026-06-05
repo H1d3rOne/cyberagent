@@ -1035,6 +1035,7 @@ Glass surface：
 | v17 | 扩展 turn executor seam：authorization approve resume 与 route-before-LLM 后续 auto-continue 的 `runAgentReplanActionContinuation` 已经 `replan_action_continuation` dispatch，实际 action execution / StepReplan synthesis / append 语义保持原路径。 |
 | v18 | 扩展 turn executor seam：authorization approve 后的单个 planner action execution 已经 `planner_action_execution` dispatch；实际 action/tool execution、错误处理、authorization metadata 与后续 synthesis 语义保持原路径。 |
 | v19 | 扩展 planner loop action execution seam：LLM planner loop 与 replan continuation 内部 `executeAgentPlannerActions` 已按单个 action 复用 `planner_action_execution` dispatch；authorization gate、错误 fallback、action queue metadata、phase tagging 与 StepReplan synthesis 语义保持原路径。 |
+| v20 | 扩展 session mutation seam：planner loop / replan continuation 的 action/warning append 增加 turn-aware `append_messages` dispatch；实际 append/persist/compaction/runtime events 仍复用 daemon legacy helper。 |
 
 ---
 
