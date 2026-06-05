@@ -94,16 +94,17 @@ type Store interface {
 	ListEvents(ctx context.Context, filter EventFilter, limit int) ([]Event, error)
 }
 
-// Engine is the central coordinator. Submit/Stream are live today; the
-// optional TurnExecutor seam lets callers attach the legacy daemon turn
-// executor before the planner loop is migrated into Engine.
+// Engine is the central coordinator. Submit/Stream are live today; optional
+// turn-execution seams let callers attach the legacy daemon executor / LLM
+// tool loop before the planner loop is fully migrated into Engine.
 type Engine struct {
-	store        Store
-	mu           sync.Mutex
-	tasks        map[string]*Task
-	runs         map[string]*Run
-	turns        map[string]*Turn
-	turnExecutor TurnExecutor
+	store         Store
+	mu            sync.Mutex
+	tasks         map[string]*Task
+	runs          map[string]*Run
+	turns         map[string]*Turn
+	turnExecutor  TurnExecutor
+	llmTurnRunner LLMTurnRunner
 
 	events  chan Event // legacy single-consumer stream; prefer Subscribe.
 	nextSeq atomic.Int64

@@ -15,6 +15,7 @@ func (m *agentManager) AttachEngine(e *runtime.Engine) {
 	m.mu.Unlock()
 	if e != nil {
 		e.AttachTurnExecutor(daemonAgentTurnExecutor{manager: m})
+		e.AttachLLMTurnRunner(daemonAgentLLMTurnRunner{manager: m})
 	}
 }
 

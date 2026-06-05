@@ -174,6 +174,79 @@ func TestExecuteTurnWithoutExecutorReturnsStableError(t *testing.T) {
 	}
 }
 
+func TestRunLLMTurnDispatchesAttachedRunner(t *testing.T) {
+	e, _ := newTestEngine()
+	ctx := context.WithValue(context.Background(), struct{}{}, "ctx-value")
+	expectedTurn := TurnContext{
+		SessionID:      "session-llm",
+		TaskID:         "task-llm",
+		RunID:          "run-llm",
+		TurnID:         "turn-llm",
+		Prompt:         "plan and execute",
+		Origin:         "user",
+		OperationLevel: "safe_scan",
+		Metadata:       map[string]any{"source": "test"},
+	}
+	expectedPayload := map[string]any{"opaque": "daemon-private"}
+	called := false
+	e.AttachLLMTurnRunner(LLMTurnRunnerFunc(func(gotCtx context.Context, got LLMTurnRequest) (LLMTurnResult, error) {
+		called = true
+		if gotCtx != ctx {
+			t.Fatalf("RunLLMTurn ctx = %#v, want original ctx", gotCtx)
+		}
+		if got.Turn.SessionID != expectedTurn.SessionID ||
+			got.Turn.TaskID != expectedTurn.TaskID ||
+			got.Turn.RunID != expectedTurn.RunID ||
+			got.Turn.TurnID != expectedTurn.TurnID ||
+			got.Turn.Prompt != expectedTurn.Prompt ||
+			got.Turn.Origin != expectedTurn.Origin ||
+			got.Turn.OperationLevel != expectedTurn.OperationLevel ||
+			got.Turn.Metadata["source"] != expectedTurn.Metadata["source"] {
+			t.Fatalf("LLMTurnRequest.Turn = %#v, want %#v", got.Turn, expectedTurn)
+		}
+		payload, ok := got.Payload.(map[string]any)
+		if !ok || payload["opaque"] != expectedPayload["opaque"] {
+			t.Fatalf("LLMTurnRequest.Payload = %#v, want %#v", got.Payload, expectedPayload)
+		}
+		if got.Metadata["phase"] != "llm_loop" {
+			t.Fatalf("LLMTurnRequest.Metadata = %#v, want phase=llm_loop", got.Metadata)
+		}
+		return LLMTurnResult{
+			Status:  TurnResultFinished,
+			Reason:  "done",
+			Payload: "result-payload",
+			Data:    map[string]any{"runner": "test"},
+		}, nil
+	}))
+
+	result, err := e.RunLLMTurn(ctx, LLMTurnRequest{
+		Turn:     expectedTurn,
+		Payload:  expectedPayload,
+		Metadata: map[string]any{"phase": "llm_loop"},
+	})
+	if err != nil {
+		t.Fatalf("RunLLMTurn() error = %v", err)
+	}
+	if !called {
+		t.Fatalf("RunLLMTurn() did not call attached runner")
+	}
+	if result.Status != TurnResultFinished || result.Reason != "done" || result.Payload != "result-payload" || result.Data["runner"] != "test" {
+		t.Fatalf("RunLLMTurn() result = %#v", result)
+	}
+}
+
+func TestRunLLMTurnWithoutRunnerReturnsStableError(t *testing.T) {
+	e, _ := newTestEngine()
+
+	result, err := e.RunLLMTurn(context.Background(), LLMTurnRequest{Turn: TurnContext{SessionID: "session-llm"}})
+	if !errors.Is(err, ErrLLMTurnRunnerNotAttached) {
+		t.Fatalf("RunLLMTurn() error = %v, want ErrLLMTurnRunnerNotAttached", err)
+	}
+	if result.Status != TurnResultBlocked || !errors.Is(result.Error, ErrLLMTurnRunnerNotAttached) || result.Reason == "" {
+		t.Fatalf("RunLLMTurn() result = %#v, want blocked missing-runner result", result)
+	}
+}
+
 func TestBeginTurnPublishesLegacyLifecycleEvents(t *testing.T) {
 	e, store := newTestEngine()
 	ctx := context.Background()

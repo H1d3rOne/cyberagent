@@ -571,7 +571,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				history = cloneAgentMessages(sessionState.Messages)
 				memorySummary = cloneAgentMemorySummary(sessionState.MemorySummary)
 			}
-			messages, toolCalls, err := m.runAgentLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+			messages, toolCalls, err := m.runRuntimeLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
 			if err == nil {
 				responseMessages := append([]agentMessage{userMessage, controlResp.Message}, messages...)
 				sessionState, _ = m.GetSession(ctx, sessionID)
@@ -654,7 +654,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	}
 
 	if agentLLMConfigured(req) {
-		messages, toolCalls, err := m.runAgentLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+		messages, toolCalls, err := m.runRuntimeLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
 		if err == nil {
 			responseMessages := append([]agentMessage{userMessage}, messages...)
 			sessionState, _ := m.GetSession(ctx, sessionID)

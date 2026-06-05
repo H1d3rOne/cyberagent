@@ -197,10 +197,10 @@ Leader 负责：
    - 覆盖自然语言 `runs.approvals.approve`、`runs.approvals.deny` 与 `runs.resume_approved`。
    - 保留 `approval_ops` operation-level gate、最新用户显式指令匹配、approval comment 传递、active/current run fallback 与原 approval/resume handler 的 audit/event 语义。
    - route source metadata 继续标记为 `deterministic_route/registry_dispatch`；`read_only` 不会调用 approval write registry handler。
-11. 当前评估结论：先继续做分批 registry 化，不直接启动 engine-native turn lifecycle 下沉。
-   - 原因：`runtime.Engine` 当前仍是事件桥、SQLite replay 与 recovery 容器；`SendMessage`、planner loop、授权 gate、session mutation 仍由 daemon 保证语义。
-   - 如果此时把 `runAgentLLMToolLoop` 下沉为 engine 主控，会同时牵动 session persist、authorization resume、tool synthesis、auto-continue 与 SSE replay，切片过大。
-   - 更稳妥路径是先让所有确定性工具执行统一经过 registry handler，再把 daemon 的 begin/finish turn bridge 抽成 engine-native TurnExecutor。
+11. 当前收敛策略：不一次性搬迁 legacy turn，继续按 registry dispatch → lifecycle seam → LLM runner seam → engine-native runner 分层推进。
+   - 原因：`SendMessage`、planner loop、授权 gate、session mutation 仍由 daemon 保证语义；一次性把 `runAgentLLMToolLoop` 完整下沉会同时牵动 session persist、authorization resume、tool synthesis、auto-continue 与 SSE replay，切片过大。
+   - 已完成确定性工具 registry 化、`BeginTurn`/`FinishTurn` lifecycle API 与 `RunLLMTurn` dispatch seam。
+   - 后续更稳妥路径是继续拆分 planner chat、tool synthesis、step replan、session mutation，再收敛 authorization resume / auto-continue。
 
 高风险 / 写动作 registry 化分批建议：
 
@@ -220,7 +220,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 再把 `runAgentLLMToolLoop` 迁到 engine 主控，daemon 只传入 session snapshot、operator prompt 与 service adapter。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam，先让 `SendMessage` 的 LLM 主入口经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`；下一步再拆 planner chat、tool synthesis、step replan 与 session mutation。
 4. 最后收敛 `SendMessage` 中的 no-LLM route、LLM route、authorization resume、auto-continue 分支为 engine turn lifecycle。
 
 已完成的 seam 边界：
@@ -234,6 +234,12 @@ engine-native turn lifecycle 下沉入口建议：
 - `runtime.Engine.BeginTurn` 接管 task/run/turn state 写入与 `task_created`、`run_started`、`turn_started` 事件发布。
 - `runtime.Engine.FinishTurn` 接管 turn state 写入、`turn_finished`/`turn_failed` 发布，以及 approval required、task finished、task failed run 终态分派。
 - daemon `beginRuntimeTurn` / `finishRuntimeTurn` 只保留 session snapshot、message ID、response completion 到 `TurnContext` / `TurnResult` 的 adapter 逻辑；`SendMessage`、planner loop、authorization resume、auto-continue 仍未下沉。
+
+已完成的 LLM runner seam 边界：
+
+- `runtime.Engine` 新增可选 `LLMTurnRunner`，`RunLLMTurn` 只负责 dispatch，不发布 lifecycle events，不改变 Begin/Finish ownership。
+- `LLMTurnRequest` 使用稳定 `TurnContext` 承载 runtime 标识；临时 `Payload any` 只作为 daemon-private planner/session 类型尚未迁出 daemon 前的迁移适配层。
+- daemon `AttachEngine` 会挂接 `daemon_legacy_llm_tool_loop`；`SendMessage` 中 control continue/revise 与普通 LLM configured 两个主入口已改为调用 `runRuntimeLLMToolLoop`，实际执行仍复用原 `runAgentLLMToolLoop`，保持 model streaming、tool action、synthesis、authorization gate 与 session persist 语义不变。
 
 ---
 
@@ -998,6 +1004,7 @@ Glass surface：
 | v2 | 同步 P0 Slice A–H 实际完成状态、提交证据与本地验证结果；将后续重点切换为 engine 默认路径、legacy 收敛、subagent 与 P1/P2 优化。 |
 | v3 | Runtime engine 默认启用；保留 `CYBERAGENT_RUNTIME=legacy/off/disabled/false/0` 作为兼容回退开关。 |
 | v4 | 更新 P0.5 registry dispatch 收敛状态：workspace mutation 与 approval approve/deny/resume-approved 自然语言本地路由已统一经 Tool Registry handler 执行。 |
+| v5 | 新增 LLM runner seam 状态：`runtime.Engine.RunLLMTurn` 已可调度 daemon legacy `runAgentLLMToolLoop`，为后续 engine-native planner/synthesis/replan/session mutation 拆分做入口。 |
 
 ---
 
