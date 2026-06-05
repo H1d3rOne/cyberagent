@@ -220,7 +220,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record 与 `DecideAgentAuthorization` approve/deny 状态写入已经 engine session mutation dispatch。下一步继续拆 control session mutation，并准备收敛 no-LLM route/authorization resume/auto-continue 分支。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch。下一步准备收敛 no-LLM route/authorization resume/auto-continue 分支。
 4. 最后收敛 `SendMessage` 中的 no-LLM route、LLM route、authorization resume、auto-continue 分支为 engine turn lifecycle。
 
 已完成的 seam 边界：
@@ -251,9 +251,10 @@ engine-native turn lifecycle 下沉入口建议：
 已完成的 session mutation seam 边界：
 
 - `runtime.Engine` 新增可选 `SessionMutator`，`MutateSession` 只负责 dispatch 单个 bounded session mutation，不发布 lifecycle events。
-- 已接入 mutation 为 `append_messages`、`record_user_message` 与 `resolve_authorization`，覆盖 legacy `appendMessagesWithPlanner` 的 messages append、tool/link/planner state apply、session persist、memory compaction 与 runtime events 发布，`SendMessage` 开头的 user message 记录、ActiveTask start/touch、history/memory snapshot 与 persist，以及 `DecideAgentAuthorization` approve/deny 的 pending 校验、授权状态更新、session/task/todo/next_action 更新、persist、compaction 与 runtime events 发布。
+- 已接入 mutation 为 `append_messages`、`record_user_message`、`control_session` 与 `resolve_authorization`，覆盖 legacy `appendMessagesWithPlanner` 的 messages append、tool/link/planner state apply、session persist、memory compaction 与 runtime events 发布，`SendMessage` 开头的 user message 记录、ActiveTask start/touch、history/memory snapshot 与 persist，`ControlSession` 的 continue/revise/pause/cancel/stop/new_task 状态更新、persist、compaction 与 runtime events 发布，以及 `DecideAgentAuthorization` approve/deny 的 pending 校验、授权状态更新、session/task/todo/next_action 更新、persist、compaction 与 runtime events 发布。
 - daemon `AttachEngine` 会挂接 `daemon_legacy_session`；实际执行仍复用原 `appendMessagesWithPlannerLegacy`，保持 session lock 顺序、planner apply、compaction、persist、`memory_compacted` 与 message runtime events 语义不变。
 - `record_user_message` 实际执行仍复用 daemon legacy helper，保持 user message timestamp、task start/touch、history/memory snapshot、persist best-effort、`BeginTurn` 先于 memory compaction event 的原有顺序。
+- `control_session` 实际执行仍复用 daemon legacy helper，保持 continue/revise/pause/cancel/stop/new_task 对 session/task/todo/next_action/message、persist、`memory_compacted` 与 message runtime events 的原有语义；stop/cancel 的 daemon job cancel 副作用仍留在 `ControlSession` 外层 control flow。
 - `resolve_authorization` 实际执行仍复用 daemon legacy helper，保持 pending authorization ID 校验、operation level uplift、approve/deny message 文案与 phase、ActiveTask/Todos/NextAction、`approval_resolved`、`memory_compacted` 与 message runtime events 语义不变；approve 后挂起 action 执行、tool message append、synthesis 与 auto-continue 仍留在原 `DecideAgentAuthorization` 后续路径。
 
 ---
@@ -1027,6 +1028,7 @@ Glass surface：
 | v10 | 新增 session mutation seam：`runtime.Engine.MutateSession` / `SessionMutator` 已可调度 `append_messages`，`appendMessagesWithPlanner` 经 engine dispatch 后仍复用 daemon legacy session mutation。 |
 | v11 | 扩展 session mutation seam：`record_user_message` 已接入 `SendMessage` 开头 user message 记录与 history/memory snapshot，实际执行仍复用 daemon legacy helper。 |
 | v12 | 扩展 session mutation seam：`resolve_authorization` 已接入 `DecideAgentAuthorization` approve/deny 状态写入，实际执行仍复用 daemon legacy helper，approve 后 action/synthesis 流程保持原路径。 |
+| v13 | 扩展 session mutation seam：`control_session` 已接入 `ControlSession` continue/revise/pause/cancel/stop/new_task 状态写入；stop/cancel 的 daemon job cancel 副作用仍保留在外层 control flow。 |
 
 ---
 

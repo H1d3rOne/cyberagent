@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
-	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 )
 
 func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req agentControlRequest, svc routerServices) (agentControlResponse, error) {
@@ -25,238 +23,20 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 	language := normalizeAgentLanguage(req.Language)
 	operator := normalizeAgentOperator(req.Operator)
 	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
-	now := time.Now().UTC()
 
-	m.mu.Lock()
-	session, ok := m.sessions[sessionID]
-	if !ok {
-		loaded, loadErr := m.loadSessionLocked(sessionID)
-		if loadErr != nil {
-			m.mu.Unlock()
-			return agentControlResponse{}, loadErr
-		}
-		session = loaded
+	resolved, handled, controlErr := m.runRuntimeControlSessionMutation(ctx, sessionID, action, req, operator, language, operationLevel)
+	if controlErr != nil {
+		return agentControlResponse{}, controlErr
 	}
-	session.Operator = operator
-	session.Language = language
-	session.OperationLevel = operationLevel
-	previousNextAction := cloneAgentNextAction(session.NextAction)
-
-	if session.PendingAuthorization != nil &&
-		strings.EqualFold(session.PendingAuthorization.Status, "pending") &&
-		(action == "continue" || action == "revise") {
-		session.Status = "waiting_authorization"
-		if session.ActiveTask != nil {
-			session.ActiveTask.Status = "blocked"
-			session.ActiveTask.UpdatedAt = now
+	if !handled {
+		resolved, controlErr = m.controlSessionLegacy(ctx, sessionID, action, req.Prompt, req.Reason, req.RunID, req.JobID, req.ClearInput, operator, language, operationLevel)
+		if controlErr != nil {
+			return agentControlResponse{}, controlErr
 		}
-		session.NextAction = &agentNextAction{
-			Type:            "authorization_required",
-			Reason:          session.PendingAuthorization.Reason,
-			SuggestedPrompt: agentAuthorizationSuggestedPrompt(language, session.PendingAuthorization),
-			AutoContinue:    false,
-		}
-		message := agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, "当前有挂起的工具授权，请先点击允许或拒绝；在此之前不会继续执行任务。", "A tool authorization is pending. Approve or deny it first; the task will not continue before that."), nil, nil), "step")
-		session.Messages = append(session.Messages, message)
-		session.UpdatedAt = now
-		compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
-		if err := m.persistSessionLocked(session); err != nil {
-			m.mu.Unlock()
-			return agentControlResponse{}, err
-		}
-		sessionState := cloneAgentSession(session)
-		m.mu.Unlock()
-		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
-		return agentControlResponse{Session: sessionState, Message: message}, nil
 	}
-
-	var message agentMessage
-	var cancelJobID string
-	switch action {
-	case "continue":
-		session.Status = "running"
-		if session.ActiveTask != nil {
-			session.ActiveTask.Status = "running"
-			session.ActiveTask.UpdatedAt = now
-		}
-		m.ensureRunningTodoLocked(session, now)
-		previousAutoContinue := previousNextAction != nil &&
-			previousNextAction.Type == "continue" &&
-			previousNextAction.AutoContinue &&
-			strings.TrimSpace(req.Prompt) == "" &&
-			strings.TrimSpace(previousNextAction.SuggestedPrompt) != ""
-		previousSuggestedPrompt := ""
-		if previousAutoContinue {
-			previousSuggestedPrompt = previousNextAction.SuggestedPrompt
-		}
-		suggestedPrompt := firstNonEmpty(strings.TrimSpace(req.Prompt), strings.TrimSpace(previousSuggestedPrompt), agentSuggestedContinuePrompt(language, session))
-		session.NextAction = &agentNextAction{
-			Type:            "continue",
-			Reason:          agentText(language, "用户请求继续当前任务。", "The operator requested continuing the current task."),
-			SuggestedPrompt: suggestedPrompt,
-			AutoContinue:    previousAutoContinue,
-		}
-		if agentEvidenceActionHasApprovalGate(suggestedPrompt) {
-			session.NextAction = &agentNextAction{
-				Type:            "approval_required",
-				Reason:          agentText(language, "当前继续动作仍包含待审批 gate，需先处理审批后再继续。", "The continue action still contains a pending approval gate; resolve approvals before continuing."),
-				SuggestedPrompt: suggestedPrompt,
-			}
-		}
-		message = m.newMessageLocked(language, "agent", agentText(language, "收到：继续当前任务。我会基于当前计划、工具调用和工作区上下文推进下一步。", "Received: continue the current task. I will proceed based on the current plan, tool calls and workspace context."), nil, nil)
-	case "revise":
-		revision := strings.TrimSpace(req.Prompt)
-		if revision == "" {
-			revision = strings.TrimSpace(req.Reason)
-		}
-		if revision == "" {
-			revision = agentText(language, "修订当前任务计划。", "Revise the current task plan.")
-		}
-		session.Status = "running"
-		if session.ActiveTask == nil {
-			session.ActiveTask = &agentTask{
-				ID:        strings.Replace(runs.NewJobID(now), "job_", "task_", 1),
-				Goal:      agentText(language, "修订安全分析任务", "Revise security analysis task"),
-				Kind:      "planning",
-				Status:    "running",
-				Summary:   revision,
-				CreatedAt: now,
-				UpdatedAt: now,
-			}
-		} else {
-			session.ActiveTask.Status = "running"
-			session.ActiveTask.Summary = trimSummary(revision, 360)
-			session.ActiveTask.UpdatedAt = now
-		}
-		isEvidenceAction := agentIsEvidenceActionPrompt(revision)
-		evidenceActionRequiresApproval := false
-		if isEvidenceAction {
-			evidenceActionRequiresApproval = agentEvidenceActionHasApprovalGate(revision)
-			session.Todos = agentEvidenceActionTodos(language, revision, now)
-		} else {
-			m.ensureRunningTodoLocked(session, now)
-			if len(session.Todos) == 0 {
-				session.Todos = agentInitialTodos(language, "chat", now)
-			}
-		}
-		session.NextAction = &agentNextAction{
-			Type:            "continue",
-			Reason:          agentText(language, "用户要求修订当前任务计划。", "The operator requested revising the current task plan."),
-			SuggestedPrompt: revision,
-		}
-		if evidenceActionRequiresApproval {
-			session.NextAction = &agentNextAction{
-				Type:            "approval_required",
-				Reason:          agentText(language, "当前证据行动计划存在待审批 gate，需先处理审批后再继续。", "The evidence action plan has a pending approval gate; resolve approvals before continuing."),
-				SuggestedPrompt: revision,
-			}
-		}
-		message = m.newMessageLocked(language, "agent", agentText(language, "收到：我会按你的修订要求更新当前任务计划，并在下一轮继续推进。", "Received: I will update the current task plan according to your revision and continue in the next turn."), nil, nil)
-	case "pause":
-		session.Status = "paused"
-		if session.ActiveTask != nil {
-			session.ActiveTask.Status = "blocked"
-			session.ActiveTask.UpdatedAt = now
-		}
-		reason := strings.TrimSpace(req.Reason)
-		if reason == "" {
-			reason = agentText(language, "用户请求暂停当前 Agent 会话。", "The operator requested pausing the current Agent session.")
-		}
-		for idx := range session.Todos {
-			if session.Todos[idx].Status == "running" {
-				markAgentTodoByIndex(session.Todos, idx, "blocked", now, "", reason)
-			}
-		}
-		session.NextAction = &agentNextAction{
-			Type:            "continue",
-			Reason:          reason,
-			SuggestedPrompt: firstNonEmpty(strings.TrimSpace(req.Prompt), agentSuggestedContinuePrompt(language, session)),
-		}
-		message = m.newMessageLocked(language, "agent", agentText(language, "已暂停当前 Agent 会话；不会清空上下文。发送继续/Resume 可从当前计划恢复。", "Paused the current Agent session without clearing context. Send continue/resume to proceed from the current plan."), nil, nil)
-	case "cancel":
-		session.PendingAuthorization = nil
-		session.Status = "cancelled"
-		if session.ActiveTask != nil {
-			session.ActiveTask.Status = "blocked"
-			session.ActiveTask.UpdatedAt = now
-		}
-		cancelJobID = strings.TrimSpace(req.JobID)
-		if cancelJobID == "" {
-			cancelJobID = m.findActiveJobIDLocked(session, strings.TrimSpace(req.RunID))
-		}
-		reason := strings.TrimSpace(req.Reason)
-		if reason == "" {
-			reason = agentText(language, "用户请求取消当前 Agent 任务。", "The operator requested cancelling the current Agent task.")
-		}
-		for idx := range session.Todos {
-			if session.Todos[idx].Status == "running" || session.Todos[idx].Status == "pending" {
-				markAgentTodoByIndex(session.Todos, idx, "skipped", now, "", reason)
-			}
-		}
-		session.NextAction = &agentNextAction{
-			Type:            "wait_user",
-			Reason:          reason,
-			SuggestedPrompt: firstNonEmpty(strings.TrimSpace(req.Prompt), agentText(language, "开启新任务并说明授权目标与 scope", "start a new task and provide the authorized target and scope")),
-		}
-		message = m.newMessageLocked(language, "agent", agentText(language, "已取消当前 Agent 任务；如存在运行中的 daemon job，会尝试取消。", "Cancelled the current Agent task; if a daemon job is running, I will try to cancel it."), nil, nil)
-	case "stop":
-		session.PendingAuthorization = nil
-		session.Status = "blocked"
-		if session.ActiveTask != nil {
-			session.ActiveTask.Status = "blocked"
-			session.ActiveTask.UpdatedAt = now
-		}
-		cancelJobID = strings.TrimSpace(req.JobID)
-		if cancelJobID == "" {
-			cancelJobID = m.findActiveJobIDLocked(session, strings.TrimSpace(req.RunID))
-		}
-		reason := strings.TrimSpace(req.Reason)
-		if reason == "" {
-			reason = agentText(language, "用户请求停止当前任务。", "The operator requested stopping the current task.")
-		}
-		for idx := range session.Todos {
-			if session.Todos[idx].Status == "running" || session.Todos[idx].Status == "pending" {
-				markAgentTodoByIndex(session.Todos, idx, "blocked", now, "", reason)
-			}
-		}
-		session.NextAction = &agentNextAction{
-			Type:            "blocked",
-			Reason:          reason,
-			SuggestedPrompt: firstNonEmpty(strings.TrimSpace(req.Prompt), agentSuggestedStopPrompt(language, session)),
-		}
-		message = m.newMessageLocked(language, "agent", agentText(language, "已暂停当前 Agent 任务状态；如存在运行中的 daemon job，会尝试取消。", "The current Agent task state is paused; if a daemon job is running, I will try to cancel it."), nil, nil)
-	case "new_task":
-		session.Status = "idle"
-		session.ActiveTask = nil
-		session.Todos = []agentTodo{}
-		session.ToolCalls = []agentToolCall{}
-		session.ContextRefs = []agentContextRef{}
-		session.PendingChanges = []agentWorkspaceChange{}
-		session.PendingAuthorization = nil
-		session.MemorySummary = nil
-		session.NextAction = &agentNextAction{
-			Type:   "wait_user",
-			Reason: agentText(language, "已开启新任务，等待用户输入目标、scope 或下一步指令。", "New task started; waiting for target, scope, or next instruction."),
-		}
-		if req.ClearInput {
-			session.Messages = []agentMessage{}
-		}
-		message = m.newMessageLocked(language, "agent", agentText(language, "已开启新的 Agent 任务上下文。", "Started a new Agent task context."), nil, nil)
-	default:
-		m.mu.Unlock()
-		return agentControlResponse{}, services.NewError(services.CodeBadRequest, "unsupported agent control action", map[string]any{"action": req.Action}, nil)
-	}
-	session.Messages = append(session.Messages, message)
-	session.UpdatedAt = now
-	compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
-	if err := m.persistSessionLocked(session); err != nil {
-		m.mu.Unlock()
-		return agentControlResponse{}, err
-	}
-	sessionState := cloneAgentSession(session)
-	m.mu.Unlock()
-	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
-	m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, sessionState, message)
+	sessionState := resolved.Session
+	message := resolved.Message
+	cancelJobID := resolved.CancelJobID
 
 	if (action == "stop" || action == "cancel") && cancelJobID != "" && svc.jobs != nil {
 		if job, cancelErr := svc.jobs.CancelJob(ctx, cancelJobID); cancelErr == nil {

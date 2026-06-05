@@ -9,6 +9,7 @@ import (
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 )
 
 type daemonAppendMessagesMutationPayload struct {
@@ -58,6 +59,27 @@ type daemonResolveAuthorizationMutationResultPayload struct {
 	OperationLevel string
 	Compaction     *agentMemoryCompaction
 	Mutated        bool
+}
+
+type daemonControlSessionMutationPayload struct {
+	SessionID      string
+	Action         string
+	Prompt         string
+	Reason         string
+	RunID          string
+	JobID          string
+	ClearInput     bool
+	Operator       string
+	Language       string
+	OperationLevel string
+}
+
+type daemonControlSessionMutationResultPayload struct {
+	Session     agentSession
+	Message     agentMessage
+	CancelJobID string
+	Compaction  *agentMemoryCompaction
+	Mutated     bool
 }
 
 type daemonSessionMutator struct {
@@ -112,6 +134,32 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 				"kind":            string(req.Kind),
 				"session_id":      payload.SessionID,
 				"message_id":      resultPayload.UserMessage.ID,
+				"operation_level": payload.OperationLevel,
+				"mutated":         true,
+			},
+		}, nil
+	case runtime.SessionMutationControlSession:
+		payload, ok := req.Payload.(daemonControlSessionMutationPayload)
+		if !ok {
+			err := errors.New("daemon: invalid control session mutation payload")
+			return daemonSessionMutationErrorResult(req, err), err
+		}
+		resultPayload, err := r.manager.controlSessionLegacy(ctx, payload.SessionID, payload.Action, payload.Prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, payload.OperationLevel)
+		if err != nil {
+			return daemonSessionMutationErrorResult(req, err), err
+		}
+		resultPayload.Mutated = true
+		return runtime.SessionMutationResult{
+			Status:  runtime.TurnResultFinished,
+			Reason:  "legacy daemon control session mutation executed",
+			Payload: resultPayload,
+			Data: map[string]any{
+				"mutator":         "daemon_legacy_session",
+				"kind":            string(req.Kind),
+				"session_id":      payload.SessionID,
+				"action":          payload.Action,
+				"message_id":      resultPayload.Message.ID,
+				"cancel_job_id":   resultPayload.CancelJobID,
 				"operation_level": payload.OperationLevel,
 				"mutated":         true,
 			},
@@ -257,6 +305,65 @@ func (m *agentManager) runRuntimeRecordUserMessageMutation(ctx context.Context, 
 	return payload, true, nil
 }
 
+func (m *agentManager) runRuntimeControlSessionMutation(ctx context.Context, sessionID, action string, req agentControlRequest, operator, language, operationLevel string) (daemonControlSessionMutationResultPayload, bool, error) {
+	eng := m.runtimeEngine()
+	if eng == nil || eng.SessionMutator() == nil {
+		return daemonControlSessionMutationResultPayload{}, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
+		Turn: runtime.TurnContext{
+			SessionID:      sessionID,
+			Prompt:         req.Prompt,
+			Origin:         "operator",
+			OperationLevel: operationLevel,
+			Metadata: map[string]any{
+				"mutator": "session_mutation",
+				"kind":    string(runtime.SessionMutationControlSession),
+			},
+		},
+		Kind: runtime.SessionMutationControlSession,
+		Payload: daemonControlSessionMutationPayload{
+			SessionID:      sessionID,
+			Action:         action,
+			Prompt:         req.Prompt,
+			Reason:         req.Reason,
+			RunID:          req.RunID,
+			JobID:          req.JobID,
+			ClearInput:     req.ClearInput,
+			Operator:       operator,
+			Language:       language,
+			OperationLevel: operationLevel,
+		},
+		Metadata: map[string]any{
+			"mutator":         "session_mutation",
+			"kind":            string(runtime.SessionMutationControlSession),
+			"action":          action,
+			"operation_level": operationLevel,
+			"clear_input":     req.ClearInput,
+			"run_id":          strings.TrimSpace(req.RunID),
+			"job_id":          strings.TrimSpace(req.JobID),
+		},
+	})
+	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
+		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
+		return daemonControlSessionMutationResultPayload{}, false, nil
+	}
+	if err != nil {
+		return daemonControlSessionMutationResultPayload{}, true, err
+	}
+	if result.Status == runtime.TurnResultBlocked {
+		return daemonControlSessionMutationResultPayload{}, false, nil
+	}
+	payload, ok := result.Payload.(daemonControlSessionMutationResultPayload)
+	if !ok {
+		return daemonControlSessionMutationResultPayload{}, true, errors.New("daemon: control session mutator returned invalid payload")
+	}
+	return payload, true, nil
+}
+
 func (m *agentManager) runRuntimeResolveAuthorizationMutation(ctx context.Context, sessionID, decision string, req agentAuthorizationDecisionRequest, operator, language, operationLevel string) (daemonResolveAuthorizationMutationResultPayload, bool, error) {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.SessionMutator() == nil {
@@ -348,6 +455,260 @@ func (m *agentManager) recordUserMessageLegacy(sessionID, prompt, operator, lang
 		MemorySummary: memorySummary,
 		Compaction:    compaction,
 		Mutated:       true,
+	}, nil
+}
+
+func (m *agentManager) controlSessionLegacy(ctx context.Context, sessionID, action, prompt, reason, runID, jobID string, clearInput bool, operator, language, operationLevel string) (daemonControlSessionMutationResultPayload, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	action = normalizeAgentControlAction(action)
+	if action == "" {
+		return daemonControlSessionMutationResultPayload{}, services.NewError(services.CodeBadRequest, "unsupported agent control action", map[string]any{"action": action}, nil)
+	}
+	now := time.Now().UTC()
+
+	m.mu.Lock()
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		loaded, loadErr := m.loadSessionLocked(sessionID)
+		if loadErr != nil {
+			m.mu.Unlock()
+			return daemonControlSessionMutationResultPayload{}, loadErr
+		}
+		session = loaded
+	}
+	session.Operator = operator
+	session.Language = language
+	session.OperationLevel = operationLevel
+	previousNextAction := cloneAgentNextAction(session.NextAction)
+
+	if session.PendingAuthorization != nil &&
+		strings.EqualFold(session.PendingAuthorization.Status, "pending") &&
+		(action == "continue" || action == "revise") {
+		session.Status = "waiting_authorization"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.UpdatedAt = now
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "authorization_required",
+			Reason:          session.PendingAuthorization.Reason,
+			SuggestedPrompt: agentAuthorizationSuggestedPrompt(language, session.PendingAuthorization),
+			AutoContinue:    false,
+		}
+		message := agentMessageWithPhase(m.newMessageLocked(language, "agent", agentText(language, "当前有挂起的工具授权，请先点击允许或拒绝；在此之前不会继续执行任务。", "A tool authorization is pending. Approve or deny it first; the task will not continue before that."), nil, nil), "step")
+		session.Messages = append(session.Messages, message)
+		session.UpdatedAt = now
+		compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+		if err := m.persistSessionLocked(session); err != nil {
+			m.mu.Unlock()
+			return daemonControlSessionMutationResultPayload{}, err
+		}
+		sessionState := cloneAgentSession(session)
+		m.mu.Unlock()
+		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
+		return daemonControlSessionMutationResultPayload{
+			Session:    sessionState,
+			Message:    message,
+			Compaction: compaction,
+			Mutated:    true,
+		}, nil
+	}
+
+	var message agentMessage
+	var cancelJobID string
+	switch action {
+	case "continue":
+		session.Status = "running"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "running"
+			session.ActiveTask.UpdatedAt = now
+		}
+		m.ensureRunningTodoLocked(session, now)
+		previousAutoContinue := previousNextAction != nil &&
+			previousNextAction.Type == "continue" &&
+			previousNextAction.AutoContinue &&
+			strings.TrimSpace(prompt) == "" &&
+			strings.TrimSpace(previousNextAction.SuggestedPrompt) != ""
+		previousSuggestedPrompt := ""
+		if previousAutoContinue {
+			previousSuggestedPrompt = previousNextAction.SuggestedPrompt
+		}
+		suggestedPrompt := firstNonEmpty(strings.TrimSpace(prompt), strings.TrimSpace(previousSuggestedPrompt), agentSuggestedContinuePrompt(language, session))
+		session.NextAction = &agentNextAction{
+			Type:            "continue",
+			Reason:          agentText(language, "用户请求继续当前任务。", "The operator requested continuing the current task."),
+			SuggestedPrompt: suggestedPrompt,
+			AutoContinue:    previousAutoContinue,
+		}
+		if agentEvidenceActionHasApprovalGate(suggestedPrompt) {
+			session.NextAction = &agentNextAction{
+				Type:            "approval_required",
+				Reason:          agentText(language, "当前继续动作仍包含待审批 gate，需先处理审批后再继续。", "The continue action still contains a pending approval gate; resolve approvals before continuing."),
+				SuggestedPrompt: suggestedPrompt,
+			}
+		}
+		message = m.newMessageLocked(language, "agent", agentText(language, "收到：继续当前任务。我会基于当前计划、工具调用和工作区上下文推进下一步。", "Received: continue the current task. I will proceed based on the current plan, tool calls and workspace context."), nil, nil)
+	case "revise":
+		revision := strings.TrimSpace(prompt)
+		if revision == "" {
+			revision = strings.TrimSpace(reason)
+		}
+		if revision == "" {
+			revision = agentText(language, "修订当前任务计划。", "Revise the current task plan.")
+		}
+		session.Status = "running"
+		if session.ActiveTask == nil {
+			session.ActiveTask = &agentTask{
+				ID:        strings.Replace(runs.NewJobID(now), "job_", "task_", 1),
+				Goal:      agentText(language, "修订安全分析任务", "Revise security analysis task"),
+				Kind:      "planning",
+				Status:    "running",
+				Summary:   revision,
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+		} else {
+			session.ActiveTask.Status = "running"
+			session.ActiveTask.Summary = trimSummary(revision, 360)
+			session.ActiveTask.UpdatedAt = now
+		}
+		isEvidenceAction := agentIsEvidenceActionPrompt(revision)
+		evidenceActionRequiresApproval := false
+		if isEvidenceAction {
+			evidenceActionRequiresApproval = agentEvidenceActionHasApprovalGate(revision)
+			session.Todos = agentEvidenceActionTodos(language, revision, now)
+		} else {
+			m.ensureRunningTodoLocked(session, now)
+			if len(session.Todos) == 0 {
+				session.Todos = agentInitialTodos(language, "chat", now)
+			}
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "continue",
+			Reason:          agentText(language, "用户要求修订当前任务计划。", "The operator requested revising the current task plan."),
+			SuggestedPrompt: revision,
+		}
+		if evidenceActionRequiresApproval {
+			session.NextAction = &agentNextAction{
+				Type:            "approval_required",
+				Reason:          agentText(language, "当前证据行动计划存在待审批 gate，需先处理审批后再继续。", "The evidence action plan has a pending approval gate; resolve approvals before continuing."),
+				SuggestedPrompt: revision,
+			}
+		}
+		message = m.newMessageLocked(language, "agent", agentText(language, "收到：我会按你的修订要求更新当前任务计划，并在下一轮继续推进。", "Received: I will update the current task plan according to your revision and continue in the next turn."), nil, nil)
+	case "pause":
+		session.Status = "paused"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.UpdatedAt = now
+		}
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			reason = agentText(language, "用户请求暂停当前 Agent 会话。", "The operator requested pausing the current Agent session.")
+		}
+		for idx := range session.Todos {
+			if session.Todos[idx].Status == "running" {
+				markAgentTodoByIndex(session.Todos, idx, "blocked", now, "", reason)
+			}
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "continue",
+			Reason:          reason,
+			SuggestedPrompt: firstNonEmpty(strings.TrimSpace(prompt), agentSuggestedContinuePrompt(language, session)),
+		}
+		message = m.newMessageLocked(language, "agent", agentText(language, "已暂停当前 Agent 会话；不会清空上下文。发送继续/Resume 可从当前计划恢复。", "Paused the current Agent session without clearing context. Send continue/resume to proceed from the current plan."), nil, nil)
+	case "cancel":
+		session.PendingAuthorization = nil
+		session.Status = "cancelled"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.UpdatedAt = now
+		}
+		cancelJobID = strings.TrimSpace(jobID)
+		if cancelJobID == "" {
+			cancelJobID = m.findActiveJobIDLocked(session, strings.TrimSpace(runID))
+		}
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			reason = agentText(language, "用户请求取消当前 Agent 任务。", "The operator requested cancelling the current Agent task.")
+		}
+		for idx := range session.Todos {
+			if session.Todos[idx].Status == "running" || session.Todos[idx].Status == "pending" {
+				markAgentTodoByIndex(session.Todos, idx, "skipped", now, "", reason)
+			}
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "wait_user",
+			Reason:          reason,
+			SuggestedPrompt: firstNonEmpty(strings.TrimSpace(prompt), agentText(language, "开启新任务并说明授权目标与 scope", "start a new task and provide the authorized target and scope")),
+		}
+		message = m.newMessageLocked(language, "agent", agentText(language, "已取消当前 Agent 任务；如存在运行中的 daemon job，会尝试取消。", "Cancelled the current Agent task; if a daemon job is running, I will try to cancel it."), nil, nil)
+	case "stop":
+		session.PendingAuthorization = nil
+		session.Status = "blocked"
+		if session.ActiveTask != nil {
+			session.ActiveTask.Status = "blocked"
+			session.ActiveTask.UpdatedAt = now
+		}
+		cancelJobID = strings.TrimSpace(jobID)
+		if cancelJobID == "" {
+			cancelJobID = m.findActiveJobIDLocked(session, strings.TrimSpace(runID))
+		}
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			reason = agentText(language, "用户请求停止当前任务。", "The operator requested stopping the current task.")
+		}
+		for idx := range session.Todos {
+			if session.Todos[idx].Status == "running" || session.Todos[idx].Status == "pending" {
+				markAgentTodoByIndex(session.Todos, idx, "blocked", now, "", reason)
+			}
+		}
+		session.NextAction = &agentNextAction{
+			Type:            "blocked",
+			Reason:          reason,
+			SuggestedPrompt: firstNonEmpty(strings.TrimSpace(prompt), agentSuggestedStopPrompt(language, session)),
+		}
+		message = m.newMessageLocked(language, "agent", agentText(language, "已暂停当前 Agent 任务状态；如存在运行中的 daemon job，会尝试取消。", "The current Agent task state is paused; if a daemon job is running, I will try to cancel it."), nil, nil)
+	case "new_task":
+		session.Status = "idle"
+		session.ActiveTask = nil
+		session.Todos = []agentTodo{}
+		session.ToolCalls = []agentToolCall{}
+		session.ContextRefs = []agentContextRef{}
+		session.PendingChanges = []agentWorkspaceChange{}
+		session.PendingAuthorization = nil
+		session.MemorySummary = nil
+		session.NextAction = &agentNextAction{
+			Type:   "wait_user",
+			Reason: agentText(language, "已开启新任务，等待用户输入目标、scope 或下一步指令。", "New task started; waiting for target, scope, or next instruction."),
+		}
+		if clearInput {
+			session.Messages = []agentMessage{}
+		}
+		message = m.newMessageLocked(language, "agent", agentText(language, "已开启新的 Agent 任务上下文。", "Started a new Agent task context."), nil, nil)
+	default:
+		m.mu.Unlock()
+		return daemonControlSessionMutationResultPayload{}, services.NewError(services.CodeBadRequest, "unsupported agent control action", map[string]any{"action": action}, nil)
+	}
+	session.Messages = append(session.Messages, message)
+	session.UpdatedAt = now
+	compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
+	if err := m.persistSessionLocked(session); err != nil {
+		m.mu.Unlock()
+		return daemonControlSessionMutationResultPayload{}, err
+	}
+	sessionState := cloneAgentSession(session)
+	m.mu.Unlock()
+	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
+	m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, sessionState, message)
+	return daemonControlSessionMutationResultPayload{
+		Session:     sessionState,
+		Message:     message,
+		CancelJobID: cancelJobID,
+		Compaction:  compaction,
+		Mutated:     true,
 	}, nil
 }
 

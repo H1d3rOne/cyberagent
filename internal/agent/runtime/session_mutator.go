@@ -12,13 +12,15 @@ var (
 )
 
 // SessionMutationKind identifies one bounded session state mutation. During
-// migration, daemon-private payloads keep legacy append/user/authorization
-// state changes behind this engine seam until those types move runtime-side.
+// migration, daemon-private payloads keep legacy append/user/control/
+// authorization state changes behind this engine seam until those types move
+// runtime-side.
 type SessionMutationKind string
 
 const (
 	SessionMutationAppendMessages       SessionMutationKind = "append_messages"
 	SessionMutationRecordUserMessage    SessionMutationKind = "record_user_message"
+	SessionMutationControlSession       SessionMutationKind = "control_session"
 	SessionMutationResolveAuthorization SessionMutationKind = "resolve_authorization"
 )
 

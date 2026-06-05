@@ -130,6 +130,111 @@ func TestAgentManagerRunRuntimeRecordUserMessageDispatchesSessionMutator(t *test
 	require.NotNil(t, got.ActiveTask)
 }
 
+func TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	initialMessages := len(created.Session.Messages)
+	now := time.Date(2026, 6, 6, 12, 15, 0, 0, time.UTC)
+	mgr.mu.Lock()
+	session := mgr.sessions[sessionID]
+	session.Status = "running"
+	session.ActiveTask = &agentTask{
+		ID:        "task-control-session-mutation",
+		Goal:      "pause through runtime session mutator",
+		Kind:      "analysis",
+		Status:    "running",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	session.Todos = []agentTodo{
+		{ID: "todo-control-running", Title: "inspect runtime seam", Status: "running", Priority: 1, UpdatedAt: now},
+		{ID: "todo-control-pending", Title: "verify mutation result", Status: "pending", Priority: 2, UpdatedAt: now},
+	}
+	mgr.mu.Unlock()
+
+	req := agentControlRequest{
+		Action:         "pause",
+		Prompt:         "resume later",
+		Reason:         "operator pause",
+		Operator:       "operator-1",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+	}
+
+	called := false
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		called = true
+		require.Equal(t, runtime.SessionMutationControlSession, req.Kind)
+		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, "resume later", req.Turn.Prompt)
+		require.Equal(t, "operator", req.Turn.Origin)
+		require.Equal(t, "safe_scan", req.Turn.OperationLevel)
+		require.Equal(t, "session_mutation", req.Turn.Metadata["mutator"])
+		require.Equal(t, string(runtime.SessionMutationControlSession), req.Turn.Metadata["kind"])
+		require.Equal(t, string(runtime.SessionMutationControlSession), req.Metadata["kind"])
+		require.Equal(t, "pause", req.Metadata["action"])
+		require.Equal(t, "safe_scan", req.Metadata["operation_level"])
+		require.Equal(t, false, req.Metadata["clear_input"])
+
+		payload, ok := req.Payload.(daemonControlSessionMutationPayload)
+		require.True(t, ok, "payload type = %T", req.Payload)
+		require.Equal(t, sessionID, payload.SessionID)
+		require.Equal(t, "pause", payload.Action)
+		require.Equal(t, "resume later", payload.Prompt)
+		require.Equal(t, "operator pause", payload.Reason)
+		require.Equal(t, "operator-1", payload.Operator)
+		require.Equal(t, "en", payload.Language)
+		require.Equal(t, "safe_scan", payload.OperationLevel)
+
+		resultPayload, err := mgr.controlSessionLegacy(ctx, payload.SessionID, payload.Action, payload.Prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, payload.OperationLevel)
+		require.NoError(t, err)
+		return runtime.SessionMutationResult{
+			Status:  runtime.TurnResultFinished,
+			Reason:  "handled by test mutator",
+			Payload: resultPayload,
+			Data:    map[string]any{"mutator": "test"},
+		}, nil
+	}))
+
+	result, handled, err := mgr.runRuntimeControlSessionMutation(context.Background(), sessionID, "pause", req, "operator-1", "en", "safe_scan")
+
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.True(t, called)
+	require.True(t, result.Mutated)
+	require.Equal(t, sessionID, result.Session.SessionID)
+	require.Equal(t, "operator-1", result.Session.Operator)
+	require.Equal(t, "safe_scan", result.Session.OperationLevel)
+	require.Equal(t, "paused", result.Session.Status)
+	require.Equal(t, "agent", result.Message.Role)
+	require.NotEmpty(t, result.Message.ID)
+	require.Empty(t, result.CancelJobID)
+	require.NotNil(t, result.Session.ActiveTask)
+	require.Equal(t, "blocked", result.Session.ActiveTask.Status)
+	require.NotNil(t, result.Session.NextAction)
+	require.Equal(t, "continue", result.Session.NextAction.Type)
+	require.Equal(t, "operator pause", result.Session.NextAction.Reason)
+	require.Equal(t, "resume later", result.Session.NextAction.SuggestedPrompt)
+	require.Len(t, result.Session.Todos, 2)
+	require.Equal(t, "blocked", result.Session.Todos[0].Status)
+	require.Equal(t, "pending", result.Session.Todos[1].Status)
+
+	got, err := mgr.GetSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.Equal(t, "paused", got.Status)
+	require.Len(t, got.Messages, initialMessages+1)
+	require.Equal(t, result.Message.ID, got.Messages[len(got.Messages)-1].ID)
+}
+
 func TestAgentManagerRunRuntimeResolveAuthorizationDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
