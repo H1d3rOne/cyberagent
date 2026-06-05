@@ -78,6 +78,24 @@ go build -o bin/cyberagent ./cmd/cyberagent
 ./bin/cyberagent plugins doctor --json
 ```
 
+启动本地 daemon / Agent Cockpit 后端：
+
+```bash
+./bin/cyberagent daemon
+```
+
+daemon 默认启用 Agent runtime engine，并在 runs workspace 下维护 SQLite runtime 事件库：
+
+```text
+runs/.agent/runtime/runtime.db
+```
+
+如需临时回退到旧兼容路径，可显式设置：
+
+```bash
+CYBERAGENT_RUNTIME=legacy ./bin/cyberagent daemon
+```
+
 执行一次 safe Web/API 扫描：
 
 ```bash

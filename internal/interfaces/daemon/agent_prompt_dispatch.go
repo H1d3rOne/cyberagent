@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -16,430 +15,171 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 		args = map[string]any{}
 	}
 
-	if spec, ok := toolRegistry().Lookup(name); ok && spec.Handler != nil {
+	if spec, ok := toolRegistry().Lookup(name); ok {
+		if spec.Handler == nil {
+			return nil, nil, services.NewError(services.CodeInternal, "planner action handler is not configured", map[string]any{"action": name}, nil)
+		}
 		return m.executeAgentRegistryHandler(ctx, sessionID, language, operator, operationLevel, svc, spec, args, authProfiles, defaultAuthProfileID)
 	}
 
-	// Deprecated: legacy per-tool dispatch. Migrate cases into ToolSpec.Handler
-	// in small slices until the registry is the only execution source.
-	switch name {
-	case "scan.web.safe":
-		target := firstNonEmpty(
-			stringFromAny(args["target"]),
-			stringFromAny(args["url"]),
-			stringFromAny(args["input"]),
-		)
-		scope := firstNonEmpty(
-			stringFromAny(args["scope"]),
-			stringFromAny(args["scope_url"]),
-			target,
-		)
-		prompt := "扫描 " + target
-		if scope != "" {
-			prompt += " scope=" + scope
+	return nil, nil, services.NewError(services.CodeUnsupported, "unsupported planner action", map[string]any{"action": action.Name, "normalized_action": name}, nil)
+}
+
+func (m *agentManager) routeReadOnlySystemHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentReadOnlySystemRouteAction, "read-only/system registry route slice")
+}
+
+func (m *agentManager) routeSafeHTTPHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentSafeHTTPRouteAction, "safe HTTP registry route slice")
+}
+
+func (m *agentManager) routeSafePortScanHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentSafePortScanRouteAction, "safe port scan registry route slice")
+}
+
+func (m *agentManager) routeSafeScanHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentSafeScanRouteAction, "safe scan registry route slice")
+}
+
+func (m *agentManager) routeWorkspaceStagedChangeHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentWorkspaceStagedChangeRouteAction, "workspace staged-change registry route slice")
+}
+
+func (m *agentManager) routeReportDraftHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentReportDraftRouteAction, "report draft registry route slice")
+}
+
+func (m *agentManager) routeHeuristicRegistryActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string, allowed func(string, map[string]any) bool, sliceName string) ([]agentMessage, []agentToolCall, error) {
+	actions := agentHeuristicActionsFromPrompt(prompt)
+	if len(actions) == 0 {
+		return []agentMessage{m.message(language, "agent", agentExplain(language), nil, nil)}, nil, nil
+	}
+	if len(actions) > 6 {
+		actions = actions[:6]
+	}
+
+	messages := make([]agentMessage, 0, len(actions))
+	toolCalls := make([]agentToolCall, 0, len(actions))
+	for _, action := range actions {
+		actionName := normalizeAgentPlannerActionName(action.Name)
+		if action.Arguments == nil {
+			action.Arguments = map[string]any{}
 		}
-		return m.handleAgentScan(ctx, prompt, language, svc)
-	case "ports.scan.safe":
-		target := firstNonEmpty(
-			stringFromAny(args["target"]),
-			stringFromAny(args["host"]),
-			stringFromAny(args["url"]),
-			stringFromAny(args["input"]),
-		)
-		if target == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "ports.scan.safe requires target or host", map[string]any{"action": action.Name}, nil)
+		if allowed == nil || !allowed(actionName, action.Arguments) {
+			return nil, nil, services.NewError(services.CodeUnsupported, "heuristic action is outside the "+sliceName, map[string]any{"action": action.Name, "normalized_action": actionName}, nil)
 		}
-		prompt := "扫描 " + target + " 开放端口"
-		if portsSpec := agentPortSpecFromPlannerArgument(args["ports"]); portsSpec != "" {
-			prompt += " ports=" + portsSpec
+		actionMessages, actionToolCalls, err := m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, action, authProfiles, defaultAuthProfileID)
+		if err != nil {
+			tool := failedAgentToolCall(firstNonEmpty(actionName, "agent.action"), err)
+			tool.Result = map[string]any{"action": actionName}
+			messages = append(messages, m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil))
+			toolCalls = append(toolCalls, tool)
+			return messages, toolCalls, nil
 		}
-		return m.handleAgentPortScan(ctx, prompt, language)
-	case "workspace.command":
-		cmd := firstNonEmpty(
-			stringFromAny(args["command"]),
-			stringFromAny(args["cmd"]),
-			stringFromAny(args["input"]),
-		)
-		if cmd == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.command requires command", map[string]any{"action": action.Name}, nil)
+		messages = append(messages, actionMessages...)
+		toolCalls = append(toolCalls, actionToolCalls...)
+	}
+	return messages, toolCalls, nil
+}
+
+func tagAgentLocalRouteMessages(messages []agentMessage, calls []agentToolCall, source string) ([]agentMessage, []agentToolCall) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return messages, calls
+	}
+	metadata := map[string]interface{}{"source": source}
+	for i := range calls {
+		calls[i] = withAgentToolMetadata(calls[i], metadata)
+	}
+	for i := range messages {
+		for j := range messages[i].ToolCalls {
+			messages[i].ToolCalls[j] = withAgentToolMetadata(messages[i].ToolCalls[j], metadata)
 		}
-		if !agentPlannerCommandAllowed(cmd) {
-			return nil, nil, services.NewError(services.CodePolicyDenied, "planner command is not in the low-risk allowlist; ask the operator to run it explicitly", map[string]any{"command": cmd}, nil)
-		}
-		return m.handleAgentCommand(ctx, sessionID, "command: "+cmd, language)
-	case "workspace.files.list":
-		relPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["directory"]),
-			stringFromAny(args["dir"]),
-			stringFromAny(args["input"]),
-			".",
-		)
-		return m.handleAgentWorkspaceList(sessionID, "path="+relPath, language)
-	case "workspace.files.tree":
-		relPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["directory"]),
-			stringFromAny(args["dir"]),
-			stringFromAny(args["input"]),
-			".",
-		)
-		depth := intFromAny(args["depth"])
-		if depth <= 0 {
-			depth = 3
-		}
-		limit := intFromAny(args["limit"])
-		if limit <= 0 {
-			limit = 120
-		}
-		includeHidden := boolFromAny(args["include_hidden"])
-		return m.handleAgentWorkspaceTree(sessionID, relPath, depth, limit, includeHidden, language)
-	case "workspace.files.read":
-		relPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["file"]),
-			stringFromAny(args["filename"]),
-			stringFromAny(args["input"]),
-		)
-		if relPath == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.read requires path", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspaceRead(sessionID, "file="+relPath, language)
-	case "workspace.search":
-		query := firstNonEmpty(
-			stringFromAny(args["query"]),
-			stringFromAny(args["pattern"]),
-			stringFromAny(args["text"]),
-			stringFromAny(args["input"]),
-		)
-		relPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["directory"]),
-			stringFromAny(args["dir"]),
-			".",
-		)
-		if query == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.search requires query", map[string]any{"action": action.Name}, nil)
-		}
-		limit := intFromAny(args["limit"])
-		if limit <= 0 {
-			limit = 80
-		}
-		return m.handleAgentWorkspaceSearch(sessionID, query, relPath, boolFromAny(args["regex"]), boolFromAny(args["case_sensitive"]), limit, language)
-	case "workspace.files.write":
-		relPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["file"]),
-			stringFromAny(args["filename"]),
-		)
-		content := firstNonEmpty(
-			stringFromAny(args["content"]),
-			stringFromAny(args["body"]),
-			stringFromAny(args["text"]),
-			stringFromAny(args["input"]),
-		)
-		if relPath == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.write requires path", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspaceWrite(sessionID, relPath, content, language)
-	case "workspace.files.patch":
-		relPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["file"]),
-			stringFromAny(args["filename"]),
-		)
-		oldText := firstNonEmpty(
-			stringFromAny(args["old"]),
-			stringFromAny(args["old_text"]),
-			stringFromAny(args["before"]),
-			stringFromAny(args["search"]),
-		)
-		newText := firstNonEmpty(
-			stringFromAny(args["new"]),
-			stringFromAny(args["new_text"]),
-			stringFromAny(args["after"]),
-			stringFromAny(args["replace"]),
-		)
-		if relPath == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.patch requires path", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspacePatch(sessionID, relPath, oldText, newText, language)
-	case "workspace.files.diff":
-		relPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["file"]),
-			stringFromAny(args["filename"]),
-		)
-		oldText := firstNonEmpty(
-			stringFromAny(args["old"]),
-			stringFromAny(args["old_text"]),
-			stringFromAny(args["before"]),
-			stringFromAny(args["search"]),
-		)
-		newText := firstNonEmpty(
-			stringFromAny(args["new"]),
-			stringFromAny(args["new_text"]),
-			stringFromAny(args["after"]),
-			stringFromAny(args["replace"]),
-		)
-		if relPath == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.diff requires path", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspaceDiff(sessionID, relPath, oldText, newText, language)
-	case "workspace.files.diff_many":
-		changes := workspaceChangeInputsFromAny(args["changes"])
-		if len(changes) == 0 {
-			changes = workspaceChangeInputsFromAny(args["input"])
-		}
-		return m.handleAgentWorkspaceDiffMany(sessionID, changes, language)
-	case "workspace.files.rebase":
-		changeID := firstNonEmpty(
-			stringFromAny(args["change_id"]),
-			stringFromAny(args["id"]),
-		)
-		oldText := firstNonEmpty(
-			stringFromAny(args["old"]),
-			stringFromAny(args["old_text"]),
-			stringFromAny(args["before"]),
-			stringFromAny(args["search"]),
-		)
-		newText := firstNonEmpty(
-			stringFromAny(args["new"]),
-			stringFromAny(args["new_text"]),
-			stringFromAny(args["after"]),
-			stringFromAny(args["replace"]),
-		)
-		return m.handleAgentWorkspaceRebase(sessionID, changeID, oldText, newText, language)
-	case "workspace.files.apply":
-		changeID := firstNonEmpty(
-			stringFromAny(args["change_id"]),
-			stringFromAny(args["id"]),
-			stringFromAny(args["input"]),
-		)
-		groupID := firstNonEmpty(stringFromAny(args["group_id"]), stringFromAny(args["group"]))
-		if groupID != "" {
-			return m.handleAgentWorkspaceApplyGroup(sessionID, groupID, language)
-		}
-		if boolFromAny(args["all"]) || strings.EqualFold(changeID, "all") || strings.EqualFold(stringFromAny(args["scope"]), "all") {
-			return m.handleAgentWorkspaceApplyAll(sessionID, language)
-		}
-		if changeID == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.apply requires change_id", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspaceApply(sessionID, changeID, language)
-	case "workspace.files.discard":
-		changeID := firstNonEmpty(
-			stringFromAny(args["change_id"]),
-			stringFromAny(args["id"]),
-			stringFromAny(args["input"]),
-		)
-		groupID := firstNonEmpty(stringFromAny(args["group_id"]), stringFromAny(args["group"]))
-		if groupID != "" {
-			return m.handleAgentWorkspaceDiscardGroup(sessionID, groupID, language)
-		}
-		if boolFromAny(args["all"]) || strings.EqualFold(changeID, "all") || strings.EqualFold(stringFromAny(args["scope"]), "all") {
-			return m.handleAgentWorkspaceDiscardAll(sessionID, language)
-		}
-		if changeID == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.discard requires change_id", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspaceDiscard(sessionID, changeID, language)
-	case "workspace.files.delete":
-		relPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["file"]),
-			stringFromAny(args["filename"]),
-			stringFromAny(args["input"]),
-		)
-		if relPath == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.delete requires path", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspaceDelete(sessionID, relPath, language)
-	case "workspace.files.move":
-		fromPath := firstNonEmpty(
-			stringFromAny(args["from"]),
-			stringFromAny(args["source"]),
-			stringFromAny(args["old"]),
-			stringFromAny(args["path"]),
-			stringFromAny(args["file"]),
-			stringFromAny(args["filename"]),
-		)
-		toPath := firstNonEmpty(
-			stringFromAny(args["to"]),
-			stringFromAny(args["target"]),
-			stringFromAny(args["new"]),
-			stringFromAny(args["dest"]),
-			stringFromAny(args["destination"]),
-		)
-		if fromPath == "" || toPath == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.move requires from and to", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspaceMove(sessionID, fromPath, toPath, language)
-	case "workspace.files.copy":
-		fromPath := firstNonEmpty(
-			stringFromAny(args["from"]),
-			stringFromAny(args["source"]),
-			stringFromAny(args["old"]),
-			stringFromAny(args["path"]),
-			stringFromAny(args["file"]),
-			stringFromAny(args["filename"]),
-		)
-		toPath := firstNonEmpty(
-			stringFromAny(args["to"]),
-			stringFromAny(args["target"]),
-			stringFromAny(args["new"]),
-			stringFromAny(args["dest"]),
-			stringFromAny(args["destination"]),
-		)
-		if fromPath == "" || toPath == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.copy requires from and to", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspaceCopy(sessionID, fromPath, toPath, language)
-	case "workspace.files.mkdir":
-		relPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["directory"]),
-			stringFromAny(args["dir"]),
-			stringFromAny(args["input"]),
-		)
-		if relPath == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "workspace.files.mkdir requires path", map[string]any{"action": action.Name}, nil)
-		}
-		return m.handleAgentWorkspaceMkdir(sessionID, relPath, language)
-	case "http.request":
-		targetURL := firstNonEmpty(
-			stringFromAny(args["url"]),
-			stringFromAny(args["target"]),
-			stringFromAny(args["input"]),
-		)
-		method := firstNonEmpty(stringFromAny(args["method"]), "GET")
-		if targetURL == "" {
-			return nil, nil, services.NewError(services.CodeBadRequest, "http.request requires url", map[string]any{"action": action.Name}, nil)
-		}
-		targetURL = agentNormalizeURLInput(targetURL)
-		headers := stringMapFromAny(args["headers"])
-		if contentType := stringFromAny(args["content_type"]); contentType != "" {
-			headers["Content-Type"] = contentType
-		}
-		authProfileID := firstNonEmpty(
-			stringFromAny(args["auth_profile_id"]),
-			stringFromAny(args["auth_profile"]),
-			stringFromAny(args["profile_id"]),
-			stringFromAny(args["profile"]),
-		)
-		profileHeaders, profileUsage, profileErr := agentResolveHTTPAuthProfileHeaders(authProfiles, authProfileID, defaultAuthProfileID, targetURL)
-		if profileErr != nil {
-			return nil, nil, profileErr
-		}
-		for key, value := range profileHeaders {
-			if _, exists := headers[key]; !exists {
-				headers[key] = value
-			}
-		}
-		body := firstNonEmpty(
-			stringFromAny(args["body"]),
-			stringFromAny(args["content"]),
-			stringFromAny(args["data"]),
-			stringFromAny(args["input_body"]),
-		)
-		return m.handleAgentHTTPRequest(ctx, method, targetURL, headers, body, language, profileUsage)
-	case "daemon.health":
-		return m.handleAgentHealth(ctx, language, svc)
-	case "plugins.list":
-		return m.handleAgentPlugins(ctx, language, svc)
-	case "runs.list":
-		return m.handleAgentRuns(ctx, language, svc)
-	case "runs.context":
-		runID := firstNonEmpty(
-			stringFromAny(args["run_id"]),
-			stringFromAny(args["run"]),
-			stringFromAny(args["id"]),
-		)
-		contextKind := firstNonEmpty(
-			stringFromAny(args["context"]),
-			stringFromAny(args["kind"]),
-			stringFromAny(args["section"]),
-			stringFromAny(args["type"]),
-		)
-		return m.handleAgentRunContextTool(ctx, sessionID, runID, contextKind, language, svc)
-	case "reports.draft":
-		runID := firstNonEmpty(
-			stringFromAny(args["run_id"]),
-			stringFromAny(args["run"]),
-			stringFromAny(args["id"]),
-		)
-		outputPath := firstNonEmpty(
-			stringFromAny(args["path"]),
-			stringFromAny(args["output_path"]),
-			stringFromAny(args["file"]),
-		)
-		return m.handleAgentReportDraft(ctx, sessionID, runID, language, svc, outputPath)
-	case "runs.approvals.list":
-		runID := firstNonEmpty(
-			stringFromAny(args["run_id"]),
-			stringFromAny(args["run"]),
-			stringFromAny(args["id"]),
-		)
-		if runID == "" {
-			return m.handleAgentApprovals(ctx, language, svc)
-		}
-		return m.handleAgentRunContextAnalysis(ctx, "读取运行 "+runID+" 的 approvals 审批队列", language, svc)
-	case "runs.approvals.approve", "runs.approvals.deny":
-		runID := firstNonEmpty(
-			stringFromAny(args["run_id"]),
-			stringFromAny(args["run"]),
-		)
-		approvalID := firstNonEmpty(
-			stringFromAny(args["approval_id"]),
-			stringFromAny(args["approval"]),
-			stringFromAny(args["step_id"]),
-			stringFromAny(args["step"]),
-			stringFromAny(args["id"]),
-		)
-		comment := stringFromAny(args["comment"])
-		verb := "批准"
-		if name == "runs.approvals.deny" {
-			verb = "拒绝"
-		}
-		prompt := verb + "当前审批"
-		if runID != "" && approvalID != "" {
-			prompt = fmt.Sprintf("%s运行 %s 的 %s", verb, runID, approvalID)
-		} else if runID != "" {
-			prompt = fmt.Sprintf("%s运行 %s 的当前审批", verb, runID)
-		} else if approvalID != "" {
-			prompt = fmt.Sprintf("%s %s", verb, approvalID)
-		}
-		if strings.TrimSpace(comment) != "" {
-			prompt += " comment=" + comment
-		}
-		return m.handleAgentApprovalDecision(ctx, sessionID, prompt, language, operator, svc)
-	case "runs.resume_approved":
-		runID := firstNonEmpty(
-			stringFromAny(args["run_id"]),
-			stringFromAny(args["run"]),
-			stringFromAny(args["id"]),
-		)
-		prompt := "恢复已批准当前运行"
-		if runID != "" {
-			prompt = "恢复已批准运行 " + runID
-		}
-		return m.handleAgentResumeApproved(ctx, sessionID, prompt, language, operator, svc)
-	case "schedule.create":
-		return m.handleAgentScheduleCreate(sessionID, language, operator, svc, args)
-	case "schedule.list":
-		return m.handleAgentScheduleList(language, svc)
-	case "schedule.delete":
-		return m.handleAgentScheduleDelete(language, svc, args)
-	case "web.search":
-		return m.handleAgentWebSearch(ctx, language, svc, args)
-	case "web.fetch":
-		return m.handleAgentWebFetch(ctx, language, args)
+	}
+	return messages, calls
+}
+
+func agentReadOnlySystemRouteAction(actionName string, _ map[string]any) bool {
+	switch normalizeAgentPlannerActionName(actionName) {
+	case "workspace.command",
+		"workspace.files.list",
+		"workspace.files.tree",
+		"workspace.files.read",
+		"workspace.search",
+		"daemon.health",
+		"plugins.list",
+		"runs.list",
+		"runs.context",
+		"runs.approvals.list",
+		"schedule.list":
+		return true
 	default:
-		return nil, nil, services.NewError(services.CodeUnsupported, "unsupported planner action", map[string]any{"action": action.Name}, nil)
+		return false
 	}
 }
 
-func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func agentSafeHTTPRouteAction(actionName string, args map[string]any) bool {
+	if normalizeAgentPlannerActionName(actionName) != "http.request" {
+		return false
+	}
+	return agentHTTPMethodIsSafe(firstNonEmpty(stringFromAny(args["method"]), "GET"))
+}
+
+func agentSafePortScanRouteAction(actionName string, args map[string]any) bool {
+	if normalizeAgentPlannerActionName(actionName) != "ports.scan.safe" {
+		return false
+	}
+	return strings.TrimSpace(firstNonEmpty(
+		stringFromAny(args["host"]),
+		agentExtractPortScanHostFromPrompt(stringFromAny(args["target"])),
+		stringFromAny(args["target"]),
+		stringFromAny(args["input"]),
+	)) != ""
+}
+
+func agentSafeScanRouteAction(actionName string, args map[string]any) bool {
+	if normalizeAgentPlannerActionName(actionName) != "scan.web.safe" {
+		return false
+	}
+	return strings.TrimSpace(firstNonEmpty(
+		stringFromAny(args["target"]),
+		stringFromAny(args["url"]),
+		stringFromAny(args["input"]),
+	)) != ""
+}
+
+func agentWorkspaceStagedChangeRouteAction(actionName string, args map[string]any) bool {
+	switch normalizeAgentPlannerActionName(actionName) {
+	case "workspace.files.diff":
+		return strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["path"]),
+			stringFromAny(args["file"]),
+			stringFromAny(args["filename"]),
+		)) != ""
+	case "workspace.files.diff_many":
+		return len(workspaceChangeInputsFromAny(args["changes"])) > 0 || len(workspaceChangeInputsFromAny(args["input"])) > 0
+	case "workspace.files.rebase":
+		return strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["change_id"]),
+			stringFromAny(args["id"]),
+		)) != ""
+	default:
+		return false
+	}
+}
+
+func agentReportDraftRouteAction(actionName string, _ map[string]any) bool {
+	return normalizeAgentPlannerActionName(actionName) == "reports.draft"
+}
+
+func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) (messages []agentMessage, toolCalls []agentToolCall, err error) {
+	routeMetadataSource := "deterministic_route/direct_handler"
+	defer func() {
+		if err == nil {
+			messages, toolCalls = tagAgentLocalRouteMessages(messages, toolCalls, routeMetadataSource)
+		}
+	}()
+
 	requiredLevel := agentOperationLevelRequiredForPrompt(prompt)
 	if !agentOperationLevelAtLeast(operationLevel, requiredLevel) {
 		return []agentMessage{m.message(
@@ -454,7 +194,8 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 	case agentIsScheduleCreateIntent(prompt):
 		return m.handleAgentScheduleCreate(sessionID, language, operator, svc, agentScheduleArgsFromPrompt(prompt, language))
 	case agentIsScheduleListIntent(prompt):
-		return m.handleAgentScheduleList(language, svc)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsScheduleDeleteIntent(prompt):
 		return m.handleAgentScheduleDelete(language, svc, map[string]any{"id": agentExtractScheduleID(prompt)})
 	case agentIsResumeApprovedIntent(prompt):
@@ -462,11 +203,14 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 	case agentIsApprovalDecisionIntent(prompt):
 		return m.handleAgentApprovalDecision(ctx, sessionID, prompt, language, operator, svc)
 	case agentIsReportDraftIntent(prompt):
-		return m.handleAgentReportDraft(ctx, sessionID, agentExtractRunID(prompt), language, svc, "")
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReportDraftHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsRunContextAnalysisIntent(prompt):
-		return m.handleAgentRunContextTool(ctx, sessionID, agentExtractRunID(prompt), agentRunContextKind(prompt), language, svc)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsPortScanIntent(prompt):
-		return m.handleAgentPortScan(ctx, prompt, language)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeSafePortScanHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentHasCapabilityGapIntent(prompt):
 		plan := agentCapabilityGapPlannerFromPrompt(prompt, "", language)
 		if plan != nil {
@@ -477,24 +221,41 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 		}
 		return []agentMessage{m.message(language, "agent", agentExplain(language), nil, nil)}, nil, nil
 	case agentIsScanIntent(prompt):
-		return m.handleAgentScan(ctx, prompt, language, svc)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeSafeScanHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsCommandIntent(prompt):
-		return m.handleAgentCommand(ctx, sessionID, prompt, language)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsApprovalIntent(prompt):
-		return m.handleAgentApprovals(ctx, language, svc)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsHealthIntent(prompt):
-		return m.handleAgentHealth(ctx, language, svc)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsPluginIntent(prompt):
-		return m.handleAgentPlugins(ctx, language, svc)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsRunIntent(prompt):
-		return m.handleAgentRuns(ctx, language, svc)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt):
+		if agentHTTPMethodIsSafe(agentExtractHTTPMethod(prompt)) {
+			routeMetadataSource = "deterministic_route/registry_dispatch"
+			return m.routeSafeHTTPHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		}
 		return m.handleAgentHTTPRequest(ctx, agentExtractHTTPMethod(prompt), agentExtractURL(prompt), nil, "", language, nil)
+	case agentIsWorkspaceDiffIntent(prompt) || agentIsWorkspaceRebaseIntent(prompt):
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeWorkspaceStagedChangeHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsWorkspaceSearchIntent(prompt):
-		query := agentExtractWorkspaceSearchQuery(prompt)
-		return m.handleAgentWorkspaceSearch(sessionID, query, agentExtractWorkspaceSearchPath(prompt, query), false, false, 80, language)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsWorkspaceTreeIntent(prompt):
-		return m.handleAgentWorkspaceTree(sessionID, agentExtractPath(prompt), 3, 120, false, language)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+	case agentIsWorkspaceReadIntent(prompt) || agentIsWorkspaceListIntent(prompt):
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsWorkspaceIntent(prompt):
 		return m.handleAgentWorkspace(ctx, sessionID, prompt, language)
 	default:

@@ -7,6 +7,7 @@
 
 # Runtime outputs
 /runs/
+/.tmp/
 *.log
 
 # OS / editor

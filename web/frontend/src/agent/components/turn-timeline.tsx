@@ -155,25 +155,34 @@ function TurnGroup({
 
         {tools.length ? (
           <div className="grid gap-2 sm:grid-cols-2">
-            {tools.map((tool) => tool && (
-              <GlassCard
-                key={tool.id}
-                as="button"
-                type="button"
-                onClick={() => onSelectTool(tool.id)}
-                selected={state.selectedToolCallId === tool.id}
-                className="p-3 text-left transition-colors hover:border-primary/25 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              >
-                <div className="flex items-start gap-2">
-                  <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', toolDotClass(tool.status))} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-mono text-xs text-foreground">{tool.name}</div>
-                    <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{tool.detail || tool.error?.message || tool.id}</div>
+            {tools.map((tool) => {
+              if (!tool) return null
+              const sourceLabel = toolSourceLabel(tool.metadata?.source, language)
+              return (
+                <GlassCard
+                  key={tool.id}
+                  as="button"
+                  type="button"
+                  onClick={() => onSelectTool(tool.id)}
+                  selected={state.selectedToolCallId === tool.id}
+                  className="p-3 text-left transition-colors hover:border-primary/25 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                >
+                  <div className="flex items-start gap-2">
+                    <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', toolDotClass(tool.status))} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-mono text-xs text-foreground">{tool.name}</div>
+                      <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{tool.detail || tool.error?.message || tool.id}</div>
+                    </div>
+                    <span className={cn('rounded-full border px-1.5 py-0.5 font-mono text-[10px]', statusPillClass(tool.status))}>{statusLabel(tool.status, language)}</span>
                   </div>
-                  <span className={cn('rounded-full border px-1.5 py-0.5 font-mono text-[10px]', statusPillClass(tool.status))}>{statusLabel(tool.status, language)}</span>
-                </div>
-              </GlassCard>
-            ))}
+                  {sourceLabel && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <StatusPill tone={toolSourceTone(tool.metadata?.source)}>{sourceLabel}</StatusPill>
+                    </div>
+                  )}
+                </GlassCard>
+              )
+            })}
           </div>
         ) : null}
 
@@ -330,6 +339,23 @@ function findTool(state: AgentCockpitState, id: string) {
     for (const tool of message.tool_calls || []) if (tool.id === id) return tool
   }
   return undefined
+}
+
+function toolSourceLabel(source: unknown, language: Language) {
+  const value = String(source || '').trim()
+  switch (value) {
+    case 'deterministic_route/registry_dispatch':
+      return text(language, '规则路由 · Registry', 'Route · Registry')
+    case 'deterministic_route/direct_handler':
+      return text(language, '规则路由 · Direct', 'Route · Direct')
+    default:
+      return value
+  }
+}
+
+function toolSourceTone(source: unknown) {
+  const value = String(source || '').trim()
+  return value === 'deterministic_route/registry_dispatch' ? 'info' : 'muted'
 }
 
 export { commandFromToolCall }

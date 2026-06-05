@@ -34,10 +34,11 @@ import (
 
 func TestNewServerCreatesTokenFileAndNormalizesDefaults(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "config", "token")
-	server, err := NewServer(Config{TokenFile: tokenFile})
+	server, err := NewServer(Config{RunsDir: t.TempDir(), TokenFile: tokenFile})
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
 	}
+	defer server.Close()
 	if server.Addr() != DefaultListen {
 		t.Fatalf("Addr() = %q, want %q", server.Addr(), DefaultListen)
 	}
@@ -62,8 +63,56 @@ func TestNewServerCreatesTokenFileAndNormalizesDefaults(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeEngineEnabledFromEnv(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "empty defaults to engine", value: "", want: true},
+		{name: "engine explicit", value: "engine", want: true},
+		{name: "true explicit", value: "true", want: true},
+		{name: "legacy opt out", value: "legacy", want: false},
+		{name: "off opt out", value: "off", want: false},
+		{name: "disabled opt out", value: "disabled", want: false},
+		{name: "false opt out", value: "false", want: false},
+		{name: "zero opt out", value: "0", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := agentRuntimeEngineEnabledFromEnv(tc.value); got != tc.want {
+				t.Fatalf("agentRuntimeEngineEnabledFromEnv(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewServerDefaultRuntimeEngineCanOptOutToLegacy(t *testing.T) {
+	t.Setenv("CYBERAGENT_RUNTIME", "")
+	server, err := NewServer(Config{RunsDir: t.TempDir(), TokenFile: filepath.Join(t.TempDir(), "token")})
+	if err != nil {
+		t.Fatalf("NewServer() default engine error = %v", err)
+	}
+	if server.runtimeStore == nil {
+		t.Fatal("default NewServer() should open the runtime engine store")
+	}
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close() default engine error = %v", err)
+	}
+
+	t.Setenv("CYBERAGENT_RUNTIME", "legacy")
+	legacy, err := NewServer(Config{RunsDir: t.TempDir(), TokenFile: filepath.Join(t.TempDir(), "token")})
+	if err != nil {
+		t.Fatalf("NewServer() legacy opt-out error = %v", err)
+	}
+	defer legacy.Close()
+	if legacy.runtimeStore != nil {
+		t.Fatal("CYBERAGENT_RUNTIME=legacy should leave runtimeStore nil")
+	}
+}
+
 func TestNewServerEngineRuntimeRecoversInterruptedRuns(t *testing.T) {
-	t.Setenv("CYBERAGENT_RUNTIME", "engine")
+	t.Setenv("CYBERAGENT_RUNTIME", "")
 	runsDir := t.TempDir()
 	tokenFile := filepath.Join(t.TempDir(), "config", "token")
 	ctx := context.Background()
@@ -496,6 +545,7 @@ func TestHTTPAuthEnvelopeHealthAndVersion(t *testing.T) {
 		t.Fatalf("write token file: %v", err)
 	}
 	server, err := NewServer(Config{
+		RunsDir:   t.TempDir(),
 		TokenFile: tokenFile,
 		Build: services.BuildInfo{
 			Name:    "CyberAgent",
@@ -508,6 +558,7 @@ func TestHTTPAuthEnvelopeHealthAndVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
 	}
+	defer server.Close()
 
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
@@ -546,10 +597,11 @@ func TestHTTPCORSPreflightBypassesAuthForLoopbackOrigin(t *testing.T) {
 	if err := os.WriteFile(tokenFile, []byte("test-token\n"), 0o600); err != nil {
 		t.Fatalf("write token file: %v", err)
 	}
-	server, err := NewServer(Config{TokenFile: tokenFile})
+	server, err := NewServer(Config{RunsDir: t.TempDir(), TokenFile: tokenFile})
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
 	}
+	defer server.Close()
 
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
@@ -862,6 +914,25 @@ func TestHTTPAgentSessionAndMessageAPIs(t *testing.T) {
 	traceSummary := asMap(t, trace.Body.Data["summary"])
 	if int(traceSummary["message_count"].(float64)) != len(traceMessages) || int(traceSummary["tool_call_count"].(float64)) != len(traceTools) {
 		t.Fatalf("agent trace summary counts mismatch: %#v", traceSummary)
+	}
+	findTraceTool := func(name string) map[string]any {
+		t.Helper()
+		for _, raw := range traceTimeline {
+			item := asMap(t, raw)
+			if itemName, _ := item["name"].(string); itemName == name {
+				return item
+			}
+		}
+		t.Fatalf("missing trace tool item name=%q in %#v", name, traceTimeline)
+		return nil
+	}
+	scanTraceItem := findTraceTool("POST /api/v1/scans/web")
+	if scanTraceItem["source"] != "deterministic_route/registry_dispatch" {
+		t.Fatalf("scan trace item should expose registry route source: %#v", scanTraceItem)
+	}
+	contextTraceItem := findTraceTool("GET /api/v1/runs/{run_id}/context")
+	if contextTraceItem["source"] != "deterministic_route/registry_dispatch" {
+		t.Fatalf("context trace item should expose registry route source: %#v", contextTraceItem)
 	}
 
 	continueControl := doDaemonRequestWithBody(
@@ -1561,6 +1632,10 @@ func TestHTTPAgentNaturalLanguageRunWorkspaceContext(t *testing.T) {
 	draftTool := asMap(t, draftTools[0])
 	if draftTool["name"] != "reports.draft" || draftTool["status"] != string(contracts.StatusSucceeded) {
 		t.Fatalf("unexpected report draft tool: %#v", draftTool)
+	}
+	draftMetadata := asMap(t, draftTool["metadata"])
+	if draftMetadata["source"] != "deterministic_route/registry_dispatch" {
+		t.Fatalf("report draft tool should expose registry route source metadata: %#v", draftMetadata)
 	}
 	draftResult := asMap(t, draftTool["result"])
 	draftPath := stringValue(t, draftResult["path"])
@@ -4756,7 +4831,8 @@ func TestHTTPAgentSessionContinuityAcrossMessages(t *testing.T) {
 	if scanMetadata["phase"] != "daemon_job" ||
 		scanMetadata["risk"] != "medium" ||
 		boolValue(t, scanMetadata["auto_run"]) ||
-		scanMetadata["approval_policy"] != "explicit_user_instruction" {
+		scanMetadata["approval_policy"] != "explicit_user_instruction" ||
+		scanMetadata["source"] != "deterministic_route/registry_dispatch" {
 		t.Fatalf("scan tool should expose explicit daemon-job metadata: %#v", scanMetadata)
 	}
 	scanResult := asMap(t, scanTool["result"])
@@ -5633,6 +5709,9 @@ func TestHTTPAgentCockpitShortcutPromptsRouteToLocalTools(t *testing.T) {
 				metadata := asMap(t, tool["metadata"])
 				if metadata["risk"] != "low" || metadata["auto_run"] != true {
 					t.Fatalf("shortcut tool should be low-risk auto metadata: %#v", metadata)
+				}
+				if metadata["source"] != "deterministic_route/registry_dispatch" {
+					t.Fatalf("shortcut tool should expose deterministic registry source metadata: %#v", metadata)
 				}
 			}
 			messages := asList(t, send.Body.Data["messages"])

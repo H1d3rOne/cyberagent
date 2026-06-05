@@ -139,10 +139,10 @@ func TestScheduleManagerMigratesPersistedScanWebToPrompt(t *testing.T) {
 func TestScheduleManagerInvalidCronRejected(t *testing.T) {
 	m := newScheduleManager(t.TempDir())
 	if _, err := m.Create(scheduleSpec{
-		Name:    "bad",
-		Cron:    "this is not cron",
-		Action:  scheduleActionAgentPrompt,
-		Prompt:  "扫描 https://example.com",
+		Name:   "bad",
+		Cron:   "this is not cron",
+		Action: scheduleActionAgentPrompt,
+		Prompt: "扫描 https://example.com",
 	}); err == nil {
 		t.Fatal("expected error for invalid cron")
 	}

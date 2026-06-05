@@ -28,22 +28,24 @@
 15. CyberAgent-Release-Plan.md
 16. CyberAgent-Planning-Audit.md
 17. CyberAgent-Implementation-Status.md
-18. CyberAgent-Smoke-Test.md
-19. CyberAgent-v0.1.1-Plan.md
-20. CyberAgent-v0.1.1-Smoke-Test.md
-21. CyberAgent-Release-Checklist.md
-22. release-notes/v0.1.1.md
-23. CyberAgent-v0.1.2-Plan.md
-24. CyberAgent-v0.1.2-Implementation-Breakdown.md
-25. api/v0.1.2-api-contract.md
-26. CyberAgent-v0.1.2-Daemon-Smoke-Test.md
-27. release-notes/v0.1.2.md
-28. CyberAgent-v0.1.3-Agent-Native-Plan.md
-29. CyberAgent-v0.1.4-Plan.md
-30. CyberAgent-v0.1.5-Plan.md
-31. CyberAgent-v0.1.6-Plan.md
-32. CyberAgent-v0.1.7-Plan.md
-33. CyberAgent-v0.1.8-Plan.md
+18. CyberAgent-TODO.md
+19. CyberAgent-Smoke-Test.md
+20. CyberAgent-v0.1.1-Plan.md
+21. CyberAgent-v0.1.1-Smoke-Test.md
+22. CyberAgent-Optimization-Plan.md
+23. CyberAgent-Release-Checklist.md
+24. release-notes/v0.1.1.md
+25. CyberAgent-v0.1.2-Plan.md
+26. CyberAgent-v0.1.2-Implementation-Breakdown.md
+27. api/v0.1.2-api-contract.md
+28. CyberAgent-v0.1.2-Daemon-Smoke-Test.md
+29. release-notes/v0.1.2.md
+30. CyberAgent-v0.1.3-Agent-Native-Plan.md
+31. CyberAgent-v0.1.4-Plan.md
+32. CyberAgent-v0.1.5-Plan.md
+33. CyberAgent-v0.1.6-Plan.md
+34. CyberAgent-v0.1.7-Plan.md
+35. CyberAgent-v0.1.8-Plan.md
 ```
 
 ---
@@ -70,9 +72,11 @@
 | `CyberAgent-Release-Plan.md` | 发布计划 |
 | `CyberAgent-Planning-Audit.md` | 规划完成审计与需求映射 |
 | `CyberAgent-Implementation-Status.md` | MVP 实现进度快照与剩余项 |
+| `CyberAgent-TODO.md` | 当前待办清单：工作树清理、发布准备、Production Agent Runtime 收敛、P1/P2 优化与后置能力 |
 | `CyberAgent-Smoke-Test.md` | MVP smoke test 命令与结果记录 |
 | `CyberAgent-v0.1.1-Plan.md` | v0.1.1 稳定性、HITL、插件加固和复现能力计划 |
 | `CyberAgent-v0.1.1-Smoke-Test.md` | v0.1.1 P0 smoke test 命令、断言和验收 |
+| `CyberAgent-Optimization-Plan.md` | 后续优化动态方案：毛玻璃 UI、runtime event catalog、UI state、approval/recovery 收敛、质量基线；由 Leader 根据成员反馈实时维护 |
 | `CyberAgent-Release-Checklist.md` | 可复用发布前检查清单 |
 | `release-notes/v0.1.1.md` | v0.1.1 release notes 草案；本地 RC 准备使用，远程发布需显式授权 |
 | `CyberAgent-v0.1.2-Plan.md` | v0.1.2 Local Daemon / Web API foundation 计划；为 Desktop/Web 复用 Core 做准备 |

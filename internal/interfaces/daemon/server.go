@@ -59,15 +59,14 @@ func NewServer(cfg Config) (*Server, error) {
 		svc.agent = newAgentManager(cfg.RunsDir)
 	}
 	svc.agent.AttachProviderStore(providers)
-	var engine *agentruntime.Engine
 	var runtimeStore interface{ Close() error }
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("CYBERAGENT_RUNTIME")), "engine") {
+	if agentRuntimeEngineEnabledFromEnv(os.Getenv("CYBERAGENT_RUNTIME")) {
 		store, err := runtimesqlite.Open(agentRuntimeSQLitePath(cfg.RunsDir))
 		if err != nil {
 			return nil, err
 		}
 		runtimeStore = store
-		engine = agentruntime.NewEngine(store)
+		engine := agentruntime.NewEngine(store)
 		svc.agent.AttachEngine(engine)
 		if _, err := engine.RecoverInterruptedRuns(context.Background()); err != nil {
 			_ = runtimeStore.Close()
@@ -122,9 +121,21 @@ func agentRuntimeSQLitePath(runsDir string) string {
 	return filepath.Join(base, ".agent", "runtime", "runtime.db")
 }
 
+// agentRuntimeEngineEnabledFromEnv controls the compatibility switch for the
+// production Agent runtime. Engine is now the default path; set
+// CYBERAGENT_RUNTIME=legacy/off/disabled/false/0 to opt out for rollback.
+func agentRuntimeEngineEnabledFromEnv(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "legacy", "off", "disabled", "disable", "false", "0", "none":
+		return false
+	default:
+		return true
+	}
+}
+
 // Close releases resources owned by the server. ListenAndServe calls this for
 // long-running daemon processes; tests that only use Handler may call it
-// explicitly when CYBERAGENT_RUNTIME=engine opens the SQLite runtime store.
+// explicitly because the SQLite runtime store is opened by default.
 func (s *Server) Close() error {
 	if s == nil || s.runtimeStore == nil {
 		return nil

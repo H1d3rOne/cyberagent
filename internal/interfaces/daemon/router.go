@@ -515,6 +515,11 @@ func agentSessionTraceTimeline(session agentSession) []map[string]any {
 			"timestamp": call.StartedAt,
 			"tool_call": cloneAgentToolCalls([]agentToolCall{call})[0],
 		}
+		if call.Metadata != nil {
+			if source := stringFromAny(call.Metadata["source"]); source != "" {
+				item["source"] = source
+			}
+		}
 		if call.FinishedAt != nil {
 			item["finished_at"] = *call.FinishedAt
 		}

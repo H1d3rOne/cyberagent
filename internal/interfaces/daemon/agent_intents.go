@@ -44,7 +44,13 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 			"context": agentRunContextKind(prompt),
 		}}}
 	case agentIsCommandIntent(prompt):
-		cmd := agentExtractCommand(prompt)
+		cmd := ""
+		if commands := agentExtractCommands(prompt); len(commands) > 0 {
+			cmd = strings.Join(commands, " && ")
+		}
+		if cmd == "" {
+			cmd = agentExtractCommand(prompt)
+		}
 		if cmd == "" {
 			return nil
 		}
@@ -121,18 +127,18 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 			return nil
 		}
 		return []agentPlannerAction{{Name: "workspace.files.mkdir", Arguments: map[string]any{"path": path}}}
-	case agentIsWorkspacePatchIntent(prompt):
-		relPath, oldText, newText := agentExtractWorkspacePatch(prompt)
-		if relPath == "" || relPath == "." {
-			return nil
-		}
-		return []agentPlannerAction{{Name: "workspace.files.patch", Arguments: map[string]any{"path": relPath, "old": oldText, "new": newText}}}
 	case agentIsWorkspaceDiffIntent(prompt):
 		relPath, oldText, newText := agentExtractWorkspacePatch(prompt)
 		if relPath == "" || relPath == "." {
 			return nil
 		}
 		return []agentPlannerAction{{Name: "workspace.files.diff", Arguments: map[string]any{"path": relPath, "old": oldText, "new": newText}}}
+	case agentIsWorkspacePatchIntent(prompt):
+		relPath, oldText, newText := agentExtractWorkspacePatch(prompt)
+		if relPath == "" || relPath == "." {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.files.patch", Arguments: map[string]any{"path": relPath, "old": oldText, "new": newText}}}
 	case agentIsWorkspaceWriteIntent(prompt):
 		relPath, content := agentExtractWorkspaceWrite(prompt)
 		if relPath == "" || relPath == "." {
