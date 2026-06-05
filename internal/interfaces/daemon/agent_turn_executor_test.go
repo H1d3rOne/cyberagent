@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/agent/toolregistry"
+	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,6 +49,184 @@ func attachRecordingSessionMutator(t *testing.T, eng *runtime.Engine, mgr *agent
 		}
 		return legacy.MutateSession(ctx, req)
 	}))
+}
+
+func TestAgentManagerControlSessionJobCancelAppendUsesExternalTurnRef(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	now := time.Date(2026, 6, 6, 13, 0, 0, 0, time.UTC)
+	runID := "run-external-control"
+	mgr.mu.Lock()
+	session := mgr.sessions[sessionID]
+	session.Status = "running"
+	session.ActiveTask = &agentTask{
+		ID:          "task-external-control",
+		Goal:        "cancel a running daemon job",
+		Kind:        "scan",
+		Status:      "running",
+		ActiveRunID: runID,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	mgr.mu.Unlock()
+
+	jobID := "job-external-control"
+	cancelled := false
+	jobs := newJobManager(jobManagerConfig{RunsDir: t.TempDir()})
+	jobs.mu.Lock()
+	jobs.jobs[jobID] = &daemonJob{
+		JobID:     jobID,
+		Kind:      scanWebJobKind,
+		Status:    contracts.StatusRunning,
+		RunID:     runID,
+		CreatedAt: now,
+		StartedAt: timePtr(now),
+		cancel: func() {
+			cancelled = true
+		},
+		inFlight: true,
+	}
+	jobs.running = 1
+	jobs.mu.Unlock()
+
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+
+	_, err = mgr.ControlSession(context.Background(), sessionID, agentControlRequest{
+		Action:         "cancel",
+		Operator:       "operator-1",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+		Prompt:         "cancel the running daemon job",
+		JobID:          jobID,
+	}, routerServices{jobs: jobs})
+
+	require.NoError(t, err)
+	require.True(t, cancelled)
+	require.Len(t, appendMutations, 1)
+	appendReq := appendMutations[0]
+	require.Equal(t, runtime.SessionMutationAppendMessages, appendReq.Kind)
+	require.Equal(t, sessionID, appendReq.Turn.SessionID)
+	require.Equal(t, "task-external-control", appendReq.Turn.TaskID)
+	require.Equal(t, runID, appendReq.Turn.RunID)
+	require.NotEmpty(t, appendReq.Turn.TurnID)
+	require.Equal(t, "cancel the running daemon job", appendReq.Turn.Prompt)
+	require.Equal(t, string(runtime.SessionMutationControlSession), appendReq.Turn.Origin)
+	require.Equal(t, "safe_scan", appendReq.Turn.OperationLevel)
+	require.Equal(t, 1, appendReq.Turn.Metadata["message_count"])
+	require.Equal(t, false, appendReq.Turn.Metadata["planner_apply"])
+
+	payload, ok := appendReq.Payload.(daemonAppendMessagesMutationPayload)
+	require.True(t, ok, "payload type = %T", appendReq.Payload)
+	require.Len(t, payload.Messages, 1)
+	require.Equal(t, "tool", payload.Messages[0].Role)
+	require.Len(t, payload.Messages[0].ToolCalls, 1)
+	require.Equal(t, "POST /api/v1/jobs/{job_id}/cancel", payload.Messages[0].ToolCalls[0].Name)
+}
+
+func TestAgentManagerDecideAgentAuthorizationApprovedActionAppendUsesExternalTurnRef(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	now := time.Date(2026, 6, 6, 13, 30, 0, 0, time.UTC)
+	runID := "run-external-authorization"
+	mgr.mu.Lock()
+	session := mgr.sessions[sessionID]
+	session.Status = "waiting_authorization"
+	session.ActiveTask = &agentTask{
+		ID:          "task-external-authorization",
+		Goal:        "approve a pending daemon action",
+		Kind:        "tool",
+		Status:      "blocked",
+		ActiveRunID: runID,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	session.PendingAuthorization = &agentAuthorizationRequest{
+		ID:             "auth-external-authorization",
+		ActionName:     "daemon.health",
+		Arguments:      map[string]any{"probe": "external-authorization"},
+		RequiredLevel:  "read_only",
+		Policy:         "manual",
+		Reason:         "operator approval required",
+		OriginalPrompt: "run daemon health after approval",
+		Status:         "pending",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	mgr.mu.Unlock()
+
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	require.True(t, ok, "daemon.health missing from registry")
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+	spec.Handler = func(_ context.Context, in toolregistry.HandlerInput) (any, error) {
+		require.Equal(t, sessionID, in.SessionID)
+		require.Equal(t, "operator-1", in.Operator)
+		require.Equal(t, "en", in.Language)
+		require.Equal(t, "read_only", in.OperationLevel)
+		require.Equal(t, "external-authorization", stringFromAny(in.RawArgs["probe"]))
+		tool := runningAgentToolCall("daemon.health", "authorization")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"approved_action": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "authorized action executed", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+
+	resp, err := mgr.DecideAgentAuthorization(context.Background(), sessionID, agentAuthorizationDecisionRequest{
+		Action:          "approve",
+		AuthorizationID: "auth-external-authorization",
+		Operator:        "operator-1",
+		Language:        "en",
+		OperationLevel:  "read_only",
+		SkipSynthesis:   true,
+	}, routerServices{})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.ApprovalState)
+	require.Equal(t, approvalCanonicalStateApproved, resp.ApprovalState.State)
+	require.Len(t, appendMutations, 1)
+	appendReq := appendMutations[0]
+	require.Equal(t, runtime.SessionMutationAppendMessages, appendReq.Kind)
+	require.Equal(t, sessionID, appendReq.Turn.SessionID)
+	require.Equal(t, "task-external-authorization", appendReq.Turn.TaskID)
+	require.Equal(t, runID, appendReq.Turn.RunID)
+	require.NotEmpty(t, appendReq.Turn.TurnID)
+	require.Equal(t, "run daemon health after approval", appendReq.Turn.Prompt)
+	require.Equal(t, daemonTurnExecutionPlannerActionExecution, appendReq.Turn.Origin)
+	require.Equal(t, "read_only", appendReq.Turn.OperationLevel)
+	require.Equal(t, 1, appendReq.Turn.Metadata["message_count"])
+	require.Equal(t, false, appendReq.Turn.Metadata["planner_apply"])
+
+	payload, ok := appendReq.Payload.(daemonAppendMessagesMutationPayload)
+	require.True(t, ok, "payload type = %T", appendReq.Payload)
+	require.Len(t, payload.Messages, 1)
+	require.Equal(t, "authorized action executed", payload.Messages[0].Content)
+	require.Equal(t, "step", payload.Messages[0].Phase)
+	require.Len(t, payload.Messages[0].ToolCalls, 1)
+	require.Equal(t, "daemon.health", payload.Messages[0].ToolCalls[0].Name)
 }
 
 func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testing.T) {

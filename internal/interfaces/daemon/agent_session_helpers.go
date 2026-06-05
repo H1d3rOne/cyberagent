@@ -261,6 +261,15 @@ func (m *agentManager) appendMessagesWithPlannerForTurn(ctx context.Context, ses
 	_, _ = m.appendMessagesWithPlannerLegacy(sessionID, plan, messages...)
 }
 
+func firstAgentMessageID(messages []agentMessage, fallback string) string {
+	for _, message := range messages {
+		if id := strings.TrimSpace(message.ID); id != "" {
+			return id
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
 func (m *agentManager) appendMessagesWithPlannerLegacy(sessionID string, plan *agentPlannerResponse, messages ...agentMessage) (daemonAppendMessagesMutationResultPayload, bool) {
 	eng := m.runtimeEngine()
 	m.mu.Lock()

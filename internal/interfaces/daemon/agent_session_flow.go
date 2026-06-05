@@ -44,10 +44,14 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 			tool := runningAgentToolCall("POST /api/v1/jobs/{job_id}/cancel", shortAgentID(cancelJobID, 22))
 			tool = finishAgentToolCall(tool, nil)
 			tool.Result = map[string]any{"job_id": job.JobID, "run_id": job.RunID, "status": string(job.Status)}
-			m.appendMessages(sessionID, m.message(language, "tool", agentText(language, "daemon job 已收到取消请求。", "daemon job received the cancellation request."), []agentToolCall{tool}, nil))
+			cancelMessage := m.message(language, "tool", agentText(language, "daemon job 已收到取消请求。", "daemon job received the cancellation request."), []agentToolCall{tool}, nil)
+			cancelTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, cancelMessage.ID)
+			m.appendMessagesForTurn(ctx, sessionID, cancelTurnRef, req.Prompt, string(runtime.SessionMutationControlSession), operationLevel, cancelMessage)
 		} else if services.ErrorCodeOf(cancelErr) != services.CodeConflict {
 			tool := failedAgentToolCall("POST /api/v1/jobs/{job_id}/cancel", cancelErr)
-			m.appendMessages(sessionID, m.message(language, "tool", cancelErr.Error(), []agentToolCall{tool}, nil))
+			cancelMessage := m.message(language, "tool", cancelErr.Error(), []agentToolCall{tool}, nil)
+			cancelTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, cancelMessage.ID)
+			m.appendMessagesForTurn(ctx, sessionID, cancelTurnRef, req.Prompt, string(runtime.SessionMutationControlSession), operationLevel, cancelMessage)
 		}
 	}
 
@@ -111,7 +115,8 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		}
 	}
 	if len(actionMessages) > 0 {
-		m.appendMessages(sessionID, actionMessages...)
+		actionTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, firstAgentMessageID(actionMessages, pending.ID))
+		m.appendMessagesForTurn(ctx, sessionID, actionTurnRef, pending.OriginalPrompt, daemonTurnExecutionPlannerActionExecution, operationLevel, actionMessages...)
 	}
 	responseMessages := append([]agentMessage{message}, actionMessages...)
 	responseToolCalls := append([]agentToolCall{}, actionToolCalls...)
@@ -144,11 +149,13 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 					[]agentToolCall{warningTool},
 					nil,
 				), "step_replan")
-				m.appendMessages(sessionID, warningMessage)
+				warningTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, warningMessage.ID)
+				m.appendMessagesForTurn(ctx, sessionID, warningTurnRef, pending.OriginalPrompt, string(runtime.LLMStageToolSynthesis), operationLevel, warningMessage)
 				responseMessages = append(responseMessages, warningMessage)
 				responseToolCalls = append(responseToolCalls, warningTool)
 			} else if len(synthesisMessages) > 0 {
-				m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
+				synthesisTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, firstAgentMessageID(synthesisMessages, pending.ID))
+				m.appendMessagesWithPlannerForTurn(ctx, sessionID, synthesisTurnRef, pending.OriginalPrompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
 				responseMessages = append(responseMessages, synthesisMessages...)
 				responseToolCalls = append(responseToolCalls, synthesisToolCalls...)
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {

@@ -99,6 +99,35 @@ func (m *agentManager) beginRuntimeTurn(ctx context.Context, sessionID, prompt, 
 	return agentRuntimeTurnRef{TaskID: turn.TaskID, RunID: turn.RunID, TurnID: turn.TurnID}
 }
 
+func (m *agentManager) externalSessionMutationTurnRef(ctx context.Context, sessionID, seed string) agentRuntimeTurnRef {
+	taskID := "task_" + sessionID
+	runID := ""
+	if session, err := m.GetSession(ctx, sessionID); err == nil {
+		taskID = agentRuntimeTaskID(sessionID, session)
+		if session.ActiveTask != nil {
+			runID = strings.TrimSpace(session.ActiveTask.ActiveRunID)
+		}
+	}
+
+	seed = strings.TrimSpace(seed)
+	if seed == "" {
+		seed = sessionID
+	}
+	seed = strings.NewReplacer("/", "_", "\\", "_", "\x00", "_").Replace(seed)
+
+	if runID == "" {
+		runID = strings.Replace(seed, "msg_", "run_", 1)
+		if runID == seed {
+			runID = "run_" + seed
+		}
+	}
+	turnID := strings.Replace(seed, "msg_", "turn_", 1)
+	if turnID == seed {
+		turnID = "turn_" + seed
+	}
+	return agentRuntimeTurnRef{TaskID: taskID, RunID: runID, TurnID: turnID}
+}
+
 func (m *agentManager) emitAgentRuntimeEvents(ctx context.Context, eng *runtime.Engine, sessionID string, session agentSession, messages ...agentMessage) {
 	if eng == nil {
 		return

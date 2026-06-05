@@ -220,7 +220,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch；no-LLM deterministic route、control auto-continue route、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation、authorization approved planner action execution，以及 LLM planner/replan loop 内部 action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters。下一步准备继续收敛 remaining SendMessage branches。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch；no-LLM deterministic route、control auto-continue route、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation、authorization approved planner action execution，以及 LLM planner/replan loop 内部 action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters；planner/replan/LLM/SendMessage append 与外部 control/authorization append 已经改为携带 turnRef 的 `append_messages` dispatch。下一步准备继续收敛 remaining SendMessage branches。
 4. 最后收敛 remaining SendMessage branches 为 engine turn lifecycle。
 
 已完成的 seam 边界：
@@ -1038,6 +1038,7 @@ Glass surface：
 | v20 | 扩展 session mutation seam：planner loop / replan continuation 的 action/warning append 增加 turn-aware `append_messages` dispatch；实际 append/persist/compaction/runtime events 仍复用 daemon legacy helper。 |
 | v21 | 扩展 planner-aware append seam：LLM planner chat 初始 plan append 与 tool synthesis planner apply 改为 turn-aware `append_messages` dispatch；实际 planner apply、append/persist/compaction/runtime events 仍复用 daemon legacy helper。 |
 | v22 | 扩展 SendMessage append seam：deterministic route、route-before-LLM synthesis、LLM fallback route、control auto-continue 与 authorization-gate append 改为携带当前 turnRef 的 `append_messages` dispatch；`agent_session_flow.go` 剩余直接 append 仅保留在无 turnRef 的外部 control/authorization 入口。 |
+| v23 | 扩展外部 control/authorization append seam：为 `ControlSession` / `DecideAgentAuthorization` 生成轻量 external turnRef，daemon job cancel、approved action 与 authorization synthesis append 改为 turn-aware `append_messages` dispatch；不接管完整 Begin/Finish turn lifecycle。 |
 
 ---
 
