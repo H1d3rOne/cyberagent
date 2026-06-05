@@ -288,7 +288,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		return planMessages, planToolCalls, err
 	}
 
-	m.appendMessagesWithPlanner(sessionID, plan, planMessages...)
+	m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStagePlannerChat), operationLevel, plan, planMessages...)
 	responseMessages := append([]agentMessage{}, planMessages...)
 	toolCalls := append([]agentToolCall{}, planToolCalls...)
 	loopHistory := append(cloneAgentMessages(history), planMessages...)
@@ -345,7 +345,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			break
 		}
 		if len(synthesisMessages) > 0 {
-			m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
+			m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
 			responseMessages = append(responseMessages, synthesisMessages...)
 			loopHistory = append(loopHistory, synthesisMessages...)
 			toolCalls = append(toolCalls, synthesisToolCalls...)
@@ -410,7 +410,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			break
 		}
 		if len(synthesisMessages) > 0 {
-			m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
+			m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
 			responseMessages = append(responseMessages, synthesisMessages...)
 			toolCalls = append(toolCalls, synthesisToolCalls...)
 			loopHistory = append(loopHistory, synthesisMessages...)

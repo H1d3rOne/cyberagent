@@ -770,6 +770,45 @@ func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStag
 	expectedMessage := agentMessage{ID: "msg-continuation-synthesis", Role: "agent", Content: "continuation summarized"}
 	expectedToolCall := agentToolCall{ID: "tool-continuation-synthesis", Name: "LLM synthesis"}
 	expectedPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "continuation summarized"}
+	appendOrigins := []string{}
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		require.Equal(t, runtime.SessionMutationAppendMessages, req.Kind)
+		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, "task-continuation", req.Turn.TaskID)
+		require.Equal(t, "run-continuation", req.Turn.RunID)
+		require.Equal(t, "turn-continuation", req.Turn.TurnID)
+		require.Equal(t, "continue daemon health", req.Turn.Prompt)
+		require.Equal(t, "read_only", req.Turn.OperationLevel)
+		require.Equal(t, "session_mutation", req.Turn.Metadata["mutator"])
+		require.Equal(t, string(runtime.SessionMutationAppendMessages), req.Turn.Metadata["kind"])
+		require.Equal(t, 1, req.Turn.Metadata["message_count"])
+
+		payload, ok := req.Payload.(daemonAppendMessagesMutationPayload)
+		require.True(t, ok, "payload type = %T", req.Payload)
+		require.Equal(t, sessionID, payload.SessionID)
+		require.Len(t, payload.Messages, 1)
+
+		appendOrigins = append(appendOrigins, req.Turn.Origin)
+		switch len(appendOrigins) {
+		case 1:
+			require.Equal(t, daemonTurnExecutionReplanActionContinuation, req.Turn.Origin)
+			require.Equal(t, false, req.Turn.Metadata["planner_apply"])
+			require.Nil(t, payload.Plan)
+			require.Contains(t, payload.Messages[0].Content, "health ok")
+		case 2:
+			require.Equal(t, string(runtime.LLMStageToolSynthesis), req.Turn.Origin)
+			require.Equal(t, true, req.Turn.Metadata["planner_apply"])
+			require.Same(t, expectedPlan, payload.Plan)
+			require.Equal(t, expectedMessage.ID, payload.Messages[0].ID)
+		default:
+			t.Fatalf("unexpected append mutation call %d", len(appendOrigins))
+		}
+
+		return runtime.SessionMutationResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "handled by test mutator",
+		}, nil
+	}))
 	synthesisCalled := false
 	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
 		synthesisCalled = true
@@ -830,6 +869,7 @@ func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStag
 
 	require.True(t, actionCalled)
 	require.True(t, synthesisCalled)
+	require.Equal(t, []string{daemonTurnExecutionReplanActionContinuation, string(runtime.LLMStageToolSynthesis)}, appendOrigins)
 	require.Len(t, messages, 2)
 	require.Contains(t, messages[0].Content, "health ok")
 	require.Equal(t, expectedMessage, messages[1])
