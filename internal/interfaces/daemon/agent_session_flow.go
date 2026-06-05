@@ -230,7 +230,15 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				return buildAgentSendResponse(sessionID, responseMessages, contextToolCalls, sessionState), nil
 			}
 			if autoPrompt := agentExecutableAutoContinuePrompt(controlResp.Session.NextAction); autoPrompt != "" && agentCanAutoRouteContinuePrompt(autoPrompt) {
-				autoMessages, autoToolCalls, routeErr := m.routePrompt(ctx, sessionID, autoPrompt, language, operator, operationLevel, svc)
+				routed, handled, routeErr := m.runRuntimeDeterministicRoute(ctx, sessionID, turnRef, autoPrompt, language, operator, operationLevel, svc)
+				var autoMessages []agentMessage
+				var autoToolCalls []agentToolCall
+				if !handled && routeErr == nil {
+					autoMessages, autoToolCalls, routeErr = m.routePrompt(ctx, sessionID, autoPrompt, language, operator, operationLevel, svc)
+				} else {
+					autoMessages = routed.Messages
+					autoToolCalls = routed.ToolCalls
+				}
 				if routeErr != nil {
 					errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.auto_continue", routeErr)}, nil)
 					m.appendMessages(sessionID, errMessage)
@@ -392,7 +400,16 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
 	}
 
-	messages, toolCalls, err := m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+	routed, handled, routeErr := m.runRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
+	var messages []agentMessage
+	var toolCalls []agentToolCall
+	if !handled && routeErr == nil {
+		messages, toolCalls, routeErr = m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+	} else {
+		messages = routed.Messages
+		toolCalls = routed.ToolCalls
+	}
+	err = routeErr
 	if err != nil {
 		errMessage := m.message(language, "agent", err.Error(), []agentToolCall{failedAgentToolCall("agent.route", err)}, nil)
 		m.appendMessages(sessionID, errMessage)

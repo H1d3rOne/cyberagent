@@ -220,20 +220,20 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch。下一步准备收敛 no-LLM route/authorization resume/auto-continue 分支。
-4. 最后收敛 `SendMessage` 中的 no-LLM route、LLM route、authorization resume、auto-continue 分支为 engine turn lifecycle。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch；no-LLM deterministic route 与 control auto-continue route 已经 `ExecuteTurn` dispatch 到 daemon legacy route adapter。下一步准备收敛 LLM fallback route、route-before-LLM、authorization resume 与 auto-continue 后续分支。
+4. 最后收敛 `SendMessage` 中的 LLM route、authorization resume、auto-continue 后续分支为 engine turn lifecycle。
 
 已完成的 seam 边界：
 
 - `runtime.Engine` 新增可选 `TurnExecutor`，`ExecuteTurn` 只转发到 attached executor，不主动发 runtime lifecycle events。
-- `TurnContext` 只承载 session/task/run/turn ID、message ID、prompt/goal、origin、operation level、turn index、timestamp 与 metadata；daemon session mutation、planner loop、authorization gate 仍留在现有路径。
-- daemon `AttachEngine` 会挂接 `daemon_legacy_adapter`，当前返回 `running` 占位结果，明确表示 legacy `SendMessage` 仍拥有 turn execution；因此本切片不改变对话、approval、auto-continue 或 SSE event parity。
+- `TurnContext` 承载 session/task/run/turn ID、message ID、prompt/goal、origin、operation level、turn index、timestamp、metadata，以及迁移期 daemon-private `Payload`；daemon session mutation、planner loop、authorization gate 仍留在现有路径。
+- daemon `AttachEngine` 会挂接 `daemon_legacy_adapter`；默认无 kind 时仍返回 `running` 占位结果，明确表示 legacy `SendMessage` 仍拥有 turn execution；`deterministic_route` kind 会执行现有 daemon `routePrompt` 并返回 daemon-private messages/toolCalls payload，因此 no-LLM route 与 control auto-continue route 可先经 `ExecuteTurn` seam 调度且不改变 append/response/runtime event parity。
 
 已完成的 lifecycle API 边界：
 
 - `runtime.Engine.BeginTurn` 接管 task/run/turn state 写入与 `task_created`、`run_started`、`turn_started` 事件发布。
 - `runtime.Engine.FinishTurn` 接管 turn state 写入、`turn_finished`/`turn_failed` 发布，以及 approval required、task finished、task failed run 终态分派。
-- daemon `beginRuntimeTurn` / `finishRuntimeTurn` 只保留 session snapshot、message ID、response completion 到 `TurnContext` / `TurnResult` 的 adapter 逻辑；`SendMessage`、planner loop、authorization resume、auto-continue 仍未下沉。
+- daemon `beginRuntimeTurn` / `finishRuntimeTurn` 只保留 session snapshot、message ID、response completion 到 `TurnContext` / `TurnResult` 的 adapter 逻辑；`SendMessage` 主流程、planner loop、authorization resume、auto-continue 后续分支仍未完整下沉。
 
 已完成的 LLM runner seam 边界：
 
@@ -1029,6 +1029,7 @@ Glass surface：
 | v11 | 扩展 session mutation seam：`record_user_message` 已接入 `SendMessage` 开头 user message 记录与 history/memory snapshot，实际执行仍复用 daemon legacy helper。 |
 | v12 | 扩展 session mutation seam：`resolve_authorization` 已接入 `DecideAgentAuthorization` approve/deny 状态写入，实际执行仍复用 daemon legacy helper，approve 后 action/synthesis 流程保持原路径。 |
 | v13 | 扩展 session mutation seam：`control_session` 已接入 `ControlSession` continue/revise/pause/cancel/stop/new_task 状态写入；stop/cancel 的 daemon job cancel 副作用仍保留在外层 control flow。 |
+| v14 | 扩展 turn executor seam：`SendMessage` no-LLM deterministic route 与 control auto-continue route 已经 `runtime.Engine.ExecuteTurn` dispatch 到 daemon legacy `routePrompt` adapter，实际 append/response 语义保持原路径。 |
 
 ---
 

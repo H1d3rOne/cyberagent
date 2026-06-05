@@ -29,9 +29,9 @@ const (
 )
 
 // TurnContext is the engine-owned boundary object for one turn execution. It
-// carries identifiers and prompt/task metadata only; daemon session mutation,
-// planner state and service adapters remain outside this package until later
-// migration slices.
+// carries stable identifiers plus a temporary opaque payload for migration
+// adapters while daemon-private planner/session/service types move
+// runtime-side.
 type TurnContext struct {
 	SessionID      string
 	TaskID         string
@@ -44,6 +44,7 @@ type TurnContext struct {
 	OperationLevel string
 	TurnIndex      int
 	Timestamp      time.Time
+	Payload        any
 	Metadata       map[string]any
 }
 
@@ -51,10 +52,11 @@ type TurnContext struct {
 // returned error so callers that persist results can preserve the original
 // failure text without relying on error wrapping.
 type TurnResult struct {
-	Status TurnResultStatus
-	Reason string
-	Error  error
-	Data   map[string]any
+	Status  TurnResultStatus
+	Reason  string
+	Error   error
+	Payload any
+	Data    map[string]any
 }
 
 // TurnExecutor executes a single runtime turn. The first attached

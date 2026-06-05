@@ -126,6 +126,7 @@ func TestExecuteTurnDispatchesAttachedExecutor(t *testing.T) {
 		Timestamp:      expectedTime,
 		Metadata:       map[string]any{"source": "test"},
 	}
+	expectedPayload := map[string]any{"opaque": "daemon-private-turn"}
 	called := false
 	e.AttachTurnExecutor(TurnExecutorFunc(func(gotCtx context.Context, got TurnContext) (TurnResult, error) {
 		called = true
@@ -143,13 +144,19 @@ func TestExecuteTurnDispatchesAttachedExecutor(t *testing.T) {
 			got.Metadata["source"] != expectedTurn.Metadata["source"] {
 			t.Fatalf("TurnContext = %#v, want %#v", got, expectedTurn)
 		}
+		payload, ok := got.Payload.(map[string]any)
+		if !ok || payload["opaque"] != expectedPayload["opaque"] {
+			t.Fatalf("TurnContext.Payload = %#v, want %#v", got.Payload, expectedPayload)
+		}
 		return TurnResult{
-			Status: TurnResultFinished,
-			Reason: "done",
-			Data:   map[string]any{"executor": "test"},
+			Status:  TurnResultFinished,
+			Reason:  "done",
+			Payload: "turn-result-payload",
+			Data:    map[string]any{"executor": "test"},
 		}, nil
 	}))
 
+	expectedTurn.Payload = expectedPayload
 	result, err := e.ExecuteTurn(ctx, expectedTurn)
 	if err != nil {
 		t.Fatalf("ExecuteTurn() error = %v", err)
@@ -157,7 +164,7 @@ func TestExecuteTurnDispatchesAttachedExecutor(t *testing.T) {
 	if !called {
 		t.Fatalf("ExecuteTurn() did not call attached executor")
 	}
-	if result.Status != TurnResultFinished || result.Reason != "done" || result.Data["executor"] != "test" {
+	if result.Status != TurnResultFinished || result.Reason != "done" || result.Payload != "turn-result-payload" || result.Data["executor"] != "test" {
 		t.Fatalf("ExecuteTurn() result = %#v", result)
 	}
 }

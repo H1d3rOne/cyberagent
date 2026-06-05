@@ -37,6 +37,123 @@ func TestAgentManagerAttachEngineWiresDaemonTurnExecutor(t *testing.T) {
 	require.Equal(t, "turn-legacy-executor", result.Data["turn_id"])
 }
 
+func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	expectedMessage := agentMessage{ID: "msg-route", Role: "tool", Content: "routed"}
+	expectedToolCall := agentToolCall{ID: "tool-route", Name: "daemon.health"}
+	called := false
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		called = true
+		require.Equal(t, "session-route-executor", turn.SessionID)
+		require.Equal(t, "task-route-executor", turn.TaskID)
+		require.Equal(t, "run-route-executor", turn.RunID)
+		require.Equal(t, "turn-route-executor", turn.TurnID)
+		require.Equal(t, "daemon health", turn.Prompt)
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+		require.Equal(t, "turn_execution", turn.Metadata["executor"])
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Metadata["kind"])
+
+		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, "session-route-executor", payload.SessionID)
+		require.Equal(t, "daemon health", payload.Prompt)
+		require.Equal(t, "en", payload.Language)
+		require.Equal(t, "operator-1", payload.Operator)
+		require.Equal(t, "read_only", payload.OperationLevel)
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonDeterministicRouteTurnResultPayload{
+				Messages:  []agentMessage{expectedMessage},
+				ToolCalls: []agentToolCall{expectedToolCall},
+			},
+		}, nil
+	}))
+
+	result, handled, err := mgr.runRuntimeDeterministicRoute(
+		context.Background(),
+		"session-route-executor",
+		agentRuntimeTurnRef{TaskID: "task-route-executor", RunID: "run-route-executor", TurnID: "turn-route-executor"},
+		"daemon health",
+		"en",
+		"operator-1",
+		"read_only",
+		routerServices{},
+	)
+
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.True(t, called)
+	require.Equal(t, []agentMessage{expectedMessage}, result.Messages)
+	require.Equal(t, []agentToolCall{expectedToolCall}, result.ToolCalls)
+}
+
+func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	expectedMessage := agentMessage{ID: "msg-send-route", Role: "tool", Content: "routed through executor"}
+	expectedToolCall := agentToolCall{ID: "tool-send-route", Name: "daemon.health"}
+
+	called := false
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		called = true
+		require.Equal(t, sessionID, turn.SessionID)
+		require.NotEmpty(t, turn.TaskID)
+		require.NotEmpty(t, turn.RunID)
+		require.NotEmpty(t, turn.TurnID)
+		require.Equal(t, "daemon health", turn.Prompt)
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+
+		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, sessionID, payload.SessionID)
+		require.Equal(t, "daemon health", payload.Prompt)
+		require.Equal(t, "operator-1", payload.Operator)
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonDeterministicRouteTurnResultPayload{
+				Messages:  []agentMessage{expectedMessage},
+				ToolCalls: []agentToolCall{expectedToolCall},
+			},
+		}, nil
+	}))
+
+	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
+		Message:        "daemon health",
+		Operator:       "operator-1",
+		Language:       "en",
+		OperationLevel: "read_only",
+	}, routerServices{})
+
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Len(t, resp.Messages, 2)
+	require.Equal(t, "user", resp.Messages[0].Role)
+	require.Equal(t, expectedMessage, resp.Messages[1])
+	require.Equal(t, []agentToolCall{expectedToolCall}, resp.ToolCalls)
+
+	got, err := mgr.GetSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.Equal(t, expectedMessage.ID, got.Messages[len(got.Messages)-1].ID)
+}
+
 func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
