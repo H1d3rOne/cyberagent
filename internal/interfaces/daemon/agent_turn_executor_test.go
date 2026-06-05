@@ -14,6 +14,7 @@ func TestAgentManagerAttachEngineWiresDaemonTurnExecutor(t *testing.T) {
 	mgr.AttachEngine(eng)
 
 	require.NotNil(t, eng.LLMTurnRunner())
+	require.NotNil(t, eng.LLMStageRunner())
 
 	result, err := eng.ExecuteTurn(context.Background(), runtime.TurnContext{
 		SessionID:      "session-legacy-executor",
@@ -93,4 +94,67 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 	require.True(t, called)
 	require.Equal(t, []agentMessage{expectedMessage}, messages)
 	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
+}
+
+func TestAgentManagerRunRuntimeAgentLLMPlannerChatDispatchesEngineStageRunner(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	expectedMessage := agentMessage{ID: "msg-planner", Role: "agent", Content: "planned"}
+	expectedToolCall := agentToolCall{ID: "tool-planner", Name: "LLM chat"}
+	expectedPlan := &agentPlannerResponse{Phase: "plan", Answer: "planned"}
+	called := false
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		called = true
+		require.Equal(t, runtime.LLMStagePlannerChat, req.Stage)
+		require.Equal(t, "session-planner-stage", req.Turn.SessionID)
+		require.Equal(t, "task-planner-stage", req.Turn.TaskID)
+		require.Equal(t, "run-planner-stage", req.Turn.RunID)
+		require.Equal(t, "turn-planner-stage", req.Turn.TurnID)
+		require.Equal(t, "make a plan", req.Turn.Prompt)
+		require.Equal(t, "safe_scan", req.Turn.OperationLevel)
+		require.Equal(t, "llm_stage", req.Metadata["runner"])
+		require.Equal(t, string(runtime.LLMStagePlannerChat), req.Metadata["stage"])
+
+		payload, ok := req.Payload.(daemonLLMPlannerChatPayload)
+		require.True(t, ok, "payload type = %T", req.Payload)
+		require.Equal(t, "session-planner-stage", payload.SessionID)
+		require.Equal(t, "task-planner-stage", payload.TurnRef.TaskID)
+		require.Equal(t, "run-planner-stage", payload.TurnRef.RunID)
+		require.Equal(t, "turn-planner-stage", payload.TurnRef.TurnID)
+		require.Equal(t, "make a plan", payload.Prompt)
+		require.Equal(t, "zh-CN", payload.Language)
+		require.Equal(t, "safe_scan", payload.OperationLevel)
+		require.Equal(t, "gpt-planner", payload.Req.Model)
+		require.Len(t, payload.History, 1)
+
+		return runtime.LLMStageResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonLLMPlannerChatResultPayload{
+				Messages:  []agentMessage{expectedMessage},
+				ToolCalls: []agentToolCall{expectedToolCall},
+				Plan:      expectedPlan,
+			},
+		}, nil
+	}))
+
+	messages, toolCalls, plan, err := mgr.runRuntimeAgentLLMPlannerChat(
+		context.Background(),
+		"session-planner-stage",
+		agentRuntimeTurnRef{TaskID: "task-planner-stage", RunID: "run-planner-stage", TurnID: "turn-planner-stage"},
+		"make a plan",
+		"zh-CN",
+		"safe_scan",
+		sendAgentMessageRequest{Model: "gpt-planner"},
+		[]agentMessage{{ID: "history-1", Role: "user", Content: "hello"}},
+		&agentMemorySummary{Summary: "memory"},
+	)
+
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Equal(t, []agentMessage{expectedMessage}, messages)
+	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
+	require.Same(t, expectedPlan, plan)
 }

@@ -16,6 +16,7 @@ func (m *agentManager) AttachEngine(e *runtime.Engine) {
 	if e != nil {
 		e.AttachTurnExecutor(daemonAgentTurnExecutor{manager: m})
 		e.AttachLLMTurnRunner(daemonAgentLLMTurnRunner{manager: m})
+		e.AttachLLMStageRunner(daemonAgentLLMStageRunner{manager: m})
 	}
 }
 

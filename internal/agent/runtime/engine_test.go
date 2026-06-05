@@ -247,6 +247,86 @@ func TestRunLLMTurnWithoutRunnerReturnsStableError(t *testing.T) {
 	}
 }
 
+func TestRunLLMStageDispatchesAttachedRunner(t *testing.T) {
+	e, _ := newTestEngine()
+	ctx := context.WithValue(context.Background(), struct{}{}, "ctx-value")
+	expectedTurn := TurnContext{
+		SessionID:      "session-stage",
+		TaskID:         "task-stage",
+		RunID:          "run-stage",
+		TurnID:         "turn-stage",
+		Prompt:         "create plan",
+		Origin:         "user",
+		OperationLevel: "safe_scan",
+		Metadata:       map[string]any{"source": "test"},
+	}
+	expectedPayload := map[string]any{"opaque": "daemon-private-stage"}
+	called := false
+	e.AttachLLMStageRunner(LLMStageRunnerFunc(func(gotCtx context.Context, got LLMStageRequest) (LLMStageResult, error) {
+		called = true
+		if gotCtx != ctx {
+			t.Fatalf("RunLLMStage ctx = %#v, want original ctx", gotCtx)
+		}
+		if got.Stage != LLMStagePlannerChat {
+			t.Fatalf("LLMStageRequest.Stage = %q, want %q", got.Stage, LLMStagePlannerChat)
+		}
+		if got.Turn.SessionID != expectedTurn.SessionID ||
+			got.Turn.TaskID != expectedTurn.TaskID ||
+			got.Turn.RunID != expectedTurn.RunID ||
+			got.Turn.TurnID != expectedTurn.TurnID ||
+			got.Turn.Prompt != expectedTurn.Prompt ||
+			got.Turn.Origin != expectedTurn.Origin ||
+			got.Turn.OperationLevel != expectedTurn.OperationLevel ||
+			got.Turn.Metadata["source"] != expectedTurn.Metadata["source"] {
+			t.Fatalf("LLMStageRequest.Turn = %#v, want %#v", got.Turn, expectedTurn)
+		}
+		payload, ok := got.Payload.(map[string]any)
+		if !ok || payload["opaque"] != expectedPayload["opaque"] {
+			t.Fatalf("LLMStageRequest.Payload = %#v, want %#v", got.Payload, expectedPayload)
+		}
+		if got.Metadata["phase"] != "planner_chat" {
+			t.Fatalf("LLMStageRequest.Metadata = %#v, want phase=planner_chat", got.Metadata)
+		}
+		return LLMStageResult{
+			Status:  TurnResultFinished,
+			Reason:  "done",
+			Payload: "stage-result-payload",
+			Data:    map[string]any{"runner": "test-stage"},
+		}, nil
+	}))
+
+	result, err := e.RunLLMStage(ctx, LLMStageRequest{
+		Turn:     expectedTurn,
+		Stage:    LLMStagePlannerChat,
+		Payload:  expectedPayload,
+		Metadata: map[string]any{"phase": "planner_chat"},
+	})
+	if err != nil {
+		t.Fatalf("RunLLMStage() error = %v", err)
+	}
+	if !called {
+		t.Fatalf("RunLLMStage() did not call attached runner")
+	}
+	if result.Status != TurnResultFinished || result.Reason != "done" || result.Payload != "stage-result-payload" || result.Data["runner"] != "test-stage" {
+		t.Fatalf("RunLLMStage() result = %#v", result)
+	}
+}
+
+func TestRunLLMStageWithoutRunnerReturnsStableError(t *testing.T) {
+	e, _ := newTestEngine()
+
+	result, err := e.RunLLMStage(context.Background(), LLMStageRequest{
+		Turn:  TurnContext{SessionID: "session-stage"},
+		Stage: LLMStagePlannerChat,
+	})
+	if !errors.Is(err, ErrLLMStageRunnerNotAttached) {
+		t.Fatalf("RunLLMStage() error = %v, want ErrLLMStageRunnerNotAttached", err)
+	}
+	if result.Status != TurnResultBlocked || !errors.Is(result.Error, ErrLLMStageRunnerNotAttached) || result.Reason == "" {
+		t.Fatalf("RunLLMStage() result = %#v, want blocked missing-runner result", result)
+	}
+}
+
 func TestBeginTurnPublishesLegacyLifecycleEvents(t *testing.T) {
 	e, store := newTestEngine()
 	ctx := context.Background()
