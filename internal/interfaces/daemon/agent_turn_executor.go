@@ -10,6 +10,7 @@ import (
 const (
 	daemonTurnExecutionDeterministicRoute       = "deterministic_route"
 	daemonTurnExecutionReplanActionContinuation = "replan_action_continuation"
+	daemonTurnExecutionPlannerActionExecution   = "planner_action_execution"
 )
 
 type daemonDeterministicRouteTurnPayload struct {
@@ -46,6 +47,22 @@ type daemonReplanActionContinuationTurnResultPayload struct {
 	ToolCalls []agentToolCall
 }
 
+type daemonPlannerActionExecutionTurnPayload struct {
+	SessionID            string
+	Language             string
+	Operator             string
+	OperationLevel       string
+	Services             routerServices
+	Action               agentPlannerAction
+	AuthProfiles         []agentHTTPAuthProfile
+	DefaultAuthProfileID string
+}
+
+type daemonPlannerActionExecutionTurnResultPayload struct {
+	Messages  []agentMessage
+	ToolCalls []agentToolCall
+}
+
 type daemonAgentTurnExecutor struct {
 	manager *agentManager
 }
@@ -56,6 +73,9 @@ func (e daemonAgentTurnExecutor) ExecuteTurn(ctx context.Context, turn runtime.T
 	}
 	if turn.Metadata != nil && turn.Metadata["kind"] == daemonTurnExecutionReplanActionContinuation {
 		return e.executeReplanActionContinuationTurn(ctx, turn)
+	}
+	if turn.Metadata != nil && turn.Metadata["kind"] == daemonTurnExecutionPlannerActionExecution {
+		return e.executePlannerActionExecutionTurn(ctx, turn)
 	}
 	return runtime.TurnResult{
 		Status: runtime.TurnResultRunning,
@@ -161,6 +181,60 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 			"manager_attached": true,
 		},
 	}, nil
+}
+
+func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn(ctx context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	if e.manager == nil {
+		err := errors.New("daemon: turn executor has no manager")
+		return daemonTurnExecutionErrorResult(turn, err), err
+	}
+	payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+	if !ok {
+		err := errors.New("daemon: invalid planner action execution turn payload")
+		return daemonTurnExecutionErrorResult(turn, err), err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	messages, toolCalls, err := e.manager.executeAgentPlannerAction(
+		ctx,
+		payload.SessionID,
+		payload.Language,
+		payload.Operator,
+		payload.OperationLevel,
+		payload.Services,
+		payload.Action,
+		payload.AuthProfiles,
+		payload.DefaultAuthProfileID,
+	)
+	status := runtime.TurnResultFinished
+	reason := "legacy daemon planner action executed"
+	if err != nil {
+		status = runtime.TurnResultFailed
+		reason = err.Error()
+	}
+	return runtime.TurnResult{
+		Status: status,
+		Reason: reason,
+		Error:  err,
+		Payload: daemonPlannerActionExecutionTurnResultPayload{
+			Messages:  messages,
+			ToolCalls: toolCalls,
+		},
+		Data: map[string]any{
+			"executor":         "daemon_legacy_adapter",
+			"kind":             daemonTurnExecutionPlannerActionExecution,
+			"session_id":       payload.SessionID,
+			"task_id":          turn.TaskID,
+			"run_id":           turn.RunID,
+			"turn_id":          turn.TurnID,
+			"action_name":      normalizeAgentPlannerActionName(payload.Action.Name),
+			"message_count":    len(messages),
+			"tool_call_count":  len(toolCalls),
+			"operation_level":  payload.OperationLevel,
+			"manager_attached": true,
+		},
+	}, err
 }
 
 func daemonTurnExecutionErrorResult(turn runtime.TurnContext, err error) runtime.TurnResult {
@@ -301,4 +375,54 @@ func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, s
 		return m.runAgentReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops)
 	}
 	return payload.Messages, payload.ToolCalls
+}
+
+func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, svc routerServices, action agentPlannerAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, error) {
+	eng := m.runtimeEngine()
+	if eng == nil || eng.TurnExecutor() == nil {
+		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, action, authProfiles, defaultAuthProfileID)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result, err := eng.ExecuteTurn(ctx, runtime.TurnContext{
+		SessionID:      sessionID,
+		TaskID:         turnRef.TaskID,
+		RunID:          turnRef.RunID,
+		TurnID:         turnRef.TurnID,
+		Prompt:         prompt,
+		Origin:         daemonTurnExecutionPlannerActionExecution,
+		OperationLevel: operationLevel,
+		TurnIndex:      1,
+		Payload: daemonPlannerActionExecutionTurnPayload{
+			SessionID:            sessionID,
+			Language:             language,
+			Operator:             operator,
+			OperationLevel:       operationLevel,
+			Services:             svc,
+			Action:               action,
+			AuthProfiles:         authProfiles,
+			DefaultAuthProfileID: defaultAuthProfileID,
+		},
+		Metadata: map[string]any{
+			"executor":        "turn_execution",
+			"kind":            daemonTurnExecutionPlannerActionExecution,
+			"operation_level": operationLevel,
+			"action_name":     normalizeAgentPlannerActionName(action.Name),
+		},
+	})
+	if errors.Is(err, runtime.ErrTurnExecutorNotAttached) ||
+		errors.Is(result.Error, runtime.ErrTurnExecutorNotAttached) ||
+		result.Status == runtime.TurnResultBlocked ||
+		(result.Status == runtime.TurnResultRunning && result.Payload == nil) {
+		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, action, authProfiles, defaultAuthProfileID)
+	}
+	payload, ok := result.Payload.(daemonPlannerActionExecutionTurnResultPayload)
+	if ok {
+		return payload.Messages, payload.ToolCalls, err
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return nil, nil, errors.New("daemon: planner action execution turn executor returned invalid payload")
 }

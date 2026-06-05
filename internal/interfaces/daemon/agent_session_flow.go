@@ -87,7 +87,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 	}
 
 	action := agentPlannerAction{Name: pending.ActionName, Arguments: cloneMapStringAny(pending.Arguments)}
-	actionMessages, actionToolCalls, execErr := m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, action, req.AuthProfiles, req.DefaultAuthProfileID)
+	actionMessages, actionToolCalls, execErr := m.runRuntimePlannerActionExecution(ctx, sessionID, agentRuntimeTurnRef{}, pending.OriginalPrompt, language, operator, operationLevel, svc, action, req.AuthProfiles, req.DefaultAuthProfileID)
 	if execErr != nil {
 		tool := failedAgentToolCall(pending.ActionName, execErr)
 		tool.Result = map[string]any{"action": pending.ActionName, "authorization_id": pending.ID}

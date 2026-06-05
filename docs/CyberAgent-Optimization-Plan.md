@@ -146,7 +146,7 @@ Leader 负责：
 
 1. `internal/interfaces/daemon/agent_session_flow.go`
    - `SendMessage` 仍是 Agent 对话主入口。
-   - runtime engine 当前负责 SQLite 事件桥、SSE replay 与 recovery；尚未接管 turn 调度和 planner loop。
+   - runtime engine 已接管 SQLite 事件桥、SSE replay、recovery 与部分 lifecycle / turn / LLM / session mutation seam dispatch；尚未完整接管 `SendMessage` 调度和 planner loop。
 2. `internal/interfaces/daemon/agent_planner_loop.go`
    - LLM JSON planner / native tool calls 仍由 daemon 解析、回写 session state，并通过 `executeAgentPlannerActions` 执行。
    - operation level、explicit intent gate、manual authorization gate、action queue metadata 仍在 daemon 层。
@@ -200,7 +200,7 @@ Leader 负责：
 11. 当前收敛策略：不一次性搬迁 legacy turn，继续按 registry dispatch → lifecycle seam → LLM runner seam → engine-native runner 分层推进。
    - 原因：`SendMessage`、planner loop、授权 gate、session mutation 仍由 daemon 保证语义；一次性把 `runAgentLLMToolLoop` 完整下沉会同时牵动 session persist、authorization resume、tool synthesis、auto-continue 与 SSE replay，切片过大。
    - 已完成确定性工具 registry 化、`BeginTurn`/`FinishTurn` lifecycle API 与 `RunLLMTurn` dispatch seam。
-   - 后续更稳妥路径是继续拆分 planner chat、tool synthesis、step replan、session mutation，再收敛 authorization resume / auto-continue。
+   - 后续更稳妥路径是继续拆分 planner chat、tool synthesis、step replan、session mutation，再收敛 authorization resume / auto-continue 与剩余 SendMessage branches。
 
 高风险 / 写动作 registry 化分批建议：
 
@@ -220,14 +220,14 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch；no-LLM deterministic route、control auto-continue route、LLM provider failure fallback route、route-before-LLM deterministic pre-route 与后续 replan action continuation 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters。下一步准备继续收敛 authorization approved action execution 与 remaining SendMessage branches。
-4. 最后收敛 authorization approved action execution 与 remaining SendMessage branches 为 engine turn lifecycle。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch；no-LLM deterministic route、control auto-continue route、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation 与 authorization approved planner action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters。下一步准备继续收敛 remaining SendMessage branches。
+4. 最后收敛 remaining SendMessage branches 为 engine turn lifecycle。
 
 已完成的 seam 边界：
 
 - `runtime.Engine` 新增可选 `TurnExecutor`，`ExecuteTurn` 只转发到 attached executor，不主动发 runtime lifecycle events。
 - `TurnContext` 承载 session/task/run/turn ID、message ID、prompt/goal、origin、operation level、turn index、timestamp、metadata，以及迁移期 daemon-private `Payload`；daemon session mutation、planner loop、authorization gate 仍留在现有路径。
-- daemon `AttachEngine` 会挂接 `daemon_legacy_adapter`；默认无 kind 时仍返回 `running` 占位结果，明确表示 legacy `SendMessage` 仍拥有 turn execution；`deterministic_route` kind 会执行现有 daemon `routePrompt` 并返回 daemon-private messages/toolCalls payload，`replan_action_continuation` kind 会执行现有 daemon `runAgentReplanActionContinuation` 并返回 daemon-private messages/toolCalls payload，因此 no-LLM route、control auto-continue route、LLM provider failure fallback route、route-before-LLM deterministic pre-route 与后续 auto-continue continuation 可先经 `ExecuteTurn` seam 调度且不改变 append/response/runtime event parity。
+- daemon `AttachEngine` 会挂接 `daemon_legacy_adapter`；默认无 kind 时仍返回 `running` 占位结果，明确表示 legacy `SendMessage` 仍拥有 turn execution；`deterministic_route` kind 会执行现有 daemon `routePrompt` 并返回 daemon-private messages/toolCalls payload，`replan_action_continuation` kind 会执行现有 daemon `runAgentReplanActionContinuation` 并返回 daemon-private messages/toolCalls payload，`planner_action_execution` kind 会执行现有 daemon `executeAgentPlannerAction` 并返回 daemon-private messages/toolCalls payload，因此 no-LLM route、control auto-continue route、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 auto-continue continuation 与 authorization approved planner action execution 可先经 `ExecuteTurn` seam 调度且不改变 append/response/runtime event parity。
 
 已完成的 lifecycle API 边界：
 
@@ -1033,6 +1033,7 @@ Glass surface：
 | v15 | 扩展 turn executor seam：LLM provider failure fallback 的本地 route 已复用 `deterministic_route` adapter；AI failure warning、fallback messages prepend 与 tool call merge 语义保持原路径。 |
 | v16 | 扩展 turn executor seam：LLM configured + route-before-LLM synthesis 的 deterministic pre-route 已复用 `deterministic_route` adapter；step phase tagging 与后续 synthesis 语义保持原路径。 |
 | v17 | 扩展 turn executor seam：authorization approve resume 与 route-before-LLM 后续 auto-continue 的 `runAgentReplanActionContinuation` 已经 `replan_action_continuation` dispatch，实际 action execution / StepReplan synthesis / append 语义保持原路径。 |
+| v18 | 扩展 turn executor seam：authorization approve 后的单个 planner action execution 已经 `planner_action_execution` dispatch；实际 action/tool execution、错误处理、authorization metadata 与后续 synthesis 语义保持原路径。 |
 
 ---
 
