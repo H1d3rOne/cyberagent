@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
+	"github.com/H1d3rOne/cyberagent/internal/agent/toolregistry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -222,4 +223,111 @@ func TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner(
 	require.Equal(t, []agentMessage{expectedMessage}, messages)
 	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
 	require.Same(t, expectedPlan, plan)
+}
+
+func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStage(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	require.True(t, ok, "daemon.health missing from registry")
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	actionCalled := false
+	spec.Handler = func(_ context.Context, in toolregistry.HandlerInput) (any, error) {
+		actionCalled = true
+		require.Equal(t, sessionID, in.SessionID)
+		require.Equal(t, "tester", in.Operator)
+		require.Equal(t, "en", in.Language)
+		require.Equal(t, "read_only", in.OperationLevel)
+		require.Equal(t, "continuation", stringFromAny(in.RawArgs["probe"]))
+
+		tool := runningAgentToolCall("daemon.health", "continuation")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"ok": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "health ok", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	expectedMessage := agentMessage{ID: "msg-continuation-synthesis", Role: "agent", Content: "continuation summarized"}
+	expectedToolCall := agentToolCall{ID: "tool-continuation-synthesis", Name: "LLM synthesis"}
+	expectedPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "continuation summarized"}
+	synthesisCalled := false
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		synthesisCalled = true
+		require.Equal(t, runtime.LLMStageToolSynthesis, req.Stage)
+		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, "task-continuation", req.Turn.TaskID)
+		require.Equal(t, "run-continuation", req.Turn.RunID)
+		require.Equal(t, "turn-continuation", req.Turn.TurnID)
+		require.Equal(t, "continue daemon health", req.Turn.Prompt)
+		require.Equal(t, "read_only", req.Turn.OperationLevel)
+
+		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		require.True(t, ok, "payload type = %T", req.Payload)
+		require.Equal(t, sessionID, payload.SessionID)
+		require.Equal(t, "continue daemon health", payload.Prompt)
+		require.Equal(t, "en", payload.Language)
+		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Len(t, payload.History, 2)
+		require.Len(t, payload.ToolMessages, 1)
+		require.Contains(t, payload.ToolMessages[0].Content, "health ok")
+
+		return runtime.LLMStageResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonLLMToolSynthesisResultPayload{
+				Messages:  []agentMessage{expectedMessage},
+				ToolCalls: []agentToolCall{expectedToolCall},
+				Plan:      expectedPlan,
+			},
+		}, nil
+	}))
+
+	messages, toolCalls := mgr.runAgentReplanActionContinuation(
+		context.Background(),
+		sessionID,
+		agentRuntimeTurnRef{TaskID: "task-continuation", RunID: "run-continuation", TurnID: "turn-continuation"},
+		"continue daemon health",
+		"en",
+		"tester",
+		"read_only",
+		sendAgentMessageRequest{Model: "gpt-continuation"},
+		[]agentMessage{{ID: "history-1", Role: "agent", Content: "previous step"}},
+		&agentMemorySummary{Summary: "memory"},
+		routerServices{},
+		&agentPlannerResponse{
+			Phase: "step_replan",
+			NextAction: &agentNextAction{
+				Type:         "continue",
+				AutoContinue: true,
+			},
+			ToolCalls: []agentPlannerAction{{
+				Name:      "daemon.health",
+				Arguments: map[string]any{"probe": "continuation"},
+			}},
+		},
+		1,
+	)
+
+	require.True(t, actionCalled)
+	require.True(t, synthesisCalled)
+	require.Len(t, messages, 2)
+	require.Contains(t, messages[0].Content, "health ok")
+	require.Equal(t, expectedMessage, messages[1])
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, "daemon.health", toolCalls[0].Name)
+	require.Equal(t, expectedToolCall, toolCalls[1])
 }

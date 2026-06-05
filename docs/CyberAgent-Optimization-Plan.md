@@ -220,7 +220,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam 与 `RunLLMStage`/`LLMStageRunner` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，且 loop 内部 planner chat / tool synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`。下一步继续拆 step replan、session mutation，并覆盖 authorization resume / standalone route synthesis 分支。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam 与 `RunLLMStage`/`LLMStageRunner` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，且 loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`。下一步继续拆 session mutation，并覆盖 authorization resume / standalone route synthesis 分支。
 4. 最后收敛 `SendMessage` 中的 no-LLM route、LLM route、authorization resume、auto-continue 分支为 engine turn lifecycle。
 
 已完成的 seam 边界：
@@ -245,7 +245,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 - `runtime.Engine` 新增可选 `LLMStageRunner`，`RunLLMStage` 只负责 dispatch 单个 bounded LLM stage，不发布 lifecycle events。
 - 已接入 stage 为 `planner_chat` 与 `tool_synthesis`。
-- daemon `AttachEngine` 会挂接 `daemon_legacy_llm_stage`；`runAgentLLMToolLoop` 首个 planner chat 已改为调用 `runRuntimeAgentLLMPlannerChat`，内部 tool synthesis 已改为调用 `runRuntimeAgentLLMToolSynthesis`。
+- daemon `AttachEngine` 会挂接 `daemon_legacy_llm_stage`；`runAgentLLMToolLoop` 首个 planner chat 已改为调用 `runRuntimeAgentLLMPlannerChat`，内部 tool synthesis 与 `runAgentReplanActionContinuation` 的 auto-continue synthesis 已改为调用 `runRuntimeAgentLLMToolSynthesis`。
 - 实际执行仍复用原 `handleAgentLLMChat` / `synthesizeAgentToolResults`，保持 provider fallback、model_token/model_reasoning streaming、planner JSON parsing、native tool call extraction、StepReplan/final_answer 解析与 planner/tool_synthesis metadata 语义不变。
 
 ---
@@ -1014,6 +1014,7 @@ Glass surface：
 | v5 | 新增 LLM runner seam 状态：`runtime.Engine.RunLLMTurn` 已可调度 daemon legacy `runAgentLLMToolLoop`，为后续 engine-native planner/synthesis/replan/session mutation 拆分做入口。 |
 | v6 | 新增 LLM stage runner seam 状态：`runtime.Engine.RunLLMStage` 已可调度 planner chat stage，`runAgentLLMToolLoop` 的首个 planner chat 已经 engine stage dispatch。 |
 | v7 | 扩展 LLM stage runner seam：`LLMStageToolSynthesis` 已接入 `runAgentLLMToolLoop` 内部 synthesis 调用，实际执行仍复用 daemon legacy synthesis。 |
+| v8 | 扩展 StepReplan continuation seam：`runAgentReplanActionContinuation` 的 auto-continue synthesis 已复用 `LLMStageToolSynthesis`。 |
 
 ---
 
