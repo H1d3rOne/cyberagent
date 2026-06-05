@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
 )
 
@@ -215,13 +216,13 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		controlResp, controlErr := m.ControlSession(ctx, sessionID, controlReq, svc)
 		if controlErr != nil {
 			errMessage := m.message(language, "agent", controlErr.Error(), []agentToolCall{failedAgentToolCall("agent.control", controlErr)}, nil)
-			m.appendMessages(sessionID, errMessage)
+			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, string(runtime.SessionMutationControlSession), operationLevel, errMessage)
 			sessionState, _ := m.GetSession(ctx, sessionID)
 			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, errMessage}, errMessage.ToolCalls, sessionState), nil
 		}
 		if controlReq.Action == "continue" && !agentLLMConfigured(req) {
 			if contextMessages, contextToolCalls, ok := m.handleAgentActiveRunContinue(ctx, sessionID, language, svc); ok {
-				m.appendMessages(sessionID, contextMessages...)
+				m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "active_run_continue", operationLevel, contextMessages...)
 				sessionState, getErr := m.GetSession(ctx, sessionID)
 				if getErr != nil {
 					sessionState = controlResp.Session
@@ -233,7 +234,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				autoMessages, autoToolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, autoPrompt, language, operator, operationLevel, svc)
 				if routeErr != nil {
 					errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.auto_continue", routeErr)}, nil)
-					m.appendMessages(sessionID, errMessage)
+					m.appendMessagesForTurn(ctx, sessionID, turnRef, autoPrompt, daemonTurnExecutionDeterministicRoute, operationLevel, errMessage)
 					sessionState, getErr := m.GetSession(ctx, sessionID)
 					if getErr != nil {
 						sessionState = controlResp.Session
@@ -241,7 +242,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 					return buildAgentSendResponse(sessionID, []agentMessage{userMessage, controlResp.Message, errMessage}, errMessage.ToolCalls, sessionState), nil
 				}
 				autoMessages, autoToolCalls = tagAgentAutoContinueMessages(autoMessages, autoToolCalls, autoPrompt)
-				m.appendMessages(sessionID, autoMessages...)
+				m.appendMessagesForTurn(ctx, sessionID, turnRef, autoPrompt, daemonTurnExecutionDeterministicRoute, operationLevel, autoMessages...)
 				sessionState, getErr := m.GetSession(ctx, sessionID)
 				if getErr != nil {
 					sessionState = controlResp.Session
@@ -273,7 +274,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				[]agentToolCall{warningTool},
 				nil,
 			)
-			m.appendMessages(sessionID, warningMessage)
+			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "llm_tool_loop", operationLevel, warningMessage)
 			sessionState, _ = m.GetSession(ctx, sessionID)
 			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, controlResp.Message, warningMessage}, []agentToolCall{warningTool}, sessionState), nil
 		}
@@ -288,7 +289,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		sessionState.PendingAuthorization != nil &&
 		strings.EqualFold(sessionState.PendingAuthorization.Status, "pending") {
 		blockMessage := agentMessageWithPhase(m.message(language, "agent", agentText(language, "当前任务已暂停在工具授权门。请先在授权卡片中点击“允许并继续”或“拒绝”；我不会在授权前执行新的步骤。", "The current task is paused at a tool authorization gate. Approve or deny the authorization card first; I will not execute new steps before authorization."), nil, nil), "step")
-		m.appendMessages(sessionID, blockMessage)
+		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "authorization_gate", operationLevel, blockMessage)
 		latestState, _ := m.GetSession(ctx, sessionID)
 		return buildAgentSendResponse(sessionID, []agentMessage{userMessage, blockMessage}, nil, latestState), nil
 	}
@@ -297,13 +298,13 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 		if routeErr != nil {
 			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
-			m.appendMessages(sessionID, errMessage)
+			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionDeterministicRoute, operationLevel, errMessage)
 			sessionState, _ := m.GetSession(ctx, sessionID)
 			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, errMessage}, errMessage.ToolCalls, sessionState), nil
 		}
 		messages = agentMessagesWithPhase(messages, "step")
 		toolCalls = agentToolCallsWithPhase(toolCalls, "step")
-		m.appendMessages(sessionID, messages...)
+		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionDeterministicRoute, operationLevel, messages...)
 		responseMessages := append([]agentMessage{userMessage}, messages...)
 		if len(toolCalls) > 0 {
 			synthesisHistory := append(cloneAgentMessages(history), messages...)
@@ -319,11 +320,11 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 					[]agentToolCall{warningTool},
 					nil,
 				), "step_replan")
-				m.appendMessages(sessionID, warningMessage)
+				m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, warningMessage)
 				responseMessages = append(responseMessages, warningMessage)
 				toolCalls = append(toolCalls, warningTool)
 			} else if len(synthesisMessages) > 0 {
-				m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
+				m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
 				responseMessages = append(responseMessages, synthesisMessages...)
 				toolCalls = append(toolCalls, synthesisToolCalls...)
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
@@ -373,20 +374,20 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 					fmt.Sprintf("After the AI provider failed, %s was detected as requiring human confirmation; execution is paused until authorization.", actionName),
 				),
 			)
-			m.appendMessages(sessionID, warningMessage, authMessage)
+			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "llm_fallback_authorization", operationLevel, warningMessage, authMessage)
 			sessionState, _ := m.GetSession(ctx, sessionID)
 			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, warningMessage, authMessage}, []agentToolCall{warningTool}, sessionState), nil
 		}
 		messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 		if routeErr != nil {
 			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
-			m.appendMessages(sessionID, warningMessage, errMessage)
+			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "llm_fallback_route", operationLevel, warningMessage, errMessage)
 			sessionState, _ := m.GetSession(ctx, sessionID)
 			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, warningMessage, errMessage}, append([]agentToolCall{warningTool}, errMessage.ToolCalls...), sessionState), nil
 		}
 		messages = append([]agentMessage{warningMessage}, messages...)
 		toolCalls = append([]agentToolCall{warningTool}, toolCalls...)
-		m.appendMessages(sessionID, messages...)
+		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "llm_fallback_route", operationLevel, messages...)
 		responseMessages := append([]agentMessage{userMessage}, messages...)
 		sessionState, _ := m.GetSession(ctx, sessionID)
 		return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
@@ -396,12 +397,12 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	err = routeErr
 	if err != nil {
 		errMessage := m.message(language, "agent", err.Error(), []agentToolCall{failedAgentToolCall("agent.route", err)}, nil)
-		m.appendMessages(sessionID, errMessage)
+		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionDeterministicRoute, operationLevel, errMessage)
 		sessionState, _ := m.GetSession(ctx, sessionID)
 		return buildAgentSendResponse(sessionID, []agentMessage{userMessage, errMessage}, errMessage.ToolCalls, sessionState), nil
 	}
 
-	m.appendMessages(sessionID, messages...)
+	m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionDeterministicRoute, operationLevel, messages...)
 	responseMessages := append([]agentMessage{userMessage}, messages...)
 	if agentLLMConfigured(req) && len(toolCalls) > 0 {
 		synthesisHistory := append(cloneAgentMessages(history), messages...)
@@ -416,11 +417,11 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				[]agentToolCall{warningTool},
 				nil,
 			)
-			m.appendMessages(sessionID, warningMessage)
+			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, warningMessage)
 			responseMessages = append(responseMessages, warningMessage)
 			toolCalls = append(toolCalls, warningTool)
 		} else if len(synthesisMessages) > 0 {
-			m.appendMessagesWithPlanner(sessionID, synthesisPlan, synthesisMessages...)
+			m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
 			responseMessages = append(responseMessages, synthesisMessages...)
 			toolCalls = append(toolCalls, synthesisToolCalls...)
 		}

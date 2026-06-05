@@ -38,6 +38,17 @@ func TestAgentManagerAttachEngineWiresDaemonTurnExecutor(t *testing.T) {
 	require.Equal(t, "turn-legacy-executor", result.Data["turn_id"])
 }
 
+func attachRecordingSessionMutator(t *testing.T, eng *runtime.Engine, mgr *agentManager, records *[]runtime.SessionMutationRequest) {
+	t.Helper()
+	legacy := daemonSessionMutator{manager: mgr}
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		if req.Kind == runtime.SessionMutationAppendMessages {
+			*records = append(*records, req)
+		}
+		return legacy.MutateSession(ctx, req)
+	}))
+}
+
 func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
@@ -106,6 +117,8 @@ func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
 	})
 	require.NoError(t, err)
 	sessionID := created.Session.SessionID
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 	expectedMessage := agentMessage{ID: "msg-send-route", Role: "tool", Content: "routed through executor"}
 	expectedToolCall := agentToolCall{ID: "tool-send-route", Name: "daemon.health"}
 
@@ -153,6 +166,22 @@ func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
 	got, err := mgr.GetSession(context.Background(), sessionID)
 	require.NoError(t, err)
 	require.Equal(t, expectedMessage.ID, got.Messages[len(got.Messages)-1].ID)
+	require.Len(t, appendMutations, 1)
+	appendReq := appendMutations[0]
+	require.Equal(t, runtime.SessionMutationAppendMessages, appendReq.Kind)
+	require.Equal(t, sessionID, appendReq.Turn.SessionID)
+	require.NotEmpty(t, appendReq.Turn.TaskID)
+	require.NotEmpty(t, appendReq.Turn.RunID)
+	require.NotEmpty(t, appendReq.Turn.TurnID)
+	require.Equal(t, "daemon health", appendReq.Turn.Prompt)
+	require.Equal(t, daemonTurnExecutionDeterministicRoute, appendReq.Turn.Origin)
+	require.Equal(t, "read_only", appendReq.Turn.OperationLevel)
+	require.Equal(t, 1, appendReq.Turn.Metadata["message_count"])
+	require.Equal(t, false, appendReq.Turn.Metadata["planner_apply"])
+	payload, ok := appendReq.Payload.(daemonAppendMessagesMutationPayload)
+	require.True(t, ok, "payload type = %T", appendReq.Payload)
+	require.Len(t, payload.Messages, 1)
+	require.Equal(t, expectedMessage.ID, payload.Messages[0].ID)
 }
 
 func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
@@ -167,6 +196,8 @@ func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 	})
 	require.NoError(t, err)
 	sessionID := created.Session.SessionID
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 
 	llmErr := errors.New("provider down")
 	llmCalled := false
@@ -238,6 +269,23 @@ func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 	got, err := mgr.GetSession(context.Background(), sessionID)
 	require.NoError(t, err)
 	require.Equal(t, expectedMessage.ID, got.Messages[len(got.Messages)-1].ID)
+	require.Len(t, appendMutations, 1)
+	appendReq := appendMutations[0]
+	require.Equal(t, runtime.SessionMutationAppendMessages, appendReq.Kind)
+	require.Equal(t, sessionID, appendReq.Turn.SessionID)
+	require.NotEmpty(t, appendReq.Turn.TaskID)
+	require.NotEmpty(t, appendReq.Turn.RunID)
+	require.NotEmpty(t, appendReq.Turn.TurnID)
+	require.Equal(t, "hello fallback route", appendReq.Turn.Prompt)
+	require.Equal(t, "llm_fallback_route", appendReq.Turn.Origin)
+	require.Equal(t, "read_only", appendReq.Turn.OperationLevel)
+	require.Equal(t, 2, appendReq.Turn.Metadata["message_count"])
+	require.Equal(t, false, appendReq.Turn.Metadata["planner_apply"])
+	payload, ok := appendReq.Payload.(daemonAppendMessagesMutationPayload)
+	require.True(t, ok, "payload type = %T", appendReq.Payload)
+	require.Len(t, payload.Messages, 2)
+	require.Contains(t, payload.Messages[0].Content, "provider down")
+	require.Equal(t, expectedMessage.ID, payload.Messages[1].ID)
 }
 
 func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
@@ -252,6 +300,8 @@ func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
 	})
 	require.NoError(t, err)
 	sessionID := created.Session.SessionID
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 	prompt := "列出所有定时任务"
 	require.True(t, agentShouldRouteBeforeLLMSynthesis(prompt))
 
@@ -312,6 +362,23 @@ func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expectedMessage.ID, got.Messages[len(got.Messages)-1].ID)
 	require.Equal(t, "step", got.Messages[len(got.Messages)-1].Phase)
+	require.Len(t, appendMutations, 1)
+	appendReq := appendMutations[0]
+	require.Equal(t, runtime.SessionMutationAppendMessages, appendReq.Kind)
+	require.Equal(t, sessionID, appendReq.Turn.SessionID)
+	require.NotEmpty(t, appendReq.Turn.TaskID)
+	require.NotEmpty(t, appendReq.Turn.RunID)
+	require.NotEmpty(t, appendReq.Turn.TurnID)
+	require.Equal(t, prompt, appendReq.Turn.Prompt)
+	require.Equal(t, daemonTurnExecutionDeterministicRoute, appendReq.Turn.Origin)
+	require.Equal(t, "read_only", appendReq.Turn.OperationLevel)
+	require.Equal(t, 1, appendReq.Turn.Metadata["message_count"])
+	require.Equal(t, false, appendReq.Turn.Metadata["planner_apply"])
+	payload, ok := appendReq.Payload.(daemonAppendMessagesMutationPayload)
+	require.True(t, ok, "payload type = %T", appendReq.Payload)
+	require.Len(t, payload.Messages, 1)
+	require.Equal(t, expectedMessage.ID, payload.Messages[0].ID)
+	require.Equal(t, "step", payload.Messages[0].Phase)
 }
 
 func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {

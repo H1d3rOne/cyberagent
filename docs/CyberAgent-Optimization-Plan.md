@@ -1037,6 +1037,7 @@ Glass surface：
 | v19 | 扩展 planner loop action execution seam：LLM planner loop 与 replan continuation 内部 `executeAgentPlannerActions` 已按单个 action 复用 `planner_action_execution` dispatch；authorization gate、错误 fallback、action queue metadata、phase tagging 与 StepReplan synthesis 语义保持原路径。 |
 | v20 | 扩展 session mutation seam：planner loop / replan continuation 的 action/warning append 增加 turn-aware `append_messages` dispatch；实际 append/persist/compaction/runtime events 仍复用 daemon legacy helper。 |
 | v21 | 扩展 planner-aware append seam：LLM planner chat 初始 plan append 与 tool synthesis planner apply 改为 turn-aware `append_messages` dispatch；实际 planner apply、append/persist/compaction/runtime events 仍复用 daemon legacy helper。 |
+| v22 | 扩展 SendMessage append seam：deterministic route、route-before-LLM synthesis、LLM fallback route、control auto-continue 与 authorization-gate append 改为携带当前 turnRef 的 `append_messages` dispatch；`agent_session_flow.go` 剩余直接 append 仅保留在无 turnRef 的外部 control/authorization 入口。 |
 
 ---
 
