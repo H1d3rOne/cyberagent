@@ -94,14 +94,16 @@ type Store interface {
 	ListEvents(ctx context.Context, filter EventFilter, limit int) ([]Event, error)
 }
 
-// Engine is the central coordinator. The Phase 2 cut wires Submit/Stream
-// only; runTurn/approval routing land in subsequent commits.
+// Engine is the central coordinator. Submit/Stream are live today; the
+// optional TurnExecutor seam lets callers attach the legacy daemon turn
+// executor before the planner loop is migrated into Engine.
 type Engine struct {
-	store Store
-	mu    sync.Mutex
-	tasks map[string]*Task
-	runs  map[string]*Run
-	turns map[string]*Turn
+	store        Store
+	mu           sync.Mutex
+	tasks        map[string]*Task
+	runs         map[string]*Run
+	turns        map[string]*Turn
+	turnExecutor TurnExecutor
 
 	events  chan Event // legacy single-consumer stream; prefer Subscribe.
 	nextSeq atomic.Int64

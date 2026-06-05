@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -107,6 +108,69 @@ func TestSubmitSimpleChat(t *testing.T) {
 
 	if !hasEvent(store.Events(), "task_created", "task-chat") {
 		t.Fatalf("task_created event missing: %#v", store.Events())
+	}
+}
+
+func TestExecuteTurnDispatchesAttachedExecutor(t *testing.T) {
+	e, _ := newTestEngine()
+	ctx := context.WithValue(context.Background(), struct{}{}, "ctx-value")
+	expectedTime := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	expectedTurn := TurnContext{
+		SessionID:      "session-turn",
+		TaskID:         "task-turn",
+		RunID:          "run-turn",
+		TurnID:         "turn-1",
+		Prompt:         "scan example",
+		Origin:         "user",
+		OperationLevel: "safe_scan",
+		Timestamp:      expectedTime,
+		Metadata:       map[string]any{"source": "test"},
+	}
+	called := false
+	e.AttachTurnExecutor(TurnExecutorFunc(func(gotCtx context.Context, got TurnContext) (TurnResult, error) {
+		called = true
+		if gotCtx != ctx {
+			t.Fatalf("ExecuteTurn ctx = %#v, want original ctx", gotCtx)
+		}
+		if got.SessionID != expectedTurn.SessionID ||
+			got.TaskID != expectedTurn.TaskID ||
+			got.RunID != expectedTurn.RunID ||
+			got.TurnID != expectedTurn.TurnID ||
+			got.Prompt != expectedTurn.Prompt ||
+			got.Origin != expectedTurn.Origin ||
+			got.OperationLevel != expectedTurn.OperationLevel ||
+			!got.Timestamp.Equal(expectedTurn.Timestamp) ||
+			got.Metadata["source"] != expectedTurn.Metadata["source"] {
+			t.Fatalf("TurnContext = %#v, want %#v", got, expectedTurn)
+		}
+		return TurnResult{
+			Status: TurnResultFinished,
+			Reason: "done",
+			Data:   map[string]any{"executor": "test"},
+		}, nil
+	}))
+
+	result, err := e.ExecuteTurn(ctx, expectedTurn)
+	if err != nil {
+		t.Fatalf("ExecuteTurn() error = %v", err)
+	}
+	if !called {
+		t.Fatalf("ExecuteTurn() did not call attached executor")
+	}
+	if result.Status != TurnResultFinished || result.Reason != "done" || result.Data["executor"] != "test" {
+		t.Fatalf("ExecuteTurn() result = %#v", result)
+	}
+}
+
+func TestExecuteTurnWithoutExecutorReturnsStableError(t *testing.T) {
+	e, _ := newTestEngine()
+
+	result, err := e.ExecuteTurn(context.Background(), TurnContext{SessionID: "session-turn"})
+	if !errors.Is(err, ErrTurnExecutorNotAttached) {
+		t.Fatalf("ExecuteTurn() error = %v, want ErrTurnExecutorNotAttached", err)
+	}
+	if result.Status != TurnResultBlocked || !errors.Is(result.Error, ErrTurnExecutorNotAttached) || result.Reason == "" {
+		t.Fatalf("ExecuteTurn() result = %#v, want blocked missing-executor result", result)
 	}
 }
 
