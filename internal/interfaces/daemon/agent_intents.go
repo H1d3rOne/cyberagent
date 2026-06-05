@@ -26,7 +26,12 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 	case agentIsScanIntent(prompt):
 		return agentHeuristicScanActionsFromPrompt(prompt)
 	case agentIsResumeApprovedIntent(prompt):
-		return []agentPlannerAction{{Name: "runs.resume_approved", Arguments: map[string]any{"run_id": agentExtractRunID(prompt)}}}
+		runID := agentExtractRunID(prompt)
+		args := map[string]any{"run_id": runID}
+		if runID == "" {
+			args["current"] = true
+		}
+		return []agentPlannerAction{{Name: "runs.resume_approved", Arguments: args}}
 	case agentIsReportDraftIntent(prompt):
 		return []agentPlannerAction{{Name: "reports.draft", Arguments: map[string]any{"run_id": agentExtractRunID(prompt)}}}
 	case agentIsApprovalDecisionIntent(prompt):
@@ -34,10 +39,19 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 		if agentApprovalDecisionAction(prompt) == "deny" {
 			action = "runs.approvals.deny"
 		}
-		return []agentPlannerAction{{Name: action, Arguments: map[string]any{
-			"run_id":      agentExtractRunID(prompt),
-			"approval_id": agentExtractApprovalID(prompt),
-		}}}
+		runID := agentExtractRunID(prompt)
+		approvalID := agentExtractApprovalID(prompt)
+		args := map[string]any{
+			"run_id":      runID,
+			"approval_id": approvalID,
+		}
+		if runID == "" && approvalID == "" {
+			args["current"] = true
+		}
+		if comment := agentExtractApprovalComment(prompt); comment != "" {
+			args["comment"] = comment
+		}
+		return []agentPlannerAction{{Name: action, Arguments: args}}
 	case agentIsRunContextAnalysisIntent(prompt):
 		return []agentPlannerAction{{Name: "runs.context", Arguments: map[string]any{
 			"run_id":  agentExtractRunID(prompt),

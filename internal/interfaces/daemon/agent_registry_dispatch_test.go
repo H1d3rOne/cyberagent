@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/toolregistry"
@@ -601,6 +602,212 @@ func TestRoutePromptWorkspaceMutationRegistryDispatchPreservesOperationGate(t *t
 	}
 	if len(messages) != 1 || messages[0].Role != "agent" || messages[0].Content == "" {
 		t.Fatalf("unexpected operation gate messages: %#v", messages)
+	}
+}
+
+func TestRoutePromptApprovalDecisionUsesHeuristicRegistryDispatch(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	tests := []struct {
+		name        string
+		prompt      string
+		tool        string
+		wantComment string
+	}{
+		{
+			name:        "approve",
+			prompt:      "批准 run_abc approval_123 comment: approved from registry route",
+			tool:        "runs.approvals.approve",
+			wantComment: "approved from registry route",
+		},
+		{
+			name:        "deny",
+			prompt:      "deny run_abc approval_123 comment: denied from registry route",
+			tool:        "runs.approvals.deny",
+			wantComment: "denied from registry route",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, ok := toolRegistry().Lookup(tt.tool)
+			if !ok {
+				t.Fatalf("%s missing from registry", tt.tool)
+			}
+			oldHandler := spec.Handler
+			t.Cleanup(func() { spec.Handler = oldHandler })
+
+			called := false
+			spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+				called = true
+				if in.SessionID != "agent_route_approval_"+tt.name || in.Operator != "tester" || in.Language != "zh" || in.OperationLevel != "approval_ops" {
+					t.Fatalf("unexpected handler input: %#v", in)
+				}
+				if got := stringFromAny(in.RawArgs["run_id"]); got != "run_abc" {
+					t.Fatalf("handler RawArgs run_id = %q, want run_abc", got)
+				}
+				if got := stringFromAny(in.RawArgs["approval_id"]); got != "approval_123" {
+					t.Fatalf("handler RawArgs approval_id = %q, want approval_123", got)
+				}
+				if got := stringFromAny(in.RawArgs["comment"]); !strings.Contains(got, tt.wantComment) {
+					t.Fatalf("handler RawArgs comment = %q, want %q", got, tt.wantComment)
+				}
+				tool := runningAgentToolCall(tt.tool, "route.approval.registry")
+				tool = finishAgentToolCall(tool, nil)
+				tool.Result = map[string]any{"route_registry": true}
+				return agentRegistryHandlerResult{
+					Messages:  []agentMessage{mgr.message("zh", "tool", "approval operation registry dispatched", []agentToolCall{tool}, nil)},
+					ToolCalls: []agentToolCall{tool},
+				}, nil
+			}
+
+			actions := agentHeuristicActionsFromPrompt(tt.prompt)
+			if len(actions) != 1 || normalizeAgentPlannerActionName(actions[0].Name) != tt.tool {
+				t.Fatalf("approval prompt should produce %s action: %#v", tt.tool, actions)
+			}
+
+			messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_approval_"+tt.name, tt.prompt, "zh", "tester", "approval_ops", routerServices{})
+			if err != nil {
+				t.Fatalf("routePrompt() error = %v", err)
+			}
+			if !called {
+				t.Fatalf("routePrompt did not dispatch %s through the registry handler", tt.tool)
+			}
+			if len(messages) != 1 || messages[0].Content != "approval operation registry dispatched" {
+				t.Fatalf("unexpected messages: %#v", messages)
+			}
+			if len(calls) != 1 || calls[0].Name != tt.tool || calls[0].Result["route_registry"] != true {
+				t.Fatalf("unexpected tool calls: %#v", calls)
+			}
+			if calls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+				t.Fatalf("approval route tool source metadata = %#v", calls[0].Metadata)
+			}
+			if messages[0].ToolCalls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+				t.Fatalf("approval route message tool source metadata = %#v", messages[0].ToolCalls[0].Metadata)
+			}
+		})
+	}
+}
+
+func TestRoutePromptResumeApprovedUsesHeuristicRegistryDispatch(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("runs.resume_approved")
+	if !ok {
+		t.Fatal("runs.resume_approved missing from registry")
+	}
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		if in.SessionID != "agent_route_resume_approved" || in.Operator != "tester" || in.Language != "zh" || in.OperationLevel != "approval_ops" {
+			t.Fatalf("unexpected handler input: %#v", in)
+		}
+		if got := stringFromAny(in.RawArgs["run_id"]); got != "run_abc" {
+			t.Fatalf("handler RawArgs run_id = %q, want run_abc", got)
+		}
+		tool := runningAgentToolCall("runs.resume_approved", "route.resume.registry")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"route_registry": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("zh", "tool", "resume-approved registry dispatched", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	actions := agentHeuristicActionsFromPrompt("resume-approved run_abc")
+	if len(actions) != 1 || normalizeAgentPlannerActionName(actions[0].Name) != "runs.resume_approved" {
+		t.Fatalf("resume-approved prompt should produce runs.resume_approved action: %#v", actions)
+	}
+
+	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_resume_approved", "resume-approved run_abc", "zh", "tester", "approval_ops", routerServices{})
+	if err != nil {
+		t.Fatalf("routePrompt() error = %v", err)
+	}
+	if !called {
+		t.Fatal("routePrompt did not dispatch runs.resume_approved through the registry handler")
+	}
+	if len(messages) != 1 || messages[0].Content != "resume-approved registry dispatched" {
+		t.Fatalf("unexpected messages: %#v", messages)
+	}
+	if len(calls) != 1 || calls[0].Name != "runs.resume_approved" || calls[0].Result["route_registry"] != true {
+		t.Fatalf("unexpected tool calls: %#v", calls)
+	}
+	if calls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+		t.Fatalf("resume-approved route tool source metadata = %#v", calls[0].Metadata)
+	}
+	if messages[0].ToolCalls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+		t.Fatalf("resume-approved route message tool source metadata = %#v", messages[0].ToolCalls[0].Metadata)
+	}
+}
+
+func TestRoutePromptApprovalOperationRegistryDispatchPreservesOperationGate(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	for _, toolName := range []string{"runs.approvals.approve", "runs.resume_approved"} {
+		spec, ok := toolRegistry().Lookup(toolName)
+		if !ok {
+			t.Fatalf("%s missing from registry", toolName)
+		}
+		oldHandler := spec.Handler
+		t.Cleanup(func() { spec.Handler = oldHandler })
+		spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+			t.Fatalf("%s registry handler was called despite insufficient operation level", toolName)
+			return nil, nil
+		}
+	}
+
+	tests := []struct {
+		name   string
+		prompt string
+	}{
+		{name: "approve", prompt: "approve run_abc approval_123"},
+		{name: "resume", prompt: "resume-approved run_abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requiredLevel := agentOperationLevelRequiredForPrompt(tt.prompt)
+			if requiredLevel != "approval_ops" {
+				t.Fatalf("approval operation prompt required level = %q, want approval_ops", requiredLevel)
+			}
+			if agentOperationLevelAtLeast("read_only", requiredLevel) {
+				t.Fatalf("read_only unexpectedly satisfies required level %q", requiredLevel)
+			}
+
+			messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_approval_gate_"+tt.name, tt.prompt, "zh", "tester", "read_only", routerServices{})
+			if err != nil {
+				t.Fatalf("routePrompt() error = %v", err)
+			}
+			if len(calls) != 0 {
+				t.Fatalf("operation gate should not return tool calls: %#v", calls)
+			}
+			if len(messages) != 1 || messages[0].Role != "agent" || messages[0].Content == "" {
+				t.Fatalf("unexpected operation gate messages: %#v", messages)
+			}
+		})
+	}
+}
+
+func TestApprovalOperationRouteActionAllowlist(t *testing.T) {
+	if agentApprovalOperationRouteAction("runs.approvals.list", map[string]any{"run_id": "run_abc"}) {
+		t.Fatal("runs.approvals.list must stay outside the approval operation registry route slice")
+	}
+	if agentApprovalOperationRouteAction("runs.approvals.approve", map[string]any{}) {
+		t.Fatal("approval decision without run/approval/current target must stay outside the approval operation registry route slice")
+	}
+	if agentApprovalOperationRouteAction("runs.approvals.deny", map[string]any{}) {
+		t.Fatal("approval deny without run/approval/current target must stay outside the approval operation registry route slice")
+	}
+	if agentApprovalOperationRouteAction("runs.resume_approved", map[string]any{}) {
+		t.Fatal("resume-approved without run/current target must stay outside the approval operation registry route slice")
+	}
+	if !agentApprovalOperationRouteAction("runs.approvals.approve", map[string]any{"approval_id": "approval_123"}) {
+		t.Fatal("approval decision with approval_id should be inside the approval operation registry route slice")
+	}
+	if !agentApprovalOperationRouteAction("runs.approvals.deny", map[string]any{"run_id": "run_abc"}) {
+		t.Fatal("approval decision with run_id should be inside the approval operation registry route slice")
+	}
+	if !agentApprovalOperationRouteAction("runs.resume_approved", map[string]any{"current": true}) {
+		t.Fatal("resume-approved current target should be inside the approval operation registry route slice")
 	}
 }
 

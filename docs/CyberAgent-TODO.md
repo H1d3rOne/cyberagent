@@ -46,7 +46,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 将 workspace staged diff/rebase route 收敛为 Tool Registry dispatch。
 - [x] 将 `reports.draft` route 收敛为 Tool Registry dispatch。
 - [x] 将 workspace write/patch/apply/discard/delete/move/copy/mkdir route 收敛为 Tool Registry dispatch；保留 `workspace_write` gate、explicit intent gate 与既有 conflict/atomicity 测试语义。
-- [ ] 独立迁移 approval approve/deny/resume-approved；必须保留 `approval_ops` gate、最新用户显式指令匹配、audit/event parity。
+- [x] 独立迁移 approval approve/deny/resume-approved route 为 Tool Registry dispatch；保留 `approval_ops` gate、最新用户显式指令匹配、comment/audit/event parity。
 - [ ] 定义 engine 侧 `TurnExecutor` / `TurnContext` seam，先复用现有 daemon executor，不改变行为。
 - [ ] 将 `beginRuntimeTurn` / `finishRuntimeTurn` 状态迁移到 engine API，daemon 暂时保留 session adapter。
 - [ ] 分阶段把 `runAgentLLMToolLoop` 迁入 engine 主控。
@@ -102,6 +102,7 @@ go build -ldflags "-X main.version=local -X main.commit=$(git rev-parse --short 
 ./bin/cyberagent daemon --listen 127.0.0.1:18787 --runs-dir .tmp/smoke/runs --token-file .tmp/smoke/token
 go test ./internal/interfaces/daemon
 go test ./internal/interfaces/daemon -run 'TestRoutePromptWorkspace(Mutation|Diff|Rebase)|TestRoutePromptReportDraft'
+go test ./internal/interfaces/daemon -run 'TestRoutePromptApproval|TestRoutePromptResume|TestApprovalOperationRouteAction|TestHTTPAgentChatNativeApprovalDecisions|TestHTTPAgentChatNativeResumeApproved'
 ```
 
 结果摘要：
@@ -114,4 +115,5 @@ Frontend production build 通过。
 Binary version 输出正常。
 Daemon API smoke 通过：healthz/version/capabilities、Agent session create、自然语言 `daemon health` → `deterministic_route/registry_dispatch`、runtime SQLite DB 创建。
 Workspace mutation route 小切片验证通过：write/patch/apply/apply-all/discard/discard-all/delete/move/copy/mkdir 均经 `deterministic_route/registry_dispatch`，且 `read_only` 不会越过 `workspace_write` gate。
+Approval operation route 小切片验证通过：approve/deny/resume-approved 均经 `deterministic_route/registry_dispatch`，保留 `approval_ops` gate、显式指令匹配、approval comment 与原 approval/resume handler 审计事件语义。
 ```

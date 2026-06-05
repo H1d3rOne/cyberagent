@@ -49,6 +49,10 @@ func (m *agentManager) routeWorkspaceMutationHeuristicActions(ctx context.Contex
 	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentWorkspaceMutationRouteAction, "workspace mutation registry route slice")
 }
 
+func (m *agentManager) routeApprovalOperationHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentApprovalOperationRouteAction, "approval operation registry route slice")
+}
+
 func (m *agentManager) routeReportDraftHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
 	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentReportDraftRouteAction, "report draft registry route slice")
 }
@@ -225,6 +229,33 @@ func agentWorkspaceMutationRouteAction(actionName string, args map[string]any) b
 	}
 }
 
+func agentApprovalOperationRouteAction(actionName string, args map[string]any) bool {
+	switch normalizeAgentPlannerActionName(actionName) {
+	case "runs.approvals.approve", "runs.approvals.deny":
+		approvalID := strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["approval_id"]),
+			stringFromAny(args["approval"]),
+			stringFromAny(args["step_id"]),
+			stringFromAny(args["step"]),
+		))
+		runID := strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["run_id"]),
+			stringFromAny(args["run"]),
+			stringFromAny(args["id"]),
+		))
+		return approvalID != "" || runID != "" || boolFromAny(args["current"]) || boolFromAny(args["active"])
+	case "runs.resume_approved":
+		runID := strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["run_id"]),
+			stringFromAny(args["run"]),
+			stringFromAny(args["id"]),
+		))
+		return runID != "" || boolFromAny(args["current"]) || boolFromAny(args["active"])
+	default:
+		return false
+	}
+}
+
 func agentReportDraftRouteAction(actionName string, _ map[string]any) bool {
 	return normalizeAgentPlannerActionName(actionName) == "reports.draft"
 }
@@ -256,9 +287,11 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 	case agentIsScheduleDeleteIntent(prompt):
 		return m.handleAgentScheduleDelete(language, svc, map[string]any{"id": agentExtractScheduleID(prompt)})
 	case agentIsResumeApprovedIntent(prompt):
-		return m.handleAgentResumeApproved(ctx, sessionID, prompt, language, operator, svc)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeApprovalOperationHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsApprovalDecisionIntent(prompt):
-		return m.handleAgentApprovalDecision(ctx, sessionID, prompt, language, operator, svc)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeApprovalOperationHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsReportDraftIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
 		return m.routeReportDraftHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
