@@ -312,7 +312,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			}
 		}
 
-		actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
+		actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
 		actionMessages = agentMessagesWithPhase(actionMessages, "step")
 		actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
 		if len(actionMessages) > 0 {
@@ -379,7 +379,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			break
 		}
 
-		actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
+		actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
 		actionMessages = agentMessagesWithPhase(actionMessages, "step")
 		actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
 		if len(actionMessages) == 0 {
@@ -429,7 +429,7 @@ func reqMaxAgentReplans(req sendAgentMessageRequest) int {
 	return 3
 }
 
-func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
+func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
 	actions := agentPlannerActions(plan)
 	if len(actions) == 0 {
 		return nil, nil, false
@@ -522,7 +522,7 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 			messages = append(messages, authMessage)
 			return messages, toolCalls, true
 		} else {
-			actionMessages, actionToolCalls, err = m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, action, authProfiles, defaultAuthProfileID)
+			actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, action, authProfiles, defaultAuthProfileID)
 		}
 		if err != nil {
 			if actionName == "" {

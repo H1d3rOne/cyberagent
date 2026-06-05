@@ -654,6 +654,83 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
 }
 
+func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTurnExecutor(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	expectedToolCall := agentToolCall{ID: "tool-planner-loop-action", Name: "daemon.health"}
+	expectedMessage := agentMessage{
+		ID:        "msg-planner-loop-action",
+		Role:      "tool",
+		Content:   "planner loop action executed through executor",
+		ToolCalls: []agentToolCall{expectedToolCall},
+	}
+	action := agentPlannerAction{
+		Name:      "daemon.health",
+		Arguments: map[string]any{"probe": "planner-loop"},
+	}
+	called := false
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		called = true
+		require.Equal(t, "session-planner-loop-action", turn.SessionID)
+		require.Equal(t, "task-planner-loop-action", turn.TaskID)
+		require.Equal(t, "run-planner-loop-action", turn.RunID)
+		require.Equal(t, "turn-planner-loop-action", turn.TurnID)
+		require.Equal(t, "daemon health", turn.Prompt)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Metadata["kind"])
+		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
+
+		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, "session-planner-loop-action", payload.SessionID)
+		require.Equal(t, "en", payload.Language)
+		require.Equal(t, "tester", payload.Operator)
+		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, action, payload.Action)
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonPlannerActionExecutionTurnResultPayload{
+				Messages:  []agentMessage{expectedMessage},
+				ToolCalls: []agentToolCall{expectedToolCall},
+			},
+		}, nil
+	}))
+
+	messages, toolCalls, authorizationRequired := mgr.executeAgentPlannerActions(
+		context.Background(),
+		"session-planner-loop-action",
+		agentRuntimeTurnRef{TaskID: "task-planner-loop-action", RunID: "run-planner-loop-action", TurnID: "turn-planner-loop-action"},
+		"daemon health",
+		"en",
+		"tester",
+		"read_only",
+		routerServices{},
+		&agentPlannerResponse{Actions: []agentPlannerAction{action}},
+		nil,
+		"",
+	)
+
+	require.True(t, called)
+	require.False(t, authorizationRequired)
+	require.Len(t, messages, 1)
+	require.Equal(t, expectedMessage.ID, messages[0].ID)
+	require.Len(t, messages[0].ToolCalls, 1)
+	require.Equal(t, expectedToolCall.ID, messages[0].ToolCalls[0].ID)
+	require.Equal(t, "daemon.health", messages[0].ToolCalls[0].Metadata["action_name"])
+	require.Equal(t, 1, messages[0].ToolCalls[0].Metadata["action_index"])
+	require.Equal(t, 1, messages[0].ToolCalls[0].Metadata["action_count"])
+	require.NotEmpty(t, messages[0].ToolCalls[0].Metadata["action_queue_id"])
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, expectedToolCall.ID, toolCalls[0].ID)
+	require.Equal(t, "daemon.health", toolCalls[0].Metadata["action_name"])
+	require.Equal(t, messages[0].ToolCalls[0].Metadata["action_queue_id"], toolCalls[0].Metadata["action_queue_id"])
+}
+
 func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStage(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
