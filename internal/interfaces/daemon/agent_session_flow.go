@@ -294,7 +294,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	}
 
 	if agentLLMConfigured(req) && agentShouldRouteBeforeLLMSynthesis(prompt) {
-		messages, toolCalls, routeErr := m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 		if routeErr != nil {
 			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
 			m.appendMessages(sessionID, errMessage)

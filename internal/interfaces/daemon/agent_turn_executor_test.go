@@ -240,6 +240,80 @@ func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 	require.Equal(t, expectedMessage.ID, got.Messages[len(got.Messages)-1].ID)
 }
 
+func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	prompt := "列出所有定时任务"
+	require.True(t, agentShouldRouteBeforeLLMSynthesis(prompt))
+
+	llmCalled := false
+	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, _ runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
+		llmCalled = true
+		return runtime.LLMTurnResult{Status: runtime.TurnResultFailed, Reason: "llm should not run"}, errors.New("llm should not run")
+	}))
+
+	expectedMessage := agentMessage{ID: "msg-route-before-llm", Role: "tool", Content: "route-before-llm through executor"}
+	routeCalled := false
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		routeCalled = true
+		require.Equal(t, sessionID, turn.SessionID)
+		require.NotEmpty(t, turn.TaskID)
+		require.NotEmpty(t, turn.RunID)
+		require.NotEmpty(t, turn.TurnID)
+		require.Equal(t, prompt, turn.Prompt)
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+
+		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, sessionID, payload.SessionID)
+		require.Equal(t, prompt, payload.Prompt)
+		require.Equal(t, "operator-1", payload.Operator)
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonDeterministicRouteTurnResultPayload{
+				Messages: []agentMessage{expectedMessage},
+			},
+		}, nil
+	}))
+
+	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
+		Message:        prompt,
+		Operator:       "operator-1",
+		Language:       "en",
+		OperationLevel: "read_only",
+		Provider:       "openai",
+		APIKey:         "test-key",
+	}, routerServices{})
+
+	require.NoError(t, err)
+	require.True(t, routeCalled)
+	require.False(t, llmCalled)
+	require.Len(t, resp.Messages, 2)
+	require.Equal(t, "user", resp.Messages[0].Role)
+	require.Equal(t, "step", resp.Messages[1].Phase)
+	require.Equal(t, expectedMessage.ID, resp.Messages[1].ID)
+	require.Equal(t, expectedMessage.Role, resp.Messages[1].Role)
+	require.Equal(t, expectedMessage.Content, resp.Messages[1].Content)
+	require.Empty(t, resp.ToolCalls)
+
+	got, err := mgr.GetSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.Equal(t, expectedMessage.ID, got.Messages[len(got.Messages)-1].ID)
+	require.Equal(t, "step", got.Messages[len(got.Messages)-1].Phase)
+}
+
 func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
