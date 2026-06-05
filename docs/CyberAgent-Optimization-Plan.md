@@ -44,7 +44,7 @@
 
 最新状态同步：
 
-- 仓库实际 HEAD：`93004e4`。
+- 仓库实际 HEAD：本分支当前 HEAD（持续滚动，见 `git log -1 --oneline`）。
 - P0 Slice A–H 已完成代码落地并通过本地验证。
 - Runtime engine 默认路径已完成小切片切换：daemon 默认打开 SQLite runtime engine；如需回滚，可设置 `CYBERAGENT_RUNTIME=legacy`、`off`、`disabled`、`false` 或 `0`。
 - 当前优化重点已从 P0 实施切换为：文档收敛、subagent / engine-native 收尾、P1/P2 体验与生产化增强。
@@ -153,7 +153,7 @@ Leader 负责：
 3. `internal/interfaces/daemon/agent_prompt_dispatch.go`
    - `routePrompt` 仍是 no-LLM、本地 fallback、确定性 pre-route、auto-continue 的规则路由入口。
    - 本切片已删除 `executeAgentPlannerAction` 内部的 legacy per-tool switch fallback；builtin action 只能通过 Tool Registry handler 执行，handler 缺失会以 `internal_error` 失败。
-   - 本切片已将 read-only/system 路由分支收敛为 `agentHeuristicActionsFromPrompt` 产出 action，再通过 Tool Registry handler 执行；scan、workspace mutation、approval 写动作仍保留原路由。
+   - 本切片已将 read-only/system、safe HTTP、safe scan、workspace staged change、reports draft 与 workspace mutation 路由分支收敛为 `agentHeuristicActionsFromPrompt` 产出 action，再通过 Tool Registry handler 执行；approval 写动作仍保留原路由。
    - 本切片已为 routePrompt 工具结果统一增加 metadata source：registry 分发为 `deterministic_route/registry_dispatch`，保留直连 handler 的分支为 `deterministic_route/direct_handler`。
    - 本切片已将 source 提升到后端 trace timeline 顶层，并在 Agent Cockpit Timeline 工具卡显示轻量 source badge。
 4. `internal/interfaces/daemon/agent_intents.go` 与 `internal/interfaces/daemon/agent_prompt_extractors.go`
@@ -189,7 +189,11 @@ Leader 负责：
    - 覆盖自然语言报告草稿生成，会继续通过 registry handler 写入当前 Agent workspace 的 markdown 草稿。
    - 保留 `workspace_write` operation-level gate、run_id / active run 解析与 review_required 结果语义。
    - route source metadata 继续标记为 `deterministic_route/registry_dispatch`。
-9. 当前评估结论：先继续做分批 registry 化，不直接启动 engine-native turn lifecycle 下沉。
+9. ✅ 将 `routePrompt` 的 workspace mutation 本地路由小切片收敛为 `agentHeuristicActionsFromPrompt` → registry dispatch：
+   - 覆盖自然语言 `workspace.files.write/patch/apply/discard/delete/move/copy/mkdir`，含 apply-all / discard-all。
+   - 保留 `workspace_write` operation-level gate，registry handler 继续复用原 workspace handler，因此 write/patch/apply/discard/delete/move/copy/mkdir 的 workspace 安全、冲突处理、原子性与审计语义不变。
+   - route source metadata 继续标记为 `deterministic_route/registry_dispatch`；`read_only` 不会调用 mutation registry handler。
+10. 当前评估结论：先继续做分批 registry 化，不直接启动 engine-native turn lifecycle 下沉。
    - 原因：`runtime.Engine` 当前仍是事件桥、SQLite replay 与 recovery 容器；`SendMessage`、planner loop、授权 gate、session mutation 仍由 daemon 保证语义。
    - 如果此时把 `runAgentLLMToolLoop` 下沉为 engine 主控，会同时牵动 session persist、authorization resume、tool synthesis、auto-continue 与 SSE replay，切片过大。
    - 更稳妥路径是先让所有确定性工具执行统一经过 registry handler，再把 daemon 的 begin/finish turn bridge 抽成 engine-native TurnExecutor。
@@ -205,7 +209,7 @@ Leader 负责：
 | E | workspace diff/rebase | 已完成自然语言 staged-change 本地路由小切片；diff/rebase 不直接改文件但会持久化 pending change state | 继续观察 staged state、conflict/rebase 与 source metadata parity；diff_many 暂无自然语言 extractor |
 | E2 | `reports.draft` | 已完成本切片；会写当前 Agent workspace 的报告草稿，需要人工复核 | 继续观察 workspace draft path、review_required 与 source metadata parity |
 | E3 | workspace diff_many | 结构化 state-only changeset，当前无自然语言 extractor | 后续独立切片，先补自然语言/结构化参数测试，再考虑 registry 化 local route |
-| F | workspace write/patch/apply/discard/delete/move/copy/mkdir | 真实 workspace mutation 或 staged change resolution | 最后迁移；必须保留 `workspace_write` gate、explicit intent gate、conflict/atomicity 测试 |
+| F | workspace write/patch/apply/discard/delete/move/copy/mkdir | 已完成自然语言本地路由 registry dispatch；真实 workspace mutation 或 staged change resolution，风险高 | 继续观察 `workspace_write` gate、explicit intent gate、source metadata 与既有 conflict/atomicity 测试 parity |
 | G | runs.approvals.approve / deny / resume_approved | 审批状态写动作，会改变 run 执行链 | 独立切片；必须保留 `approval_ops` gate、最新用户显式指令匹配与 audit/event parity |
 
 engine-native turn lifecycle 下沉入口建议：

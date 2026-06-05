@@ -3,7 +3,7 @@
 日期：2026-06-06  
 状态：动态维护中  
 当前分支：`feat/production-agent-runtime`  
-当前基线：`93004e4 fix(runtime): protect recovery from stale approval state`
+当前基线：本分支当前 HEAD（持续滚动，见 `git log -1 --oneline`）
 
 ---
 
@@ -11,7 +11,7 @@
 
 CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0.1.3-v0.1.8 Agent-native 主链路，以及 Production Agent Runtime 的小切片收敛。当前重点从“补功能”转向：
 
-1. 清理当前工作树并固化本轮 registry dispatch/runtime engine 改动。
+1. 保持当前分支小切片提交与验证记录清晰。
 2. 完成发布前验证与远程 release 流程。
 3. 继续收敛 legacy planner/routing 与 runtime engine 职责边界。
 4. 补齐 P1/P2 体验、测试与生产可用性。
@@ -45,7 +45,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 将 `scan.web.safe` 收敛为 Tool Registry dispatch。
 - [x] 将 workspace staged diff/rebase route 收敛为 Tool Registry dispatch。
 - [x] 将 `reports.draft` route 收敛为 Tool Registry dispatch。
-- [ ] 继续迁移 workspace write/patch/apply/discard/delete/move/copy/mkdir；必须保留 `workspace_write` gate、explicit intent gate、conflict/atomicity 测试。
+- [x] 将 workspace write/patch/apply/discard/delete/move/copy/mkdir route 收敛为 Tool Registry dispatch；保留 `workspace_write` gate、explicit intent gate 与既有 conflict/atomicity 测试语义。
 - [ ] 独立迁移 approval approve/deny/resume-approved；必须保留 `approval_ops` gate、最新用户显式指令匹配、audit/event parity。
 - [ ] 定义 engine 侧 `TurnExecutor` / `TurnContext` seam，先复用现有 daemon executor，不改变行为。
 - [ ] 将 `beginRuntimeTurn` / `finishRuntimeTurn` 状态迁移到 engine API，daemon 暂时保留 session adapter。
@@ -101,6 +101,7 @@ go build -ldflags "-X main.version=local -X main.commit=$(git rev-parse --short 
 ./bin/cyberagent --version
 ./bin/cyberagent daemon --listen 127.0.0.1:18787 --runs-dir .tmp/smoke/runs --token-file .tmp/smoke/token
 go test ./internal/interfaces/daemon
+go test ./internal/interfaces/daemon -run 'TestRoutePromptWorkspace(Mutation|Diff|Rebase)|TestRoutePromptReportDraft'
 ```
 
 结果摘要：
@@ -112,4 +113,5 @@ Frontend vitest 6 files / 25 tests 通过。
 Frontend production build 通过。
 Binary version 输出正常。
 Daemon API smoke 通过：healthz/version/capabilities、Agent session create、自然语言 `daemon health` → `deterministic_route/registry_dispatch`、runtime SQLite DB 创建。
+Workspace mutation route 小切片验证通过：write/patch/apply/apply-all/discard/discard-all/delete/move/copy/mkdir 均经 `deterministic_route/registry_dispatch`，且 `read_only` 不会越过 `workspace_write` gate。
 ```

@@ -45,6 +45,10 @@ func (m *agentManager) routeWorkspaceStagedChangeHeuristicActions(ctx context.Co
 	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentWorkspaceStagedChangeRouteAction, "workspace staged-change registry route slice")
 }
 
+func (m *agentManager) routeWorkspaceMutationHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentWorkspaceMutationRouteAction, "workspace mutation registry route slice")
+}
+
 func (m *agentManager) routeReportDraftHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
 	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentReportDraftRouteAction, "report draft registry route slice")
 }
@@ -168,6 +172,59 @@ func agentWorkspaceStagedChangeRouteAction(actionName string, args map[string]an
 	}
 }
 
+func agentWorkspaceMutationRouteAction(actionName string, args map[string]any) bool {
+	switch normalizeAgentPlannerActionName(actionName) {
+	case "workspace.files.write", "workspace.files.patch":
+		return strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["path"]),
+			stringFromAny(args["file"]),
+			stringFromAny(args["filename"]),
+		)) != ""
+	case "workspace.files.apply", "workspace.files.discard":
+		changeID := strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["change_id"]),
+			stringFromAny(args["id"]),
+			stringFromAny(args["input"]),
+		))
+		groupID := strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["group_id"]),
+			stringFromAny(args["group"]),
+		))
+		return changeID != "" ||
+			groupID != "" ||
+			boolFromAny(args["all"]) ||
+			strings.EqualFold(stringFromAny(args["scope"]), "all")
+	case "workspace.files.delete", "workspace.files.mkdir":
+		return strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["path"]),
+			stringFromAny(args["file"]),
+			stringFromAny(args["filename"]),
+			stringFromAny(args["directory"]),
+			stringFromAny(args["dir"]),
+			stringFromAny(args["input"]),
+		)) != ""
+	case "workspace.files.move", "workspace.files.copy":
+		fromPath := strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["from"]),
+			stringFromAny(args["source"]),
+			stringFromAny(args["old"]),
+			stringFromAny(args["path"]),
+			stringFromAny(args["file"]),
+			stringFromAny(args["filename"]),
+		))
+		toPath := strings.TrimSpace(firstNonEmpty(
+			stringFromAny(args["to"]),
+			stringFromAny(args["target"]),
+			stringFromAny(args["new"]),
+			stringFromAny(args["dest"]),
+			stringFromAny(args["destination"]),
+		))
+		return fromPath != "" && toPath != ""
+	default:
+		return false
+	}
+}
+
 func agentReportDraftRouteAction(actionName string, _ map[string]any) bool {
 	return normalizeAgentPlannerActionName(actionName) == "reports.draft"
 }
@@ -226,6 +283,21 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 	case agentIsCommandIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
 		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+	case agentIsWorkspaceDiffIntent(prompt) || agentIsWorkspaceRebaseIntent(prompt):
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeWorkspaceStagedChangeHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+	case agentIsWorkspaceWriteIntent(prompt) ||
+		agentIsWorkspacePatchIntent(prompt) ||
+		agentIsWorkspaceApplyIntent(prompt) ||
+		agentIsWorkspaceApplyAllIntent(prompt) ||
+		agentIsWorkspaceDiscardIntent(prompt) ||
+		agentIsWorkspaceDiscardAllIntent(prompt) ||
+		agentIsWorkspaceDeleteIntent(prompt) ||
+		agentIsWorkspaceMoveIntent(prompt) ||
+		agentIsWorkspaceCopyIntent(prompt) ||
+		agentIsWorkspaceMkdirIntent(prompt):
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeWorkspaceMutationHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsApprovalIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
 		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
@@ -244,9 +316,6 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 			return m.routeSafeHTTPHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 		}
 		return m.handleAgentHTTPRequest(ctx, agentExtractHTTPMethod(prompt), agentExtractURL(prompt), nil, "", language, nil)
-	case agentIsWorkspaceDiffIntent(prompt) || agentIsWorkspaceRebaseIntent(prompt):
-		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeWorkspaceStagedChangeHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsWorkspaceSearchIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
 		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)

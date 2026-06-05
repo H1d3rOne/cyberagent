@@ -55,16 +55,6 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 			return nil
 		}
 		return []agentPlannerAction{{Name: "workspace.command", Arguments: map[string]any{"command": cmd}}}
-	case agentIsApprovalIntent(prompt):
-		return []agentPlannerAction{{Name: "runs.approvals.list", Arguments: map[string]any{"run_id": agentExtractRunID(prompt)}}}
-	case agentIsHealthIntent(prompt):
-		return []agentPlannerAction{{Name: "daemon.health", Arguments: map[string]any{}}}
-	case agentIsPluginIntent(prompt):
-		return []agentPlannerAction{{Name: "plugins.list", Arguments: map[string]any{}}}
-	case agentIsRunIntent(prompt):
-		return []agentPlannerAction{{Name: "runs.list", Arguments: map[string]any{}}}
-	case agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt):
-		return agentHTTPProbeActionsFromPrompt(prompt)
 	case agentIsWorkspaceRebaseIntent(prompt):
 		oldText, newText := agentExtractWorkspaceRebaseTexts(prompt)
 		return []agentPlannerAction{{Name: "workspace.files.rebase", Arguments: map[string]any{
@@ -88,21 +78,6 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 			args["group_id"] = groupID
 		}
 		return []agentPlannerAction{{Name: "workspace.files.apply", Arguments: args}}
-	case agentIsWorkspaceSearchIntent(prompt):
-		query := agentExtractWorkspaceSearchQuery(prompt)
-		if query == "" {
-			return nil
-		}
-		return []agentPlannerAction{{Name: "workspace.search", Arguments: map[string]any{
-			"query": query,
-			"path":  agentExtractWorkspaceSearchPath(prompt, query),
-		}}}
-	case agentIsWorkspaceTreeIntent(prompt):
-		path := agentExtractPath(prompt)
-		if path == "" {
-			path = "."
-		}
-		return []agentPlannerAction{{Name: "workspace.files.tree", Arguments: map[string]any{"path": path}}}
 	case agentIsWorkspaceDeleteIntent(prompt):
 		path := agentExtractPath(prompt)
 		if path == "" || path == "." {
@@ -145,6 +120,31 @@ func agentHeuristicActionsFromPrompt(prompt string) []agentPlannerAction {
 			return nil
 		}
 		return []agentPlannerAction{{Name: "workspace.files.write", Arguments: map[string]any{"path": relPath, "content": content}}}
+	case agentIsApprovalIntent(prompt):
+		return []agentPlannerAction{{Name: "runs.approvals.list", Arguments: map[string]any{"run_id": agentExtractRunID(prompt)}}}
+	case agentIsHealthIntent(prompt):
+		return []agentPlannerAction{{Name: "daemon.health", Arguments: map[string]any{}}}
+	case agentIsPluginIntent(prompt):
+		return []agentPlannerAction{{Name: "plugins.list", Arguments: map[string]any{}}}
+	case agentIsRunIntent(prompt):
+		return []agentPlannerAction{{Name: "runs.list", Arguments: map[string]any{}}}
+	case agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt):
+		return agentHTTPProbeActionsFromPrompt(prompt)
+	case agentIsWorkspaceSearchIntent(prompt):
+		query := agentExtractWorkspaceSearchQuery(prompt)
+		if query == "" {
+			return nil
+		}
+		return []agentPlannerAction{{Name: "workspace.search", Arguments: map[string]any{
+			"query": query,
+			"path":  agentExtractWorkspaceSearchPath(prompt, query),
+		}}}
+	case agentIsWorkspaceTreeIntent(prompt):
+		path := agentExtractPath(prompt)
+		if path == "" {
+			path = "."
+		}
+		return []agentPlannerAction{{Name: "workspace.files.tree", Arguments: map[string]any{"path": path}}}
 	case agentIsWorkspaceReadIntent(prompt):
 		path := agentExtractPath(prompt)
 		if path == "" {

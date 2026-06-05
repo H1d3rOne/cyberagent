@@ -420,6 +420,190 @@ func TestRoutePromptWorkspaceRebaseUsesHeuristicRegistryDispatch(t *testing.T) {
 	}
 }
 
+func TestRoutePromptWorkspaceMutationUsesHeuristicRegistryDispatch(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	tests := []struct {
+		name      string
+		prompt    string
+		tool      string
+		wantArgs  map[string]string
+		wantBools map[string]bool
+	}{
+		{
+			name:     "write",
+			prompt:   "写入文件 notes.md 内容: hello",
+			tool:     "workspace.files.write",
+			wantArgs: map[string]string{"path": "notes.md", "content": "hello"},
+		},
+		{
+			name:     "patch",
+			prompt:   "修改文件 notes.md old: hello new: world",
+			tool:     "workspace.files.patch",
+			wantArgs: map[string]string{"path": "notes.md", "old": "hello", "new": "world"},
+		},
+		{
+			name:     "apply",
+			prompt:   "应用 change_id: change_20260605_notes",
+			tool:     "workspace.files.apply",
+			wantArgs: map[string]string{"change_id": "change_20260605_notes"},
+		},
+		{
+			name:      "apply_all",
+			prompt:    "应用所有待应用变更",
+			tool:      "workspace.files.apply",
+			wantBools: map[string]bool{"all": true},
+		},
+		{
+			name:     "discard",
+			prompt:   "丢弃 change_id: change_20260605_notes",
+			tool:     "workspace.files.discard",
+			wantArgs: map[string]string{"change_id": "change_20260605_notes"},
+		},
+		{
+			name:      "discard_all",
+			prompt:    "丢弃所有待应用变更",
+			tool:      "workspace.files.discard",
+			wantBools: map[string]bool{"all": true},
+		},
+		{
+			name:     "delete",
+			prompt:   "删除文件 notes.md",
+			tool:     "workspace.files.delete",
+			wantArgs: map[string]string{"path": "notes.md"},
+		},
+		{
+			name:     "move",
+			prompt:   "重命名文件 notes.md 为 archive/notes.md",
+			tool:     "workspace.files.move",
+			wantArgs: map[string]string{"from": "notes.md", "to": "archive/notes.md"},
+		},
+		{
+			name:     "copy",
+			prompt:   "复制文件 notes.md 到 archive/notes-copy.md",
+			tool:     "workspace.files.copy",
+			wantArgs: map[string]string{"from": "notes.md", "to": "archive/notes-copy.md"},
+		},
+		{
+			name:     "mkdir",
+			prompt:   "创建目录 reports",
+			tool:     "workspace.files.mkdir",
+			wantArgs: map[string]string{"path": "reports"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, ok := toolRegistry().Lookup(tt.tool)
+			if !ok {
+				t.Fatalf("%s missing from registry", tt.tool)
+			}
+			oldHandler := spec.Handler
+			t.Cleanup(func() { spec.Handler = oldHandler })
+
+			called := false
+			spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+				called = true
+				if in.SessionID != "agent_route_workspace_mutation_"+tt.name || in.Operator != "tester" || in.Language != "zh" || in.OperationLevel != "workspace_write" {
+					t.Fatalf("unexpected handler input: %#v", in)
+				}
+				for key, want := range tt.wantArgs {
+					if got := stringFromAny(in.RawArgs[key]); got != want {
+						t.Fatalf("handler RawArgs[%q] = %q, want %q (raw=%#v)", key, got, want, in.RawArgs)
+					}
+				}
+				for key, want := range tt.wantBools {
+					if got := boolFromAny(in.RawArgs[key]); got != want {
+						t.Fatalf("handler RawArgs[%q] = %v, want %v (raw=%#v)", key, got, want, in.RawArgs)
+					}
+				}
+				tool := runningAgentToolCall(tt.tool, "route.workspace.mutation.registry")
+				tool = finishAgentToolCall(tool, nil)
+				tool.Result = map[string]any{"route_registry": true}
+				return agentRegistryHandlerResult{
+					Messages:  []agentMessage{mgr.message("zh", "tool", "workspace mutation registry dispatched", []agentToolCall{tool}, nil)},
+					ToolCalls: []agentToolCall{tool},
+				}, nil
+			}
+
+			actions := agentHeuristicActionsFromPrompt(tt.prompt)
+			if len(actions) != 1 || normalizeAgentPlannerActionName(actions[0].Name) != tt.tool {
+				t.Fatalf("workspace mutation prompt should produce %s action: %#v", tt.tool, actions)
+			}
+
+			messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_workspace_mutation_"+tt.name, tt.prompt, "zh", "tester", "workspace_write", routerServices{})
+			if err != nil {
+				t.Fatalf("routePrompt() error = %v", err)
+			}
+			if !called {
+				t.Fatalf("routePrompt did not dispatch %s through the registry handler", tt.tool)
+			}
+			if len(messages) != 1 || messages[0].Content != "workspace mutation registry dispatched" {
+				t.Fatalf("unexpected messages: %#v", messages)
+			}
+			if len(calls) != 1 || calls[0].Name != tt.tool || calls[0].Result["route_registry"] != true {
+				t.Fatalf("unexpected tool calls: %#v", calls)
+			}
+			if calls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+				t.Fatalf("workspace mutation route tool source metadata = %#v", calls[0].Metadata)
+			}
+			if messages[0].ToolCalls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+				t.Fatalf("workspace mutation route message tool source metadata = %#v", messages[0].ToolCalls[0].Metadata)
+			}
+		})
+	}
+
+	if agentWorkspaceMutationRouteAction("workspace.files.diff", map[string]any{"path": "notes.md"}) {
+		t.Fatal("workspace.files.diff must stay outside the mutation registry route slice")
+	}
+	if agentWorkspaceMutationRouteAction("workspace.files.apply", map[string]any{}) {
+		t.Fatal("workspace.files.apply without change/group/all must stay outside the mutation registry route slice")
+	}
+}
+
+func TestRoutePromptWorkspaceMutationRegistryDispatchPreservesOperationGate(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("workspace.files.write")
+	if !ok {
+		t.Fatal("workspace.files.write missing from registry")
+	}
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		tool := runningAgentToolCall("workspace.files.write", "route.workspace.mutation.registry")
+		tool = finishAgentToolCall(tool, nil)
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("zh", "tool", "unexpected write", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	prompt := "写入文件 notes.md 内容: hello"
+	requiredLevel := agentOperationLevelRequiredForPrompt(prompt)
+	if requiredLevel != "workspace_write" {
+		t.Fatalf("workspace mutation prompt required level = %q, want workspace_write", requiredLevel)
+	}
+	if agentOperationLevelAtLeast("read_only", requiredLevel) {
+		t.Fatalf("read_only unexpectedly satisfies required level %q", requiredLevel)
+	}
+
+	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_workspace_mutation_gate", prompt, "zh", "tester", "read_only", routerServices{})
+	if err != nil {
+		t.Fatalf("routePrompt() error = %v", err)
+	}
+	if called {
+		t.Fatal("workspace mutation registry handler was called despite insufficient operation level")
+	}
+	if len(calls) != 0 {
+		t.Fatalf("operation gate should not return tool calls: %#v", calls)
+	}
+	if len(messages) != 1 || messages[0].Role != "agent" || messages[0].Content == "" {
+		t.Fatalf("unexpected operation gate messages: %#v", messages)
+	}
+}
+
 func TestRoutePromptReportDraftUsesHeuristicRegistryDispatch(t *testing.T) {
 	mgr := newAgentManager(t.TempDir())
 	spec, ok := toolRegistry().Lookup("reports.draft")
