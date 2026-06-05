@@ -174,6 +174,201 @@ func TestExecuteTurnWithoutExecutorReturnsStableError(t *testing.T) {
 	}
 }
 
+func TestBeginTurnPublishesLegacyLifecycleEvents(t *testing.T) {
+	e, store := newTestEngine()
+	ctx := context.Background()
+	longPrompt := strings.Repeat("p", 1001)
+	longGoal := strings.Repeat("g", 361)
+	startedAt := time.Date(2026, 6, 6, 12, 30, 0, 0, time.UTC)
+
+	turn, err := e.BeginTurn(ctx, TurnContext{
+		SessionID:      "session-begin",
+		TaskID:         "task-begin",
+		RunID:          "run-begin",
+		TurnID:         "turn-begin",
+		MessageID:      "msg-begin",
+		Prompt:         longPrompt,
+		Goal:           longGoal,
+		OperationLevel: "safe_scan",
+		Timestamp:      startedAt,
+	})
+	if err != nil {
+		t.Fatalf("BeginTurn() error = %v", err)
+	}
+	if turn.Origin != "user" || turn.TurnIndex != 1 {
+		t.Fatalf("BeginTurn() normalized turn = %#v, want origin=user turn_index=1", turn)
+	}
+
+	task, err := store.LoadTask(ctx, "task-begin")
+	if err != nil {
+		t.Fatalf("LoadTask() error = %v", err)
+	}
+	if task.SessionID != "session-begin" || task.Origin != "user" || task.OperationLevel != "safe_scan" {
+		t.Fatalf("task snapshot = %#v", task)
+	}
+	if len(task.Goal) != 363 || !strings.HasSuffix(task.Goal, "…") {
+		t.Fatalf("task goal was not legacy-trimmed: len=%d value=%q", len(task.Goal), task.Goal)
+	}
+	if len(task.Prompt) != 1003 || !strings.HasSuffix(task.Prompt, "…") {
+		t.Fatalf("task prompt was not legacy-trimmed: len=%d", len(task.Prompt))
+	}
+	run, err := store.LoadRun(ctx, "run-begin")
+	if err != nil {
+		t.Fatalf("LoadRun() error = %v", err)
+	}
+	if run.TaskID != "task-begin" || run.State != string(RunRunning) || run.Turn != 1 {
+		t.Fatalf("run snapshot = %#v", run)
+	}
+	e.mu.Lock()
+	savedTurn := e.turns["turn-begin"]
+	e.mu.Unlock()
+	if savedTurn == nil || savedTurn.State != string(TurnRunning) || savedTurn.Index != 1 {
+		t.Fatalf("saved turn = %#v, want running index=1", savedTurn)
+	}
+
+	events := store.Events()
+	got := eventTypes(events, "run-begin")
+	want := []string{EventRunStarted, EventTurnStarted}
+	assertContainsInOrder(t, got, want)
+	var sawTaskCreated, sawTurnStarted bool
+	for _, ev := range events {
+		switch ev.Type {
+		case EventTaskCreated:
+			if ev.TaskID == "task-begin" {
+				sawTaskCreated = true
+				if ev.Data["session_id"] != "session-begin" || ev.Data["origin"] != "user" {
+					t.Fatalf("task_created data = %#v", ev.Data)
+				}
+			}
+		case EventTurnStarted:
+			sawTurnStarted = true
+			if ev.TaskID != "task-begin" || ev.RunID != "run-begin" || ev.TurnID != "turn-begin" {
+				t.Fatalf("turn_started IDs = %#v", ev)
+			}
+			if ev.Data["session_id"] != "session-begin" || ev.Data["message_id"] != "msg-begin" || ev.Data["prompt"] != longPrompt || ev.Data["origin"] != "user" {
+				t.Fatalf("turn_started data = %#v", ev.Data)
+			}
+			if !ev.Timestamp.Equal(startedAt) {
+				t.Fatalf("turn_started timestamp = %s, want %s", ev.Timestamp, startedAt)
+			}
+		}
+	}
+	if !sawTaskCreated || !sawTurnStarted {
+		t.Fatalf("expected task_created and turn_started, got %#v", events)
+	}
+}
+
+func TestFinishTurnPublishesFinishedAndApprovalEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    TurnResultStatus
+		wantRun   RunState
+		wantEvent string
+	}{
+		{name: "finished", status: TurnResultFinished, wantRun: RunDone, wantEvent: EventTaskFinished},
+		{name: "approval", status: TurnResultApprovalRequired, wantRun: RunAwaitingApproval, wantEvent: EventApprovalRequired},
+		{name: "failed-status", status: TurnResultFailed, wantRun: RunFailed, wantEvent: EventTaskFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, store := newTestEngine()
+			ctx := context.Background()
+			turn, err := e.BeginTurn(ctx, TurnContext{
+				SessionID: "session-" + tc.name,
+				TaskID:    "task-" + tc.name,
+				RunID:     "run-" + tc.name,
+				TurnID:    "turn-" + tc.name,
+				MessageID: "msg-" + tc.name,
+				Prompt:    "finish " + tc.name,
+				Origin:    "user",
+			})
+			if err != nil {
+				t.Fatalf("BeginTurn() error = %v", err)
+			}
+
+			if err := e.FinishTurn(ctx, turn, TurnResult{Status: tc.status, Reason: "done"}); err != nil {
+				t.Fatalf("FinishTurn() error = %v", err)
+			}
+			run, err := store.LoadRun(ctx, turn.RunID)
+			if err != nil {
+				t.Fatalf("LoadRun() error = %v", err)
+			}
+			if run.State != string(tc.wantRun) {
+				t.Fatalf("run state = %q, want %q", run.State, tc.wantRun)
+			}
+			e.mu.Lock()
+			savedTurn := e.turns[turn.TurnID]
+			e.mu.Unlock()
+			if savedTurn == nil || savedTurn.State != string(TurnFinished) {
+				t.Fatalf("saved turn = %#v, want finished", savedTurn)
+			}
+
+			got := eventTypes(store.Events(), turn.RunID)
+			assertContainsInOrder(t, got, []string{EventRunStarted, EventTurnFinished, tc.wantEvent})
+			var sawTurnFinished bool
+			for _, ev := range store.Events() {
+				if ev.Type != EventTurnFinished || ev.RunID != turn.RunID {
+					continue
+				}
+				sawTurnFinished = true
+				if ev.Data["session_id"] != turn.SessionID || ev.Data["status"] != string(tc.status) || ev.Data["reason"] != "done" {
+					t.Fatalf("turn_finished data = %#v", ev.Data)
+				}
+			}
+			if !sawTurnFinished {
+				t.Fatalf("turn_finished missing: %#v", store.Events())
+			}
+		})
+	}
+}
+
+func TestFinishTurnPublishesTurnFailedOnResultError(t *testing.T) {
+	e, store := newTestEngine()
+	ctx := context.Background()
+	turn, err := e.BeginTurn(ctx, TurnContext{
+		SessionID: "session-error",
+		TaskID:    "task-error",
+		RunID:     "run-error",
+		TurnID:    "turn-error",
+		MessageID: "msg-error",
+		Prompt:    "error",
+		Origin:    "user",
+	})
+	if err != nil {
+		t.Fatalf("BeginTurn() error = %v", err)
+	}
+
+	boom := errors.New("boom")
+	if err := e.FinishTurn(ctx, turn, TurnResult{Status: TurnResultFailed, Reason: "boom", Error: boom}); err != nil {
+		t.Fatalf("FinishTurn() error = %v", err)
+	}
+	run, err := store.LoadRun(ctx, turn.RunID)
+	if err != nil {
+		t.Fatalf("LoadRun() error = %v", err)
+	}
+	if run.State != string(RunFailed) {
+		t.Fatalf("run state = %q, want failed", run.State)
+	}
+	e.mu.Lock()
+	savedTurn := e.turns[turn.TurnID]
+	e.mu.Unlock()
+	if savedTurn == nil || savedTurn.State != string(TurnFailed) {
+		t.Fatalf("saved turn = %#v, want failed", savedTurn)
+	}
+
+	got := eventTypes(store.Events(), turn.RunID)
+	assertContainsInOrder(t, got, []string{EventRunStarted, EventTurnFailed, EventTaskFailed})
+	for _, ev := range store.Events() {
+		if ev.Type != EventTurnFailed {
+			continue
+		}
+		if ev.Data["session_id"] != turn.SessionID || ev.Data["status"] != string(TurnResultFailed) || ev.Data["reason"] != "boom" || ev.Data["error"] != "boom" {
+			t.Fatalf("turn_failed data = %#v", ev.Data)
+		}
+		return
+	}
+	t.Fatalf("turn_failed missing: %#v", store.Events())
+}
+
 func TestEventEnvelopeHasTopLevelSessionID(t *testing.T) {
 	e, store := newTestEngine()
 	ctx := context.Background()

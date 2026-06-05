@@ -219,15 +219,21 @@ Leader 负责：
 engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
-2. 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
+2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
 3. 再把 `runAgentLLMToolLoop` 迁到 engine 主控，daemon 只传入 session snapshot、operator prompt 与 service adapter。
 4. 最后收敛 `SendMessage` 中的 no-LLM route、LLM route、authorization resume、auto-continue 分支为 engine turn lifecycle。
 
 已完成的 seam 边界：
 
 - `runtime.Engine` 新增可选 `TurnExecutor`，`ExecuteTurn` 只转发到 attached executor，不主动发 runtime lifecycle events。
-- `TurnContext` 只承载 session/task/run/turn ID、prompt、origin、operation level、timestamp 与 metadata；daemon session mutation、planner loop、authorization gate 仍留在现有路径。
+- `TurnContext` 只承载 session/task/run/turn ID、message ID、prompt/goal、origin、operation level、turn index、timestamp 与 metadata；daemon session mutation、planner loop、authorization gate 仍留在现有路径。
 - daemon `AttachEngine` 会挂接 `daemon_legacy_adapter`，当前返回 `running` 占位结果，明确表示 legacy `SendMessage` 仍拥有 turn execution；因此本切片不改变对话、approval、auto-continue 或 SSE event parity。
+
+已完成的 lifecycle API 边界：
+
+- `runtime.Engine.BeginTurn` 接管 task/run/turn state 写入与 `task_created`、`run_started`、`turn_started` 事件发布。
+- `runtime.Engine.FinishTurn` 接管 turn state 写入、`turn_finished`/`turn_failed` 发布，以及 approval required、task finished、task failed run 终态分派。
+- daemon `beginRuntimeTurn` / `finishRuntimeTurn` 只保留 session snapshot、message ID、response completion 到 `TurnContext` / `TurnResult` 的 adapter 逻辑；`SendMessage`、planner loop、authorization resume、auto-continue 仍未下沉。
 
 ---
 

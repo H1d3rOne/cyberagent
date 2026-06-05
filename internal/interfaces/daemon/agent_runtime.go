@@ -80,36 +80,20 @@ func (m *agentManager) beginRuntimeTurn(ctx context.Context, sessionID, prompt, 
 		turnID = "turn_" + userMessage.ID
 	}
 	now := time.Now().UTC()
-	_, _ = eng.Submit(ctx, runtime.Task{
-		ID:             taskID,
+	turn, _ := eng.BeginTurn(ctx, runtime.TurnContext{
 		SessionID:      sessionID,
+		TaskID:         taskID,
+		RunID:          runID,
+		TurnID:         turnID,
+		MessageID:      userMessage.ID,
+		Prompt:         prompt,
+		Goal:           goal,
 		Origin:         firstNonEmpty(strings.TrimSpace(origin), "user"),
-		Goal:           trimSummary(goal, 360),
-		Prompt:         trimSummary(prompt, 1000),
 		OperationLevel: operationLevel,
-		Created:        now,
+		TurnIndex:      1,
+		Timestamp:      now,
 	})
-	_, _ = eng.SubmitRun(ctx, runtime.Run{
-		ID:        runID,
-		TaskID:    taskID,
-		State:     string(runtime.RunRunning),
-		Turn:      1,
-		CreatedAt: now,
-	})
-	eng.Publish(ctx, runtime.Event{
-		Type:   "turn_started",
-		TaskID: taskID,
-		RunID:  runID,
-		TurnID: turnID,
-		Data: map[string]any{
-			"session_id": sessionID,
-			"message_id": userMessage.ID,
-			"origin":     firstNonEmpty(strings.TrimSpace(origin), "user"),
-			"prompt":     prompt,
-		},
-		Timestamp: now,
-	})
-	return agentRuntimeTurnRef{TaskID: taskID, RunID: runID, TurnID: turnID}
+	return agentRuntimeTurnRef{TaskID: turn.TaskID, RunID: turn.RunID, TurnID: turn.TurnID}
 }
 
 func (m *agentManager) emitAgentRuntimeEvents(ctx context.Context, eng *runtime.Engine, sessionID string, session agentSession, messages ...agentMessage) {
@@ -245,43 +229,17 @@ func (m *agentManager) finishRuntimeTurn(ctx context.Context, sessionID string, 
 		return
 	}
 	status, reason := agentRuntimeTurnCompletion(resp, err)
-	data := map[string]any{
-		"session_id": sessionID,
-		"status":     status,
-	}
-	if reason != "" {
-		data["reason"] = reason
-	}
-	if err != nil {
-		data["error"] = err.Error()
-		eng.Publish(ctx, runtime.Event{
-			Type:      "turn_failed",
-			TaskID:    turnRef.TaskID,
-			RunID:     turnRef.RunID,
-			TurnID:    turnRef.TurnID,
-			Data:      data,
-			Timestamp: time.Now().UTC(),
-		})
-		_ = eng.FinishRun(ctx, turnRef.RunID, false)
-		return
-	}
-
-	eng.Publish(ctx, runtime.Event{
-		Type:      "turn_finished",
+	_ = eng.FinishTurn(ctx, runtime.TurnContext{
+		SessionID: sessionID,
 		TaskID:    turnRef.TaskID,
 		RunID:     turnRef.RunID,
 		TurnID:    turnRef.TurnID,
-		Data:      data,
-		Timestamp: time.Now().UTC(),
+		TurnIndex: 1,
+	}, runtime.TurnResult{
+		Status: runtime.TurnResultStatus(status),
+		Reason: reason,
+		Error:  err,
 	})
-	switch status {
-	case "approval_required":
-		_ = eng.RequestApproval(turnRef.RunID, reason)
-	case "finished":
-		_ = eng.FinishRun(ctx, turnRef.RunID, true)
-	case "failed":
-		_ = eng.FinishRun(ctx, turnRef.RunID, false)
-	}
 }
 
 func agentRuntimeTurnCompletion(resp sendAgentMessageResponse, err error) (string, string) {

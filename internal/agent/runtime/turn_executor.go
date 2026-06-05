@@ -29,7 +29,7 @@ const (
 )
 
 // TurnContext is the engine-owned boundary object for one turn execution. It
-// carries identifiers and prompt metadata only; daemon session mutation,
+// carries identifiers and prompt/task metadata only; daemon session mutation,
 // planner state and service adapters remain outside this package until later
 // migration slices.
 type TurnContext struct {
@@ -37,9 +37,12 @@ type TurnContext struct {
 	TaskID         string
 	RunID          string
 	TurnID         string
+	MessageID      string
 	Prompt         string
+	Goal           string
 	Origin         string
 	OperationLevel string
+	TurnIndex      int
 	Timestamp      time.Time
 	Metadata       map[string]any
 }
@@ -94,8 +97,8 @@ func (e *Engine) TurnExecutor() TurnExecutor {
 }
 
 // ExecuteTurn dispatches a TurnContext to the attached executor. It does not
-// emit lifecycle events by itself yet; begin/finish turn event parity remains
-// owned by the daemon bridge in this migration slice.
+// emit lifecycle events by itself; BeginTurn/FinishTurn own the persisted
+// lifecycle state while the executor only runs one turn.
 func (e *Engine) ExecuteTurn(ctx context.Context, turn TurnContext) (TurnResult, error) {
 	if e == nil {
 		return missingTurnExecutorResult(ErrNilEngine), ErrNilEngine
