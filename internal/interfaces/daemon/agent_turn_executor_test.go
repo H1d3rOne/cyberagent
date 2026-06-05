@@ -158,3 +158,68 @@ func TestAgentManagerRunRuntimeAgentLLMPlannerChatDispatchesEngineStageRunner(t 
 	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
 	require.Same(t, expectedPlan, plan)
 }
+
+func TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	expectedMessage := agentMessage{ID: "msg-synthesis", Role: "agent", Content: "summarized"}
+	expectedToolCall := agentToolCall{ID: "tool-synthesis", Name: "LLM synthesis"}
+	expectedPlan := &agentPlannerResponse{Phase: "step_replan", Answer: "summarized"}
+	called := false
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		called = true
+		require.Equal(t, runtime.LLMStageToolSynthesis, req.Stage)
+		require.Equal(t, "session-synthesis-stage", req.Turn.SessionID)
+		require.Equal(t, "task-synthesis-stage", req.Turn.TaskID)
+		require.Equal(t, "run-synthesis-stage", req.Turn.RunID)
+		require.Equal(t, "turn-synthesis-stage", req.Turn.TurnID)
+		require.Equal(t, "summarize tools", req.Turn.Prompt)
+		require.Equal(t, "safe_scan", req.Turn.OperationLevel)
+		require.Equal(t, "llm_stage", req.Metadata["runner"])
+		require.Equal(t, string(runtime.LLMStageToolSynthesis), req.Metadata["stage"])
+
+		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		require.True(t, ok, "payload type = %T", req.Payload)
+		require.Equal(t, "session-synthesis-stage", payload.SessionID)
+		require.Equal(t, "task-synthesis-stage", payload.TurnRef.TaskID)
+		require.Equal(t, "run-synthesis-stage", payload.TurnRef.RunID)
+		require.Equal(t, "turn-synthesis-stage", payload.TurnRef.TurnID)
+		require.Equal(t, "summarize tools", payload.Prompt)
+		require.Equal(t, "zh-CN", payload.Language)
+		require.Equal(t, "safe_scan", payload.OperationLevel)
+		require.Equal(t, "gpt-synthesis", payload.Req.Model)
+		require.Len(t, payload.History, 1)
+		require.Len(t, payload.ToolMessages, 1)
+
+		return runtime.LLMStageResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonLLMToolSynthesisResultPayload{
+				Messages:  []agentMessage{expectedMessage},
+				ToolCalls: []agentToolCall{expectedToolCall},
+				Plan:      expectedPlan,
+			},
+		}, nil
+	}))
+
+	messages, toolCalls, plan, err := mgr.runRuntimeAgentLLMToolSynthesis(
+		context.Background(),
+		"session-synthesis-stage",
+		agentRuntimeTurnRef{TaskID: "task-synthesis-stage", RunID: "run-synthesis-stage", TurnID: "turn-synthesis-stage"},
+		"summarize tools",
+		"zh-CN",
+		"safe_scan",
+		sendAgentMessageRequest{Model: "gpt-synthesis"},
+		[]agentMessage{{ID: "history-1", Role: "user", Content: "hello"}},
+		&agentMemorySummary{Summary: "memory"},
+		[]agentMessage{{ID: "tool-message-1", Role: "tool", Content: "observation"}},
+	)
+
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Equal(t, []agentMessage{expectedMessage}, messages)
+	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
+	require.Same(t, expectedPlan, plan)
+}

@@ -328,7 +328,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			break
 		}
 
-		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, loopHistory, memorySummary, actionMessages)
+		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, turnRef, prompt, language, operationLevel, req, loopHistory, memorySummary, actionMessages)
 		if synthesisErr != nil {
 			warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 			warningTool = agentToolCallWithPhase(warningTool, "step_replan")
