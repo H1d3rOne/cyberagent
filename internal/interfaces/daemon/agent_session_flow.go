@@ -153,7 +153,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					nextState, _ := m.GetSession(ctx, sessionID)
 					loopHistory := cloneAgentMessages(nextState.Messages)
-					followupMessages, followupToolCalls := m.runAgentReplanActionContinuation(ctx, sessionID, agentRuntimeTurnRef{}, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(llmReq)-1)
+					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuation(ctx, sessionID, agentRuntimeTurnRef{}, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(llmReq)-1)
 					responseMessages = append(responseMessages, followupMessages...)
 					responseToolCalls = append(responseToolCalls, followupToolCalls...)
 				}
@@ -328,7 +328,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				toolCalls = append(toolCalls, synthesisToolCalls...)
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					loopHistory := append(synthesisHistory, synthesisMessages...)
-					followupMessages, followupToolCalls := m.runAgentReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(req)-1)
+					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(req)-1)
 					responseMessages = append(responseMessages, followupMessages...)
 					toolCalls = append(toolCalls, followupToolCalls...)
 				}

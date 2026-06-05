@@ -503,6 +503,85 @@ func TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner(
 	require.Same(t, expectedPlan, plan)
 }
 
+func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	expectedMessage := agentMessage{ID: "msg-replan-continuation", Role: "agent", Content: "continued through executor"}
+	expectedToolCall := agentToolCall{ID: "tool-replan-continuation", Name: "daemon.health"}
+	expectedPlan := &agentPlannerResponse{
+		Phase: "step_replan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+		ToolCalls: []agentPlannerAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "continuation"},
+		}},
+	}
+	called := false
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		called = true
+		require.Equal(t, "session-replan-continuation", turn.SessionID)
+		require.Equal(t, "task-replan-continuation", turn.TaskID)
+		require.Equal(t, "run-replan-continuation", turn.RunID)
+		require.Equal(t, "turn-replan-continuation", turn.TurnID)
+		require.Equal(t, "continue daemon health", turn.Prompt)
+		require.Equal(t, daemonTurnExecutionReplanActionContinuation, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+		require.Equal(t, "turn_execution", turn.Metadata["executor"])
+		require.Equal(t, daemonTurnExecutionReplanActionContinuation, turn.Metadata["kind"])
+		require.Equal(t, 2, turn.Metadata["max_loops"])
+
+		payload, ok := turn.Payload.(daemonReplanActionContinuationTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, "session-replan-continuation", payload.SessionID)
+		require.Equal(t, "task-replan-continuation", payload.TurnRef.TaskID)
+		require.Equal(t, "run-replan-continuation", payload.TurnRef.RunID)
+		require.Equal(t, "turn-replan-continuation", payload.TurnRef.TurnID)
+		require.Equal(t, "continue daemon health", payload.Prompt)
+		require.Equal(t, "en", payload.Language)
+		require.Equal(t, "tester", payload.Operator)
+		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, "gpt-continuation", payload.Req.Model)
+		require.Len(t, payload.History, 1)
+		require.Equal(t, "memory", payload.MemorySummary.Summary)
+		require.Same(t, expectedPlan, payload.Plan)
+		require.Equal(t, 2, payload.MaxLoops)
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonReplanActionContinuationTurnResultPayload{
+				Messages:  []agentMessage{expectedMessage},
+				ToolCalls: []agentToolCall{expectedToolCall},
+			},
+		}, nil
+	}))
+
+	messages, toolCalls := mgr.runRuntimeReplanActionContinuation(
+		context.Background(),
+		"session-replan-continuation",
+		agentRuntimeTurnRef{TaskID: "task-replan-continuation", RunID: "run-replan-continuation", TurnID: "turn-replan-continuation"},
+		"continue daemon health",
+		"en",
+		"tester",
+		"read_only",
+		sendAgentMessageRequest{Model: "gpt-continuation"},
+		[]agentMessage{{ID: "history-1", Role: "agent", Content: "previous step"}},
+		&agentMemorySummary{Summary: "memory"},
+		routerServices{},
+		expectedPlan,
+		2,
+	)
+
+	require.True(t, called)
+	require.Equal(t, []agentMessage{expectedMessage}, messages)
+	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
+}
+
 func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStage(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

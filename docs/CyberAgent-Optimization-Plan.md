@@ -220,14 +220,14 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch；no-LLM deterministic route、control auto-continue route、LLM provider failure fallback route 与 route-before-LLM deterministic pre-route 已经 `ExecuteTurn` dispatch 到 daemon legacy route adapter。下一步准备收敛 authorization resume 与 auto-continue 后续分支。
-4. 最后收敛 `SendMessage` 中的 authorization resume、auto-continue 后续分支为 engine turn lifecycle。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch；no-LLM deterministic route、control auto-continue route、LLM provider failure fallback route、route-before-LLM deterministic pre-route 与后续 replan action continuation 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters。下一步准备继续收敛 authorization approved action execution 与 remaining SendMessage branches。
+4. 最后收敛 authorization approved action execution 与 remaining SendMessage branches 为 engine turn lifecycle。
 
 已完成的 seam 边界：
 
 - `runtime.Engine` 新增可选 `TurnExecutor`，`ExecuteTurn` 只转发到 attached executor，不主动发 runtime lifecycle events。
 - `TurnContext` 承载 session/task/run/turn ID、message ID、prompt/goal、origin、operation level、turn index、timestamp、metadata，以及迁移期 daemon-private `Payload`；daemon session mutation、planner loop、authorization gate 仍留在现有路径。
-- daemon `AttachEngine` 会挂接 `daemon_legacy_adapter`；默认无 kind 时仍返回 `running` 占位结果，明确表示 legacy `SendMessage` 仍拥有 turn execution；`deterministic_route` kind 会执行现有 daemon `routePrompt` 并返回 daemon-private messages/toolCalls payload，因此 no-LLM route、control auto-continue route、LLM provider failure fallback route 与 route-before-LLM deterministic pre-route 可先经 `ExecuteTurn` seam 调度且不改变 append/response/runtime event parity。
+- daemon `AttachEngine` 会挂接 `daemon_legacy_adapter`；默认无 kind 时仍返回 `running` 占位结果，明确表示 legacy `SendMessage` 仍拥有 turn execution；`deterministic_route` kind 会执行现有 daemon `routePrompt` 并返回 daemon-private messages/toolCalls payload，`replan_action_continuation` kind 会执行现有 daemon `runAgentReplanActionContinuation` 并返回 daemon-private messages/toolCalls payload，因此 no-LLM route、control auto-continue route、LLM provider failure fallback route、route-before-LLM deterministic pre-route 与后续 auto-continue continuation 可先经 `ExecuteTurn` seam 调度且不改变 append/response/runtime event parity。
 
 已完成的 lifecycle API 边界：
 
@@ -1032,6 +1032,7 @@ Glass surface：
 | v14 | 扩展 turn executor seam：`SendMessage` no-LLM deterministic route 与 control auto-continue route 已经 `runtime.Engine.ExecuteTurn` dispatch 到 daemon legacy `routePrompt` adapter，实际 append/response 语义保持原路径。 |
 | v15 | 扩展 turn executor seam：LLM provider failure fallback 的本地 route 已复用 `deterministic_route` adapter；AI failure warning、fallback messages prepend 与 tool call merge 语义保持原路径。 |
 | v16 | 扩展 turn executor seam：LLM configured + route-before-LLM synthesis 的 deterministic pre-route 已复用 `deterministic_route` adapter；step phase tagging 与后续 synthesis 语义保持原路径。 |
+| v17 | 扩展 turn executor seam：authorization approve resume 与 route-before-LLM 后续 auto-continue 的 `runAgentReplanActionContinuation` 已经 `replan_action_continuation` dispatch，实际 action execution / StepReplan synthesis / append 语义保持原路径。 |
 
 ---
 
