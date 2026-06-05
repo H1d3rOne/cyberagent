@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
@@ -148,6 +149,91 @@ func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
 	require.Equal(t, "user", resp.Messages[0].Role)
 	require.Equal(t, expectedMessage, resp.Messages[1])
 	require.Equal(t, []agentToolCall{expectedToolCall}, resp.ToolCalls)
+
+	got, err := mgr.GetSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.Equal(t, expectedMessage.ID, got.Messages[len(got.Messages)-1].ID)
+}
+
+func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+
+	llmErr := errors.New("provider down")
+	llmCalled := false
+	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, req runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
+		llmCalled = true
+		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, "hello fallback route", req.Turn.Prompt)
+		return runtime.LLMTurnResult{
+			Status: runtime.TurnResultFailed,
+			Reason: llmErr.Error(),
+			Error:  llmErr,
+			Payload: daemonLLMTurnResultPayload{
+				Messages:  nil,
+				ToolCalls: nil,
+			},
+		}, llmErr
+	}))
+
+	expectedMessage := agentMessage{ID: "msg-llm-fallback-route", Role: "agent", Content: "fallback routed through executor"}
+	expectedToolCall := agentToolCall{ID: "tool-llm-fallback-route", Name: "daemon.health"}
+	routeCalled := false
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		routeCalled = true
+		require.Equal(t, sessionID, turn.SessionID)
+		require.NotEmpty(t, turn.TaskID)
+		require.NotEmpty(t, turn.RunID)
+		require.NotEmpty(t, turn.TurnID)
+		require.Equal(t, "hello fallback route", turn.Prompt)
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+
+		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, sessionID, payload.SessionID)
+		require.Equal(t, "hello fallback route", payload.Prompt)
+		require.Equal(t, "operator-1", payload.Operator)
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonDeterministicRouteTurnResultPayload{
+				Messages:  []agentMessage{expectedMessage},
+				ToolCalls: []agentToolCall{expectedToolCall},
+			},
+		}, nil
+	}))
+
+	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
+		Message:        "hello fallback route",
+		Operator:       "operator-1",
+		Language:       "en",
+		OperationLevel: "read_only",
+		Provider:       "openai",
+		APIKey:         "test-key",
+	}, routerServices{})
+
+	require.NoError(t, err)
+	require.True(t, llmCalled)
+	require.True(t, routeCalled)
+	require.Len(t, resp.Messages, 3)
+	require.Equal(t, "user", resp.Messages[0].Role)
+	require.Equal(t, "tool", resp.Messages[1].Role)
+	require.Contains(t, resp.Messages[1].Content, "provider down")
+	require.Equal(t, expectedMessage, resp.Messages[2])
+	require.Len(t, resp.ToolCalls, 2)
+	require.Equal(t, "LLM chat", resp.ToolCalls[0].Name)
+	require.Equal(t, expectedToolCall, resp.ToolCalls[1])
 
 	got, err := mgr.GetSession(context.Background(), sessionID)
 	require.NoError(t, err)

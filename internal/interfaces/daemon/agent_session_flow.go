@@ -230,15 +230,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 				return buildAgentSendResponse(sessionID, responseMessages, contextToolCalls, sessionState), nil
 			}
 			if autoPrompt := agentExecutableAutoContinuePrompt(controlResp.Session.NextAction); autoPrompt != "" && agentCanAutoRouteContinuePrompt(autoPrompt) {
-				routed, handled, routeErr := m.runRuntimeDeterministicRoute(ctx, sessionID, turnRef, autoPrompt, language, operator, operationLevel, svc)
-				var autoMessages []agentMessage
-				var autoToolCalls []agentToolCall
-				if !handled && routeErr == nil {
-					autoMessages, autoToolCalls, routeErr = m.routePrompt(ctx, sessionID, autoPrompt, language, operator, operationLevel, svc)
-				} else {
-					autoMessages = routed.Messages
-					autoToolCalls = routed.ToolCalls
-				}
+				autoMessages, autoToolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, autoPrompt, language, operator, operationLevel, svc)
 				if routeErr != nil {
 					errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.auto_continue", routeErr)}, nil)
 					m.appendMessages(sessionID, errMessage)
@@ -385,7 +377,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 			sessionState, _ := m.GetSession(ctx, sessionID)
 			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, warningMessage, authMessage}, []agentToolCall{warningTool}, sessionState), nil
 		}
-		messages, toolCalls, routeErr := m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 		if routeErr != nil {
 			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
 			m.appendMessages(sessionID, warningMessage, errMessage)
@@ -400,15 +392,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
 	}
 
-	routed, handled, routeErr := m.runRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
-	var messages []agentMessage
-	var toolCalls []agentToolCall
-	if !handled && routeErr == nil {
-		messages, toolCalls, routeErr = m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
-	} else {
-		messages = routed.Messages
-		toolCalls = routed.ToolCalls
-	}
+	messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 	err = routeErr
 	if err != nil {
 		errMessage := m.message(language, "agent", err.Error(), []agentToolCall{failedAgentToolCall("agent.route", err)}, nil)

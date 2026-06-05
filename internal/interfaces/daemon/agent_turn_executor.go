@@ -153,3 +153,14 @@ func (m *agentManager) runRuntimeDeterministicRoute(ctx context.Context, session
 	}
 	return payload, true, nil
 }
+
+func (m *agentManager) routePromptWithRuntimeDeterministicRoute(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	routed, handled, err := m.runRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
+	if err != nil {
+		return nil, nil, err
+	}
+	if handled {
+		return routed.Messages, routed.ToolCalls, nil
+	}
+	return m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+}
