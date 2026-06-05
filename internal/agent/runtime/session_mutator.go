@@ -17,7 +17,8 @@ var (
 type SessionMutationKind string
 
 const (
-	SessionMutationAppendMessages SessionMutationKind = "append_messages"
+	SessionMutationAppendMessages    SessionMutationKind = "append_messages"
+	SessionMutationRecordUserMessage SessionMutationKind = "record_user_message"
 )
 
 // SessionMutationRequest is the engine-owned boundary for one bounded session

@@ -495,35 +495,22 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	var memorySummary *agentMemorySummary
 	userMessage := agentMessage{}
 	sessionSnapshot := agentSession{}
-	m.mu.Lock()
-	session, ok := m.sessions[sessionID]
-	if !ok {
-		loaded, loadErr := m.loadSessionLocked(sessionID)
-		if loadErr != nil {
-			m.mu.Unlock()
-			return sendAgentMessageResponse{}, loadErr
+	recorded, handled, recordErr := m.runRuntimeRecordUserMessageMutation(ctx, sessionID, prompt, operator, language, operationLevel)
+	if recordErr != nil {
+		return sendAgentMessageResponse{}, recordErr
+	}
+	if !handled {
+		recorded, recordErr = m.recordUserMessageLegacy(sessionID, prompt, operator, language, operationLevel)
+		if recordErr != nil {
+			return sendAgentMessageResponse{}, recordErr
 		}
-		session = loaded
 	}
-	session.Operator = operator
-	session.Language = language
-	session.OperationLevel = operationLevel
-	userMessage = m.newMessageLocked(language, "user", prompt, nil, nil)
-	session.Messages = append(session.Messages, userMessage)
-	session.UpdatedAt = userMessage.Timestamp
-	if m.shouldStartNewAgentTaskLocked(session, prompt, language) {
-		m.startAgentTaskLocked(session, prompt, language)
-	} else {
-		m.touchAgentTaskForMessageLocked(session, prompt, language)
-	}
-	compaction := compactAgentSessionMessagesLocked(session, agentSessionMaxMessages)
-	history = cloneAgentMessages(session.Messages)
-	memorySummary = cloneAgentMemorySummary(session.MemorySummary)
-	_ = m.persistSessionLocked(session)
-	sessionSnapshot = cloneAgentSession(session)
-	m.mu.Unlock()
+	userMessage = recorded.UserMessage
+	sessionSnapshot = recorded.Session
+	history = cloneAgentMessages(recorded.History)
+	memorySummary = cloneAgentMemorySummary(recorded.MemorySummary)
 	turnRef = m.beginRuntimeTurn(ctx, sessionID, prompt, firstNonEmpty(req.Origin, "user"), operationLevel, sessionSnapshot, userMessage)
-	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionSnapshot, turnRef, compaction)
+	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionSnapshot, turnRef, recorded.Compaction)
 
 	if controlReq, ok := agentControlRequestFromPrompt(prompt, operator, language); ok {
 		controlReq.OperationLevel = operationLevel
