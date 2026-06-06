@@ -472,10 +472,13 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 			toolCalls = append(toolCalls, agentToolCallWithPhase(tool, "step_replan"))
 			return messages, toolCalls, true
 		} else if !bypassPermissions && !agentPlannerActionAllowedByPrompt(operatorPrompt, actionName) {
-			authMessage := m.requestAgentAuthorization(
+			authMessage := m.requestAgentAuthorizationForTurn(
+				ctx,
 				sessionID,
+				turnRef,
 				language,
 				operatorPrompt,
+				operationLevel,
 				action,
 				actionName,
 				requiredLevel,
@@ -486,10 +489,13 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 			messages = append(messages, authMessage)
 			return messages, toolCalls, true
 		} else if !bypassPermissions && !agentOperationLevelAtLeast(operationLevel, requiredLevel) {
-			authMessage := m.requestAgentAuthorization(
+			authMessage := m.requestAgentAuthorizationForTurn(
+				ctx,
 				sessionID,
+				turnRef,
 				language,
 				operatorPrompt,
+				operationLevel,
 				action,
 				actionName,
 				requiredLevel,
@@ -504,10 +510,13 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 			messages = append(messages, authMessage)
 			return messages, toolCalls, true
 		} else if !bypassPermissions && agentPlannerActionRequiresManualAuthorization(actionName) {
-			authMessage := m.requestAgentAuthorization(
+			authMessage := m.requestAgentAuthorizationForTurn(
+				ctx,
 				sessionID,
+				turnRef,
 				language,
 				operatorPrompt,
+				operationLevel,
 				action,
 				actionName,
 				requiredLevel,
@@ -565,7 +574,15 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 	return messages, toolCalls, false
 }
 
-func (m *agentManager) requestAgentAuthorization(sessionID, language, operatorPrompt string, action agentPlannerAction, actionName, requiredLevel, policy, reason string) agentMessage {
+func (m *agentManager) requestAgentAuthorizationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language, operatorPrompt, operationLevel string, action agentPlannerAction, actionName, requiredLevel, policy, reason string) agentMessage {
+	if payload, handled := m.runRuntimeRequestAuthorizationMutationForTurn(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, action, actionName, requiredLevel, policy, reason); handled {
+		return payload.Message
+	}
+	payload := m.requestAgentAuthorizationLegacy(sessionID, language, operatorPrompt, action, actionName, requiredLevel, policy, reason)
+	return payload.Message
+}
+
+func (m *agentManager) requestAgentAuthorizationLegacy(sessionID, language, operatorPrompt string, action agentPlannerAction, actionName, requiredLevel, policy, reason string) daemonRequestAuthorizationMutationResultPayload {
 	language = normalizeAgentLanguage(language)
 	actionName = firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(action.Name), "agent.action")
 	requiredLevel = normalizeAgentOperationLevel(firstNonEmpty(requiredLevel, "read_only"))
@@ -612,9 +629,21 @@ func (m *agentManager) requestAgentAuthorization(sessionID, language, operatorPr
 		}
 		session.UpdatedAt = now
 		_ = m.persistSessionLocked(session)
+		message := agentMessageWithPhase(m.newMessageLocked(language, "agent", agentAuthorizationPromptMessage(language, auth), nil, nil), "step")
+		return daemonRequestAuthorizationMutationResultPayload{
+			Session:       cloneAgentSession(session),
+			Authorization: *cloneAgentAuthorizationRequest(auth),
+			Message:       message,
+			Mutated:       true,
+		}
 	}
 
-	return agentMessageWithPhase(m.newMessageLocked(language, "agent", agentAuthorizationPromptMessage(language, auth), nil, nil), "step")
+	message := agentMessageWithPhase(m.newMessageLocked(language, "agent", agentAuthorizationPromptMessage(language, auth), nil, nil), "step")
+	return daemonRequestAuthorizationMutationResultPayload{
+		Authorization: *cloneAgentAuthorizationRequest(auth),
+		Message:       message,
+		Mutated:       false,
+	}
 }
 
 func (m *agentManager) markAgentCapabilityBlocked(sessionID, language, reason, suggestedPrompt string) {

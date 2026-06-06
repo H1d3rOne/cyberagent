@@ -41,6 +41,25 @@ type daemonRecordUserMessageMutationResultPayload struct {
 	Mutated       bool
 }
 
+type daemonRequestAuthorizationMutationPayload struct {
+	SessionID      string
+	Language       string
+	OperatorPrompt string
+	OperationLevel string
+	Action         agentPlannerAction
+	ActionName     string
+	RequiredLevel  string
+	Policy         string
+	Reason         string
+}
+
+type daemonRequestAuthorizationMutationResultPayload struct {
+	Session       agentSession
+	Authorization agentAuthorizationRequest
+	Message       agentMessage
+	Mutated       bool
+}
+
 type daemonResolveAuthorizationMutationPayload struct {
 	SessionID              string
 	Decision               string
@@ -136,6 +155,30 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 				"message_id":      resultPayload.UserMessage.ID,
 				"operation_level": payload.OperationLevel,
 				"mutated":         true,
+			},
+		}, nil
+	case runtime.SessionMutationRequestAuthorization:
+		payload, ok := req.Payload.(daemonRequestAuthorizationMutationPayload)
+		if !ok {
+			err := errors.New("daemon: invalid request authorization mutation payload")
+			return daemonSessionMutationErrorResult(req, err), err
+		}
+		resultPayload := r.manager.requestAgentAuthorizationLegacy(payload.SessionID, payload.Language, payload.OperatorPrompt, payload.Action, payload.ActionName, payload.RequiredLevel, payload.Policy, payload.Reason)
+		return runtime.SessionMutationResult{
+			Status:  runtime.TurnResultFinished,
+			Reason:  "legacy daemon authorization request mutation executed",
+			Payload: resultPayload,
+			Data: map[string]any{
+				"mutator":          "daemon_legacy_session",
+				"kind":             string(req.Kind),
+				"session_id":       payload.SessionID,
+				"authorization_id": resultPayload.Authorization.ID,
+				"action_name":      resultPayload.Authorization.ActionName,
+				"required_level":   resultPayload.Authorization.RequiredLevel,
+				"policy":           resultPayload.Authorization.Policy,
+				"message_id":       resultPayload.Message.ID,
+				"operation_level":  payload.OperationLevel,
+				"mutated":          resultPayload.Mutated,
 			},
 		}, nil
 	case runtime.SessionMutationControlSession:
@@ -336,6 +379,67 @@ func (m *agentManager) runRuntimeRecordUserMessageMutation(ctx context.Context, 
 		return daemonRecordUserMessageMutationResultPayload{}, true, errors.New("daemon: record user message mutator returned invalid payload")
 	}
 	return payload, true, nil
+}
+
+func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operationLevel string, action agentPlannerAction, actionName, requiredLevel, policy, reason string) (daemonRequestAuthorizationMutationResultPayload, bool) {
+	eng := m.runtimeEngine()
+	if eng == nil || eng.SessionMutator() == nil {
+		return daemonRequestAuthorizationMutationResultPayload{}, false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	action = agentPlannerAction{
+		Name:      action.Name,
+		Arguments: cloneMapStringAny(action.Arguments),
+	}
+	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
+		Turn: runtime.TurnContext{
+			SessionID:      sessionID,
+			TaskID:         turnRef.TaskID,
+			RunID:          turnRef.RunID,
+			TurnID:         turnRef.TurnID,
+			Prompt:         operatorPrompt,
+			Origin:         string(runtime.SessionMutationRequestAuthorization),
+			OperationLevel: operationLevel,
+			Metadata: map[string]any{
+				"mutator": "session_mutation",
+				"kind":    string(runtime.SessionMutationRequestAuthorization),
+			},
+		},
+		Kind: runtime.SessionMutationRequestAuthorization,
+		Payload: daemonRequestAuthorizationMutationPayload{
+			SessionID:      sessionID,
+			Language:       language,
+			OperatorPrompt: operatorPrompt,
+			OperationLevel: operationLevel,
+			Action:         action,
+			ActionName:     actionName,
+			RequiredLevel:  requiredLevel,
+			Policy:         policy,
+			Reason:         reason,
+		},
+		Metadata: map[string]any{
+			"mutator":         "session_mutation",
+			"kind":            string(runtime.SessionMutationRequestAuthorization),
+			"action_name":     firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(action.Name)),
+			"required_level":  normalizeAgentOperationLevel(firstNonEmpty(requiredLevel, "read_only")),
+			"policy":          strings.TrimSpace(policy),
+			"operation_level": operationLevel,
+		},
+	})
+	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
+		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
+		return daemonRequestAuthorizationMutationResultPayload{}, false
+	}
+	if err != nil || result.Status == runtime.TurnResultBlocked {
+		return daemonRequestAuthorizationMutationResultPayload{}, false
+	}
+	payload, ok := result.Payload.(daemonRequestAuthorizationMutationResultPayload)
+	if !ok {
+		return daemonRequestAuthorizationMutationResultPayload{}, false
+	}
+	return payload, true
 }
 
 func (m *agentManager) runRuntimeControlSessionMutation(ctx context.Context, sessionID, action string, req agentControlRequest, operator, language, operationLevel string) (daemonControlSessionMutationResultPayload, bool, error) {

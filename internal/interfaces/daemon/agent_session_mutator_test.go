@@ -406,6 +406,95 @@ func TestAgentManagerRunRuntimeRecordUserMessageDispatchesSessionMutator(t *test
 	require.NotNil(t, got.ActiveTask)
 }
 
+func TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMutator(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	turnRef := agentRuntimeTurnRef{
+		TaskID: "task-request-auth",
+		RunID:  "run-request-auth",
+		TurnID: "turn-request-auth",
+	}
+	action := agentPlannerAction{
+		Name:      "scan.web.safe",
+		Arguments: map[string]any{"target": "https://example.com"},
+	}
+
+	records := []runtime.SessionMutationRequest{}
+	legacy := daemonSessionMutator{manager: mgr}
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		if req.Kind == runtime.SessionMutationRequestAuthorization {
+			records = append(records, req)
+		}
+		return legacy.MutateSession(ctx, req)
+	}))
+
+	messages, toolCalls, authorizationRequired := mgr.executeAgentPlannerActions(
+		context.Background(),
+		sessionID,
+		turnRef,
+		"scan https://example.com",
+		"en",
+		"tester",
+		"read_only",
+		routerServices{},
+		&agentPlannerResponse{Actions: []agentPlannerAction{action}},
+		nil,
+		"",
+	)
+
+	require.True(t, authorizationRequired)
+	require.Empty(t, toolCalls)
+	require.Len(t, messages, 1)
+	require.Equal(t, "step", messages[0].Phase)
+	require.Contains(t, messages[0].Content, "Authorization required")
+	require.Len(t, records, 1)
+
+	req := records[0]
+	require.Equal(t, runtime.SessionMutationRequestAuthorization, req.Kind)
+	require.Equal(t, sessionID, req.Turn.SessionID)
+	require.Equal(t, turnRef.TaskID, req.Turn.TaskID)
+	require.Equal(t, turnRef.RunID, req.Turn.RunID)
+	require.Equal(t, turnRef.TurnID, req.Turn.TurnID)
+	require.Equal(t, "scan https://example.com", req.Turn.Prompt)
+	require.Equal(t, string(runtime.SessionMutationRequestAuthorization), req.Turn.Origin)
+	require.Equal(t, "read_only", req.Turn.OperationLevel)
+	require.Equal(t, string(runtime.SessionMutationRequestAuthorization), req.Metadata["kind"])
+	require.Equal(t, "scan.web.safe", req.Metadata["action_name"])
+	require.Equal(t, "safe_scan", req.Metadata["required_level"])
+	require.Equal(t, "operation_level_required", req.Metadata["policy"])
+
+	payload, ok := req.Payload.(daemonRequestAuthorizationMutationPayload)
+	require.True(t, ok, "payload type = %T", req.Payload)
+	require.Equal(t, sessionID, payload.SessionID)
+	require.Equal(t, "en", payload.Language)
+	require.Equal(t, "scan https://example.com", payload.OperatorPrompt)
+	require.Equal(t, "read_only", payload.OperationLevel)
+	require.Equal(t, "scan.web.safe", payload.ActionName)
+	require.Equal(t, "safe_scan", payload.RequiredLevel)
+	require.Equal(t, "operation_level_required", payload.Policy)
+	require.Equal(t, action, payload.Action)
+
+	got, err := mgr.GetSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.Equal(t, "waiting_authorization", got.Status)
+	require.NotNil(t, got.PendingAuthorization)
+	require.Equal(t, "scan.web.safe", got.PendingAuthorization.ActionName)
+	require.Equal(t, "safe_scan", got.PendingAuthorization.RequiredLevel)
+	require.Equal(t, "operation_level_required", got.PendingAuthorization.Policy)
+	require.Equal(t, "scan https://example.com", got.PendingAuthorization.OriginalPrompt)
+	require.NotNil(t, got.NextAction)
+	require.Equal(t, "authorization_required", got.NextAction.Type)
+}
+
 func TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

@@ -20,6 +20,7 @@ type SessionMutationKind string
 const (
 	SessionMutationAppendMessages       SessionMutationKind = "append_messages"
 	SessionMutationRecordUserMessage    SessionMutationKind = "record_user_message"
+	SessionMutationRequestAuthorization SessionMutationKind = "request_authorization"
 	SessionMutationControlSession       SessionMutationKind = "control_session"
 	SessionMutationResolveAuthorization SessionMutationKind = "resolve_authorization"
 )

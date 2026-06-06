@@ -367,10 +367,13 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 		if action, ok := agentManualAuthorizationActionFromPrompt(prompt); ok {
 			actionName := normalizeAgentPlannerActionName(action.Name)
 			requiredLevel := agentOperationLevelRequiredForPlannerAction(actionName, action.Arguments)
-			authMessage := m.requestAgentAuthorization(
+			authMessage := m.requestAgentAuthorizationForTurn(
+				ctx,
 				sessionID,
+				turnRef,
 				language,
 				prompt,
+				operationLevel,
 				action,
 				actionName,
 				requiredLevel,
