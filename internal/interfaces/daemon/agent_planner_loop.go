@@ -316,7 +316,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			Turn:       agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
 			Language:   language,
 			Operator:   operator,
-			LLMRequest: req,
+			LLMRequest: agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
 			Authorization: agentPlannerActionReplanCycleAuthorization{
 				AuthProfiles:         req.AuthProfiles,
 				DefaultAuthProfileID: req.DefaultAuthProfileID,
@@ -372,7 +372,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			Turn:       agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
 			Language:   language,
 			Operator:   operator,
-			LLMRequest: req,
+			LLMRequest: agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
 			Authorization: agentPlannerActionReplanCycleAuthorization{
 				AuthProfiles:         req.AuthProfiles,
 				DefaultAuthProfileID: req.DefaultAuthProfileID,
@@ -416,11 +416,51 @@ type agentPlannerActionReplanCycleAuthorization struct {
 	DefaultAuthProfileID string
 }
 
+type agentPlannerActionReplanCycleLLMRequest struct {
+	Origin               string
+	OperationLevel       string
+	Provider             string
+	Model                string
+	APIKey               string
+	BaseURL              string
+	Instructions         string
+	AuthProfiles         []agentHTTPAuthProfile
+	DefaultAuthProfileID string
+}
+
+func agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req sendAgentMessageRequest) agentPlannerActionReplanCycleLLMRequest {
+	return agentPlannerActionReplanCycleLLMRequest{
+		Origin:               req.Origin,
+		OperationLevel:       req.OperationLevel,
+		Provider:             req.Provider,
+		Model:                req.Model,
+		APIKey:               req.APIKey,
+		BaseURL:              req.BaseURL,
+		Instructions:         req.Instructions,
+		AuthProfiles:         append([]agentHTTPAuthProfile(nil), req.AuthProfiles...),
+		DefaultAuthProfileID: req.DefaultAuthProfileID,
+	}
+}
+
+func (req agentPlannerActionReplanCycleLLMRequest) sendMessageRequest() sendAgentMessageRequest {
+	return sendAgentMessageRequest{
+		Origin:               req.Origin,
+		OperationLevel:       req.OperationLevel,
+		Provider:             req.Provider,
+		Model:                req.Model,
+		APIKey:               req.APIKey,
+		BaseURL:              req.BaseURL,
+		Instructions:         req.Instructions,
+		AuthProfiles:         append([]agentHTTPAuthProfile(nil), req.AuthProfiles...),
+		DefaultAuthProfileID: req.DefaultAuthProfileID,
+	}
+}
+
 type agentPlannerActionReplanCycleRequest struct {
 	Turn          runtime.TurnContext
 	Language      string
 	Operator      string
-	LLMRequest    sendAgentMessageRequest
+	LLMRequest    agentPlannerActionReplanCycleLLMRequest
 	Authorization agentPlannerActionReplanCycleAuthorization
 	MemorySummary *agentMemorySummary
 	Services      routerServices
@@ -497,7 +537,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		req.Turn.Prompt,
 		req.Language,
 		req.Turn.OperationLevel,
-		req.LLMRequest,
+		req.LLMRequest.sendMessageRequest(),
 		result.State.LoopHistory,
 		req.MemorySummary,
 		actionMessages,

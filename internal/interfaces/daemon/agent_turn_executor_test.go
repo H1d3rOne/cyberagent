@@ -1445,6 +1445,60 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 	require.Equal(t, messages[0].ToolCalls[0].Metadata["action_queue_id"], toolCalls[0].Metadata["action_queue_id"])
 }
 
+func TestAgentPlannerActionReplanCycleLLMRequestFromMessageRequestKeepsOnlyLLMFields(t *testing.T) {
+	authProfiles := []agentHTTPAuthProfile{{
+		ID:      "auth-cycle-llm",
+		Type:    "bearer",
+		BaseURL: "https://sandbox.example",
+		Token:   "secret-token",
+	}}
+	req := sendAgentMessageRequest{
+		Message:              "operator prompt should not enter cycle llm dto",
+		Operator:             "operator should not enter cycle llm dto",
+		Language:             "zh-CN",
+		OperationLevel:       "safe_scan",
+		Origin:               "user",
+		Provider:             "openai",
+		Model:                "gpt-cycle",
+		APIKey:               "api-key",
+		BaseURL:              "https://llm.example",
+		Instructions:         "planner instructions",
+		AuthProfiles:         authProfiles,
+		DefaultAuthProfileID: "auth-cycle-llm",
+	}
+
+	llmReq := agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req)
+	authProfiles[0].Token = "mutated-token"
+
+	require.Equal(t, "user", llmReq.Origin)
+	require.Equal(t, "safe_scan", llmReq.OperationLevel)
+	require.Equal(t, "openai", llmReq.Provider)
+	require.Equal(t, "gpt-cycle", llmReq.Model)
+	require.Equal(t, "api-key", llmReq.APIKey)
+	require.Equal(t, "https://llm.example", llmReq.BaseURL)
+	require.Equal(t, "planner instructions", llmReq.Instructions)
+	require.Equal(t, "auth-cycle-llm", llmReq.DefaultAuthProfileID)
+	require.Len(t, llmReq.AuthProfiles, 1)
+	require.Equal(t, "secret-token", llmReq.AuthProfiles[0].Token)
+
+	converted := llmReq.sendMessageRequest()
+	require.Empty(t, converted.Message)
+	require.Empty(t, converted.Operator)
+	require.Empty(t, converted.Language)
+	require.Equal(t, "safe_scan", converted.OperationLevel)
+	require.Equal(t, "user", converted.Origin)
+	require.Equal(t, "openai", converted.Provider)
+	require.Equal(t, "gpt-cycle", converted.Model)
+	require.Equal(t, "api-key", converted.APIKey)
+	require.Equal(t, "https://llm.example", converted.BaseURL)
+	require.Equal(t, "planner instructions", converted.Instructions)
+	require.Equal(t, "auth-cycle-llm", converted.DefaultAuthProfileID)
+	require.Equal(t, "secret-token", converted.AuthProfiles[0].Token)
+
+	converted.AuthProfiles[0].Token = "converted-mutated-token"
+	require.Equal(t, "secret-token", llmReq.AuthProfiles[0].Token)
+}
+
 func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

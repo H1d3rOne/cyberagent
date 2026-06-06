@@ -309,7 +309,7 @@ type AgentLoopRequest struct {
     Operator       string
     OperationLevel string
 
-    LLMRequest     sendAgentMessageRequest // 迁移期；长期拆成 provider/model/instructions/limits + ephemeral credentials。
+    LLMRequest     AgentLoopLLMRequest // 迁移期 DTO；provider/model/instructions/limits + ephemeral credentials，legacy adapter 临时转回 daemon request。
     History        []agentMessage
     MemorySummary  *agentMemorySummary
     InitialPlan    *agentPlannerResponse
@@ -374,8 +374,9 @@ ownership 边界：
 4. ✅ P0.5-N10 已先把 shared cycle helper 的散列参数收敛成 daemon-private `agentPlannerActionReplanCycleRequest` / `State` / `Result` DTO，明确 turn/message request/services/plan/options 与 response/tool/history state 边界。
 5. ✅ P0.5-N11 已把 shared cycle request 的 turn identity/prompt/origin/operation level 收敛为 `runtime.TurnContext`；helper 只在调用 append/action/synthesis legacy adapter 时临时转换 `agentRuntimeTurnRef`。
 6. ✅ P0.5-N12 已拆分 shared cycle request 的 authorization 输入与 LLM synthesis request：action execution 不再读取完整 `sendAgentMessageRequest`，完整请求暂只作为 LLM synthesis runner 兼容输入。
-7. 下一步把 daemon-private cycle DTO 中剩余 daemon 类型（LLM request/authorization profiles/services/planner/message/tool）替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-8. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+7. ✅ P0.5-N13 已把 shared cycle request 的 LLM synthesis 输入缩小为 cycle-private LLM DTO；operator prompt/operator/language 等 turn/body 字段不再随 LLM request 进入 cycle，legacy synthesis adapter 调用点临时转回 daemon request。
+8. 下一步把 daemon-private cycle DTO 中剩余 daemon 类型（authorization profiles/services/planner/message/tool 与 LLM adapter compatibility）替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+9. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1260,6 +1261,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v44 | 完成 P0.5-N10 planner action/replan cycle DTO 收敛：`runAgentPlannerActionReplanCycle` 改为 daemon-private request/state/result DTO，减少参数面并明确 future engine-native runner state 边界；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v45 | 完成 P0.5-N11 planner action/replan cycle TurnContext 边界：shared cycle request 使用 `runtime.TurnContext` 承载 session/task/run/turn/prompt/origin/operation level，legacy adapter 调用点临时转换 turnRef；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v46 | 完成 P0.5-N12 planner action/replan cycle auth/request 边界拆分：shared cycle request 将 authorization profiles/default profile 从 LLM synthesis request 中拆出，action execution 不再直接读取完整 `sendAgentMessageRequest`；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
+| v47 | 完成 P0.5-N13 planner action/replan cycle LLM request DTO 收敛：shared cycle request 使用 cycle-private LLM DTO，只保留 origin/provider/model/API key/base URL/instructions/operation level/auth hints，并在 legacy synthesis adapter 调用点临时转回 daemon request；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 
 ---
 
