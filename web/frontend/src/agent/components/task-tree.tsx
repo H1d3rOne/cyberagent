@@ -31,11 +31,11 @@ export function TaskTree({
 }) {
   if (collapsed) {
     return (
-      <GlassPanel as="aside" variant="panel" className="flex min-h-0 w-12 shrink-0 flex-col items-center gap-2 overflow-hidden py-2">
+      <GlassPanel as="aside" variant="panel" className="hidden min-h-0 w-12 shrink-0 flex-col items-center gap-2 overflow-hidden py-2 xl:flex">
         <button
           type="button"
           onClick={onToggleCollapsed}
-          className="grid h-8 w-8 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+          className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
           aria-label={text(language, '展开任务列表', 'Expand task list')}
         >
           <MessageSquare className="h-4 w-4" />
@@ -43,7 +43,7 @@ export function TaskTree({
         <button
           type="button"
           onClick={onCreate}
-          className="grid h-8 w-8 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+          className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
           aria-label={text(language, '新任务', 'New task')}
         >
           <Plus className="h-4 w-4" />
@@ -51,7 +51,7 @@ export function TaskTree({
         <button
           type="button"
           onClick={onRefresh}
-          className="grid h-8 w-8 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+          className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
           aria-label={text(language, '刷新', 'Refresh')}
         >
           <RefreshCcw className={cn('h-4 w-4', loading && 'animate-spin')} />
@@ -61,7 +61,7 @@ export function TaskTree({
   }
 
   return (
-    <GlassPanel as="aside" variant="panel" className="flex min-h-0 w-[282px] shrink-0 flex-col overflow-hidden">
+    <GlassPanel as="aside" variant="panel" className="hidden min-h-0 w-[282px] shrink-0 flex-col overflow-hidden xl:flex">
       <GlassToolbar as="header" className="flex h-12 shrink-0 items-center justify-between border-b px-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-medium">

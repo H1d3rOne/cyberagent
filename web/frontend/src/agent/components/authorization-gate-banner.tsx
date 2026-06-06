@@ -41,8 +41,8 @@ export function AuthorizationGateBanner({
 }) {
   return (
     <GlassAlert tone="warning" className="mb-2 px-3 py-2 text-xs shadow-[0_0_24px_rgba(251,191,36,0.08)]">
-      <div className="flex flex-wrap items-center gap-2">
-        <ShieldCheck className="h-4 w-4 text-amber-200" />
+      <div className="flex flex-wrap items-start gap-2 sm:items-center">
+        <ShieldCheck className="mt-0.5 h-4 w-4 text-amber-200 sm:mt-0" />
         <span className="font-medium">{text(language, '需要授权确认', 'Authorization required')}</span>
         <span className="rounded-full border border-amber-200/20 bg-black/15 px-2 py-0.5 font-mono text-[10px] text-amber-100/85">
           {gate.action}
@@ -58,16 +58,16 @@ export function AuthorizationGateBanner({
             {text(language, '后台仍在收尾，可直接授权', 'Background request is finishing; you can authorize now')}
           </span>
         )}
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          <Button type="button" variant="ghost" size="sm" onClick={onDeny} disabled={busy} className="h-7 rounded-xl px-2 text-amber-100/80 hover:bg-red-300/10 hover:text-red-100">
+        <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 sm:ml-auto sm:w-auto">
+          <Button type="button" variant="ghost" size="sm" onClick={onDeny} disabled={busy} className="h-10 flex-1 rounded-xl px-2 text-amber-100/80 hover:bg-red-300/10 hover:text-red-100 sm:h-7 sm:flex-none">
             {text(language, '拒绝', 'Deny')}
           </Button>
           {gate.source === 'legacy' && gate.prompt && (
-            <Button type="button" variant="ghost" size="sm" onClick={onFill} disabled={busy} className="h-7 rounded-xl px-2 text-amber-100 hover:bg-amber-300/10">
+            <Button type="button" variant="ghost" size="sm" onClick={onFill} disabled={busy} className="h-10 flex-1 rounded-xl px-2 text-amber-100 hover:bg-amber-300/10 sm:h-7 sm:flex-none">
               {text(language, '填入声明', 'Fill')}
             </Button>
           )}
-          <Button type="button" size="sm" onClick={onAuthorize} disabled={busy} className="h-7 rounded-xl bg-amber-300 px-2 text-black hover:bg-amber-200">
+          <Button type="button" size="sm" onClick={onAuthorize} disabled={busy} className="h-10 flex-1 rounded-xl bg-amber-300 px-2 text-black hover:bg-amber-200 sm:h-7 sm:flex-none">
             {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}
             {text(language, '允许并继续', 'Allow & continue')}
           </Button>

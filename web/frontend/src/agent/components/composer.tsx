@@ -59,12 +59,12 @@ export function Composer({
 }) {
   const prompts = useMemo(() => QUICK_PROMPTS[language], [language])
   return (
-    <GlassToolbar as="footer" className="shrink-0 border-t p-2">
+    <GlassToolbar as="footer" className="shrink-0 border-t p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
       {suggestedPrompt && (
         <GlassAlert tone="info" className="mb-2 flex items-center gap-2 px-3 py-2 text-xs">
           <Sparkles className="h-3.5 w-3.5" />
           <span className="min-w-0 flex-1 truncate">{suggestedPrompt}</span>
-          <Button type="button" variant="ghost" size="sm" onClick={() => onQuickPrompt(suggestedPrompt)} className="h-7 rounded-xl px-2 text-primary">
+          <Button type="button" variant="ghost" size="sm" onClick={() => onQuickPrompt(suggestedPrompt)} className="h-9 rounded-xl px-2 text-primary sm:h-7">
             {text(language, '填入', 'Fill')}
           </Button>
         </GlassAlert>
@@ -87,23 +87,37 @@ export function Composer({
       </GlassToolbar>
 
       <GlassCard variant="subtle" className="mb-1.5 flex flex-wrap items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-xs">
-        <div className="min-w-0 truncate font-medium text-muted-foreground">
+        <div className="hidden min-w-0 truncate font-medium text-muted-foreground sm:block">
           {text(language, '输入指令继续，事件流实时更新', 'Type a command to continue; events update live')}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 sm:flex-none">
           <StatusPill className={cn('px-2 py-1', statusPillClass(streamStatus))}>
             {statusLabel(streamStatus, language)}
           </StatusPill>
           <StatusPill tone="muted" className="px-2 py-1">{operationLevelLabel(operationLevel, language)}</StatusPill>
           {suggestedPrompt && (
-            <Button type="button" variant="ghost" size="sm" onClick={() => onQuickPrompt(suggestedPrompt)} className="h-7 rounded-lg px-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => onQuickPrompt(suggestedPrompt)} className="h-9 rounded-lg px-2 sm:h-7">
               {text(language, '下一步', 'Next')}
             </Button>
           )}
-          <Button type="button" variant="ghost" size="sm" onClick={onClear} className="h-7 rounded-lg px-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onClear}
+            className="h-9 w-9 rounded-lg px-0 sm:h-7 sm:w-auto sm:px-2"
+            aria-label={text(language, '清空输入', 'Clear input')}
+          >
             <X className="h-3.5 w-3.5" />
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={onNewTask} className="h-7 rounded-lg px-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onNewTask}
+            className="h-9 w-9 rounded-lg px-0 sm:h-7 sm:w-auto sm:px-2"
+            aria-label={text(language, '新建任务', 'New task')}
+          >
             <Plus className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -125,7 +139,7 @@ export function Composer({
           disabled={disabled || sending}
         />
         <div className="flex flex-wrap items-center justify-end gap-1.5">
-          <Button type="button" onClick={onSubmit} disabled={disabled || sending || !value.trim()} className="h-8 rounded-lg px-3">
+          <Button type="button" onClick={onSubmit} disabled={disabled || sending || !value.trim()} className="h-11 rounded-lg px-4 sm:h-8 sm:px-3">
             <Send className="mr-2 h-4 w-4" />
             {text(language, '发送', 'Send')}
           </Button>
@@ -134,7 +148,7 @@ export function Composer({
             variant="outline"
             onClick={onContinue}
             disabled={disabled || sending}
-            className="h-8 rounded-lg bg-transparent px-2.5"
+            className="h-11 w-11 rounded-lg bg-transparent px-0 sm:h-8 sm:w-auto sm:px-2.5"
             title={text(language, '继续', 'Continue')}
             aria-label={text(language, '继续', 'Continue')}
           >
@@ -146,7 +160,7 @@ export function Composer({
             variant="ghost"
             onClick={onPause}
             disabled={disabled || sending}
-            className="h-8 rounded-lg px-2.5"
+            className="h-11 w-11 rounded-lg px-0 sm:h-8 sm:w-auto sm:px-2.5"
             title={text(language, '暂停', 'Pause')}
             aria-label={text(language, '暂停', 'Pause')}
           >
@@ -158,7 +172,7 @@ export function Composer({
             variant="ghost"
             onClick={onCancel}
             disabled={disabled || sending}
-            className="h-8 rounded-lg px-2.5 text-red-200 hover:text-red-100"
+            className="h-11 w-11 rounded-lg px-0 text-red-200 hover:text-red-100 sm:h-8 sm:w-auto sm:px-2.5"
             title={text(language, '取消', 'Cancel')}
             aria-label={text(language, '取消', 'Cancel')}
           >

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { AlertTriangle, Bot, Code2, Download, Loader2, RefreshCcw, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, Bot, Code2, Download, Loader2, MessageSquare, Plus, RefreshCcw, ShieldCheck, X } from 'lucide-react'
 import { GlassAlert, GlassPanel, GlassToolbar } from '@/components/glass'
 import { Button } from '@/components/ui/button'
 import type {
   AgentOperationLevel,
   AgentProviderConfig,
   AgentSession,
+  AgentSessionSummary,
   AgentSessionStreamMeta,
   AgentTraceResponse,
   SendAgentMessageResponse,
@@ -45,6 +46,7 @@ export function AgentCockpitPage() {
   const [state, dispatch] = useReducer(agentCockpitReducer, initialAgentCockpitState)
   const [input, setInput] = useState('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [mobileTasksOpen, setMobileTasksOpen] = useState(false)
   const [authBusy, setAuthBusy] = useState(false)
   const [dismissedAuthorizationGates, setDismissedAuthorizationGates] = useState<string[]>([])
   const [traceOpen, setTraceOpen] = useState(false)
@@ -448,7 +450,26 @@ export function AgentCockpitPage() {
   }, [client, language, refreshSessions, setError, setSessionSnapshot, settings.operationLevel, settings.operator, state.session])
 
   return (
-    <div className="grid h-[calc(100dvh-6.5rem)] min-h-0 gap-3 xl:grid-cols-[auto_minmax(0,1fr)_340px]">
+    <div className="flex min-h-[calc(100dvh-6.5rem)] min-w-0 flex-col gap-3 overflow-hidden xl:grid xl:h-[calc(100dvh-6.5rem)] xl:min-h-0 xl:grid-cols-[auto_minmax(0,1fr)_340px]">
+      <MobileTaskSwitcher
+        sessions={state.sessions}
+        activeSessionId={state.activeSessionId}
+        activeTitle={state.session ? sessionTitle(state.session, language) : text(language, 'Cybersecurity Agent', 'Cybersecurity Agent')}
+        loading={state.loadingSessions || state.loadingSession}
+        open={mobileTasksOpen}
+        language={language}
+        onToggle={() => setMobileTasksOpen((value) => !value)}
+        onCreate={() => {
+          setMobileTasksOpen(false)
+          void createSession()
+        }}
+        onSelect={(sessionId) => {
+          setMobileTasksOpen(false)
+          void loadSession(sessionId)
+        }}
+        onRefresh={() => { void refreshSessions() }}
+      />
+
       <TaskTree
         sessions={state.sessions}
         activeSessionId={state.activeSessionId}
@@ -462,8 +483,8 @@ export function AgentCockpitPage() {
         onDelete={(sessionId) => { void deleteSession(sessionId) }}
       />
 
-      <GlassPanel as="section" variant="elevated" className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-        <GlassToolbar as="header" className="flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3 sm:px-4">
+      <GlassPanel as="section" variant="elevated" className="flex min-h-[72dvh] min-w-0 flex-1 flex-col overflow-hidden xl:min-h-0">
+        <GlassToolbar as="header" className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b px-3 py-2 sm:gap-3 sm:px-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="relative grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-primary/30 bg-primary/10">
               <Bot className="h-4 w-4 text-primary" />
@@ -473,22 +494,22 @@ export function AgentCockpitPage() {
               <div className="truncate text-sm font-semibold">
                 {state.session ? sessionTitle(state.session, language) : text(language, 'Cybersecurity Agent', 'Cybersecurity Agent')}
               </div>
-              <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] text-muted-foreground">
-                <span>{streamLabel(state.streamStatus, language)}</span>
-                <span>·</span>
-                <span>{operationLevelLabel(currentOperationLevel, language)}</span>
-                {state.lastSeq > 0 && <span>seq={state.lastSeq}</span>}
+              <div className="flex min-w-0 items-center gap-1.5 overflow-hidden font-mono text-[10px] text-muted-foreground">
+                <span className="shrink-0">{streamLabel(state.streamStatus, language)}</span>
+                <span className="shrink-0">·</span>
+                <span className="shrink-0 truncate">{operationLevelLabel(currentOperationLevel, language)}</span>
+                {state.lastSeq > 0 && <span className="hidden shrink-0 sm:inline">seq={state.lastSeq}</span>}
                 {state.session?.active_task?.status && (
                   <>
-                    <span>·</span>
-                    <span>{statusLabel(state.session.active_task.status, language)}</span>
+                    <span className="hidden shrink-0 sm:inline">·</span>
+                    <span className="hidden shrink-0 sm:inline">{statusLabel(state.session.active_task.status, language)}</span>
                   </>
                 )}
                 {displayHint && (
                   <>
-                    <span>·</span>
+                    <span className="hidden shrink-0 md:inline">·</span>
                     <span
-                      className={cn('max-w-[13rem] truncate', displayHintClass(displayHint.tone))}
+                      className={cn('hidden max-w-[13rem] truncate md:inline-block', displayHintClass(displayHint.tone))}
                       title={[displayHint.detail, displayHint.source].filter(Boolean).join(' · ') || undefined}
                     >
                       {displayHint.label}
@@ -500,15 +521,15 @@ export function AgentCockpitPage() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
-            <Button type="button" variant="ghost" size="sm" onClick={() => { void refreshCurrentSession() }} disabled={!state.activeSessionId || state.loadingSession} className="h-8 rounded-xl px-2.5 text-muted-foreground">
+            <Button type="button" variant="ghost" size="sm" onClick={() => { void refreshCurrentSession() }} disabled={!state.activeSessionId || state.loadingSession} className="h-11 w-11 rounded-xl px-0 text-muted-foreground sm:h-8 sm:w-auto sm:px-2.5">
               <span className="sr-only">{text(language, '刷新当前会话', 'Refresh current session')}</span>
               <RefreshCcw className={cn('h-3.5 w-3.5', state.loadingSession && 'animate-spin')} />
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={openTraceViewer} disabled={!state.session || traceLoading} className="h-8 rounded-xl px-2.5 text-muted-foreground">
+            <Button type="button" variant="ghost" size="sm" onClick={openTraceViewer} disabled={!state.session || traceLoading} className="h-11 w-11 rounded-xl px-0 text-muted-foreground sm:h-8 sm:w-auto sm:px-2.5">
               <span className="sr-only">{text(language, '打开 Trace', 'Open trace')}</span>
               {traceLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Code2 className="h-3.5 w-3.5" />}
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={downloadTrace} disabled={!state.session} className="h-8 rounded-xl bg-transparent px-2.5">
+            <Button type="button" variant="outline" size="sm" onClick={downloadTrace} disabled={!state.session} className="h-11 w-11 rounded-xl bg-transparent px-0 sm:h-8 sm:w-auto sm:px-2.5">
               <span className="sr-only">{text(language, '下载 Trace', 'Download trace')}</span>
               <Download className="h-3.5 w-3.5" />
             </Button>
@@ -604,6 +625,42 @@ export function AgentCockpitPage() {
         </div>
       </GlassPanel>
 
+      {selectedTool && state.selectedToolCallId && (
+        <GlassPanel
+          as="aside"
+          variant="elevated"
+          role="dialog"
+          aria-modal="false"
+          aria-label={text(language, '工具详情', 'Tool details')}
+          className="fixed inset-x-3 bottom-24 z-40 flex max-h-[68dvh] flex-col overflow-hidden shadow-2xl xl:hidden"
+        >
+          <GlassToolbar className="flex min-h-12 shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">{text(language, '工具详情', 'Tool details')}</div>
+              <div className="truncate font-mono text-[10px] text-muted-foreground">{selectedTool.id}</div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => dispatch({ type: 'ui/selectTool', toolCallId: undefined })}
+              className="h-11 w-11 rounded-xl px-0 text-muted-foreground"
+              aria-label={text(language, '关闭工具详情', 'Close tool details')}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </GlassToolbar>
+          <div className="agent-scroll-area min-h-0 flex-1 overflow-y-auto p-3">
+            <ToolInspector
+              tool={selectedTool}
+              language={language}
+              onRefresh={() => { void refreshCurrentSession() }}
+              onClear={() => dispatch({ type: 'ui/selectTool', toolCallId: undefined })}
+            />
+          </div>
+        </GlassPanel>
+      )}
+
       {traceOpen && (
         <TraceViewerDrawer
           trace={traceData}
@@ -615,6 +672,120 @@ export function AgentCockpitPage() {
         />
       )}
     </div>
+  )
+}
+
+function MobileTaskSwitcher({
+  sessions,
+  activeSessionId,
+  activeTitle,
+  loading,
+  open,
+  language,
+  onToggle,
+  onCreate,
+  onSelect,
+  onRefresh,
+}: {
+  sessions: AgentSessionSummary[]
+  activeSessionId: string
+  activeTitle: string
+  loading: boolean
+  open: boolean
+  language: Language
+  onToggle: () => void
+  onCreate: () => void
+  onSelect: (sessionId: string) => void
+  onRefresh: () => void
+}) {
+  const visibleSessions = sessions.slice(0, 12)
+  return (
+    <GlassPanel as="section" variant="panel" className="shrink-0 overflow-hidden xl:hidden">
+      <GlassToolbar as="header" className={cn('flex min-h-14 items-center gap-2 px-2 py-2', open && 'border-b')}>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl px-2 py-1.5 text-left hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-expanded={open}
+        >
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/25 bg-primary/10">
+            <MessageSquare className="h-4 w-4 text-primary" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">{activeTitle}</span>
+            <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
+              {loading
+                ? text(language, '同步任务列表中', 'Syncing task list')
+                : text(language, `${sessions.length} 个会话`, `${sessions.length} sessions`)}
+            </span>
+          </span>
+        </button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onRefresh}
+          className="h-11 w-11 shrink-0 rounded-xl px-0 text-muted-foreground"
+          aria-label={text(language, '刷新任务列表', 'Refresh task list')}
+        >
+          <RefreshCcw className={cn('h-4 w-4', loading && 'animate-spin')} />
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={onCreate}
+          disabled={loading}
+          className="h-11 w-11 shrink-0 rounded-xl px-0"
+          aria-label={text(language, '新建任务', 'New task')}
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+      </GlassToolbar>
+
+      {open && (
+        <div className="agent-scroll-area max-h-[42dvh] overflow-y-auto p-2">
+          {visibleSessions.length ? (
+            <div className="space-y-1.5">
+              {visibleSessions.map((item) => {
+                const active = item.session_id === activeSessionId
+                return (
+                  <button
+                    key={item.session_id}
+                    type="button"
+                    onClick={() => onSelect(item.session_id)}
+                    className={cn(
+                      'flex w-full items-start gap-2 rounded-2xl border p-2 text-left transition',
+                      active
+                        ? 'border-primary/35 bg-primary/10 text-foreground'
+                        : 'border-white/5 bg-white/[0.025] text-muted-foreground hover:border-white/12 hover:bg-white/[0.05] hover:text-foreground',
+                    )}
+                  >
+                    <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary/70" />
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-2 text-xs font-medium leading-5">{sessionTitle(item, language)}</span>
+                      <span className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+                        <span>{statusLabel(item.status, language)}</span>
+                        <span>·</span>
+                        <span>{item.updated_at ? new Date(item.updated_at).toLocaleTimeString() : '—'}</span>
+                      </span>
+                    </span>
+                  </button>
+                )
+              })}
+              {sessions.length > visibleSessions.length && (
+                <div className="px-2 py-1 text-center font-mono text-[10px] text-muted-foreground">
+                  {text(language, `仅显示最近 ${visibleSessions.length} 个会话`, `Showing the latest ${visibleSessions.length} sessions`)}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-white/10 p-3 text-xs leading-5 text-muted-foreground">
+              {text(language, '暂无任务。点击加号创建第一个 Agent 会话。', 'No tasks yet. Tap plus to create the first Agent session.')}
+            </div>
+          )}
+        </div>
+      )}
+    </GlassPanel>
   )
 }
 
@@ -635,11 +806,11 @@ function streamDotClass(status: CockpitStreamStatus) {
 }
 
 function displayHintClass(tone: 'muted' | 'info' | 'success' | 'warning' | 'danger') {
-  if (tone === 'success') return 'inline-block text-emerald-200'
-  if (tone === 'warning') return 'inline-block text-amber-200'
-  if (tone === 'danger') return 'inline-block text-red-200'
-  if (tone === 'info') return 'inline-block text-cyan-200'
-  return 'inline-block text-muted-foreground'
+  if (tone === 'success') return 'text-emerald-200'
+  if (tone === 'warning') return 'text-amber-200'
+  if (tone === 'danger') return 'text-red-200'
+  if (tone === 'info') return 'text-cyan-200'
+  return 'text-muted-foreground'
 }
 
 function runSummaryLine(summary: NonNullable<ReturnType<typeof sessionRunSummary>>, language: Language) {

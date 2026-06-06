@@ -37,7 +37,7 @@ export function TurnTimeline({
 
   const turns = state.turns
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-end">
+    <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-end px-0">
       <div className="space-y-4">
         {turns.map((turn) => (
           <TurnGroup
@@ -110,7 +110,7 @@ function TurnGroup({
   const approvalEvents = state.events.filter((event) => turn.eventIds.includes(event.id) && (event.type === 'approval_required' || event.type === 'approval_resolved'))
 
   return (
-    <GlassCard as="section" variant="panel" className="relative p-3 shadow-[0_18px_50px_rgba(0,0,0,.16)]">
+    <GlassCard as="section" variant="panel" className="relative p-2.5 shadow-[0_18px_50px_rgba(0,0,0,.16)] sm:p-3">
       <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-white/10 pb-2">
         <span className={cn('grid h-7 w-7 place-items-center rounded-full border', statusPillClass(turn.status))}>
           {turn.status === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -119,7 +119,7 @@ function TurnGroup({
           <div className="line-clamp-1 text-sm font-medium">{turn.title || text(language, 'Turn', 'Turn')}</div>
           <div className="font-mono text-[10px] text-muted-foreground">{formatTime(turn.startedAt)} · {statusLabel(turn.status, language)}</div>
         </div>
-        <div className="flex flex-wrap gap-1.5 font-mono text-[10px] text-muted-foreground">
+        <div className="hidden flex-wrap gap-1.5 font-mono text-[10px] text-muted-foreground sm:flex">
           <StatusPill tone="muted">messages {turn.messages.length}</StatusPill>
           <StatusPill tone="muted">tools {tools.length}</StatusPill>
           <StatusPill tone="muted">todos {todos.length}</StatusPill>
@@ -154,7 +154,7 @@ function TurnGroup({
         )}
 
         {tools.length ? (
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 md:grid-cols-2">
             {tools.map((tool) => {
               if (!tool) return null
               const sourceLabel = toolSourceLabel(tool.metadata?.source, language)
@@ -165,7 +165,7 @@ function TurnGroup({
                   type="button"
                   onClick={() => onSelectTool(tool.id)}
                   selected={state.selectedToolCallId === tool.id}
-                  className="p-3 text-left transition-colors hover:border-primary/25 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  className="p-2.5 text-left transition-colors hover:border-primary/25 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:p-3"
                 >
                   <div className="flex items-start gap-2">
                     <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', toolDotClass(tool.status))} />
@@ -229,7 +229,7 @@ function MessageBubble({
   return (
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <GlassCard as="article" variant="subtle" className={cn(
-        'max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm',
+        'max-w-[94%] rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm sm:max-w-[88%]',
         isUser && 'bg-primary/20 text-foreground',
         isAgent && 'border border-white/10 bg-white/[0.055] text-foreground/90',
         isTool && 'border border-amber-400/20 bg-amber-500/10 text-amber-100',
@@ -301,7 +301,7 @@ function MessageBubble({
 function OptimisticBubble({ message, language }: { message: OptimisticMessage; language: Language }) {
   return (
     <div className="flex justify-end">
-      <GlassCard as="article" variant="subtle" className={cn('max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-6', message.status === 'failed' ? 'border border-red-300/25 bg-red-400/10' : 'bg-primary/20')}>
+      <GlassCard as="article" variant="subtle" className={cn('max-w-[94%] rounded-2xl px-3.5 py-2.5 text-sm leading-6 sm:max-w-[88%]', message.status === 'failed' ? 'border border-red-300/25 bg-red-400/10' : 'bg-primary/20')}>
         <div className="mb-1 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
           <MessageSquare className="h-3 w-3" />{text(language, '你', 'You')} · {formatTime(message.timestamp)}
           {message.status === 'sending' && <Loader2 className="ml-auto h-3 w-3 animate-spin" />}

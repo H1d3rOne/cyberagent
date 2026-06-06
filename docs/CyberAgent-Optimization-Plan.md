@@ -129,8 +129,8 @@ Leader 负责：
 
 ### P1：核心体验增强
 
-1. Route-level Lazy / Bundle Splitting。
-2. 移动端 Cockpit 降噪。
+1. Route-level Lazy / Bundle Splitting。✅
+2. 移动端 Cockpit 降噪。✅
 3. 真实浏览器 E2E / a11y / 视觉回归。
 
 ### P2：生产可用性增强
@@ -947,6 +947,15 @@ P1-F2 实施结果：
 - Composer 增加 safe-area padding。
 - 减少小屏 icon-only 控件数量。
 
+P1-F3 实施结果：
+
+- `/agent` 顶层布局改为 mobile flex / desktop `xl` grid；桌面 `TaskTree` 在小屏隐藏，移动端新增 `MobileTaskSwitcher` 展示当前会话、最近会话列表、刷新与新建入口。
+- Header 降噪：小屏仅保留 stream + operation level，`seq`、active task status、displayHint 延后到 `sm/md` 以上展示；Trace/Refresh/Download icon-only button 提升到 44px 触摸目标。
+- Timeline 降噪：Turn metadata badge 小屏隐藏，tool cards 改为 `md` 以上双列，message bubble 小屏 `94%` 宽度，减少 640px 附近横向挤压。
+- Tool Inspector 移动端改为选择工具后弹出 bottom sheet，桌面仍保留右侧 aside。
+- Approval pending banner 动作区在移动端换行铺满，避免 `ml-auto` 挤压；Composer 增加 safe-area padding，发送/继续/暂停/取消等移动端按钮提升触摸面积。
+- CSS 对移动端 `.agent-scroll-area` 关闭 stable gutter 并缩小 scrollbar，优先通过布局收敛避免横向滚动。
+
 验收：
 
 - 390px、768px、1024px、1440px 下无横向滚动。
@@ -1218,6 +1227,7 @@ P1-F2 实施结果：
 | v36 | 新增 `runtime.Engine.RunTurnLifecycle`，将 `SendMessage` Begin/Finish lifecycle 包装为 engine bounded runner；response merge branch body 拆入 daemon helper，补 runtime lifecycle 与 SendMessage event-order 回归。 |
 | v37 | 完成 P1-F1 前端路由与 bundle 基线盘点：记录当前静态 route 单入口 JS/CSS 体积，并确定 `/agent`、`/scan/:id`、`/settings`、`/tasks` 与 `/scan/new`、`/skills` 与 `/mcp`、`/history`、`/` 与 `/ops` 的 route-level lazy 边界。 |
 | v38 | 完成 P1-F2 route-level lazy / bundle splitting：`App.tsx` 使用 `React.lazy` + `Suspense` 延迟加载页面 route，主入口 JS 从 `442.68KB` / gzip `127.29KB` 降到 `233.51KB` / gzip `75.24KB`，并记录主要 route chunk。 |
+| v39 | 完成 P1-F3 移动端 Agent Cockpit 降噪：新增移动端任务切换器、隐藏小屏桌面 TaskTree、收敛 header/timeline/tool card/approval/composer 密度，并补移动端 Tool Inspector bottom sheet；前端测试、build 与 diff check 通过。 |
 
 ---
 
