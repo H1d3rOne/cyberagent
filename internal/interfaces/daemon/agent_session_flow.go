@@ -91,8 +91,9 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		return agentControlResponse{Session: resolved.Session, Message: message, ApprovalState: canonicalAgentAuthorizationApproval(&pending, "denied")}, nil
 	}
 
+	externalTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, pending.ID)
 	action := agentPlannerAction{Name: pending.ActionName, Arguments: cloneMapStringAny(pending.Arguments)}
-	actionMessages, actionToolCalls, execErr := m.runRuntimePlannerActionExecution(ctx, sessionID, agentRuntimeTurnRef{}, pending.OriginalPrompt, language, operator, operationLevel, svc, action, req.AuthProfiles, req.DefaultAuthProfileID)
+	actionMessages, actionToolCalls, execErr := m.runRuntimePlannerActionExecution(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, svc, action, req.AuthProfiles, req.DefaultAuthProfileID)
 	if execErr != nil {
 		tool := failedAgentToolCall(pending.ActionName, execErr)
 		tool.Result = map[string]any{"action": pending.ActionName, "authorization_id": pending.ID}
@@ -115,8 +116,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		}
 	}
 	if len(actionMessages) > 0 {
-		actionTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, firstAgentMessageID(actionMessages, pending.ID))
-		m.appendMessagesForTurn(ctx, sessionID, actionTurnRef, pending.OriginalPrompt, daemonTurnExecutionPlannerActionExecution, operationLevel, actionMessages...)
+		m.appendMessagesForTurn(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, daemonTurnExecutionPlannerActionExecution, operationLevel, actionMessages...)
 	}
 	responseMessages := append([]agentMessage{message}, actionMessages...)
 	responseToolCalls := append([]agentToolCall{}, actionToolCalls...)
@@ -138,7 +138,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		if getErr == nil {
 			history := cloneAgentMessages(sessionState.Messages)
 			memorySummary := cloneAgentMemorySummary(sessionState.MemorySummary)
-			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, agentRuntimeTurnRef{}, pending.OriginalPrompt, language, operationLevel, llmReq, history, memorySummary, actionMessages)
+			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operationLevel, llmReq, history, memorySummary, actionMessages)
 			if synthesisErr != nil {
 				warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 				warningTool = agentToolCallWithPhase(warningTool, "step_replan")
@@ -149,19 +149,17 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 					[]agentToolCall{warningTool},
 					nil,
 				), "step_replan")
-				warningTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, warningMessage.ID)
-				m.appendMessagesForTurn(ctx, sessionID, warningTurnRef, pending.OriginalPrompt, string(runtime.LLMStageToolSynthesis), operationLevel, warningMessage)
+				m.appendMessagesForTurn(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, string(runtime.LLMStageToolSynthesis), operationLevel, warningMessage)
 				responseMessages = append(responseMessages, warningMessage)
 				responseToolCalls = append(responseToolCalls, warningTool)
 			} else if len(synthesisMessages) > 0 {
-				synthesisTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, firstAgentMessageID(synthesisMessages, pending.ID))
-				m.appendMessagesWithPlannerForTurn(ctx, sessionID, synthesisTurnRef, pending.OriginalPrompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
+				m.appendMessagesWithPlannerForTurn(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
 				responseMessages = append(responseMessages, synthesisMessages...)
 				responseToolCalls = append(responseToolCalls, synthesisToolCalls...)
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					nextState, _ := m.GetSession(ctx, sessionID)
 					loopHistory := cloneAgentMessages(nextState.Messages)
-					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuation(ctx, sessionID, agentRuntimeTurnRef{}, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(llmReq)-1)
+					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuation(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisPlan, reqMaxAgentReplans(llmReq)-1)
 					responseMessages = append(responseMessages, followupMessages...)
 					responseToolCalls = append(responseToolCalls, followupToolCalls...)
 				}

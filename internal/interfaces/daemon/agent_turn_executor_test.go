@@ -229,6 +229,165 @@ func TestAgentManagerDecideAgentAuthorizationApprovedActionAppendUsesExternalTur
 	require.Equal(t, "daemon.health", payload.Messages[0].ToolCalls[0].Name)
 }
 
+func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefThroughRuntimeRunners(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	now := time.Date(2026, 6, 6, 14, 0, 0, 0, time.UTC)
+	runID := "run-external-authorization-flow"
+	mgr.mu.Lock()
+	session := mgr.sessions[sessionID]
+	session.Status = "waiting_authorization"
+	session.ActiveTask = &agentTask{
+		ID:          "task-external-authorization-flow",
+		Goal:        "approve, synthesize, and continue a pending daemon action",
+		Kind:        "tool",
+		Status:      "blocked",
+		ActiveRunID: runID,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	session.PendingAuthorization = &agentAuthorizationRequest{
+		ID:             "auth-external-authorization-flow",
+		ActionName:     "daemon.health",
+		Arguments:      map[string]any{"probe": "external-authorization-flow"},
+		RequiredLevel:  "read_only",
+		Policy:         "manual",
+		Reason:         "operator approval required",
+		OriginalPrompt: "run daemon health and summarize after approval",
+		Status:         "pending",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	mgr.mu.Unlock()
+
+	actionTool := runningAgentToolCall("daemon.health", "authorization-flow")
+	actionTool = finishAgentToolCall(actionTool, nil)
+	actionTool.Result = map[string]any{"approved_action": true}
+	actionMessage := mgr.message("en", "tool", "authorized action executed through runtime runner", []agentToolCall{actionTool}, nil)
+	synthesisTool := runningAgentToolCall("LLM synthesis", "authorization-flow")
+	synthesisTool = finishAgentToolCall(synthesisTool, nil)
+	synthesisTool.Result = map[string]any{"synthesized": true}
+	synthesisMessage := agentMessageWithPhase(mgr.message("en", "agent", "authorized action synthesized through runtime runner", []agentToolCall{synthesisTool}, nil), "step_replan")
+	synthesisPlan := &agentPlannerResponse{
+		Phase: "step_replan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+	}
+
+	turnExecutions := []runtime.TurnContext{}
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		kind, _ := turn.Metadata["kind"].(string)
+		switch kind {
+		case daemonTurnExecutionPlannerActionExecution:
+			turnExecutions = append(turnExecutions, turn)
+			payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+			require.True(t, ok, "payload type = %T", turn.Payload)
+			require.Equal(t, "daemon.health", payload.Action.Name)
+			return runtime.TurnResult{
+				Status: runtime.TurnResultFinished,
+				Reason: "approved action handled by test executor",
+				Payload: daemonPlannerActionExecutionTurnResultPayload{
+					Messages:  []agentMessage{actionMessage},
+					ToolCalls: []agentToolCall{actionTool},
+				},
+			}, nil
+		case daemonTurnExecutionReplanActionContinuation:
+			turnExecutions = append(turnExecutions, turn)
+			payload, ok := turn.Payload.(daemonReplanActionContinuationTurnPayload)
+			require.True(t, ok, "payload type = %T", turn.Payload)
+			require.Same(t, synthesisPlan, payload.Plan)
+			return runtime.TurnResult{
+				Status:  runtime.TurnResultFinished,
+				Reason:  "follow-up handled by test executor",
+				Payload: daemonReplanActionContinuationTurnResultPayload{},
+			}, nil
+		default:
+			return runtime.TurnResult{Status: runtime.TurnResultRunning}, nil
+		}
+	}))
+
+	llmStages := []runtime.LLMStageRequest{}
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		require.Equal(t, runtime.LLMStageToolSynthesis, req.Stage)
+		llmStages = append(llmStages, req)
+		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		require.True(t, ok, "payload type = %T", req.Payload)
+		require.Len(t, payload.ToolMessages, 1)
+		require.Equal(t, actionMessage.ID, payload.ToolMessages[0].ID)
+		return runtime.LLMStageResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "synthesis handled by test runner",
+			Payload: daemonLLMToolSynthesisResultPayload{
+				Messages:  []agentMessage{synthesisMessage},
+				ToolCalls: []agentToolCall{synthesisTool},
+				Plan:      synthesisPlan,
+			},
+		}, nil
+	}))
+
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+
+	resp, err := mgr.DecideAgentAuthorization(context.Background(), sessionID, agentAuthorizationDecisionRequest{
+		Action:          "approve",
+		AuthorizationID: "auth-external-authorization-flow",
+		Operator:        "operator-1",
+		Language:        "en",
+		OperationLevel:  "read_only",
+		Provider:        "ollama",
+	}, routerServices{})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.ApprovalState)
+	require.Equal(t, approvalCanonicalStateApproved, resp.ApprovalState.State)
+
+	expectedTurnID := "turn_auth-external-authorization-flow"
+	require.Len(t, turnExecutions, 2)
+	require.Len(t, llmStages, 1)
+	require.Len(t, appendMutations, 2)
+	for _, turn := range turnExecutions {
+		require.Equal(t, sessionID, turn.SessionID)
+		require.Equal(t, "task-external-authorization-flow", turn.TaskID)
+		require.Equal(t, runID, turn.RunID)
+		require.Equal(t, expectedTurnID, turn.TurnID)
+		require.Equal(t, "run daemon health and summarize after approval", turn.Prompt)
+		require.Equal(t, "read_only", turn.OperationLevel)
+	}
+	require.Equal(t, daemonTurnExecutionPlannerActionExecution, turnExecutions[0].Metadata["kind"])
+	require.Equal(t, daemonTurnExecutionReplanActionContinuation, turnExecutions[1].Metadata["kind"])
+
+	require.Equal(t, sessionID, llmStages[0].Turn.SessionID)
+	require.Equal(t, "task-external-authorization-flow", llmStages[0].Turn.TaskID)
+	require.Equal(t, runID, llmStages[0].Turn.RunID)
+	require.Equal(t, expectedTurnID, llmStages[0].Turn.TurnID)
+	require.Equal(t, "run daemon health and summarize after approval", llmStages[0].Turn.Prompt)
+	require.Equal(t, "read_only", llmStages[0].Turn.OperationLevel)
+	require.Equal(t, string(runtime.LLMStageToolSynthesis), llmStages[0].Metadata["stage"])
+
+	require.Equal(t, daemonTurnExecutionPlannerActionExecution, appendMutations[0].Turn.Origin)
+	require.Equal(t, string(runtime.LLMStageToolSynthesis), appendMutations[1].Turn.Origin)
+	for _, appendReq := range appendMutations {
+		require.Equal(t, runtime.SessionMutationAppendMessages, appendReq.Kind)
+		require.Equal(t, sessionID, appendReq.Turn.SessionID)
+		require.Equal(t, "task-external-authorization-flow", appendReq.Turn.TaskID)
+		require.Equal(t, runID, appendReq.Turn.RunID)
+		require.Equal(t, expectedTurnID, appendReq.Turn.TurnID)
+		require.Equal(t, "run daemon health and summarize after approval", appendReq.Turn.Prompt)
+		require.Equal(t, "read_only", appendReq.Turn.OperationLevel)
+	}
+}
+
 func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
