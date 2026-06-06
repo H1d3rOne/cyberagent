@@ -124,7 +124,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N3：将 capability mismatch blocked state（`markAgentCapabilityBlocked`）拆成独立 session mutation，保留 blocked todo/task/next_action 语义与 plan-only append 顺序。
 - [x] P0.5-N4：为 LLM fallback manual authorization branch 补 turn/external mutation 覆盖测试，确认 warning + authorization message append 与 pending auth mutation metadata 对齐。
 - [x] P0.5-N5：为 `runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 输出一个 engine-native runner 设计草案：输入/输出 payload、authorization gate、action queue、synthesis、append/persist ownership 边界。
-- [ ] P0.5-N6：把 planner loop 的 action queue metadata 生成与 authorization gate decision 封装为可测试的小 helper，先不改变行为，为后续 engine-native runner 做准备。
+- [x] P0.5-N6：把 planner loop 的 action queue metadata 生成与 authorization/capability gate decision 封装为可测试的小 helper；保持 gate 顺序、authorization policy/reason、capability blocked、queue metadata 与 append/response 语义不变。
 - [ ] P0.5-N7：收敛 remaining `SendMessage` response merge 分支的 regression matrix，覆盖 control continue/revise、pending auth gate、route-before-LLM、LLM fallback、no-LLM route。
 - [ ] P0.5-N8：最后再考虑把 `SendMessage` 主编排拆成 engine turn lifecycle runner；该项必须等待 N1-N7 的 focused tests 通过。
 
@@ -132,7 +132,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 
 - 已经走 engine seam：`record_user_message`、`append_messages`、`control_session`、`resolve_authorization`、`request_authorization`、`capability_blocked`；deterministic route / replan continuation / planner action execution；LLM turn runner；planner chat 与 tool synthesis stage。
 - 已输出 engine-native runner 草案：建议将 `llm_tool_loop` 与 `replan_action_continuation` 统一为单个 loop runner 的两个 mode，明确请求/响应 payload、authorization gate、action queue metadata、synthesis、append/persist ownership 与迁移顺序。
-- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization gate decision、action queue metadata、StepReplan 循环控制、response merge；`SendMessage` 主分支编排。
+- 已抽出 planner loop helper：`decideAgentPlannerActionGate` 负责无副作用计算 capability mismatch / explicit intent / operation level / manual authorization / allow 决策；`agentPlannerActionQueueMetadata` 负责统一 action queue metadata 字段与类型。
+- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 循环控制、response merge；`SendMessage` 主分支编排。
 
 ### 7.2 P1 Frontend / QA
 
@@ -166,9 +167,10 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 
 2026-06-06 当前工作树验证通过：
 
-本轮增量（P0.5-N1/N2/N3/N4/N5：未完成项滚动清单 + authorization request / capability blocked session mutation seam + LLM fallback authorization branch 覆盖 + engine-native loop runner 草案）：
+本轮增量（P0.5-N1/N2/N3/N4/N5/N6：未完成项滚动清单 + authorization request / capability blocked session mutation seam + LLM fallback authorization branch 覆盖 + engine-native loop runner 草案 + planner action gate/helper parity）：
 
 ```bash
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentPlannerActionGateDecision|TestAgentPlannerActionQueueMetadata|TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTurnExecutor|TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMutator|TestAgentManagerExecutePlannerActionCapabilityBlockedThroughSessionMutator'
 git diff --check -- docs/CyberAgent-TODO.md docs/CyberAgent-Optimization-Plan.md
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations|TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor|TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMutator'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerExecutePlannerActionCapabilityBlockedThroughSessionMutator|TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMutator|TestCapabilityClassifierPreventsCommonNonEquivalentTools|TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTurnExecutor'

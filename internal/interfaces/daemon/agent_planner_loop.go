@@ -429,6 +429,95 @@ func reqMaxAgentReplans(req sendAgentMessageRequest) int {
 	return 3
 }
 
+type agentPlannerActionGateKind string
+
+const (
+	agentPlannerActionGateAllow                       agentPlannerActionGateKind = "allow"
+	agentPlannerActionGateCapabilityBlocked           agentPlannerActionGateKind = "capability_blocked"
+	agentPlannerActionGateExplicitIntentRequired      agentPlannerActionGateKind = "explicit_operator_intent_required"
+	agentPlannerActionGateOperationLevelRequired      agentPlannerActionGateKind = "operation_level_required"
+	agentPlannerActionGateManualAuthorizationRequired agentPlannerActionGateKind = "manual_tool_authorization_required"
+)
+
+type agentPlannerActionGateDecision struct {
+	Kind            agentPlannerActionGateKind
+	ActionName      string
+	RequiredLevel   string
+	Policy          string
+	Reason          string
+	IntentID        string
+	SuggestedPrompt string
+}
+
+func decideAgentPlannerActionGate(operatorPrompt, language, operationLevel string, action agentPlannerAction) agentPlannerActionGateDecision {
+	actionName := normalizeAgentPlannerActionName(action.Name)
+	if actionName == "" {
+		actionName = strings.TrimSpace(action.Name)
+	}
+	requiredLevel := agentOperationLevelRequiredForPlannerAction(actionName, action.Arguments)
+	decision := agentPlannerActionGateDecision{
+		Kind:          agentPlannerActionGateAllow,
+		ActionName:    actionName,
+		RequiredLevel: requiredLevel,
+	}
+
+	if mismatchReason, suggestedPrompt, mismatch := agentPlannerActionCapabilityMismatch(operatorPrompt, actionName, language); mismatch {
+		decision.Kind = agentPlannerActionGateCapabilityBlocked
+		decision.IntentID = agentClassifyCapabilityIntent(operatorPrompt).ID
+		decision.Reason = mismatchReason
+		decision.SuggestedPrompt = suggestedPrompt
+		return decision
+	}
+
+	if agentOperationBypassPermissions(operationLevel) {
+		return decision
+	}
+
+	if !agentPlannerActionAllowedByPrompt(operatorPrompt, actionName) {
+		decision.Kind = agentPlannerActionGateExplicitIntentRequired
+		decision.Policy = "explicit_operator_intent_required"
+		decision.Reason = agentText(language, "模型计划了一个需要操作者明确确认的动作；已暂停执行，等待授权。", "The model planned an action that requires explicit operator confirmation; execution is paused until authorization.")
+		return decision
+	}
+
+	if !agentOperationLevelAtLeast(operationLevel, requiredLevel) {
+		decision.Kind = agentPlannerActionGateOperationLevelRequired
+		decision.Policy = "operation_level_required"
+		decision.Reason = agentText(
+			language,
+			fmt.Sprintf("当前权限级别为 %s，执行 %s 需要 %s；已暂停执行，等待授权升级。", operationLevel, actionName, requiredLevel),
+			fmt.Sprintf("Current operation level is %s; executing %s requires %s. Execution is paused until authorization is granted.", operationLevel, actionName, requiredLevel),
+		)
+		return decision
+	}
+
+	if agentPlannerActionRequiresManualAuthorization(actionName) {
+		decision.Kind = agentPlannerActionGateManualAuthorizationRequired
+		decision.Policy = "manual_tool_authorization_required"
+		decision.Reason = agentText(
+			language,
+			fmt.Sprintf("%s 属于需要人工确认的工具动作；已暂停执行，等待授权。", actionName),
+			fmt.Sprintf("%s is a tool action that requires human confirmation; execution is paused until authorization.", actionName),
+		)
+		return decision
+	}
+
+	return decision
+}
+
+func newAgentPlannerActionQueueID(now time.Time) string {
+	return strings.Replace(runs.NewJobID(now.UTC()), "job_", "queue_", 1)
+}
+
+func agentPlannerActionQueueMetadata(queueID string, index, count int, actionName string) map[string]interface{} {
+	return map[string]interface{}{
+		"action_queue_id": queueID,
+		"action_index":    index,
+		"action_count":    count,
+		"action_name":     actionName,
+	}
+}
+
 func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
 	actions := agentPlannerActions(plan)
 	if len(actions) == 0 {
@@ -440,39 +529,34 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 
 	var messages []agentMessage
 	var toolCalls []agentToolCall
-	queueID := strings.Replace(runs.NewJobID(time.Now().UTC()), "job_", "queue_", 1)
+	queueID := newAgentPlannerActionQueueID(time.Now().UTC())
 	actionCount := len(actions)
 	for idx, action := range actions {
 		actionIndex := idx + 1
-		actionName := normalizeAgentPlannerActionName(action.Name)
-		if actionName == "" {
-			actionName = strings.TrimSpace(action.Name)
-		}
-		bypassPermissions := agentOperationBypassPermissions(operationLevel)
+		gateDecision := decideAgentPlannerActionGate(operatorPrompt, language, operationLevel, action)
+		actionName := gateDecision.ActionName
 		var actionMessages []agentMessage
 		var actionToolCalls []agentToolCall
 		var err error
-		requiredLevel := agentOperationLevelRequiredForPlannerAction(actionName, action.Arguments)
-		if mismatchReason, suggestedPrompt, mismatch := agentPlannerActionCapabilityMismatch(operatorPrompt, actionName, language); mismatch {
-			intentID := agentClassifyCapabilityIntent(operatorPrompt).ID
+		if gateDecision.Kind == agentPlannerActionGateCapabilityBlocked {
 			policyErr := services.NewError(services.CodePolicyDenied, "non-equivalent tool action blocked", map[string]any{
-				"intent":              intentID,
+				"intent":              gateDecision.IntentID,
 				"action":              actionName,
-				"suggested_prompt":    suggestedPrompt,
+				"suggested_prompt":    gateDecision.SuggestedPrompt,
 				"capability_mismatch": true,
 			}, nil)
 			tool := failedAgentToolCall("agent.capability_match", policyErr)
 			tool.Result = map[string]any{
-				"intent":           intentID,
+				"intent":           gateDecision.IntentID,
 				"action":           actionName,
-				"suggested_prompt": suggestedPrompt,
+				"suggested_prompt": gateDecision.SuggestedPrompt,
 			}
-			m.markAgentCapabilityBlockedForTurn(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, actionName, intentID, mismatchReason, suggestedPrompt)
-			message := agentMessageWithPhase(m.message(language, "agent", mismatchReason, []agentToolCall{tool}, nil), "step_replan")
+			m.markAgentCapabilityBlockedForTurn(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, actionName, gateDecision.IntentID, gateDecision.Reason, gateDecision.SuggestedPrompt)
+			message := agentMessageWithPhase(m.message(language, "agent", gateDecision.Reason, []agentToolCall{tool}, nil), "step_replan")
 			messages = append(messages, message)
 			toolCalls = append(toolCalls, agentToolCallWithPhase(tool, "step_replan"))
 			return messages, toolCalls, true
-		} else if !bypassPermissions && !agentPlannerActionAllowedByPrompt(operatorPrompt, actionName) {
+		} else if gateDecision.Kind == agentPlannerActionGateExplicitIntentRequired {
 			authMessage := m.requestAgentAuthorizationForTurn(
 				ctx,
 				sessionID,
@@ -482,14 +566,14 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 				operationLevel,
 				action,
 				actionName,
-				requiredLevel,
-				"explicit_operator_intent_required",
-				agentText(language, "模型计划了一个需要操作者明确确认的动作；已暂停执行，等待授权。", "The model planned an action that requires explicit operator confirmation; execution is paused until authorization."),
+				gateDecision.RequiredLevel,
+				gateDecision.Policy,
+				gateDecision.Reason,
 			)
 			authMessage = agentMessageWithPhase(authMessage, "step")
 			messages = append(messages, authMessage)
 			return messages, toolCalls, true
-		} else if !bypassPermissions && !agentOperationLevelAtLeast(operationLevel, requiredLevel) {
+		} else if gateDecision.Kind == agentPlannerActionGateOperationLevelRequired {
 			authMessage := m.requestAgentAuthorizationForTurn(
 				ctx,
 				sessionID,
@@ -499,18 +583,14 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 				operationLevel,
 				action,
 				actionName,
-				requiredLevel,
-				"operation_level_required",
-				agentText(
-					language,
-					fmt.Sprintf("当前权限级别为 %s，执行 %s 需要 %s；已暂停执行，等待授权升级。", operationLevel, actionName, requiredLevel),
-					fmt.Sprintf("Current operation level is %s; executing %s requires %s. Execution is paused until authorization is granted.", operationLevel, actionName, requiredLevel),
-				),
+				gateDecision.RequiredLevel,
+				gateDecision.Policy,
+				gateDecision.Reason,
 			)
 			authMessage = agentMessageWithPhase(authMessage, "step")
 			messages = append(messages, authMessage)
 			return messages, toolCalls, true
-		} else if !bypassPermissions && agentPlannerActionRequiresManualAuthorization(actionName) {
+		} else if gateDecision.Kind == agentPlannerActionGateManualAuthorizationRequired {
 			authMessage := m.requestAgentAuthorizationForTurn(
 				ctx,
 				sessionID,
@@ -520,13 +600,9 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 				operationLevel,
 				action,
 				actionName,
-				requiredLevel,
-				"manual_tool_authorization_required",
-				agentText(
-					language,
-					fmt.Sprintf("%s 属于需要人工确认的工具动作；已暂停执行，等待授权。", actionName),
-					fmt.Sprintf("%s is a tool action that requires human confirmation; execution is paused until authorization.", actionName),
-				),
+				gateDecision.RequiredLevel,
+				gateDecision.Policy,
+				gateDecision.Reason,
 			)
 			authMessage = agentMessageWithPhase(authMessage, "step")
 			messages = append(messages, authMessage)
@@ -555,12 +631,7 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 			actionMessages = []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}
 			actionToolCalls = []agentToolCall{tool}
 		}
-		actionMetadata := map[string]interface{}{
-			"action_queue_id": queueID,
-			"action_index":    actionIndex,
-			"action_count":    actionCount,
-			"action_name":     actionName,
-		}
+		actionMetadata := agentPlannerActionQueueMetadata(queueID, actionIndex, actionCount, actionName)
 		for i := range actionToolCalls {
 			actionToolCalls[i] = withAgentToolMetadata(actionToolCalls[i], actionMetadata)
 		}

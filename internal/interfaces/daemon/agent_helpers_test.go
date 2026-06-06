@@ -20,6 +20,137 @@ func TestScheduleIntentBlocksImmediateScanSubstitution(t *testing.T) {
 		t.Fatalf("schedule.create should be allowed, got reason %q", reason)
 	}
 }
+
+func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
+	cases := []struct {
+		name          string
+		prompt        string
+		language      string
+		operation     string
+		action        agentPlannerAction
+		wantKind      agentPlannerActionGateKind
+		wantPolicy    string
+		wantRequired  string
+		wantIntentID  string
+		wantAction    string
+		wantReasonSub string
+	}{
+		{
+			name:         "capability mismatch wins before bypass",
+			prompt:       "每小时扫描 https://example.com",
+			language:     "zh",
+			operation:    "bypass",
+			action:       agentPlannerAction{Name: "scan.web.safe", Arguments: map[string]any{"target": "https://example.com"}},
+			wantKind:     agentPlannerActionGateCapabilityBlocked,
+			wantRequired: "safe_scan",
+			wantIntentID: agentIntentScheduleCreate,
+			wantAction:   "scan.web.safe",
+		},
+		{
+			name:          "explicit operator intent required before operation/manual gates",
+			prompt:        "summarize the project",
+			language:      "en",
+			operation:     "workspace_write",
+			action:        agentPlannerAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
+			wantKind:      agentPlannerActionGateExplicitIntentRequired,
+			wantPolicy:    "explicit_operator_intent_required",
+			wantRequired:  "workspace_write",
+			wantAction:    "workspace.files.write",
+			wantReasonSub: "explicit operator confirmation",
+		},
+		{
+			name:          "operation level required before manual authorization",
+			prompt:        "scan https://example.com",
+			language:      "en",
+			operation:     "read_only",
+			action:        agentPlannerAction{Name: "scan.web.safe", Arguments: map[string]any{"target": "https://example.com"}},
+			wantKind:      agentPlannerActionGateOperationLevelRequired,
+			wantPolicy:    "operation_level_required",
+			wantRequired:  "safe_scan",
+			wantAction:    "scan.web.safe",
+			wantReasonSub: "requires safe_scan",
+		},
+		{
+			name:          "manual authorization after explicit intent and operation level pass",
+			prompt:        "write file notes.md content: hello",
+			language:      "en",
+			operation:     "workspace_write",
+			action:        agentPlannerAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
+			wantKind:      agentPlannerActionGateManualAuthorizationRequired,
+			wantPolicy:    "manual_tool_authorization_required",
+			wantRequired:  "workspace_write",
+			wantAction:    "workspace.files.write",
+			wantReasonSub: "requires human confirmation",
+		},
+		{
+			name:         "allow read only action",
+			prompt:       "daemon health",
+			language:     "en",
+			operation:    "read_only",
+			action:       agentPlannerAction{Name: "daemon.health", Arguments: map[string]any{}},
+			wantKind:     agentPlannerActionGateAllow,
+			wantRequired: "read_only",
+			wantAction:   "daemon.health",
+		},
+		{
+			name:         "bypass skips explicit operation and manual gates",
+			prompt:       "summarize the project",
+			language:     "en",
+			operation:    "bypass",
+			action:       agentPlannerAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
+			wantKind:     agentPlannerActionGateAllow,
+			wantRequired: "workspace_write",
+			wantAction:   "workspace.files.write",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decideAgentPlannerActionGate(tc.prompt, tc.language, tc.operation, tc.action)
+			if got.Kind != tc.wantKind {
+				t.Fatalf("Kind = %q, want %q (decision=%#v)", got.Kind, tc.wantKind, got)
+			}
+			if got.Policy != tc.wantPolicy {
+				t.Fatalf("Policy = %q, want %q", got.Policy, tc.wantPolicy)
+			}
+			if got.RequiredLevel != tc.wantRequired {
+				t.Fatalf("RequiredLevel = %q, want %q", got.RequiredLevel, tc.wantRequired)
+			}
+			if got.IntentID != tc.wantIntentID {
+				t.Fatalf("IntentID = %q, want %q", got.IntentID, tc.wantIntentID)
+			}
+			if got.ActionName != tc.wantAction {
+				t.Fatalf("ActionName = %q, want %q", got.ActionName, tc.wantAction)
+			}
+			if tc.wantReasonSub != "" && !strings.Contains(got.Reason, tc.wantReasonSub) {
+				t.Fatalf("Reason = %q, want substring %q", got.Reason, tc.wantReasonSub)
+			}
+		})
+	}
+}
+
+func TestAgentPlannerActionQueueMetadata(t *testing.T) {
+	metadata := agentPlannerActionQueueMetadata("queue-test", 2, 3, "daemon.health")
+	if metadata["action_queue_id"] != "queue-test" {
+		t.Fatalf("action_queue_id = %#v, want queue-test", metadata["action_queue_id"])
+	}
+	if metadata["action_index"] != 2 {
+		t.Fatalf("action_index = %#v, want 2", metadata["action_index"])
+	}
+	if metadata["action_count"] != 3 {
+		t.Fatalf("action_count = %#v, want 3", metadata["action_count"])
+	}
+	if metadata["action_name"] != "daemon.health" {
+		t.Fatalf("action_name = %#v, want daemon.health", metadata["action_name"])
+	}
+	if _, ok := metadata["action_index"].(int); !ok {
+		t.Fatalf("action_index type = %T, want int", metadata["action_index"])
+	}
+	if _, ok := metadata["action_count"].(int); !ok {
+		t.Fatalf("action_count type = %T, want int", metadata["action_count"])
+	}
+}
+
 func TestScheduleFallbackOverridesModelCapabilityGapText(t *testing.T) {
 	plan := agentFallbackPlannerFromPrompt("每小时扫描 https://example.com", "当前工具集不支持创建定时任务/cron job", "zh")
 	if plan == nil || len(plan.Actions) != 1 {
