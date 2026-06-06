@@ -1225,6 +1225,139 @@ func TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner(
 	require.Same(t, expectedPlan, plan)
 }
 
+func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	lastMessageAt := time.Date(2026, 6, 6, 18, 0, 0, 0, time.UTC)
+	req := agentPlannerActionReplanCycleRequest{
+		Turn: agentPlannerActionReplanCycleTurnContext(
+			"session-cycle-synthesis",
+			agentRuntimeTurnRef{
+				TaskID: "task-cycle-synthesis",
+				RunID:  "run-cycle-synthesis",
+				TurnID: "turn-cycle-synthesis",
+			},
+			"summarize cycle tools",
+			"user",
+			"safe_scan",
+		),
+		Language: "zh-CN",
+		LLMRequest: agentPlannerActionReplanCycleLLMRequest{
+			Origin:         "user",
+			OperationLevel: "safe_scan",
+			Model:          "gpt-cycle-synthesis",
+		},
+		MemorySummary: agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(&agentMemorySummary{
+			Summary:       "cycle memory",
+			MessageCount:  3,
+			LastMessageID: "msg-cycle-synthesis-action",
+			LastMessageAt: &lastMessageAt,
+		}),
+	}
+	state := agentPlannerActionReplanCycleStateFromLegacy(
+		nil,
+		nil,
+		[]agentMessage{
+			{ID: "history-cycle-synthesis-user", Role: "user", Content: "operator asked"},
+			{ID: "msg-cycle-synthesis-action", Role: "tool", Content: "action observation"},
+		},
+	)
+	actionMessages := agentPlannerActionReplanCycleMessagesFromAgentMessages([]agentMessage{{
+		ID:      "msg-cycle-synthesis-action",
+		Role:    "tool",
+		Content: "action observation",
+		ToolCalls: []agentToolCall{{
+			ID:       "tool-cycle-synthesis-action",
+			Name:     "daemon.health",
+			Metadata: map[string]interface{}{"phase": "step"},
+		}},
+	}})
+
+	synthesisMessage := agentMessage{ID: "msg-cycle-synthesis-summary", Role: "agent", Content: "cycle summarized"}
+	synthesisTool := agentToolCall{ID: "tool-cycle-synthesis-summary", Name: "LLM synthesis", Result: map[string]any{"ok": true}}
+	synthesisPlan := &agentPlannerResponse{
+		Phase: "step_replan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+		Actions: []agentPlannerAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "next"},
+		}},
+	}
+
+	called := false
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, stageReq runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		called = true
+		require.Equal(t, runtime.LLMStageToolSynthesis, stageReq.Stage)
+		require.Equal(t, "session-cycle-synthesis", stageReq.Turn.SessionID)
+		require.Equal(t, "task-cycle-synthesis", stageReq.Turn.TaskID)
+		require.Equal(t, "run-cycle-synthesis", stageReq.Turn.RunID)
+		require.Equal(t, "turn-cycle-synthesis", stageReq.Turn.TurnID)
+		require.Equal(t, "summarize cycle tools", stageReq.Turn.Prompt)
+		require.Equal(t, "safe_scan", stageReq.Turn.OperationLevel)
+
+		payload, ok := stageReq.Payload.(daemonLLMToolSynthesisPayload)
+		require.True(t, ok, "payload type = %T", stageReq.Payload)
+		require.Equal(t, "zh-CN", payload.Language)
+		require.Equal(t, "safe_scan", payload.OperationLevel)
+		require.Equal(t, "gpt-cycle-synthesis", payload.Req.Model)
+		require.Equal(t, "cycle memory", payload.MemorySummary.Summary)
+		require.NotNil(t, payload.MemorySummary.LastMessageAt)
+		require.Equal(t, lastMessageAt, *payload.MemorySummary.LastMessageAt)
+		require.Equal(t, []string{"history-cycle-synthesis-user", "msg-cycle-synthesis-action"}, agentMessageIDs(payload.History))
+		require.Equal(t, []string{"msg-cycle-synthesis-action"}, agentMessageIDs(payload.ToolMessages))
+
+		payload.History[0].Content = "mutated payload history"
+		payload.ToolMessages[0].Content = "mutated payload tool message"
+		payload.MemorySummary.Summary = "mutated payload memory"
+		*payload.MemorySummary.LastMessageAt = lastMessageAt.Add(time.Hour)
+
+		return runtime.LLMStageResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "cycle synthesis handled",
+			Payload: daemonLLMToolSynthesisResultPayload{
+				Messages:  []agentMessage{synthesisMessage},
+				ToolCalls: []agentToolCall{synthesisTool},
+				Plan:      synthesisPlan,
+			},
+		}, nil
+	}))
+
+	result, err := mgr.runAgentPlannerActionReplanCycleSynthesis(context.Background(), req, state, actionMessages)
+
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Equal(t, "operator asked", state.LoopHistory.legacyAgentMessages()[0].Content)
+	require.Equal(t, "action observation", actionMessages.legacyAgentMessages()[0].Content)
+	require.Equal(t, "cycle memory", req.MemorySummary.legacyAgentMemorySummary().Summary)
+	require.Equal(t, lastMessageAt, *req.MemorySummary.legacyAgentMemorySummary().LastMessageAt)
+	require.Same(t, synthesisPlan, result.legacyPlan)
+
+	gotMessages := result.Messages.legacyAgentMessages()
+	gotToolCalls := result.ToolCalls.legacyAgentToolCalls()
+	require.Equal(t, []agentMessage{synthesisMessage}, gotMessages)
+	require.Equal(t, []agentToolCall{synthesisTool}, gotToolCalls)
+	require.True(t, result.Plan.hasActions())
+	require.True(t, result.Plan.shouldAutoContinue())
+	require.Equal(t, "next", result.Plan.actions()[0].Arguments["probe"])
+
+	synthesisMessage.Content = "mutated returned message source"
+	synthesisTool.Result["ok"] = false
+	synthesisPlan.Actions[0].Arguments["probe"] = "mutated-next"
+	synthesisPlan.NextAction.AutoContinue = false
+	gotMessages[0].Content = "mutated got message"
+	gotToolCalls[0].Result["ok"] = "mutated"
+
+	require.Equal(t, "cycle summarized", result.Messages.legacyAgentMessages()[0].Content)
+	require.Equal(t, true, result.ToolCalls.legacyAgentToolCalls()[0].Result["ok"])
+	require.True(t, result.Plan.shouldAutoContinue())
+	require.Equal(t, "next", result.Plan.actions()[0].Arguments["probe"])
+}
+
 func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

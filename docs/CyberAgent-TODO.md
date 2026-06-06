@@ -91,6 +91,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 将 planner action/replan cycle plan handle 的 actions 也固化为构造时 `actionsSnapshot`，shared cycle action executor 不再为执行动作解包 legacy plan。
 - [x] 将 `runAgentLLMToolLoop` 轮次间的 plan 状态保持为 `agentPlannerActionReplanCyclePlan` handle，auto-continue 下一轮不再把 cycle plan 解包回 legacy planner response。
 - [x] 将 `runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 轮次间的 state 保持为 `agentPlannerActionReplanCycleState` handle，外层 loop 不再每轮把 response/tool/history 解包回 legacy slice。
+- [x] 将 shared cycle StepReplan synthesis legacy adapter 调用收敛到 cycle-private `runAgentPlannerActionReplanCycleSynthesis` helper，主 cycle 不再直接展开 LLM request/history/memory/action message 的 legacy 转换。
 - [ ] 继续把剩余 session mutation 分批迁成 engine-native runner。
 - [x] 最后将 `SendMessage` Begin/Finish lifecycle 收敛为 `runtime.Engine.RunTurnLifecycle` bounded runner；response merge branch body 仍保留 daemon helper 作为迁移 adapter。
 
@@ -157,6 +158,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N22：把 shared cycle plan handle 的 action list 改为构造时 `actionsSnapshot` 快照；`runAgentPlannerActionReplanCycle` 调用 action executor 时传入 snapshot action list，不再通过 `legacyPlannerResponse()` 解包 plan actions。
 - [x] P0.5-N23：把 `runAgentLLMToolLoop` 外层 auto-continue 循环改为持有并传递 `agentPlannerActionReplanCyclePlan` handle；下一轮执行使用 `cycle.Plan`，不再通过 `cycle.Plan.legacyPlannerResponse()` 回填 legacy plan。
 - [x] P0.5-N24：把 `runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 外层循环改为持有并传递 `agentPlannerActionReplanCycleState` handle；每轮不再把 `cycle.State` 解包成 legacy response/tool/history slice 后重新包装，只在入口/返回与 synthesis adapter 边界转换。
+- [x] P0.5-N25：把 StepReplan synthesis legacy adapter 调用集中到 `runAgentPlannerActionReplanCycleSynthesis`，主流程不再直接展开 LLM request/history/memory/action message legacy 转换；返回 messages/tool calls/plan 继续以 cycle wrappers/handle 承载。
 
 当前盘点（2026-06-06）：
 
@@ -166,16 +168,16 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - 已抽出 planner action/replan cycle helper：`runAgentPlannerActionReplanCycle` 统一 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 的 Action → action append → tool synthesis → synthesis append 骨架；两种入口仍保留各自前置条件、append origin 与 response/tool merge 语义。
 - 已把 shared cycle helper 的输入/输出整理为 daemon-private DTO：`agentPlannerActionReplanCycleRequest` 承载 turn/cycle-private LLM request/authorization/tool context/plan handle/options，`agentPlannerActionReplanCycleState` 承载 response/tool/history state，`agentPlannerActionReplanCycleResult` 承载新 state/final plan handle/continue decision；为后续替换 runtime-neutral DTO 做前置。
 - shared cycle request 已使用 runtime-native turn boundary：`agentPlannerActionReplanCycleRequest.Turn` 现在是 `runtime.TurnContext`，session/task/run/turn/prompt/origin/operation_level 不再作为散列 daemon 参数传入；仅在落回 append/action/synthesis legacy adapter 时转换为 `agentRuntimeTurnRef`。
-- shared cycle request 已拆分 authorization 与 LLM synthesis request：action execution 只读取 `agentPlannerActionReplanCycleAuthorization`，LLM synthesis 兼容路径由 cycle-private DTO 临时转换到 legacy request。
+- shared cycle request 已拆分 authorization 与 LLM synthesis request：action execution 只读取 `agentPlannerActionReplanCycleAuthorization`，StepReplan synthesis 兼容路径已集中到 `runAgentPlannerActionReplanCycleSynthesis`，由 cycle-private DTO 临时转换到 legacy request。
 - shared cycle request 的 LLM synthesis 输入已缩小为 `agentPlannerActionReplanCycleLLMRequest`：只保留 provider/model/API key/base URL/instructions/origin/operation_level/auth hints，并在调用 legacy synthesis adapter 时临时转换回 `sendAgentMessageRequest`。
 - shared cycle request 的 auth profile 输入已收敛为 `agentPlannerActionReplanCycleAuthProfile`：authorization 与 LLM request 都不再直接持有 `agentHTTPAuthProfile`，legacy action/synthesis adapter 边界再转换回 daemon HTTP auth profile，并补 secret/enabled 深拷贝隔离测试。
 - shared cycle request/result 的 plan 输入输出已封装为 `agentPlannerActionReplanCyclePlan` handle：cycle DTO 不再直接暴露 `*agentPlannerResponse` 字段，LLM stage/synthesis adapter 边界临时包装 legacy plan；handle 入口/出口已深拷贝隔离 plan/action/todo/next_action，并把 action list、action count 与 auto-continue 查询状态固化为构造时快照，shared cycle action executor 直接消费 `actionsSnapshot`，`runAgentLLMToolLoop` 轮次间也保持 plan handle，后续可替换为 runtime-neutral plan/action DTO。
 - shared cycle request 的 tool/service 输入已封装为 `agentPlannerActionReplanCycleToolContext`：cycle DTO 不再直接暴露 `routerServices` 字段，action execution legacy adapter 调用点临时解包同一 services，后续可替换成 runtime-neutral tool binding。
-- shared cycle state 的 response/history messages 与 top-level tool calls 已封装为 `agentPlannerActionReplanCycleMessages` / `agentPlannerActionReplanCycleToolCalls`：cycle DTO 不再直接暴露 `[]agentMessage` / `[]agentToolCall` 字段；`runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 轮次间保持 `agentPlannerActionReplanCycleState` handle，只在入口/返回与 legacy synthesis adapter 边界显式转换，并补 state 深拷贝隔离与多轮 history 顺序回归。
+- shared cycle state 的 response/history messages 与 top-level tool calls 已封装为 `agentPlannerActionReplanCycleMessages` / `agentPlannerActionReplanCycleToolCalls`：cycle DTO 不再直接暴露 `[]agentMessage` / `[]agentToolCall` 字段；`runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 轮次间保持 `agentPlannerActionReplanCycleState` handle，只在入口/返回与 `runAgentPlannerActionReplanCycleSynthesis` legacy adapter 边界显式转换，并补 state 深拷贝隔离与多轮 history 顺序回归。
 - shared cycle request 的 memory summary 已封装为 `agentPlannerActionReplanCycleMemorySummary`：cycle DTO 不再直接暴露 `*agentMemorySummary` 字段，LLM synthesis legacy adapter 边界显式转换，并补 LastMessageAt 深拷贝隔离测试。
 - `SendMessage` response merge regression matrix 已覆盖 control continue/revise、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback route/authorization、active-run continue parity focused tests。
 - `SendMessage` Begin/Finish 已由 `runtime.Engine.RunTurnLifecycle` 包住 bounded turn body；turn_started → branch append/model/tool events → turn_finished/task terminal event 顺序已补回归。
-- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition 与 `SendMessage` response merge branch body；后续目标是把 cycle wrappers/handles 内部仍临时包住的 legacy message/tool/plan/memory 与 LLM/tool adapter compatibility 继续替换成 runtime-neutral DTO，再移动到 engine-native runner。
+- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、action execution service/auth 解包、StepReplan 外层 loop/mode precondition 与 `SendMessage` response merge branch body；StepReplan synthesis legacy 转换已集中到 cycle-private helper，后续目标是把 cycle wrappers/handles 内部仍临时包住的 legacy message/tool/plan/memory 与 LLM/tool adapter compatibility 继续替换成 runtime-neutral DTO，再移动到 engine-native runner。
 
 ### 7.2 P1 Frontend / QA
 
@@ -439,6 +441,19 @@ git diff --check
 ```
 
 结果：`runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 初始化后持有 `agentPlannerActionReplanCycleState`，每轮向 shared cycle 直接传递/接收 `cycleState`，不再把 response/tool/history state 解包回 legacy slice 后重新包装；只在函数返回与 `runRuntimeAgentLLMToolSynthesis` legacy adapter 边界转换。新增 continuation 多轮 auto-continue state/history 回归，并扩展 LLM loop synthesis history 快照断言；focused daemon/runtime tests、daemon 全量包测试与 diff check 均通过。
+
+本轮增量（P0.5-N25：planner cycle synthesis adapter helper）：
+
+```bash
+gofmt -w internal/interfaces/daemon/agent_planner_loop.go internal/interfaces/daemon/agent_turn_executor_test.go
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState|TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot|TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle|TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueSteps|TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoContinueSteps|TestAgentPlannerActionReplanCycleState|TestAgentPlannerActionReplanCycleMemory|TestAgentPlannerActionReplanCycleLLMRequest'
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentPlannerActionReplanCyclePlan|TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState|TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot|TestAgentPlannerActionReplanCycleMemory|TestAgentPlannerActionReplanCycleState|TestAgentPlannerActionReplanCycleLLMRequest|TestAgentPlannerActionReplanCycleAuthorization|TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle|TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueSteps|TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoContinueSteps|TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStage|TestAgentManagerRunAgentReplanActionContinuation|TestAgentManagerExecuteAgentPlannerActions'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestRunLLMStage|TestRunLLMTurn|TestExecuteTurn|TestMutateSession|TestRunTurnLifecycle|TestAgentManager'
+go test -count=1 ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：StepReplan tool synthesis 调用收敛到 `runAgentPlannerActionReplanCycleSynthesis`，该 helper 统一处理 LLM request、cycle history、memory summary 与 action messages 的 legacy adapter 边界，并以 cycle messages/tool calls/plan handle 返回；主 cycle 流程不再直接展开 synthesis payload 的 legacy 转换。新增 helper 覆盖验证 payload 来自 cycle wrappers/state、mutation 不污染输入、返回 wrappers 深拷贝隔离以及 planner apply 所需 legacy plan 指针兼容；focused daemon/runtime tests、daemon 全量包测试与 diff check 均通过。
 
 P1-F1 前端路由/bundle 盘点：
 

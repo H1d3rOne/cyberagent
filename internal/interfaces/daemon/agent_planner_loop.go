@@ -700,6 +700,13 @@ type agentPlannerActionReplanCycleResult struct {
 	Continue bool
 }
 
+type agentPlannerActionReplanCycleSynthesisResult struct {
+	Messages   agentPlannerActionReplanCycleMessages
+	ToolCalls  agentPlannerActionReplanCycleToolCalls
+	Plan       agentPlannerActionReplanCyclePlan
+	legacyPlan *agentPlannerResponse
+}
+
 func agentPlannerActionReplanCycleTurnContext(sessionID string, turnRef agentRuntimeTurnRef, prompt, origin, operationLevel string) runtime.TurnContext {
 	return runtime.TurnContext{
 		SessionID:      sessionID,
@@ -755,17 +762,11 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		return result
 	}
 
-	synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(
+	synthesis, synthesisErr := m.runAgentPlannerActionReplanCycleSynthesis(
 		ctx,
-		req.Turn.SessionID,
-		turnRef,
-		req.Turn.Prompt,
-		req.Language,
-		req.Turn.OperationLevel,
-		req.LLMRequest.sendMessageRequest(),
-		result.State.LoopHistory.legacyAgentMessages(),
-		req.MemorySummary.legacyAgentMemorySummary(),
-		actionMessages,
+		req,
+		result.State,
+		agentPlannerActionReplanCycleMessagesFromAgentMessages(actionMessages),
 	)
 	if synthesisErr != nil {
 		warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
@@ -782,15 +783,41 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		result.State.ToolCalls.appendLegacyAgentToolCalls(warningTool)
 		return result
 	}
+	synthesisMessages := synthesis.Messages.legacyAgentMessages()
 	if len(synthesisMessages) > 0 {
-		m.appendMessagesWithPlannerForTurn(ctx, req.Turn.SessionID, turnRef, req.Turn.Prompt, string(runtime.LLMStageToolSynthesis), req.Turn.OperationLevel, synthesisPlan, synthesisMessages...)
+		m.appendMessagesWithPlannerForTurn(ctx, req.Turn.SessionID, turnRef, req.Turn.Prompt, string(runtime.LLMStageToolSynthesis), req.Turn.OperationLevel, synthesis.legacyPlan, synthesisMessages...)
 		result.State.ResponseMessages.appendLegacyAgentMessages(synthesisMessages...)
 		result.State.LoopHistory.appendLegacyAgentMessages(synthesisMessages...)
-		result.State.ToolCalls.appendLegacyAgentToolCalls(synthesisToolCalls...)
+		result.State.ToolCalls.appendLegacyAgentToolCalls(synthesis.ToolCalls.legacyAgentToolCalls()...)
 	}
-	result.Plan = agentPlannerActionReplanCyclePlanFromPlannerResponse(synthesisPlan)
+	result.Plan = synthesis.Plan
 	result.Continue = true
 	return result
+}
+
+func (m *agentManager) runAgentPlannerActionReplanCycleSynthesis(ctx context.Context, req agentPlannerActionReplanCycleRequest, state agentPlannerActionReplanCycleState, actionMessages agentPlannerActionReplanCycleMessages) (agentPlannerActionReplanCycleSynthesisResult, error) {
+	turnRef := agentRuntimeTurnRefFromTurn(req.Turn)
+	synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(
+		ctx,
+		req.Turn.SessionID,
+		turnRef,
+		req.Turn.Prompt,
+		req.Language,
+		req.Turn.OperationLevel,
+		req.LLMRequest.sendMessageRequest(),
+		state.LoopHistory.legacyAgentMessages(),
+		req.MemorySummary.legacyAgentMemorySummary(),
+		actionMessages.legacyAgentMessages(),
+	)
+	if synthesisErr != nil {
+		return agentPlannerActionReplanCycleSynthesisResult{}, synthesisErr
+	}
+	return agentPlannerActionReplanCycleSynthesisResult{
+		Messages:   agentPlannerActionReplanCycleMessagesFromAgentMessages(synthesisMessages),
+		ToolCalls:  agentPlannerActionReplanCycleToolCallsFromAgentToolCalls(synthesisToolCalls),
+		Plan:       agentPlannerActionReplanCyclePlanFromPlannerResponse(synthesisPlan),
+		legacyPlan: synthesisPlan,
+	}, nil
 }
 
 func reqMaxAgentReplans(req sendAgentMessageRequest) int {
