@@ -965,6 +965,13 @@ P1-F3 实施结果：
 
 ### 13.3 浏览器 E2E / a11y / 视觉回归
 
+P1-F4 已落地真实浏览器 smoke：
+
+- `scripts/agent-cockpit-browser-smoke.mjs` 随机端口启动 daemon 与 Vite dev server，并使用系统 Chrome + Playwright 打开 `/agent`。
+- 脚本注入 `cyberagent_console_settings`，让前端直连本轮 daemon token，并配置一个故意失败的 OpenAI provider，用于稳定触发 LLM fallback manual authorization。
+- 覆盖 daemon health prompt、session/timeline 渲染、`workspace.files.write` authorization pending、点击“允许并继续”、workspace write 执行与 daemon workspace read API 内容校验。
+- 验证命令：`npm test --prefix web/frontend -- --run`、`npm run build --prefix web/frontend`、`node --check scripts/agent-cockpit-browser-smoke.mjs`、`node scripts/agent-cockpit-browser-smoke.mjs`、`git diff --check`。
+
 覆盖路径：
 
 - `/agent` 初始加载。
@@ -1228,6 +1235,7 @@ P1-F3 实施结果：
 | v37 | 完成 P1-F1 前端路由与 bundle 基线盘点：记录当前静态 route 单入口 JS/CSS 体积，并确定 `/agent`、`/scan/:id`、`/settings`、`/tasks` 与 `/scan/new`、`/skills` 与 `/mcp`、`/history`、`/` 与 `/ops` 的 route-level lazy 边界。 |
 | v38 | 完成 P1-F2 route-level lazy / bundle splitting：`App.tsx` 使用 `React.lazy` + `Suspense` 延迟加载页面 route，主入口 JS 从 `442.68KB` / gzip `127.29KB` 降到 `233.51KB` / gzip `75.24KB`，并记录主要 route chunk。 |
 | v39 | 完成 P1-F3 移动端 Agent Cockpit 降噪：新增移动端任务切换器、隐藏小屏桌面 TaskTree、收敛 header/timeline/tool card/approval/composer 密度，并补移动端 Tool Inspector bottom sheet；前端测试、build 与 diff check 通过。 |
+| v40 | 完成 P1-F4 真实浏览器 Agent Cockpit smoke：新增 Playwright 脚本，用随机端口 daemon + Vite + 系统 Chrome 验证 `/agent` health prompt、manual authorization approval 与 workspace write/read 最小链路；前端测试、build、脚本语法检查、browser smoke 与 diff check 通过。 |
 
 ---
 
