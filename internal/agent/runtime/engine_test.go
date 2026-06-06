@@ -414,6 +414,88 @@ func TestMutateSessionWithoutMutatorReturnsStableError(t *testing.T) {
 	}
 }
 
+func TestRunTurnLifecycleWrapsBeginBodyAndFinish(t *testing.T) {
+	e, store := newTestEngine()
+	ctx := context.Background()
+	var bodyTurn TurnContext
+
+	result, err := e.RunTurnLifecycle(ctx, TurnContext{
+		SessionID:      "session-lifecycle",
+		TaskID:         "task-lifecycle",
+		RunID:          "run-lifecycle",
+		TurnID:         "turn-lifecycle",
+		MessageID:      "msg-lifecycle",
+		Prompt:         "wrap lifecycle",
+		OperationLevel: "read_only",
+	}, func(_ context.Context, turn TurnContext) (TurnResult, error) {
+		bodyTurn = turn
+		return TurnResult{
+			Status: TurnResultFinished,
+			Reason: "done",
+			Data:   map[string]any{"branch": "send_message"},
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunTurnLifecycle() error = %v", err)
+	}
+	if result.Status != TurnResultFinished || result.Reason != "done" {
+		t.Fatalf("RunTurnLifecycle() result = %#v", result)
+	}
+	if bodyTurn.SessionID != "session-lifecycle" || bodyTurn.Origin != "user" || bodyTurn.TurnIndex != 1 {
+		t.Fatalf("body turn = %#v, want normalized turn", bodyTurn)
+	}
+	got := eventTypes(store.Events(), "run-lifecycle")
+	assertContainsInOrder(t, got, []string{EventRunStarted, EventTurnStarted, EventTurnFinished, EventTaskFinished})
+	var sawFinished bool
+	for _, ev := range store.Events() {
+		if ev.Type != EventTurnFinished || ev.RunID != "run-lifecycle" {
+			continue
+		}
+		sawFinished = true
+		if ev.Data["session_id"] != "session-lifecycle" || ev.Data["status"] != string(TurnResultFinished) || ev.Data["branch"] != "send_message" {
+			t.Fatalf("turn_finished data = %#v", ev.Data)
+		}
+	}
+	if !sawFinished {
+		t.Fatalf("turn_finished missing: %#v", store.Events())
+	}
+}
+
+func TestRunTurnLifecycleFinishesFailedTurnOnBodyError(t *testing.T) {
+	e, store := newTestEngine()
+	ctx := context.Background()
+	boom := errors.New("body failed")
+
+	result, err := e.RunTurnLifecycle(ctx, TurnContext{
+		SessionID: "session-lifecycle-error",
+		TaskID:    "task-lifecycle-error",
+		RunID:     "run-lifecycle-error",
+		TurnID:    "turn-lifecycle-error",
+		MessageID: "msg-lifecycle-error",
+		Prompt:    "wrap lifecycle error",
+		Origin:    "user",
+	}, func(context.Context, TurnContext) (TurnResult, error) {
+		return TurnResult{}, boom
+	})
+
+	if !errors.Is(err, boom) {
+		t.Fatalf("RunTurnLifecycle() error = %v, want body error", err)
+	}
+	if result.Status != TurnResultFailed || !errors.Is(result.Error, boom) || result.Reason != boom.Error() {
+		t.Fatalf("RunTurnLifecycle() result = %#v, want failed body error", result)
+	}
+	run, err := store.LoadRun(ctx, "run-lifecycle-error")
+	if err != nil {
+		t.Fatalf("LoadRun() error = %v", err)
+	}
+	if run.State != string(RunFailed) {
+		t.Fatalf("run state = %q, want %q", run.State, RunFailed)
+	}
+	got := eventTypes(store.Events(), "run-lifecycle-error")
+	assertContainsInOrder(t, got, []string{EventRunStarted, EventTurnStarted, EventTurnFailed, EventTaskFailed})
+}
+
 func TestBeginTurnPublishesLegacyLifecycleEvents(t *testing.T) {
 	e, store := newTestEngine()
 	ctx := context.Background()

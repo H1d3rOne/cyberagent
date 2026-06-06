@@ -69,6 +69,11 @@ func (m *agentManager) beginRuntimeTurn(ctx context.Context, sessionID, prompt, 
 	if eng == nil {
 		return agentRuntimeTurnRef{}
 	}
+	turn, _ := eng.BeginTurn(ctx, agentRuntimeTurnContext(sessionID, prompt, origin, operationLevel, session, userMessage))
+	return agentRuntimeTurnRef{TaskID: turn.TaskID, RunID: turn.RunID, TurnID: turn.TurnID}
+}
+
+func agentRuntimeTurnContext(sessionID, prompt, origin, operationLevel string, session agentSession, userMessage agentMessage) runtime.TurnContext {
 	taskID := agentRuntimeTaskID(sessionID, session)
 	goal := prompt
 	if session.ActiveTask != nil && strings.TrimSpace(session.ActiveTask.Goal) != "" {
@@ -82,8 +87,7 @@ func (m *agentManager) beginRuntimeTurn(ctx context.Context, sessionID, prompt, 
 	if turnID == userMessage.ID {
 		turnID = "turn_" + userMessage.ID
 	}
-	now := time.Now().UTC()
-	turn, _ := eng.BeginTurn(ctx, runtime.TurnContext{
+	return runtime.TurnContext{
 		SessionID:      sessionID,
 		TaskID:         taskID,
 		RunID:          runID,
@@ -94,9 +98,20 @@ func (m *agentManager) beginRuntimeTurn(ctx context.Context, sessionID, prompt, 
 		Origin:         firstNonEmpty(strings.TrimSpace(origin), "user"),
 		OperationLevel: operationLevel,
 		TurnIndex:      1,
-		Timestamp:      now,
+		Timestamp:      time.Now().UTC(),
+	}
+}
+
+func (m *agentManager) runRuntimeTurnLifecycle(ctx context.Context, sessionID, prompt, origin, operationLevel string, session agentSession, userMessage agentMessage, run func(context.Context, agentRuntimeTurnRef) (runtime.TurnResult, error)) error {
+	eng := m.runtimeEngine()
+	if eng == nil {
+		_, err := run(ctx, agentRuntimeTurnRef{})
+		return err
+	}
+	_, lifecycleErr := eng.RunTurnLifecycle(ctx, agentRuntimeTurnContext(sessionID, prompt, origin, operationLevel, session, userMessage), func(ctx context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		return run(ctx, agentRuntimeTurnRefFromTurn(turn))
 	})
-	return agentRuntimeTurnRef{TaskID: turn.TaskID, RunID: turn.RunID, TurnID: turn.TurnID}
+	return lifecycleErr
 }
 
 func (m *agentManager) externalSessionMutationTurnRef(ctx context.Context, sessionID, seed string) agentRuntimeTurnRef {

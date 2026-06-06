@@ -243,7 +243,7 @@ engine-native turn lifecycle 下沉入口建议：
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
 3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入、`ControlSession` 状态写入、planner/manual authorization request 与 capability mismatch blocked state 已经 engine session mutation dispatch，LLM fallback manual authorization branch 已补覆盖确认 provider failure warning + authorization append mutation 与 pending authorization request mutation 的 turn metadata 对齐；no-LLM deterministic route、control auto-continue route、active-run continue context fetch、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation、authorization approved planner action execution，以及 LLM planner/replan loop 内部 action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters；planner/replan/LLM/SendMessage append 与外部 control/authorization append 已经改为携带 turnRef 的 `append_messages` dispatch；authorization approve 后的 planner action execution、tool synthesis 与 follow-up continuation runtime runner 也已贯穿同一个 external turnRef；append/control/resolve authorization 的 `memory_compacted` events 已补齐 mutation turnRef metadata；deterministic route 内部 capability-gap plan-only planner apply 已沿用外层 turnRef 进入 turn-aware append mutation；`llm_tool_loop` / `replan_action_continuation` engine-native loop runner 草案已补齐；planner loop action queue metadata 与 authorization/capability gate decision helper 已抽出并补 parity 覆盖；`SendMessage` response merge regression matrix 已补齐 control continue/revise、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback 与 active-run continue parity。
-4. 最后收敛 remaining SendMessage branches 为 engine turn lifecycle。
+4. ✅ `SendMessage` Begin/Finish lifecycle 已收敛为 `runtime.Engine.RunTurnLifecycle` bounded runner；response merge branches 拆入 daemon turn body helper，继续作为迁移 adapter 保持 parity。
 
 已完成的 seam 边界：
 
@@ -255,7 +255,8 @@ engine-native turn lifecycle 下沉入口建议：
 
 - `runtime.Engine.BeginTurn` 接管 task/run/turn state 写入与 `task_created`、`run_started`、`turn_started` 事件发布。
 - `runtime.Engine.FinishTurn` 接管 turn state 写入、`turn_finished`/`turn_failed` 发布，以及 approval required、task finished、task failed run 终态分派。
-- daemon `beginRuntimeTurn` / `finishRuntimeTurn` 只保留 session snapshot、message ID、response completion 到 `TurnContext` / `TurnResult` 的 adapter 逻辑；`SendMessage` 主流程、planner loop、authorization resume、auto-continue 后续分支仍未完整下沉。
+- `runtime.Engine.RunTurnLifecycle` 已提供 Begin → bounded body → Finish 包装；body 负责返回 `TurnResult`，engine 负责 lifecycle state 与 terminal events。
+- daemon `beginRuntimeTurn` / `finishRuntimeTurn` 只保留外部兼容/测试 adapter；`SendMessage` 现在经 `runRuntimeTurnLifecycle` 映射 session snapshot、message ID 与 response completion，bounded body 内的 control/pending-auth/route-before-LLM/LLM fallback/no-LLM response merge 仍由 daemon helper 保持原语义。
 
 已完成的 LLM runner seam 边界：
 
@@ -361,7 +362,8 @@ ownership 边界：
 - LLM stage runner owned：provider fallback、streaming、planner JSON/native tool call extraction、StepReplan/final_answer 解析；不直接 append/persist。
 - Planner action executor owned：单个 tool/action 的执行与失败 tool call 构造；不直接持久化 action batch message，除非 tool handler 自身有业务状态副作用。
 - Session mutator owned：messages append、planner apply、PendingAuthorization / capability blocked 状态写入、session persist、memory compaction、message/memory runtime events。
-- `SendMessage` owned（直到 P0.5-N8）：user message record、BeginTurn/FinishTurn、LLM provider failure fallback response merge、route-before-LLM/no-LLM/control/pending-auth 分支 response merge。
+- `SendMessage` lifecycle owned：`runtime.Engine.RunTurnLifecycle` 负责 BeginTurn/FinishTurn 包装与 terminal event 顺序。
+- `SendMessage` daemon adapter owned（迁移期）：user message record、LLM provider failure fallback response merge、route-before-LLM/no-LLM/control/pending-auth 分支 response merge；这些分支已收敛到 bounded daemon helper，后续等 loop DTO/runtime-neutral 后再继续迁移。
 - Credential ownership：API key / auth profile secret 只作为请求期 ephemeral input 传入 adapter，不进入 runtime events、persisted turn state 或长期 `AgentLoopResult`；持久化 metadata 只保留 provider/model/phase/status。
 
 迁移顺序：
@@ -370,7 +372,7 @@ ownership 边界：
 2. 将 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 内部循环合并到 daemon-private `runAgentLoop` helper，两种 mode 共享状态机；外层函数签名保持不变。
 3. 让现有 `daemon_legacy_llm_tool_loop` runner 与 `replan_action_continuation` turn executor 都调用同一个 helper，证明 response/message/tool parity。
 4. 把 helper 的输入/输出替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-5. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；下一步 P0.5-N8 再决定是否把主编排下沉到 engine turn lifecycle runner。
+5. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1175,6 +1177,7 @@ Glass surface：
 | v33 | 输出 engine-native loop runner 设计草案：`llm_tool_loop` 与 `replan_action_continuation` 统一为单个 runner 的两个 mode，明确 payload、authorization/capability gate、action queue、synthesis、append/persist ownership 与 N6-N8 迁移顺序。 |
 | v34 | 抽出 planner loop action queue metadata 与 authorization/capability gate decision helper；保持 gate 顺序、policy/reason、queue metadata 与 append/response 语义不变，并补 helper parity 覆盖。 |
 | v35 | 补齐 SendMessage response merge regression matrix：覆盖 control continue/revise + LLM、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback route/authorization、active-run continue parity。 |
+| v36 | 新增 `runtime.Engine.RunTurnLifecycle`，将 `SendMessage` Begin/Finish lifecycle 包装为 engine bounded runner；response merge branch body 拆入 daemon helper，补 runtime lifecycle 与 SendMessage event-order 回归。 |
 
 ---
 

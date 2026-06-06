@@ -7,6 +7,52 @@ import (
 	"time"
 )
 
+var (
+	// ErrTurnLifecycleFuncMissing is returned when RunTurnLifecycle is called
+	// without the bounded turn body callback.
+	ErrTurnLifecycleFuncMissing = errors.New("runtime: turn lifecycle function missing")
+)
+
+// TurnLifecycleFunc is the bounded body executed between BeginTurn and
+// FinishTurn by RunTurnLifecycle.
+type TurnLifecycleFunc func(context.Context, TurnContext) (TurnResult, error)
+
+// RunTurnLifecycle wraps one bounded turn body with BeginTurn and FinishTurn.
+// It is intentionally small: the caller still owns the actual execution
+// strategy and result mapping, while the engine owns persisted lifecycle state
+// and lifecycle event publication.
+func (e *Engine) RunTurnLifecycle(ctx context.Context, turn TurnContext, run TurnLifecycleFunc) (TurnResult, error) {
+	if e == nil {
+		return TurnResult{Status: TurnResultBlocked, Reason: ErrNilEngine.Error(), Error: ErrNilEngine}, ErrNilEngine
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	begun, beginErr := e.BeginTurn(ctx, turn)
+	if run == nil {
+		result := TurnResult{Status: TurnResultFailed, Reason: ErrTurnLifecycleFuncMissing.Error(), Error: ErrTurnLifecycleFuncMissing}
+		finishErr := e.FinishTurn(ctx, begun, result)
+		return result, errors.Join(beginErr, ErrTurnLifecycleFuncMissing, finishErr)
+	}
+	result, runErr := run(ctx, begun)
+	if runErr != nil && result.Error == nil {
+		result.Error = runErr
+	}
+	if runErr != nil && strings.TrimSpace(result.Reason) == "" {
+		result.Reason = runErr.Error()
+	}
+	if strings.TrimSpace(string(result.Status)) == "" {
+		if runErr != nil {
+			result.Status = TurnResultFailed
+		} else {
+			result.Status = TurnResultRunning
+		}
+	}
+	result = normalizeTurnResult(result)
+	finishErr := e.FinishTurn(ctx, begun, result)
+	return result, errors.Join(beginErr, runErr, finishErr)
+}
+
 // BeginTurn persists the task/run/turn state for one runtime turn and emits
 // the same task_created, run_started and turn_started events previously
 // produced by the daemon bridge. The daemon still adapts session state into

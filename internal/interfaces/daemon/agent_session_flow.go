@@ -177,11 +177,23 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 	return agentControlResponse{Session: sessionState, Message: message, ApprovalState: canonicalAgentAuthorizationApproval(&pending, "approved")}, nil
 }
 
-func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (resp sendAgentMessageResponse, err error) {
+type agentSendMessageTurnState struct {
+	SessionID      string
+	Prompt         string
+	Operator       string
+	Language       string
+	OperationLevel string
+	TurnRef        agentRuntimeTurnRef
+	UserMessage    agentMessage
+	History        []agentMessage
+	MemorySummary  *agentMemorySummary
+}
+
+func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (sendAgentMessageResponse, error) {
 	if err := contextError(ctx); err != nil {
 		return sendAgentMessageResponse{}, err
 	}
-	sessionID, err = normalizeAgentSessionID(sessionID)
+	sessionID, err := normalizeAgentSessionID(sessionID)
 	if err != nil {
 		return sendAgentMessageResponse{}, err
 	}
@@ -192,15 +204,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	operator := normalizeAgentOperator(req.Operator)
 	language := normalizeAgentLanguage(req.Language)
 	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
-	var turnRef agentRuntimeTurnRef
-	defer func() {
-		m.finishRuntimeTurn(ctx, sessionID, turnRef, resp, err)
-	}()
 
-	var history []agentMessage
-	var memorySummary *agentMemorySummary
-	userMessage := agentMessage{}
-	sessionSnapshot := agentSession{}
 	recorded, handled, recordErr := m.runRuntimeRecordUserMessageMutation(ctx, sessionID, prompt, operator, language, operationLevel)
 	if recordErr != nil {
 		return sendAgentMessageResponse{}, recordErr
@@ -211,12 +215,43 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 			return sendAgentMessageResponse{}, recordErr
 		}
 	}
-	userMessage = recorded.UserMessage
-	sessionSnapshot = recorded.Session
-	history = cloneAgentMessages(recorded.History)
-	memorySummary = cloneAgentMemorySummary(recorded.MemorySummary)
-	turnRef = m.beginRuntimeTurn(ctx, sessionID, prompt, firstNonEmpty(req.Origin, "user"), operationLevel, sessionSnapshot, userMessage)
-	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionSnapshot, turnRef, recorded.Compaction)
+
+	userMessage := recorded.UserMessage
+	sessionSnapshot := recorded.Session
+	state := agentSendMessageTurnState{
+		SessionID:      sessionID,
+		Prompt:         prompt,
+		Operator:       operator,
+		Language:       language,
+		OperationLevel: operationLevel,
+		UserMessage:    userMessage,
+		History:        cloneAgentMessages(recorded.History),
+		MemorySummary:  cloneAgentMemorySummary(recorded.MemorySummary),
+	}
+
+	var resp sendAgentMessageResponse
+	var runErr error
+	lifecycleErr := m.runRuntimeTurnLifecycle(ctx, sessionID, prompt, firstNonEmpty(req.Origin, "user"), operationLevel, sessionSnapshot, userMessage, func(ctx context.Context, turnRef agentRuntimeTurnRef) (runtime.TurnResult, error) {
+		state.TurnRef = turnRef
+		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionSnapshot, turnRef, recorded.Compaction)
+		resp, runErr = m.runAgentSendMessageTurn(ctx, state, req, svc)
+		status, reason := agentRuntimeTurnCompletion(resp, runErr)
+		return runtime.TurnResult{Status: runtime.TurnResultStatus(status), Reason: reason, Error: runErr}, runErr
+	})
+	_ = lifecycleErr // Preserve legacy behavior: BeginTurn/FinishTurn errors are best-effort runtime telemetry errors.
+	return resp, runErr
+}
+
+func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentSendMessageTurnState, req sendAgentMessageRequest, svc routerServices) (sendAgentMessageResponse, error) {
+	sessionID := state.SessionID
+	prompt := state.Prompt
+	operator := state.Operator
+	language := state.Language
+	operationLevel := state.OperationLevel
+	turnRef := state.TurnRef
+	userMessage := state.UserMessage
+	history := cloneAgentMessages(state.History)
+	memorySummary := cloneAgentMemorySummary(state.MemorySummary)
 
 	if controlReq, ok := agentControlRequestFromPrompt(prompt, operator, language); ok {
 		controlReq.OperationLevel = operationLevel
@@ -404,9 +439,8 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	}
 
 	messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
-	err = routeErr
-	if err != nil {
-		errMessage := m.message(language, "agent", err.Error(), []agentToolCall{failedAgentToolCall("agent.route", err)}, nil)
+	if routeErr != nil {
+		errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
 		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionDeterministicRoute, operationLevel, errMessage)
 		sessionState, _ := m.GetSession(ctx, sessionID)
 		return buildAgentSendResponse(sessionID, []agentMessage{userMessage, errMessage}, errMessage.ToolCalls, sessionState), nil
