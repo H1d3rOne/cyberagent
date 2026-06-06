@@ -380,7 +380,7 @@ ownership 边界：
 10. ✅ P0.5-N16 已把 shared cycle request/result 的 plan 输入输出封装为 cycle-private plan handle；cycle DTO 不再直接暴露 `*agentPlannerResponse` 字段，legacy action executor、synthesis 与外层 loop 边界临时解包。
 11. ✅ P0.5-N17 已把 shared cycle state 的 response/history messages 与 top-level tool calls 封装为 cycle-private wrappers；cycle DTO 不再直接暴露 `[]agentMessage` / `[]agentToolCall` 字段，外层 loop、legacy synthesis 与返回边界显式转换。
 12. ✅ P0.5-N18 已把 shared cycle request 的 memory summary 封装为 cycle-private memory wrapper；cycle DTO 不再直接暴露 `*agentMemorySummary` 字段，LLM synthesis legacy adapter 边界显式转换。
-13. ✅ P0.5-N19 已把 shared cycle plan handle 的 legacy planner response 改为入口/出口深拷贝隔离；cycle 内部仍临时保存 legacy plan，但不再与外层 loop 或 legacy adapter 返回值共享可变指针。
+13. ✅ P0.5-N19 已把 shared cycle plan handle 的 legacy planner response 改为入口/出口深拷贝隔离；作为 N30 前置，避免外层 loop 或 legacy adapter 返回值共享可变指针。
 14. ✅ P0.5-N20 已给 shared cycle plan handle 增加 cycle-native action/auto-continue 查询 helper；`llm_tool_loop` 与 `replan_action_continuation` 的循环判断不再为 actions/`NextAction.AutoContinue` 提前解包 legacy plan。
 15. ✅ P0.5-N21 已把 shared cycle plan handle 的 action count / auto-continue 查询状态固化为构造时快照；helper 不再从内部 legacy plan 指针重新计算。
 16. ✅ P0.5-N22 已把 shared cycle plan handle 的 action list 固化为构造时 `actionsSnapshot`；shared cycle action executor 直接消费 snapshot actions，不再为执行动作解包 legacy planner response。
@@ -391,8 +391,9 @@ ownership 边界：
 21. ✅ P0.5-N27 已把 shared cycle action/synthesis result 的 phase tagging 与 response/tool/history append 收敛到 cycle wrapper/state helper；主 cycle 仅在 append mutation 与 synthesis legacy adapter 边界临时展开 legacy messages/tool calls。
 22. ✅ P0.5-N28 已把 cycle message/tool wrappers 内部存储替换为 cycle-private message/tool DTO；wrappers 不再直接持有 legacy `agentMessage` / `agentToolCall` slice，legacy 转换集中在 ingress/egress adapter。
 23. ✅ P0.5-N29 已把 cycle memory summary wrapper 内部存储替换为 cycle-private memory DTO；wrapper 不再直接持有 legacy `*agentMemorySummary`，legacy 转换集中在 ingress/egress adapter。
-24. 下一步把 daemon-private cycle handles 内部仍临时包住的 legacy plan 与 LLM/tool adapter compatibility 替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-25. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+24. ✅ P0.5-N30 已把 cycle plan handle 内部存储替换为 cycle-private plan/action DTO；handle 不再直接持有 legacy `*agentPlannerResponse`，legacy 转换集中在 ingress/egress adapter。
+25. 下一步把 daemon-private cycle DTO/handles 与 LLM/tool adapter compatibility 迁到 runtime-neutral package 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+26. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1294,6 +1295,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v61 | 完成 P0.5-N27 planner cycle wrapper phase/append helper：cycle message/tool wrappers 新增 `len` / `withPhase` / wrapper append helper，state 新增 response/history/tool append helper；主 cycle 的 action/synthesis result phase tagging 与 state append 不再直接展开 legacy slice，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v62 | 完成 P0.5-N28 planner cycle message/tool private DTO：cycle message/tool wrappers 内部存储改为 cycle-private message/tool DTO，不再直接持有 legacy `agentMessage` / `agentToolCall` slice；legacy 转换集中在 wrapper ingress/egress adapter，并补字段保真与深拷贝隔离覆盖，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v63 | 完成 P0.5-N29 planner cycle memory private DTO：cycle memory summary wrapper 内部存储改为 cycle-private memory DTO，不再直接持有 legacy `*agentMemorySummary`；legacy 转换集中在 wrapper ingress/egress adapter，并补字段保真与 LastMessageAt 深拷贝隔离覆盖，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
+| v64 | 完成 P0.5-N30 planner cycle plan private DTO：cycle plan handle 内部存储改为 cycle-private plan/action DTO，不再直接持有 legacy `*agentPlannerResponse`；legacy 转换集中在 plan handle ingress/egress adapter，并补 plan/action 字段保真与深拷贝隔离覆盖，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 
 ---
 

@@ -86,6 +86,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 将 planner action/replan cycle state 的 response/history message 与 top-level tool call slice 封装为 cycle-private wrappers；外层 loop、legacy synthesis 与返回边界显式转换，并补深拷贝隔离测试。
 - [x] 将 planner action/replan cycle request 的 memory summary 封装为 cycle-private `agentPlannerActionReplanCycleMemorySummary`，并保持 `LastMessageAt` 深拷贝隔离。
 - [x] 将 planner action/replan cycle plan handle 的 legacy planner response 改为入口/出口深拷贝隔离，避免外层 legacy 指针与 cycle state 共享可变 plan/action/todo/next_action。
+- [x] 将 planner action/replan cycle plan handle 内部改为 cycle-private plan/action DTO，不再直接持有 legacy `*agentPlannerResponse`；legacy planner response 仅在入口/出口 adapter 生成。
 - [x] 为 planner action/replan cycle plan handle 增加 cycle-native action/auto-continue 查询 helper，外层 loop 不再为 actions/`NextAction.AutoContinue` 判断提前解包 legacy plan。
 - [x] 将 planner action/replan cycle plan handle 的 action count / auto-continue 查询状态固化为构造时快照，查询 helper 不再读取内部 legacy plan 指针。
 - [x] 将 planner action/replan cycle plan handle 的 actions 也固化为构造时 `actionsSnapshot`，shared cycle action executor 不再为执行动作解包 legacy plan。
@@ -154,7 +155,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N16：把 shared cycle request/result 的 plan 输入输出封装为 cycle-private `agentPlannerActionReplanCyclePlan` handle；cycle DTO 不再直接暴露 `*agentPlannerResponse` 字段，legacy 边界临时解包保持 parity。
 - [x] P0.5-N17：把 shared cycle state 的 response/history messages 与 top-level tool calls 封装为 cycle-private wrappers；外层 loop 和 legacy adapters 只通过显式 legacy 转换读写 state，并保持深拷贝隔离。
 - [x] P0.5-N18：把 shared cycle request 的 memory summary 封装为 cycle-private `agentPlannerActionReplanCycleMemorySummary`；外层 loop 在入口包装 legacy memory，LLM synthesis legacy adapter 边界显式解包并保持深拷贝隔离。
-- [x] P0.5-N19：把 shared cycle plan handle 的 legacy planner response 改为入口/出口深拷贝隔离；cycle 内部仍临时保存 legacy plan，但不再与外层 loop 或 legacy adapter 返回值共享可变指针。
+- [x] P0.5-N19：把 shared cycle plan handle 的 legacy planner response 改为入口/出口深拷贝隔离；作为 N30 前置，避免外层 loop 或 legacy adapter 返回值共享可变指针。
 - [x] P0.5-N20：给 shared cycle plan handle 增加 `actionCount` / `hasActions` / `shouldAutoContinue` 查询 helper，并让 `llm_tool_loop` / `replan_action_continuation` 的循环判断优先使用 handle，减少外层 legacy plan 解包。
 - [x] P0.5-N21：把 shared cycle plan handle 的 `actionCount` / `shouldAutoContinue` 查询状态改为构造时的 `actionCountSnapshot` / `autoContinue` 快照；helper 不再从内部 legacy plan 指针重新计算。
 - [x] P0.5-N22：把 shared cycle plan handle 的 action list 改为构造时 `actionsSnapshot` 快照；`runAgentPlannerActionReplanCycle` 调用 action executor 时传入 snapshot action list，不再通过 `legacyPlannerResponse()` 解包 plan actions。
@@ -165,6 +166,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N27：给 cycle message/tool wrappers 增加 `len` / `withPhase` / wrapper append helper，并让主 cycle 的 action/synthesis result phase tagging 与 response/tool/history append 走 wrapper/state helper；只在 append mutation 与 synthesis legacy adapter 边界临时展开 legacy slice。
 - [x] P0.5-N28：将 cycle message/tool wrappers 内部改为 cycle-private message/tool DTO，不再直接持有 legacy `agentMessage` / `agentToolCall` slice；legacy 转换集中在 wrapper ingress/egress adapter，并覆盖字段保真与深拷贝隔离。
 - [x] P0.5-N29：将 cycle memory summary wrapper 内部改为 cycle-private memory DTO，不再直接持有 legacy `*agentMemorySummary`；legacy 转换集中在 wrapper ingress/egress adapter，并覆盖 LastMessageAt 指针隔离。
+- [x] P0.5-N30：将 cycle plan handle 内部改为 cycle-private plan/action DTO，不再直接持有 legacy `*agentPlannerResponse`；legacy 转换集中在 plan handle ingress/egress adapter，并覆盖 plan/action 字段保真与深拷贝隔离。
 
 当前盘点（2026-06-07）：
 
@@ -177,13 +179,13 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - shared cycle request 已拆分 authorization 与 LLM synthesis request：action execution 只读取 `agentPlannerActionReplanCycleAuthorization`，并通过 `runAgentPlannerActionReplanCycleActionExecution` 在 helper 内临时转换 tool context / auth profiles / action snapshot；StepReplan synthesis 兼容路径已集中到 `runAgentPlannerActionReplanCycleSynthesis`，由 cycle-private DTO 临时转换到 legacy request。
 - shared cycle request 的 LLM synthesis 输入已缩小为 `agentPlannerActionReplanCycleLLMRequest`：只保留 provider/model/API key/base URL/instructions/origin/operation_level/auth hints，并在调用 legacy synthesis adapter 时临时转换回 `sendAgentMessageRequest`。
 - shared cycle request 的 auth profile 输入已收敛为 `agentPlannerActionReplanCycleAuthProfile`：authorization 与 LLM request 都不再直接持有 `agentHTTPAuthProfile`，legacy action/synthesis adapter 边界再转换回 daemon HTTP auth profile，并补 secret/enabled 深拷贝隔离测试。
-- shared cycle request/result 的 plan 输入输出已封装为 `agentPlannerActionReplanCyclePlan` handle：cycle DTO 不再直接暴露 `*agentPlannerResponse` 字段，LLM stage/synthesis adapter 边界临时包装 legacy plan；handle 入口/出口已深拷贝隔离 plan/action/todo/next_action，并把 action list、action count 与 auto-continue 查询状态固化为构造时快照，shared cycle action execution helper 直接消费 `actionsSnapshot`，`runAgentLLMToolLoop` 轮次间也保持 plan handle，后续可替换为 runtime-neutral plan/action DTO。
+- shared cycle request/result 的 plan 输入输出已封装为 `agentPlannerActionReplanCyclePlan` handle：cycle DTO 不再直接暴露 `*agentPlannerResponse` 字段，LLM stage/synthesis adapter 边界临时包装 legacy plan；handle 内部已替换为 cycle-private plan/action DTO，不再直接持有 legacy planner response，并把 plan/action/todo/context/next_action 字段保真、深拷贝隔离、action list、action count 与 auto-continue 查询状态固化为构造时快照；shared cycle action execution helper 直接消费 `actionsSnapshot`，`runAgentLLMToolLoop` 轮次间也保持 plan handle，后续可迁到 runtime-neutral package。
 - shared cycle request 的 tool/service 输入已封装为 `agentPlannerActionReplanCycleToolContext`：cycle DTO 不再直接暴露 `routerServices` 字段，`runAgentPlannerActionReplanCycleActionExecution` 在 legacy adapter 边界临时解包同一 services，后续可替换成 runtime-neutral tool binding。
 - shared cycle state 的 response/history messages 与 top-level tool calls 已封装为 `agentPlannerActionReplanCycleMessages` / `agentPlannerActionReplanCycleToolCalls`：cycle DTO 不再直接暴露 `[]agentMessage` / `[]agentToolCall` 字段；wrappers 内部也已替换为 cycle-private message/tool DTO，不再持有 legacy slice；`runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 轮次间保持 `agentPlannerActionReplanCycleState` handle，主 cycle 的 phase tagging 与 response/tool/history append 已改走 wrapper/state helper，只在入口/返回、append mutation 与 `runAgentPlannerActionReplanCycleSynthesis` legacy adapter 边界显式转换，并补 state 深拷贝隔离、字段保真与多轮 history 顺序回归。
 - shared cycle request 的 memory summary 已封装为 `agentPlannerActionReplanCycleMemorySummary`：cycle DTO 不再直接暴露 `*agentMemorySummary` 字段，wrapper 内部也已替换为 cycle-private memory DTO，不再持有 legacy memory 指针；LLM synthesis legacy adapter 边界显式转换，并补 LastMessageAt 字段保真与深拷贝隔离测试。
 - `SendMessage` response merge regression matrix 已覆盖 control continue/revise、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback route/authorization、active-run continue parity focused tests。
 - `SendMessage` Begin/Finish 已由 `runtime.Engine.RunTurnLifecycle` 包住 bounded turn body；turn_started → branch append/model/tool events → turn_finished/task terminal event 顺序已补回归。
-- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition 与 `SendMessage` response merge branch body；action execution、StepReplan synthesis 以及 action/synthesis result phase/append 的 legacy 转换已集中到 cycle-private helpers/wrappers，后续目标是把 cycle handles 内部仍临时包住的 legacy plan 与 LLM/tool adapter compatibility 继续替换成 runtime-neutral DTO，再移动到 engine-native runner。
+- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition、LLM/tool adapter compatibility 与 `SendMessage` response merge branch body；action execution、StepReplan synthesis、plan handle ingress/egress 以及 action/synthesis result phase/append 的 legacy 转换已集中到 cycle-private helpers/wrappers，后续目标是把这些 cycle DTO 迁到 runtime-neutral package，再移动到 engine-native runner。
 
 ### 7.2 P1 Frontend / QA
 
@@ -515,6 +517,19 @@ git diff --check
 ```
 
 结果：cycle memory summary wrapper 内部存储改为 cycle-private memory DTO，不再直接持有 legacy `*agentMemorySummary`；legacy 转换集中在 wrapper ingress/egress adapter。扩展 memory wrapper 测试覆盖 Summary/MessageCount/LastMessageID/UpdatedAt 字段保真、LastMessageAt 入口与出口指针深拷贝隔离，以及 synthesis payload mutation 不污染 cycle request；focused daemon/runtime tests、daemon 全量包测试与 diff check 均通过。
+
+本轮增量（P0.5-N30：planner cycle plan private DTO）
+
+```bash
+gofmt -w internal/interfaces/daemon/agent_planner_loop.go internal/interfaces/daemon/agent_turn_executor_test.go
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentPlannerActionReplanCyclePlan|TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleRequest|TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot'
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentPlannerActionReplanCyclePlan|TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleRequest|TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState|TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot|TestAgentPlannerActionReplanCycleMemory|TestAgentPlannerActionReplanCycleState|TestAgentPlannerActionReplanCycleLLMRequest|TestAgentPlannerActionReplanCycleAuthorization|TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle|TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueSteps|TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoContinueSteps|TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStage|TestAgentManagerRunAgentReplanActionContinuation|TestAgentManagerExecuteAgentPlannerActions'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestRunLLMStage|TestRunLLMTurn|TestExecuteTurn|TestMutateSession|TestRunTurnLifecycle|TestAgentManager'
+go test -count=1 ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：cycle plan handle 内部存储改为 cycle-private plan/action DTO，不再直接持有 legacy `*agentPlannerResponse`；legacy 转换集中在 plan handle ingress/egress adapter。扩展 plan wrapper 测试覆盖 SuggestedPrompt/SuggestPrompt、recommendation detail/command、task/todo/context/next_action/reasoning 字段保真，以及 action/tool call arguments 与返回 actions 的深拷贝隔离；focused daemon/runtime tests、daemon 全量包测试与 diff check 均通过。
 
 P1-F1 前端路由/bundle 盘点：
 

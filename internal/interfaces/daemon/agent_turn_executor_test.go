@@ -1531,8 +1531,8 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 	}}}
 	cyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(plan)
 	plan.Actions[0].Arguments["probe"] = "mutated-source-plan"
-	cyclePlan.plan.Actions = nil
-	cyclePlan.plan.ToolCalls = nil
+	cyclePlan.item.Actions = nil
+	cyclePlan.item.ToolCalls = nil
 	authProfiles[0].Token = "mutated-source-token"
 	*authProfiles[0].Enabled = false
 
@@ -1880,32 +1880,46 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	plan := &agentPlannerResponse{
 		Phase:            "step_replan",
 		Answer:           "cycle plan answer",
+		SuggestedPrompt:  "primary cycle suggestion",
+		SuggestPrompt:    "legacy cycle suggestion",
 		SuggestedPrompts: []string{"continue cycle"},
 		RecommendationOptions: []agentRecommendationOpt{{
-			ID:     "rec-cycle-plan",
-			Title:  "Continue",
-			Prompt: "continue cycle",
+			ID:      "rec-cycle-plan",
+			Title:   "Continue",
+			Detail:  "continue detail",
+			Prompt:  "continue cycle",
+			Command: "/continue-cycle",
 		}},
 		Task: &agentPlannerTask{
-			Goal:   "inspect cycle plan",
-			Kind:   "tool",
-			Status: "running",
+			Goal:        "inspect cycle plan",
+			Kind:        "tool",
+			Status:      "running",
+			ActiveRunID: "run-cycle-plan",
+			Summary:     "cycle plan task summary",
 		},
 		Todos: []agentPlannerTodo{{
 			Title:         "call daemon health",
+			Detail:        "collect health status",
 			Status:        "in_progress",
+			Priority:      2,
 			ContextRefIDs: []string{"ctx-cycle-plan"},
+			BlockedReason: "waiting for action",
 		}},
 		ContextRefs: []agentContextRef{{
-			ID:    "ctx-cycle-plan",
-			Kind:  "message",
-			RefID: "msg-cycle-plan",
-			Label: "Cycle plan",
+			ID:      "ctx-cycle-plan",
+			Kind:    "message",
+			RefID:   "msg-cycle-plan",
+			Label:   "Cycle plan",
+			To:      "message:msg-cycle-plan",
+			Summary: "cycle context summary",
 		}},
 		NextAction: &agentNextAction{
-			Type:         "continue",
-			AutoContinue: true,
+			Type:            "continue",
+			Reason:          "more tool work",
+			SuggestedPrompt: "continue with daemon health",
+			AutoContinue:    true,
 		},
+		Reasoning: "cycle private plan reasoning",
 		Actions: []agentPlannerAction{{
 			Name:      "daemon.health",
 			Arguments: map[string]any{"probe": "cycle-plan"},
@@ -1923,16 +1937,51 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Len(t, cyclePlan.actions(), 2)
 	require.Equal(t, "cycle-plan", cyclePlan.actions()[0].Arguments["probe"])
 	require.Equal(t, 1, cyclePlan.actions()[1].Arguments["limit"])
+	require.True(t, cyclePlan.present)
+	require.Equal(t, "cycle plan answer", cyclePlan.item.Answer)
+	require.Equal(t, "primary cycle suggestion", cyclePlan.item.SuggestedPrompt)
+	require.Equal(t, "legacy cycle suggestion", cyclePlan.item.SuggestPrompt)
+	require.Equal(t, "continue cycle", cyclePlan.item.SuggestedPrompts[0])
+	require.Equal(t, "Continue", cyclePlan.item.RecommendationOptions[0].Title)
+	require.Equal(t, "continue detail", cyclePlan.item.RecommendationOptions[0].Detail)
+	require.Equal(t, "/continue-cycle", cyclePlan.item.RecommendationOptions[0].Command)
+	require.Equal(t, "inspect cycle plan", cyclePlan.item.Task.Goal)
+	require.Equal(t, "run-cycle-plan", cyclePlan.item.Task.ActiveRunID)
+	require.Equal(t, "cycle plan task summary", cyclePlan.item.Task.Summary)
+	require.Equal(t, "collect health status", cyclePlan.item.Todos[0].Detail)
+	require.Equal(t, 2, cyclePlan.item.Todos[0].Priority)
+	require.Equal(t, "waiting for action", cyclePlan.item.Todos[0].BlockedReason)
+	require.Equal(t, "message:msg-cycle-plan", cyclePlan.item.ContextRefs[0].To)
+	require.Equal(t, "cycle context summary", cyclePlan.item.ContextRefs[0].Summary)
+	require.Equal(t, "more tool work", cyclePlan.item.NextAction.Reason)
+	require.Equal(t, "continue with daemon health", cyclePlan.item.NextAction.SuggestedPrompt)
+	require.Equal(t, "cycle private plan reasoning", cyclePlan.item.Reasoning)
+	require.Equal(t, "cycle-plan", cyclePlan.item.Actions[0].Arguments["probe"])
+	require.Equal(t, 1, cyclePlan.item.ToolCalls[0].Arguments["limit"])
 
 	plan.Phase = "mutated"
+	plan.SuggestedPrompt = "mutated primary suggestion"
+	plan.SuggestPrompt = "mutated legacy suggestion"
 	plan.SuggestedPrompts[0] = "mutated prompt"
 	plan.RecommendationOptions[0].Title = "Mutated"
+	plan.RecommendationOptions[0].Detail = "mutated detail"
+	plan.RecommendationOptions[0].Command = "/mutated"
 	plan.Task.Goal = "mutated goal"
+	plan.Task.ActiveRunID = "run-mutated"
+	plan.Task.Summary = "mutated summary"
 	plan.Todos[0].Title = "mutated todo"
+	plan.Todos[0].Detail = "mutated todo detail"
+	plan.Todos[0].Priority = 99
+	plan.Todos[0].BlockedReason = "mutated blocked"
 	plan.Todos[0].ContextRefIDs[0] = "ctx-mutated"
 	plan.ContextRefs[0].Label = "Mutated context"
+	plan.ContextRefs[0].To = "message:mutated"
+	plan.ContextRefs[0].Summary = "mutated context summary"
 	plan.NextAction.Type = "stop"
+	plan.NextAction.Reason = "mutated reason"
+	plan.NextAction.SuggestedPrompt = "mutated next prompt"
 	plan.NextAction.AutoContinue = false
+	plan.Reasoning = "mutated reasoning"
 	plan.Actions[0].Arguments["probe"] = "mutated-probe"
 	plan.ToolCalls[0].Arguments["limit"] = 99
 	plan.Actions = nil
@@ -1949,29 +1998,58 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.NotNil(t, got)
 	require.NotSame(t, plan, got)
 	require.Equal(t, "step_replan", got.Phase)
+	require.Equal(t, "cycle plan answer", got.Answer)
+	require.Equal(t, "primary cycle suggestion", got.SuggestedPrompt)
+	require.Equal(t, "legacy cycle suggestion", got.SuggestPrompt)
 	require.Equal(t, "continue cycle", got.SuggestedPrompts[0])
 	require.Equal(t, "Continue", got.RecommendationOptions[0].Title)
+	require.Equal(t, "continue detail", got.RecommendationOptions[0].Detail)
+	require.Equal(t, "/continue-cycle", got.RecommendationOptions[0].Command)
 	require.NotSame(t, plan.Task, got.Task)
 	require.Equal(t, "inspect cycle plan", got.Task.Goal)
+	require.Equal(t, "run-cycle-plan", got.Task.ActiveRunID)
+	require.Equal(t, "cycle plan task summary", got.Task.Summary)
 	require.Equal(t, "call daemon health", got.Todos[0].Title)
+	require.Equal(t, "collect health status", got.Todos[0].Detail)
+	require.Equal(t, 2, got.Todos[0].Priority)
+	require.Equal(t, "waiting for action", got.Todos[0].BlockedReason)
 	require.Equal(t, "ctx-cycle-plan", got.Todos[0].ContextRefIDs[0])
 	require.Equal(t, "Cycle plan", got.ContextRefs[0].Label)
+	require.Equal(t, "message:msg-cycle-plan", got.ContextRefs[0].To)
+	require.Equal(t, "cycle context summary", got.ContextRefs[0].Summary)
 	require.NotSame(t, plan.NextAction, got.NextAction)
 	require.Equal(t, "continue", got.NextAction.Type)
+	require.Equal(t, "more tool work", got.NextAction.Reason)
+	require.Equal(t, "continue with daemon health", got.NextAction.SuggestedPrompt)
 	require.True(t, got.NextAction.AutoContinue)
+	require.Equal(t, "cycle private plan reasoning", got.Reasoning)
 	require.Equal(t, "cycle-plan", got.Actions[0].Arguments["probe"])
 	require.Equal(t, 1, got.ToolCalls[0].Arguments["limit"])
 	require.Len(t, agentPlannerActions(got), 2)
 
 	got.Phase = "mutated returned"
+	got.SuggestedPrompt = "mutated returned primary"
+	got.SuggestPrompt = "mutated returned legacy"
 	got.SuggestedPrompts[0] = "mutated returned prompt"
 	got.RecommendationOptions[0].Title = "Mutated returned"
+	got.RecommendationOptions[0].Detail = "mutated returned detail"
+	got.RecommendationOptions[0].Command = "/mutated-returned"
 	got.Task.Goal = "mutated returned goal"
+	got.Task.ActiveRunID = "run-mutated-returned"
+	got.Task.Summary = "mutated returned summary"
 	got.Todos[0].Title = "mutated returned todo"
+	got.Todos[0].Detail = "mutated returned todo detail"
+	got.Todos[0].Priority = 100
+	got.Todos[0].BlockedReason = "mutated returned blocked"
 	got.Todos[0].ContextRefIDs[0] = "ctx-mutated-returned"
 	got.ContextRefs[0].Label = "Mutated returned context"
+	got.ContextRefs[0].To = "message:mutated-returned"
+	got.ContextRefs[0].Summary = "mutated returned context summary"
 	got.NextAction.Type = "stop returned"
+	got.NextAction.Reason = "mutated returned reason"
+	got.NextAction.SuggestedPrompt = "mutated returned next prompt"
 	got.NextAction.AutoContinue = false
+	got.Reasoning = "mutated returned reasoning"
 	got.Actions[0].Arguments["probe"] = "mutated-returned-probe"
 	got.ToolCalls[0].Arguments["limit"] = 100
 	got.Actions = nil
@@ -1988,9 +2066,9 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Equal(t, "cycle-plan", cyclePlan.actions()[0].Arguments["probe"])
 	require.Equal(t, 1, cyclePlan.actions()[1].Arguments["limit"])
 
-	cyclePlan.plan.Actions = nil
-	cyclePlan.plan.ToolCalls = nil
-	cyclePlan.plan.NextAction.AutoContinue = false
+	cyclePlan.item.Actions = nil
+	cyclePlan.item.ToolCalls = nil
+	cyclePlan.item.NextAction.AutoContinue = false
 
 	require.Equal(t, 2, cyclePlan.actionCount())
 	require.True(t, cyclePlan.hasActions())
@@ -2002,14 +2080,29 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	gotAgain := cyclePlan.legacyPlannerResponse()
 	require.NotNil(t, gotAgain)
 	require.Equal(t, "step_replan", gotAgain.Phase)
+	require.Equal(t, "cycle plan answer", gotAgain.Answer)
+	require.Equal(t, "primary cycle suggestion", gotAgain.SuggestedPrompt)
+	require.Equal(t, "legacy cycle suggestion", gotAgain.SuggestPrompt)
 	require.Equal(t, "continue cycle", gotAgain.SuggestedPrompts[0])
 	require.Equal(t, "Continue", gotAgain.RecommendationOptions[0].Title)
+	require.Equal(t, "continue detail", gotAgain.RecommendationOptions[0].Detail)
+	require.Equal(t, "/continue-cycle", gotAgain.RecommendationOptions[0].Command)
 	require.Equal(t, "inspect cycle plan", gotAgain.Task.Goal)
+	require.Equal(t, "run-cycle-plan", gotAgain.Task.ActiveRunID)
+	require.Equal(t, "cycle plan task summary", gotAgain.Task.Summary)
 	require.Equal(t, "call daemon health", gotAgain.Todos[0].Title)
+	require.Equal(t, "collect health status", gotAgain.Todos[0].Detail)
+	require.Equal(t, 2, gotAgain.Todos[0].Priority)
+	require.Equal(t, "waiting for action", gotAgain.Todos[0].BlockedReason)
 	require.Equal(t, "ctx-cycle-plan", gotAgain.Todos[0].ContextRefIDs[0])
 	require.Equal(t, "Cycle plan", gotAgain.ContextRefs[0].Label)
+	require.Equal(t, "message:msg-cycle-plan", gotAgain.ContextRefs[0].To)
+	require.Equal(t, "cycle context summary", gotAgain.ContextRefs[0].Summary)
 	require.Equal(t, "continue", gotAgain.NextAction.Type)
+	require.Equal(t, "more tool work", gotAgain.NextAction.Reason)
+	require.Equal(t, "continue with daemon health", gotAgain.NextAction.SuggestedPrompt)
 	require.False(t, gotAgain.NextAction.AutoContinue)
+	require.Equal(t, "cycle private plan reasoning", gotAgain.Reasoning)
 	require.Empty(t, agentPlannerActions(gotAgain))
 }
 
@@ -2286,8 +2379,8 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *t
 		}},
 	})
 	require.Len(t, cyclePlan.actions(), 1)
-	cyclePlan.plan.Actions = nil
-	cyclePlan.plan.ToolCalls = nil
+	cyclePlan.item.Actions = nil
+	cyclePlan.item.ToolCalls = nil
 
 	actionCalled := false
 	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
