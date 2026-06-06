@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from 'react'
 import { AlertTriangle, Bot, Code2, Download, Loader2, MessageSquare, Plus, RefreshCcw, ShieldCheck, X } from 'lucide-react'
 import { GlassAlert, GlassPanel, GlassToolbar } from '@/components/glass'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,7 @@ import { text, type Language, useConsole } from '@/lib/console'
 import { cn } from '@/lib/utils'
 import { AuthorizationGateBanner } from '@/agent/components/authorization-gate-banner'
 import { Composer } from '@/agent/components/composer'
+import { useDialogA11y } from '@/agent/components/dialog-a11y'
 import { TaskTree } from '@/agent/components/task-tree'
 import { ToolInspector } from '@/agent/components/tool-inspector'
 import { TraceViewerDrawer } from '@/agent/components/trace-viewer'
@@ -626,39 +627,12 @@ export function AgentCockpitPage() {
       </GlassPanel>
 
       {selectedTool && state.selectedToolCallId && (
-        <GlassPanel
-          as="aside"
-          variant="elevated"
-          role="dialog"
-          aria-modal="false"
-          aria-label={text(language, '工具详情', 'Tool details')}
-          className="fixed inset-x-3 bottom-24 z-40 flex max-h-[68dvh] flex-col overflow-hidden shadow-2xl xl:hidden"
-        >
-          <GlassToolbar className="flex min-h-12 shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">{text(language, '工具详情', 'Tool details')}</div>
-              <div className="truncate font-mono text-[10px] text-muted-foreground">{selectedTool.id}</div>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => dispatch({ type: 'ui/selectTool', toolCallId: undefined })}
-              className="h-11 w-11 rounded-xl px-0 text-muted-foreground"
-              aria-label={text(language, '关闭工具详情', 'Close tool details')}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </GlassToolbar>
-          <div className="agent-scroll-area min-h-0 flex-1 overflow-y-auto p-3">
-            <ToolInspector
-              tool={selectedTool}
-              language={language}
-              onRefresh={() => { void refreshCurrentSession() }}
-              onClear={() => dispatch({ type: 'ui/selectTool', toolCallId: undefined })}
-            />
-          </div>
-        </GlassPanel>
+        <MobileToolInspectorSheet
+          tool={selectedTool}
+          language={language}
+          onRefresh={() => { void refreshCurrentSession() }}
+          onClose={() => dispatch({ type: 'ui/selectTool', toolCallId: undefined })}
+        />
       )}
 
       {traceOpen && (
@@ -672,6 +646,65 @@ export function AgentCockpitPage() {
         />
       )}
     </div>
+  )
+}
+
+function MobileToolInspectorSheet({
+  tool,
+  language,
+  onRefresh,
+  onClose,
+}: {
+  tool: NonNullable<ReturnType<typeof sessionToolCalls>>[number]
+  language: Language
+  onRefresh: () => void
+  onClose: () => void
+}) {
+  const titleId = useId()
+  const descriptionId = useId()
+  const sheetRef = useDialogA11y<HTMLElement>({
+    onClose,
+    modal: false,
+    initialFocusSelector: '[data-dialog-close]',
+  })
+  return (
+    <GlassPanel
+      ref={sheetRef}
+      as="aside"
+      variant="elevated"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      tabIndex={-1}
+      className="fixed inset-x-3 bottom-24 z-40 flex max-h-[68dvh] flex-col overflow-hidden shadow-2xl xl:hidden"
+    >
+      <GlassToolbar className="flex min-h-12 shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
+        <div className="min-w-0">
+          <div id={titleId} className="text-sm font-medium">{text(language, '工具详情', 'Tool details')}</div>
+          <div id={descriptionId} className="truncate font-mono text-[10px] text-muted-foreground">{tool.id}</div>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onClose}
+          className="h-11 w-11 rounded-xl px-0 text-muted-foreground"
+          aria-label={text(language, '关闭工具详情', 'Close tool details')}
+          data-dialog-close
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </GlassToolbar>
+      <div className="agent-scroll-area min-h-0 flex-1 overflow-y-auto p-3">
+        <ToolInspector
+          tool={tool}
+          language={language}
+          onRefresh={onRefresh}
+          onClear={onClose}
+        />
+      </div>
+    </GlassPanel>
   )
 }
 
@@ -699,6 +732,7 @@ function MobileTaskSwitcher({
   onRefresh: () => void
 }) {
   const visibleSessions = sessions.slice(0, 12)
+  const panelId = useId()
   return (
     <GlassPanel as="section" variant="panel" className="shrink-0 overflow-hidden xl:hidden">
       <GlassToolbar as="header" className={cn('flex min-h-14 items-center gap-2 px-2 py-2', open && 'border-b')}>
@@ -707,6 +741,8 @@ function MobileTaskSwitcher({
           onClick={onToggle}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl px-2 py-1.5 text-left hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-expanded={open}
+          aria-controls={panelId}
+          aria-label={open ? text(language, '收起任务列表', 'Collapse task list') : text(language, '展开任务列表', 'Expand task list')}
         >
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/25 bg-primary/10">
             <MessageSquare className="h-4 w-4 text-primary" />
@@ -743,7 +779,7 @@ function MobileTaskSwitcher({
       </GlassToolbar>
 
       {open && (
-        <div className="agent-scroll-area max-h-[42dvh] overflow-y-auto p-2">
+        <div id={panelId} className="agent-scroll-area max-h-[42dvh] overflow-y-auto p-2">
           {visibleSessions.length ? (
             <div className="space-y-1.5">
               {visibleSessions.map((item) => {
@@ -753,8 +789,9 @@ function MobileTaskSwitcher({
                     key={item.session_id}
                     type="button"
                     onClick={() => onSelect(item.session_id)}
+                    aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'flex w-full items-start gap-2 rounded-2xl border p-2 text-left transition',
+                      'flex w-full items-start gap-2 rounded-2xl border p-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                       active
                         ? 'border-primary/35 bg-primary/10 text-foreground'
                         : 'border-white/5 bg-white/[0.025] text-muted-foreground hover:border-white/12 hover:bg-white/[0.05] hover:text-foreground',

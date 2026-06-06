@@ -35,7 +35,7 @@ export function TaskTree({
         <button
           type="button"
           onClick={onToggleCollapsed}
-          className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+          className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           aria-label={text(language, '展开任务列表', 'Expand task list')}
         >
           <MessageSquare className="h-4 w-4" />
@@ -43,7 +43,7 @@ export function TaskTree({
         <button
           type="button"
           onClick={onCreate}
-          className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+          className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           aria-label={text(language, '新任务', 'New task')}
         >
           <Plus className="h-4 w-4" />
@@ -51,7 +51,7 @@ export function TaskTree({
         <button
           type="button"
           onClick={onRefresh}
-          className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+          className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           aria-label={text(language, '刷新', 'Refresh')}
         >
           <RefreshCcw className={cn('h-4 w-4', loading && 'animate-spin')} />
@@ -73,7 +73,7 @@ export function TaskTree({
         <button
           type="button"
           onClick={onToggleCollapsed}
-          className="grid h-8 w-8 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+          className="grid h-8 w-8 place-items-center rounded-xl text-muted-foreground hover:bg-white/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           aria-label={text(language, '收起任务列表', 'Collapse task list')}
         >
           ×
@@ -113,7 +113,12 @@ export function TaskTree({
                   )}
                 >
                   <div className="flex items-start gap-2">
-                    <button type="button" onClick={() => onSelect(item.session_id)} className="min-w-0 flex-1 text-left">
+                    <button
+                      type="button"
+                      onClick={() => onSelect(item.session_id)}
+                      aria-current={active ? 'page' : undefined}
+                      className="min-w-0 flex-1 rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    >
                       <div className="line-clamp-2 text-xs font-medium leading-5">{sessionTitle(item, language)}</div>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
                         <span className={cn('rounded-full border px-1.5 py-0.5', statusPillClass(item.status))}>{statusLabel(item.status, language)}</span>
@@ -127,7 +132,7 @@ export function TaskTree({
                         event.stopPropagation()
                         onDelete(item.session_id)
                       }}
-                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg opacity-60 hover:bg-red-500/15 hover:text-red-200 group-hover:opacity-100"
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg opacity-60 hover:bg-red-500/15 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background group-hover:opacity-100"
                       aria-label={text(language, '删除', 'Delete')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />

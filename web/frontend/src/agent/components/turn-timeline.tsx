@@ -165,6 +165,7 @@ function TurnGroup({
                   type="button"
                   onClick={() => onSelectTool(tool.id)}
                   selected={state.selectedToolCallId === tool.id}
+                  aria-pressed={state.selectedToolCallId === tool.id}
                   className="p-2.5 text-left transition-colors hover:border-primary/25 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:p-3"
                 >
                   <div className="flex items-start gap-2">
@@ -255,7 +256,12 @@ function MessageBubble({
         {message.tool_calls?.length ? (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {message.tool_calls.map((tool) => (
-              <button key={tool.id} type="button" onClick={() => onSelectTool(tool.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-black/15 px-2 py-1 font-mono text-[10px] text-muted-foreground hover:border-primary/25 hover:text-foreground">
+              <button
+                key={tool.id}
+                type="button"
+                onClick={() => onSelectTool(tool.id)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-black/15 px-2 py-1 font-mono text-[10px] text-muted-foreground hover:border-primary/25 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              >
                 <span className={cn('h-2 w-2 rounded-full', toolDotClass(tool.status))} />
                 {tool.name}
               </button>
@@ -269,7 +275,14 @@ function MessageBubble({
             <div className="space-y-1.5">
               {suggestions.map((prompt, index) => (
                 <div key={`${prompt}_${index}`} className="group rounded-xl border border-white/10 bg-black/15 p-2">
-                  <button type="button" disabled={disabled} onClick={() => onFillPrompt(prompt)} className="w-full text-left text-[11px] leading-5 text-foreground/90 hover:text-primary disabled:opacity-60">{prompt}</button>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onFillPrompt(prompt)}
+                    className="w-full rounded-lg text-left text-[11px] leading-5 text-foreground/90 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
+                  >
+                    {prompt}
+                  </button>
                   <div className="mt-1 flex justify-end gap-1.5">
                     <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => onFillPrompt(prompt)} className="h-7 rounded-lg px-2 text-[11px]">{text(language, '填入', 'Fill')}</Button>
                     <Button type="button" size="sm" disabled={disabled} onClick={() => onExecutePrompt(prompt)} className="h-7 rounded-lg px-2 text-[11px]">{text(language, '执行', 'Run')}</Button>
@@ -285,7 +298,13 @@ function MessageBubble({
             <div className="mb-1.5 text-cyan-100">{text(language, '可选建议', 'Recommendation options')}</div>
             <div className="space-y-1.5">
               {options.map((item, index) => (
-                <button key={item.id || index} type="button" disabled={disabled} onClick={() => onFillPrompt(String(index + 1))} className="w-full rounded-xl border border-white/10 bg-black/15 px-2.5 py-2 text-left hover:border-cyan-300/30 disabled:opacity-60">
+                <button
+                  key={item.id || index}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onFillPrompt(String(index + 1))}
+                  className="w-full rounded-xl border border-white/10 bg-black/15 px-2.5 py-2 text-left hover:border-cyan-300/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
+                >
                   <span className="font-medium text-foreground/90">{index + 1}. {item.title || item.detail}</span>
                   {item.detail && <span className="mt-0.5 line-clamp-2 block text-[10px] text-muted-foreground">{item.detail}</span>}
                 </button>

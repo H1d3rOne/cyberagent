@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useId, useMemo } from 'react'
 import { ChevronDown, Play, Plus, Send, Sparkles, X } from 'lucide-react'
 import { GlassAlert, GlassCard, GlassToolbar, StatusPill } from '@/components/glass'
 import { Button } from '@/components/ui/button'
@@ -58,6 +58,8 @@ export function Composer({
   disabled?: boolean
 }) {
   const prompts = useMemo(() => QUICK_PROMPTS[language], [language])
+  const composerId = useId()
+  const composerHintId = useId()
   return (
     <GlassToolbar as="footer" className="shrink-0 border-t p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
       {suggestedPrompt && (
@@ -124,7 +126,11 @@ export function Composer({
       </GlassCard>
 
       <div className="space-y-1.5">
+        <label htmlFor={composerId} className="sr-only">
+          {text(language, 'Agent 指令输入', 'Agent command input')}
+        </label>
         <textarea
+          id={composerId}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
@@ -135,9 +141,13 @@ export function Composer({
           }}
           rows={1}
           placeholder={text(language, '输入指令，Enter 发送，Shift+Enter 换行', 'Type a command. Enter sends, Shift+Enter inserts a new line')}
+          aria-describedby={composerHintId}
           className="command-input min-h-[44px] max-h-28 w-full resize-y rounded-xl px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground"
           disabled={disabled || sending}
         />
+        <p id={composerHintId} className="sr-only">
+          {text(language, '按 Enter 发送，按 Shift 加 Enter 插入换行。', 'Press Enter to send, or Shift plus Enter to insert a new line.')}
+        </p>
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           <Button type="button" onClick={onSubmit} disabled={disabled || sending || !value.trim()} className="h-11 rounded-lg px-4 sm:h-8 sm:px-3">
             <Send className="mr-2 h-4 w-4" />

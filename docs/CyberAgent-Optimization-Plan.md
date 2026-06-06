@@ -972,6 +972,14 @@ P1-F4 已落地真实浏览器 smoke：
 - 覆盖 daemon health prompt、session/timeline 渲染、`workspace.files.write` authorization pending、点击“允许并继续”、workspace write 执行与 daemon workspace read API 内容校验。
 - 验证命令：`npm test --prefix web/frontend -- --run`、`npm run build --prefix web/frontend`、`node --check scripts/agent-cockpit-browser-smoke.mjs`、`node scripts/agent-cockpit-browser-smoke.mjs`、`git diff --check`。
 
+P1-F5 已落地 Agent Cockpit a11y 回归：
+
+- 新增 `web/frontend/src/agent/components/dialog-a11y.ts`，统一处理 modal 初始焦点、Tab/Shift+Tab focus trap、Escape 关闭与 unmount 后焦点返回。
+- Trace drawer 与移动端 Tool Inspector sheet 补齐 `aria-labelledby`、`aria-describedby`、可编程聚焦、关闭按钮标记与焦点恢复；Composer textarea 改为真实 `<label>` + sr-only 键盘提示。
+- TaskTree、mobile session list、timeline 工具卡/建议按钮补齐键盘 focus-visible ring、`aria-current` 与 `aria-pressed` 等状态语义。
+- 新增 `scripts/agent-cockpit-a11y-smoke.mjs`，使用随机端口 daemon + Vite + 系统 Chrome 校验 visible button accessible name、form label、dialog name、Trace drawer focus trap、Escape close 与 focus return。
+- 验证命令：`npm test --prefix web/frontend -- --run`、`npm run build --prefix web/frontend`、`node --check scripts/agent-cockpit-browser-smoke.mjs`、`node --check scripts/agent-cockpit-a11y-smoke.mjs`、`node scripts/agent-cockpit-browser-smoke.mjs`、`node scripts/agent-cockpit-a11y-smoke.mjs`、`git diff --check`。
+
 覆盖路径：
 
 - `/agent` 初始加载。
@@ -1236,6 +1244,7 @@ P1-F4 已落地真实浏览器 smoke：
 | v38 | 完成 P1-F2 route-level lazy / bundle splitting：`App.tsx` 使用 `React.lazy` + `Suspense` 延迟加载页面 route，主入口 JS 从 `442.68KB` / gzip `127.29KB` 降到 `233.51KB` / gzip `75.24KB`，并记录主要 route chunk。 |
 | v39 | 完成 P1-F3 移动端 Agent Cockpit 降噪：新增移动端任务切换器、隐藏小屏桌面 TaskTree、收敛 header/timeline/tool card/approval/composer 密度，并补移动端 Tool Inspector bottom sheet；前端测试、build 与 diff check 通过。 |
 | v40 | 完成 P1-F4 真实浏览器 Agent Cockpit smoke：新增 Playwright 脚本，用随机端口 daemon + Vite + 系统 Chrome 验证 `/agent` health prompt、manual authorization approval 与 workspace write/read 最小链路；前端测试、build、脚本语法检查、browser smoke 与 diff check 通过。 |
+| v41 | 完成 P1-F5 Agent Cockpit a11y 回归：补 Trace drawer/mobile Tool Inspector dialog label/focus trap/Escape/focus return、Composer textarea label、TaskTree/timeline 键盘焦点态，并新增真实浏览器 a11y smoke；前端测试、build、browser smoke、a11y smoke 与 diff check 通过。 |
 
 ---
 
