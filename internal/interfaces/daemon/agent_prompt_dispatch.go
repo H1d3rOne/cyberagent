@@ -261,6 +261,10 @@ func agentReportDraftRouteAction(actionName string, _ map[string]any) bool {
 }
 
 func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) (messages []agentMessage, toolCalls []agentToolCall, err error) {
+	return m.routePromptForTurn(ctx, sessionID, agentRuntimeTurnRef{}, prompt, language, operator, operationLevel, svc)
+}
+
+func (m *agentManager) routePromptForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, svc routerServices) (messages []agentMessage, toolCalls []agentToolCall, err error) {
 	routeMetadataSource := "deterministic_route/direct_handler"
 	defer func() {
 		if err == nil {
@@ -306,7 +310,7 @@ func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, langu
 		if plan != nil {
 			message := agentMessageWithPhase(m.message(language, "agent", plan.Answer, nil, nil), "plan")
 			message.Reasoning = trimSummary(plan.Reasoning, 800)
-			m.appendMessagesWithPlanner(sessionID, plan)
+			m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionDeterministicRoute, operationLevel, plan)
 			return []agentMessage{message}, nil, nil
 		}
 		return []agentMessage{m.message(language, "agent", agentExplain(language), nil, nil)}, nil, nil

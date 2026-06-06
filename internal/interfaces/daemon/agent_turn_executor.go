@@ -104,7 +104,7 @@ func (e daemonAgentTurnExecutor) executeDeterministicRouteTurn(ctx context.Conte
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	messages, toolCalls, err := e.manager.routePrompt(ctx, payload.SessionID, payload.Prompt, payload.Language, payload.Operator, payload.OperationLevel, payload.Services)
+	messages, toolCalls, err := e.manager.routePromptForTurn(ctx, payload.SessionID, agentRuntimeTurnRefFromTurn(turn), payload.Prompt, payload.Language, payload.Operator, payload.OperationLevel, payload.Services)
 	if err != nil {
 		return daemonTurnExecutionErrorResult(turn, err), err
 	}
@@ -320,7 +320,7 @@ func (m *agentManager) routePromptWithRuntimeDeterministicRoute(ctx context.Cont
 	if handled {
 		return routed.Messages, routed.ToolCalls, nil
 	}
-	return m.routePrompt(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+	return m.routePromptForTurn(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 }
 
 func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]agentMessage, []agentToolCall) {

@@ -51,6 +51,61 @@ func attachRecordingSessionMutator(t *testing.T, eng *runtime.Engine, mgr *agent
 	}))
 }
 
+func TestAgentManagerDeterministicRoutePlanOnlyAppendUsesTurnRef(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+
+	turnRef := agentRuntimeTurnRef{
+		TaskID: "task-deterministic-plan-only",
+		RunID:  "run-deterministic-plan-only",
+		TurnID: "turn-deterministic-plan-only",
+	}
+	messages, toolCalls, err := mgr.routePromptWithRuntimeDeterministicRoute(
+		context.Background(),
+		sessionID,
+		turnRef,
+		"run ffuf directory enumeration on https://example.com",
+		"en",
+		"operator-1",
+		"safe_scan",
+		routerServices{},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Contains(t, messages[0].Content, "content discovery")
+	require.Empty(t, toolCalls)
+	require.Len(t, appendMutations, 1)
+	appendReq := appendMutations[0]
+	require.Equal(t, runtime.SessionMutationAppendMessages, appendReq.Kind)
+	require.Equal(t, sessionID, appendReq.Turn.SessionID)
+	require.Equal(t, turnRef.TaskID, appendReq.Turn.TaskID)
+	require.Equal(t, turnRef.RunID, appendReq.Turn.RunID)
+	require.Equal(t, turnRef.TurnID, appendReq.Turn.TurnID)
+	require.Equal(t, "run ffuf directory enumeration on https://example.com", appendReq.Turn.Prompt)
+	require.Equal(t, daemonTurnExecutionDeterministicRoute, appendReq.Turn.Origin)
+	require.Equal(t, "safe_scan", appendReq.Turn.OperationLevel)
+	require.Equal(t, 0, appendReq.Turn.Metadata["message_count"])
+	require.Equal(t, true, appendReq.Turn.Metadata["planner_apply"])
+
+	payload, ok := appendReq.Payload.(daemonAppendMessagesMutationPayload)
+	require.True(t, ok, "payload type = %T", appendReq.Payload)
+	require.NotNil(t, payload.Plan)
+	require.Empty(t, payload.Messages)
+}
+
 func TestAgentManagerControlSessionJobCancelAppendUsesExternalTurnRef(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

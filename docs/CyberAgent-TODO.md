@@ -70,6 +70,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 为 `ControlSession` / `DecideAgentAuthorization` 外部入口 append 生成轻量 runtime turnRef，使 daemon job cancel、approved action 与 authorization synthesis append 也经 turn-aware `SessionMutationAppendMessages` dispatch；不改变 Begin/Finish lifecycle 与原 control/authorization 状态语义。
 - [x] 将 `DecideAgentAuthorization` approved flow 的外部 turnRef 贯穿 approved planner action execution、authorization tool synthesis 与 follow-up continuation runtime runner；runner dispatch 与 append mutation 现在共享同一 task/run/turn metadata，仍不发布额外 Begin/Finish lifecycle。
 - [x] 补齐 session mutation compaction metadata：append messages、control session 与 resolve authorization 的 `memory_compacted` event 现在使用当前 mutation turnRef；legacy fallback 会按 session/message/auth seed 补齐 external turnRef，避免空 task/run/turn metadata，且不发布额外 Begin/Finish lifecycle。
+- [x] 将 deterministic route 内部 capability-gap plan-only append/apply planner 改为 turn-aware `SessionMutationAppendMessages` dispatch；`routePromptForTurn` 会沿用外层 task/run/turn/prompt/origin/operation_level metadata，直接 `routePrompt` 调用仍保留 legacy wrapper 兼容。
 - [ ] 继续把剩余 session mutation 分批迁成 engine-native runner。
 - [ ] 最后继续收敛 remaining SendMessage branches 为 engine turn lifecycle。
 
@@ -146,6 +147,7 @@ go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerSendMessageN
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerControlSessionJobCancelAppendUsesExternalTurnRef|TestAgentManagerDecideAgentAuthorizationApprovedActionAppendUsesExternalTurnRef'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefThroughRuntimeRunners|TestAgentManagerDecideAgentAuthorizationApprovedActionAppendUsesExternalTurnRef|TestAgentManagerControlSessionJobCancelAppendUsesExternalTurnRef'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerAppendMessagesForTurnCompactionUsesTurnRef|TestAgentManagerControlSessionCompactionUsesMutationTurnRef|TestAgentManagerResolveAuthorizationCompactionUsesMutationTurnRef|TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator|TestAgentManagerRunRuntimeResolveAuthorizationDispatchesSessionMutator'
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerDeterministicRoutePlanOnlyAppendUsesTurnRef'
 ```
 
 结果摘要：
@@ -182,4 +184,5 @@ Turn-aware SendMessage append mutation 小切片验证通过：`SendMessage` 的
 External control/authorization append mutation 小切片验证通过：`ControlSession` daemon job cancel append 与 `DecideAgentAuthorization` approved action / synthesis append 已生成轻量 external turnRef，并携带 task/run/turn/prompt/origin/operation_level 进入 `SessionMutationAppendMessages`；不发布额外 Begin/Finish lifecycle。
 Authorization external runner turnRef threading 小切片验证通过：`DecideAgentAuthorization` approve 后的 planner action execution、tool synthesis 与 follow-up continuation runtime runner 现在共享 authorization external turnRef，runner request metadata 与 append mutation metadata 对齐，原 approval resolve/action/synthesis/auto-continue 语义保持不变。
 Session mutation compaction metadata 小切片验证通过：append messages、control session 与 resolve authorization 的 `memory_compacted` event 现在携带 mutation task/run/turn metadata；legacy fallback 会补齐 external turnRef，不发布额外 Begin/Finish lifecycle。
+Deterministic route plan-only append 小切片验证通过：capability-gap route 的 planner apply 已通过 `routePromptForTurn` 沿用外层 deterministic route turnRef，plan-only `append_messages` mutation metadata 与外层 task/run/turn 对齐。
 ```
