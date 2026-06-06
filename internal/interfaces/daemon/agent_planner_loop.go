@@ -333,13 +333,13 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		if !cycle.Continue {
 			break
 		}
+		if !cycle.Plan.hasActions() {
+			break
+		}
+		if !cycle.Plan.shouldAutoContinue() {
+			break
+		}
 		plan = cycle.Plan.legacyPlannerResponse()
-		if plan == nil || len(agentPlannerActions(plan)) == 0 {
-			break
-		}
-		if plan.NextAction == nil || !plan.NextAction.AutoContinue {
-			break
-		}
 	}
 
 	return responseMessages, toolCalls, nil
@@ -353,11 +353,12 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 	toolCalls := []agentToolCall{}
 	loopHistory := cloneAgentMessages(history)
 
+	cyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(plan)
 	for step := 0; step < maxLoops; step++ {
-		if plan == nil || len(agentPlannerActions(plan)) == 0 {
+		if !cyclePlan.hasActions() {
 			break
 		}
-		if plan.NextAction == nil || !plan.NextAction.AutoContinue {
+		if !cyclePlan.shouldAutoContinue() {
 			break
 		}
 
@@ -369,7 +370,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
 			MemorySummary: agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(memorySummary),
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
-			Plan:          agentPlannerActionReplanCyclePlanFromPlannerResponse(plan),
+			Plan:          cyclePlan,
 			State:         agentPlannerActionReplanCycleStateFromLegacy(responseMessages, toolCalls, loopHistory),
 			Options: agentPlannerActionReplanCycleOptions{
 				ActionAppendOrigin: daemonTurnExecutionReplanActionContinuation,
@@ -378,10 +379,10 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 		responseMessages = cycle.State.ResponseMessages.legacyAgentMessages()
 		toolCalls = cycle.State.ToolCalls.legacyAgentToolCalls()
 		loopHistory = cycle.State.LoopHistory.legacyAgentMessages()
-		plan = cycle.Plan.legacyPlannerResponse()
 		if !cycle.Continue {
 			break
 		}
+		cyclePlan = cycle.Plan
 	}
 	return responseMessages, toolCalls
 }
@@ -593,6 +594,18 @@ func agentPlannerActionReplanCyclePlanFromPlannerResponse(plan *agentPlannerResp
 
 func (plan agentPlannerActionReplanCyclePlan) legacyPlannerResponse() *agentPlannerResponse {
 	return cloneAgentPlannerResponse(plan.plan)
+}
+
+func (plan agentPlannerActionReplanCyclePlan) actionCount() int {
+	return len(agentPlannerActions(plan.plan))
+}
+
+func (plan agentPlannerActionReplanCyclePlan) hasActions() bool {
+	return plan.actionCount() > 0
+}
+
+func (plan agentPlannerActionReplanCyclePlan) shouldAutoContinue() bool {
+	return plan.hasActions() && plan.plan != nil && plan.plan.NextAction != nil && plan.plan.NextAction.AutoContinue
 }
 
 func cloneAgentPlannerResponse(plan *agentPlannerResponse) *agentPlannerResponse {

@@ -1578,7 +1578,29 @@ func TestAgentPlannerActionReplanCycleAuthorizationFromMessageRequestUsesPrivate
 }
 
 func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.T) {
-	require.Nil(t, agentPlannerActionReplanCyclePlan{}.legacyPlannerResponse())
+	emptyCyclePlan := agentPlannerActionReplanCyclePlan{}
+	require.Nil(t, emptyCyclePlan.legacyPlannerResponse())
+	require.Zero(t, emptyCyclePlan.actionCount())
+	require.False(t, emptyCyclePlan.hasActions())
+	require.False(t, emptyCyclePlan.shouldAutoContinue())
+
+	noActionCyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(&agentPlannerResponse{
+		NextAction: &agentNextAction{AutoContinue: true},
+	})
+	require.Zero(t, noActionCyclePlan.actionCount())
+	require.False(t, noActionCyclePlan.hasActions())
+	require.False(t, noActionCyclePlan.shouldAutoContinue())
+
+	manualStopCyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(&agentPlannerResponse{
+		NextAction: &agentNextAction{AutoContinue: false},
+		Actions: []agentPlannerAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "manual-stop"},
+		}},
+	})
+	require.Equal(t, 1, manualStopCyclePlan.actionCount())
+	require.True(t, manualStopCyclePlan.hasActions())
+	require.False(t, manualStopCyclePlan.shouldAutoContinue())
 
 	plan := &agentPlannerResponse{
 		Phase:            "step_replan",
@@ -1620,6 +1642,10 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	}
 
 	cyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(plan)
+	require.Equal(t, 2, cyclePlan.actionCount())
+	require.True(t, cyclePlan.hasActions())
+	require.True(t, cyclePlan.shouldAutoContinue())
+
 	plan.Phase = "mutated"
 	plan.SuggestedPrompts[0] = "mutated prompt"
 	plan.RecommendationOptions[0].Title = "Mutated"
@@ -1628,8 +1654,15 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	plan.Todos[0].ContextRefIDs[0] = "ctx-mutated"
 	plan.ContextRefs[0].Label = "Mutated context"
 	plan.NextAction.Type = "stop"
+	plan.NextAction.AutoContinue = false
 	plan.Actions[0].Arguments["probe"] = "mutated-probe"
 	plan.ToolCalls[0].Arguments["limit"] = 99
+	plan.Actions = nil
+	plan.ToolCalls = nil
+
+	require.Equal(t, 2, cyclePlan.actionCount())
+	require.True(t, cyclePlan.hasActions())
+	require.True(t, cyclePlan.shouldAutoContinue())
 
 	got := cyclePlan.legacyPlannerResponse()
 	require.NotNil(t, got)
@@ -1644,6 +1677,7 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Equal(t, "Cycle plan", got.ContextRefs[0].Label)
 	require.NotSame(t, plan.NextAction, got.NextAction)
 	require.Equal(t, "continue", got.NextAction.Type)
+	require.True(t, got.NextAction.AutoContinue)
 	require.Equal(t, "cycle-plan", got.Actions[0].Arguments["probe"])
 	require.Equal(t, 1, got.ToolCalls[0].Arguments["limit"])
 	require.Len(t, agentPlannerActions(got), 2)
@@ -1656,8 +1690,15 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	got.Todos[0].ContextRefIDs[0] = "ctx-mutated-returned"
 	got.ContextRefs[0].Label = "Mutated returned context"
 	got.NextAction.Type = "stop returned"
+	got.NextAction.AutoContinue = false
 	got.Actions[0].Arguments["probe"] = "mutated-returned-probe"
 	got.ToolCalls[0].Arguments["limit"] = 100
+	got.Actions = nil
+	got.ToolCalls = nil
+
+	require.Equal(t, 2, cyclePlan.actionCount())
+	require.True(t, cyclePlan.hasActions())
+	require.True(t, cyclePlan.shouldAutoContinue())
 
 	gotAgain := cyclePlan.legacyPlannerResponse()
 	require.NotNil(t, gotAgain)
@@ -1669,6 +1710,7 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Equal(t, "ctx-cycle-plan", gotAgain.Todos[0].ContextRefIDs[0])
 	require.Equal(t, "Cycle plan", gotAgain.ContextRefs[0].Label)
 	require.Equal(t, "continue", gotAgain.NextAction.Type)
+	require.True(t, gotAgain.NextAction.AutoContinue)
 	require.Equal(t, "cycle-plan", gotAgain.Actions[0].Arguments["probe"])
 	require.Equal(t, 1, gotAgain.ToolCalls[0].Arguments["limit"])
 }
