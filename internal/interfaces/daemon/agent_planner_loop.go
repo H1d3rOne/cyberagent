@@ -313,14 +313,11 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		}
 
 		cycle := m.runAgentPlannerActionReplanCycle(ctx, agentPlannerActionReplanCycleRequest{
-			Turn:       agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
-			Language:   language,
-			Operator:   operator,
-			LLMRequest: agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
-			Authorization: agentPlannerActionReplanCycleAuthorization{
-				AuthProfiles:         req.AuthProfiles,
-				DefaultAuthProfileID: req.DefaultAuthProfileID,
-			},
+			Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
+			Language:      language,
+			Operator:      operator,
+			LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
+			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
 			MemorySummary: memorySummary,
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
 			Plan:          plan,
@@ -369,14 +366,11 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 		}
 
 		cycle := m.runAgentPlannerActionReplanCycle(ctx, agentPlannerActionReplanCycleRequest{
-			Turn:       agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
-			Language:   language,
-			Operator:   operator,
-			LLMRequest: agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
-			Authorization: agentPlannerActionReplanCycleAuthorization{
-				AuthProfiles:         req.AuthProfiles,
-				DefaultAuthProfileID: req.DefaultAuthProfileID,
-			},
+			Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
+			Language:      language,
+			Operator:      operator,
+			LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
+			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
 			MemorySummary: memorySummary,
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
 			Plan:          plan,
@@ -412,8 +406,15 @@ type agentPlannerActionReplanCycleState struct {
 }
 
 type agentPlannerActionReplanCycleAuthorization struct {
-	AuthProfiles         []agentHTTPAuthProfile
+	AuthProfiles         []agentPlannerActionReplanCycleAuthProfile
 	DefaultAuthProfileID string
+}
+
+func agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req sendAgentMessageRequest) agentPlannerActionReplanCycleAuthorization {
+	return agentPlannerActionReplanCycleAuthorization{
+		AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(req.AuthProfiles),
+		DefaultAuthProfileID: req.DefaultAuthProfileID,
+	}
 }
 
 type agentPlannerActionReplanCycleLLMRequest struct {
@@ -424,8 +425,84 @@ type agentPlannerActionReplanCycleLLMRequest struct {
 	APIKey               string
 	BaseURL              string
 	Instructions         string
-	AuthProfiles         []agentHTTPAuthProfile
+	AuthProfiles         []agentPlannerActionReplanCycleAuthProfile
 	DefaultAuthProfileID string
+}
+
+type agentPlannerActionReplanCycleAuthProfile struct {
+	ID          string
+	Name        string
+	Type        string
+	BaseURL     string
+	Token       string
+	Username    string
+	Password    string
+	HeaderName  string
+	HeaderValue string
+	Cookie      string
+	Enabled     *bool
+}
+
+func agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(profiles []agentHTTPAuthProfile) []agentPlannerActionReplanCycleAuthProfile {
+	if len(profiles) == 0 {
+		return nil
+	}
+	out := make([]agentPlannerActionReplanCycleAuthProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		out = append(out, agentPlannerActionReplanCycleAuthProfileFromHTTPProfile(profile))
+	}
+	return out
+}
+
+func agentPlannerActionReplanCycleAuthProfileFromHTTPProfile(profile agentHTTPAuthProfile) agentPlannerActionReplanCycleAuthProfile {
+	return agentPlannerActionReplanCycleAuthProfile{
+		ID:          profile.ID,
+		Name:        profile.Name,
+		Type:        profile.Type,
+		BaseURL:     profile.BaseURL,
+		Token:       profile.Token,
+		Username:    profile.Username,
+		Password:    profile.Password,
+		HeaderName:  profile.HeaderName,
+		HeaderValue: profile.HeaderValue,
+		Cookie:      profile.Cookie,
+		Enabled:     cloneAgentPlannerActionReplanCycleBoolPtr(profile.Enabled),
+	}
+}
+
+func (profile agentPlannerActionReplanCycleAuthProfile) agentHTTPAuthProfile() agentHTTPAuthProfile {
+	return agentHTTPAuthProfile{
+		ID:          profile.ID,
+		Name:        profile.Name,
+		Type:        profile.Type,
+		BaseURL:     profile.BaseURL,
+		Token:       profile.Token,
+		Username:    profile.Username,
+		Password:    profile.Password,
+		HeaderName:  profile.HeaderName,
+		HeaderValue: profile.HeaderValue,
+		Cookie:      profile.Cookie,
+		Enabled:     cloneAgentPlannerActionReplanCycleBoolPtr(profile.Enabled),
+	}
+}
+
+func agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(profiles []agentPlannerActionReplanCycleAuthProfile) []agentHTTPAuthProfile {
+	if len(profiles) == 0 {
+		return nil
+	}
+	out := make([]agentHTTPAuthProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		out = append(out, profile.agentHTTPAuthProfile())
+	}
+	return out
+}
+
+func cloneAgentPlannerActionReplanCycleBoolPtr(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req sendAgentMessageRequest) agentPlannerActionReplanCycleLLMRequest {
@@ -437,7 +514,7 @@ func agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req sendAgentMess
 		APIKey:               req.APIKey,
 		BaseURL:              req.BaseURL,
 		Instructions:         req.Instructions,
-		AuthProfiles:         append([]agentHTTPAuthProfile(nil), req.AuthProfiles...),
+		AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(req.AuthProfiles),
 		DefaultAuthProfileID: req.DefaultAuthProfileID,
 	}
 }
@@ -451,7 +528,7 @@ func (req agentPlannerActionReplanCycleLLMRequest) sendMessageRequest() sendAgen
 		APIKey:               req.APIKey,
 		BaseURL:              req.BaseURL,
 		Instructions:         req.Instructions,
-		AuthProfiles:         append([]agentHTTPAuthProfile(nil), req.AuthProfiles...),
+		AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(req.AuthProfiles),
 		DefaultAuthProfileID: req.DefaultAuthProfileID,
 	}
 }
@@ -519,7 +596,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		req.Turn.OperationLevel,
 		req.ToolContext.legacyRouterServices(),
 		req.Plan,
-		req.Authorization.AuthProfiles,
+		agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(req.Authorization.AuthProfiles),
 		req.Authorization.DefaultAuthProfileID,
 	)
 	actionMessages = agentMessagesWithPhase(actionMessages, "step")

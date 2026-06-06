@@ -1446,11 +1446,19 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 }
 
 func TestAgentPlannerActionReplanCycleLLMRequestFromMessageRequestKeepsOnlyLLMFields(t *testing.T) {
+	enabled := true
 	authProfiles := []agentHTTPAuthProfile{{
-		ID:      "auth-cycle-llm",
-		Type:    "bearer",
-		BaseURL: "https://sandbox.example",
-		Token:   "secret-token",
+		ID:          "auth-cycle-llm",
+		Name:        "Cycle Auth",
+		Type:        "bearer",
+		BaseURL:     "https://sandbox.example",
+		Token:       "secret-token",
+		Username:    "agent-user",
+		Password:    "agent-pass",
+		HeaderName:  "X-Agent-Auth",
+		HeaderValue: "header-secret",
+		Cookie:      "session=secret",
+		Enabled:     &enabled,
 	}}
 	req := sendAgentMessageRequest{
 		Message:              "operator prompt should not enter cycle llm dto",
@@ -1469,6 +1477,7 @@ func TestAgentPlannerActionReplanCycleLLMRequestFromMessageRequestKeepsOnlyLLMFi
 
 	llmReq := agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req)
 	authProfiles[0].Token = "mutated-token"
+	*authProfiles[0].Enabled = false
 
 	require.Equal(t, "user", llmReq.Origin)
 	require.Equal(t, "safe_scan", llmReq.OperationLevel)
@@ -1480,6 +1489,8 @@ func TestAgentPlannerActionReplanCycleLLMRequestFromMessageRequestKeepsOnlyLLMFi
 	require.Equal(t, "auth-cycle-llm", llmReq.DefaultAuthProfileID)
 	require.Len(t, llmReq.AuthProfiles, 1)
 	require.Equal(t, "secret-token", llmReq.AuthProfiles[0].Token)
+	require.NotNil(t, llmReq.AuthProfiles[0].Enabled)
+	require.True(t, *llmReq.AuthProfiles[0].Enabled)
 
 	converted := llmReq.sendMessageRequest()
 	require.Empty(t, converted.Message)
@@ -1493,10 +1504,77 @@ func TestAgentPlannerActionReplanCycleLLMRequestFromMessageRequestKeepsOnlyLLMFi
 	require.Equal(t, "https://llm.example", converted.BaseURL)
 	require.Equal(t, "planner instructions", converted.Instructions)
 	require.Equal(t, "auth-cycle-llm", converted.DefaultAuthProfileID)
-	require.Equal(t, "secret-token", converted.AuthProfiles[0].Token)
+	require.Len(t, converted.AuthProfiles, 1)
+	require.Equal(t, agentHTTPAuthProfile{
+		ID:          "auth-cycle-llm",
+		Name:        "Cycle Auth",
+		Type:        "bearer",
+		BaseURL:     "https://sandbox.example",
+		Token:       "secret-token",
+		Username:    "agent-user",
+		Password:    "agent-pass",
+		HeaderName:  "X-Agent-Auth",
+		HeaderValue: "header-secret",
+		Cookie:      "session=secret",
+		Enabled:     converted.AuthProfiles[0].Enabled,
+	}, converted.AuthProfiles[0])
+	require.NotNil(t, converted.AuthProfiles[0].Enabled)
+	require.True(t, *converted.AuthProfiles[0].Enabled)
 
 	converted.AuthProfiles[0].Token = "converted-mutated-token"
+	*converted.AuthProfiles[0].Enabled = false
 	require.Equal(t, "secret-token", llmReq.AuthProfiles[0].Token)
+	require.True(t, *llmReq.AuthProfiles[0].Enabled)
+}
+
+func TestAgentPlannerActionReplanCycleAuthorizationFromMessageRequestUsesPrivateAuthProfileDTO(t *testing.T) {
+	enabled := true
+	req := sendAgentMessageRequest{
+		AuthProfiles: []agentHTTPAuthProfile{{
+			ID:          "auth-cycle-action",
+			Name:        "Action Auth",
+			Type:        "header",
+			BaseURL:     "https://sandbox-action.example",
+			Token:       "action-token",
+			Username:    "action-user",
+			Password:    "action-pass",
+			HeaderName:  "X-Action-Auth",
+			HeaderValue: "action-header-secret",
+			Cookie:      "action=session",
+			Enabled:     &enabled,
+		}},
+		DefaultAuthProfileID: "auth-cycle-action",
+	}
+
+	auth := agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req)
+	req.AuthProfiles[0].Token = "mutated-token"
+	*req.AuthProfiles[0].Enabled = false
+
+	require.Equal(t, "auth-cycle-action", auth.DefaultAuthProfileID)
+	require.Len(t, auth.AuthProfiles, 1)
+	require.Equal(t, "auth-cycle-action", auth.AuthProfiles[0].ID)
+	require.Equal(t, "Action Auth", auth.AuthProfiles[0].Name)
+	require.Equal(t, "header", auth.AuthProfiles[0].Type)
+	require.Equal(t, "https://sandbox-action.example", auth.AuthProfiles[0].BaseURL)
+	require.Equal(t, "action-token", auth.AuthProfiles[0].Token)
+	require.Equal(t, "action-user", auth.AuthProfiles[0].Username)
+	require.Equal(t, "action-pass", auth.AuthProfiles[0].Password)
+	require.Equal(t, "X-Action-Auth", auth.AuthProfiles[0].HeaderName)
+	require.Equal(t, "action-header-secret", auth.AuthProfiles[0].HeaderValue)
+	require.Equal(t, "action=session", auth.AuthProfiles[0].Cookie)
+	require.NotNil(t, auth.AuthProfiles[0].Enabled)
+	require.True(t, *auth.AuthProfiles[0].Enabled)
+
+	converted := agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(auth.AuthProfiles)
+	require.Len(t, converted, 1)
+	require.Equal(t, "action-token", converted[0].Token)
+	require.NotNil(t, converted[0].Enabled)
+	require.True(t, *converted[0].Enabled)
+
+	converted[0].Token = "converted-mutated-token"
+	*converted[0].Enabled = false
+	require.Equal(t, "action-token", auth.AuthProfiles[0].Token)
+	require.True(t, *auth.AuthProfiles[0].Enabled)
 }
 
 func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T) {
