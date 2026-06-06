@@ -313,12 +313,9 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		}
 
 		cycle := m.runAgentPlannerActionReplanCycle(ctx, agentPlannerActionReplanCycleRequest{
-			SessionID:      sessionID,
-			TurnRef:        turnRef,
-			Prompt:         prompt,
+			Turn:           agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
 			Language:       language,
 			Operator:       operator,
-			OperationLevel: operationLevel,
 			MessageRequest: req,
 			MemorySummary:  memorySummary,
 			Services:       svc,
@@ -368,12 +365,9 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 		}
 
 		cycle := m.runAgentPlannerActionReplanCycle(ctx, agentPlannerActionReplanCycleRequest{
-			SessionID:      sessionID,
-			TurnRef:        turnRef,
-			Prompt:         prompt,
+			Turn:           agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
 			Language:       language,
 			Operator:       operator,
-			OperationLevel: operationLevel,
 			MessageRequest: req,
 			MemorySummary:  memorySummary,
 			Services:       svc,
@@ -410,12 +404,9 @@ type agentPlannerActionReplanCycleState struct {
 }
 
 type agentPlannerActionReplanCycleRequest struct {
-	SessionID      string
-	TurnRef        agentRuntimeTurnRef
-	Prompt         string
+	Turn           runtime.TurnContext
 	Language       string
 	Operator       string
-	OperationLevel string
 	MessageRequest sendAgentMessageRequest
 	MemorySummary  *agentMemorySummary
 	Services       routerServices
@@ -430,10 +421,23 @@ type agentPlannerActionReplanCycleResult struct {
 	Continue bool
 }
 
+func agentPlannerActionReplanCycleTurnContext(sessionID string, turnRef agentRuntimeTurnRef, prompt, origin, operationLevel string) runtime.TurnContext {
+	return runtime.TurnContext{
+		SessionID:      sessionID,
+		TaskID:         turnRef.TaskID,
+		RunID:          turnRef.RunID,
+		TurnID:         turnRef.TurnID,
+		Prompt:         prompt,
+		Origin:         origin,
+		OperationLevel: operationLevel,
+	}
+}
+
 func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req agentPlannerActionReplanCycleRequest) agentPlannerActionReplanCycleResult {
 	if req.Options.ActionAppendOrigin == "" {
 		req.Options.ActionAppendOrigin = "planner_loop"
 	}
+	turnRef := agentRuntimeTurnRefFromTurn(req.Turn)
 	result := agentPlannerActionReplanCycleResult{
 		State: req.State,
 		Plan:  req.Plan,
@@ -441,12 +445,12 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 
 	actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(
 		ctx,
-		req.SessionID,
-		req.TurnRef,
-		req.Prompt,
+		req.Turn.SessionID,
+		turnRef,
+		req.Turn.Prompt,
 		req.Language,
 		req.Operator,
-		req.OperationLevel,
+		req.Turn.OperationLevel,
 		req.Services,
 		req.Plan,
 		req.MessageRequest.AuthProfiles,
@@ -455,7 +459,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 	actionMessages = agentMessagesWithPhase(actionMessages, "step")
 	actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
 	if len(actionMessages) > 0 {
-		m.appendMessagesForTurn(ctx, req.SessionID, req.TurnRef, req.Prompt, req.Options.ActionAppendOrigin, req.OperationLevel, actionMessages...)
+		m.appendMessagesForTurn(ctx, req.Turn.SessionID, turnRef, req.Turn.Prompt, req.Options.ActionAppendOrigin, req.Turn.OperationLevel, actionMessages...)
 		result.State.ResponseMessages = append(result.State.ResponseMessages, actionMessages...)
 		result.State.LoopHistory = append(result.State.LoopHistory, actionMessages...)
 	}
@@ -474,11 +478,11 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 
 	synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(
 		ctx,
-		req.SessionID,
-		req.TurnRef,
-		req.Prompt,
+		req.Turn.SessionID,
+		turnRef,
+		req.Turn.Prompt,
 		req.Language,
-		req.OperationLevel,
+		req.Turn.OperationLevel,
 		req.MessageRequest,
 		result.State.LoopHistory,
 		req.MemorySummary,
@@ -494,13 +498,13 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 			[]agentToolCall{warningTool},
 			nil,
 		), "step_replan")
-		m.appendMessagesForTurn(ctx, req.SessionID, req.TurnRef, req.Prompt, req.Options.ActionAppendOrigin, req.OperationLevel, warningMessage)
+		m.appendMessagesForTurn(ctx, req.Turn.SessionID, turnRef, req.Turn.Prompt, req.Options.ActionAppendOrigin, req.Turn.OperationLevel, warningMessage)
 		result.State.ResponseMessages = append(result.State.ResponseMessages, warningMessage)
 		result.State.ToolCalls = append(result.State.ToolCalls, warningTool)
 		return result
 	}
 	if len(synthesisMessages) > 0 {
-		m.appendMessagesWithPlannerForTurn(ctx, req.SessionID, req.TurnRef, req.Prompt, string(runtime.LLMStageToolSynthesis), req.OperationLevel, synthesisPlan, synthesisMessages...)
+		m.appendMessagesWithPlannerForTurn(ctx, req.Turn.SessionID, turnRef, req.Turn.Prompt, string(runtime.LLMStageToolSynthesis), req.Turn.OperationLevel, synthesisPlan, synthesisMessages...)
 		result.State.ResponseMessages = append(result.State.ResponseMessages, synthesisMessages...)
 		result.State.LoopHistory = append(result.State.LoopHistory, synthesisMessages...)
 		result.State.ToolCalls = append(result.State.ToolCalls, synthesisToolCalls...)

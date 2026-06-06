@@ -79,6 +79,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 将 capability mismatch blocked state（`markAgentCapabilityBlocked`）改为经 `SessionMutationCapabilityBlocked` dispatch；blocked session/task/todo/next_action 语义与 mismatch step_replan message 返回顺序保持不变。
 - [x] 抽出 planner action/replan cycle 共享 helper，让 `llm_tool_loop` 与 `replan_action_continuation` 共用 Action → append → tool synthesis → append 骨架；append origin、authorization/capability gate、response/tool parity 保持不变。
 - [x] 将 planner action/replan cycle 共享 helper 的散列参数收敛为 daemon-private `agentPlannerActionReplanCycleRequest` / `State` / `Result` DTO，为后续替换成 runtime-neutral loop DTO 并下沉 engine-native runner 做准备；行为保持纯重构。
+- [x] 将 planner action/replan cycle request 的 session/task/run/turn/prompt/origin/operation_level 边界收敛到 `runtime.TurnContext`，减少 daemon-only turnRef 在 shared helper 参数面中的扩散；现有 append、action executor 与 synthesis runner 仍复用 legacy adapter。
 - [ ] 继续把剩余 session mutation 分批迁成 engine-native runner。
 - [x] 最后将 `SendMessage` Begin/Finish lifecycle 收敛为 `runtime.Engine.RunTurnLifecycle` bounded runner；response merge branch body 仍保留 daemon helper 作为迁移 adapter。
 
@@ -131,6 +132,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N8：最后再考虑把 `SendMessage` 主编排拆成 engine turn lifecycle runner；该项必须等待 N1-N7 的 focused tests 通过。
 - [x] P0.5-N9：抽出 planner action/replan cycle helper，让 `llm_tool_loop` 与 `replan_action_continuation` 共享 Action → append → tool synthesis → append 循环骨架；保持 daemon adapter、append origin、authorization/capability gate、response/tool parity 不变。
 - [x] P0.5-N10：把 `runAgentPlannerActionReplanCycle` 的输入/输出先收敛为 daemon-private request/state/result DTO，减少 helper 参数面并明确 future engine-native loop runner 的 state 边界；不改变 action/synthesis/append/merge 行为。
+- [x] P0.5-N11：将 shared cycle request 的 turn identity/prompt/origin/operation level 改为 `runtime.TurnContext`，helper 内部只在调用 legacy adapters 时临时转换为 `agentRuntimeTurnRef`；为后续 engine-native runner 直接消费 `TurnContext` 做前置。
 
 当前盘点（2026-06-06）：
 
@@ -139,9 +141,10 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - 已抽出 planner loop helper：`decideAgentPlannerActionGate` 负责无副作用计算 capability mismatch / explicit intent / operation level / manual authorization / allow 决策；`agentPlannerActionQueueMetadata` 负责统一 action queue metadata 字段与类型。
 - 已抽出 planner action/replan cycle helper：`runAgentPlannerActionReplanCycle` 统一 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 的 Action → action append → tool synthesis → synthesis append 骨架；两种入口仍保留各自前置条件、append origin 与 response/tool merge 语义。
 - 已把 shared cycle helper 的输入/输出整理为 daemon-private DTO：`agentPlannerActionReplanCycleRequest` 承载 turn/message request/services/plan/options，`agentPlannerActionReplanCycleState` 承载 response/tool/history state，`agentPlannerActionReplanCycleResult` 承载新 state/final plan/continue decision；为后续替换 runtime-neutral DTO 做前置。
+- shared cycle request 已开始使用 runtime-native turn boundary：`agentPlannerActionReplanCycleRequest.Turn` 现在是 `runtime.TurnContext`，session/task/run/turn/prompt/origin/operation_level 不再作为散列 daemon 参数传入；仅在落回 append/action/synthesis legacy adapter 时转换为 `agentRuntimeTurnRef`。
 - `SendMessage` response merge regression matrix 已覆盖 control continue/revise、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback route/authorization、active-run continue parity focused tests。
 - `SendMessage` Begin/Finish 已由 `runtime.Engine.RunTurnLifecycle` 包住 bounded turn body；turn_started → branch append/model/tool events → turn_finished/task terminal event 顺序已补回归。
-- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition 与 `SendMessage` response merge branch body；后续目标是把 daemon-private cycle DTO 替换成 runtime-neutral DTO，再移动到 engine-native runner。
+- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition 与 `SendMessage` response merge branch body；后续目标是把 cycle DTO 中剩余 daemon 类型（message request/services/planner/message/tool）继续替换成 runtime-neutral DTO，再移动到 engine-native runner。
 
 ### 7.2 P1 Frontend / QA
 
@@ -234,6 +237,18 @@ git diff --check
 ```
 
 结果：shared cycle helper 改为 request/state/result DTO 后，LLM loop、replan continuation、planner action execution、SendMessage response merge focused tests、runtime seam focused tests、daemon 全量包测试与 diff check 均通过。
+
+本轮增量（P0.5-N11：planner action/replan cycle TurnContext 边界）：
+
+```bash
+gofmt -w internal/interfaces/daemon/agent_planner_loop.go
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerRunRuntimeLLMToolLoop|TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle|TestAgentManagerRunAgentReplanActionContinuation|TestAgentManagerExecuteAgentPlannerActions|TestAgentManagerSendMessageResponseMerge'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestRunLLMStage|TestRunLLMTurn|TestExecuteTurn|TestMutateSession|TestRunTurnLifecycle|TestAgentManager'
+go test -count=1 ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：shared cycle request 使用 `runtime.TurnContext` 后，LLM loop、replan continuation、planner action execution、SendMessage response merge focused tests、runtime seam focused tests、daemon 全量包测试与 diff check 均通过。
 
 P1-F1 前端路由/bundle 盘点：
 
