@@ -25,12 +25,13 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 	operator := normalizeAgentOperator(req.Operator)
 	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
 
-	resolved, handled, controlErr := m.runRuntimeControlSessionMutation(ctx, sessionID, action, req, operator, language, operationLevel)
+	controlTurnRef := m.controlSessionMutationTurnRef(ctx, sessionID, action, req)
+	resolved, handled, controlErr := m.runRuntimeControlSessionMutationForTurn(ctx, sessionID, controlTurnRef, action, req, operator, language, operationLevel)
 	if controlErr != nil {
 		return agentControlResponse{}, controlErr
 	}
 	if !handled {
-		resolved, controlErr = m.controlSessionLegacy(ctx, sessionID, action, req.Prompt, req.Reason, req.RunID, req.JobID, req.ClearInput, operator, language, operationLevel)
+		resolved, controlErr = m.controlSessionLegacyForTurn(ctx, controlTurnRef, sessionID, action, req.Prompt, req.Reason, req.RunID, req.JobID, req.ClearInput, operator, language, operationLevel)
 		if controlErr != nil {
 			return agentControlResponse{}, controlErr
 		}
@@ -74,12 +75,13 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 	operator := normalizeAgentOperator(req.Operator)
 	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
 
-	resolved, handled, resolveErr := m.runRuntimeResolveAuthorizationMutation(ctx, sessionID, decision, req, operator, language, operationLevel)
+	resolveTurnRef := m.resolveAuthorizationMutationTurnRef(ctx, sessionID, decision, req)
+	resolved, handled, resolveErr := m.runRuntimeResolveAuthorizationMutationForTurn(ctx, sessionID, resolveTurnRef, decision, req, operator, language, operationLevel)
 	if resolveErr != nil {
 		return agentControlResponse{}, resolveErr
 	}
 	if !handled {
-		resolved, resolveErr = m.resolveAuthorizationLegacy(ctx, sessionID, decision, req.AuthorizationID, req.Reason, operator, language, operationLevel, strings.TrimSpace(req.OperationLevel) != "")
+		resolved, resolveErr = m.resolveAuthorizationLegacyForTurn(ctx, resolveTurnRef, sessionID, decision, req.AuthorizationID, req.Reason, operator, language, operationLevel, strings.TrimSpace(req.OperationLevel) != "")
 		if resolveErr != nil {
 			return agentControlResponse{}, resolveErr
 		}

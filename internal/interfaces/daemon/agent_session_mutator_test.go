@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -215,6 +216,135 @@ func TestAgentManagerAppendMessagesWithPlannerForTurnDispatchesSessionMutatorWit
 	require.Len(t, got.Messages, initialMessages, "handled runtime mutator should prevent legacy fallback")
 }
 
+func TestAgentManagerAppendMessagesForTurnCompactionUsesTurnRef(t *testing.T) {
+	store := runtime.NewMemStore()
+	eng := runtime.NewEngine(store)
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	now := time.Date(2026, 6, 6, 13, 0, 0, 0, time.UTC)
+	mgr.mu.Lock()
+	session := mgr.sessions[sessionID]
+	session.Messages = nil
+	for i := 0; i < agentSessionMaxMessages+4; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "agent"
+		}
+		session.Messages = append(session.Messages, agentMessage{
+			ID:        fmt.Sprintf("msg-append-compaction-%03d", i),
+			Role:      role,
+			Content:   fmt.Sprintf("historical message %03d", i),
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+		})
+	}
+	mgr.mu.Unlock()
+
+	turnRef := agentRuntimeTurnRef{
+		TaskID: "task-append-compaction",
+		RunID:  "run-append-compaction",
+		TurnID: "turn-append-compaction",
+	}
+	message := agentMessage{
+		ID:        "msg-append-compaction-new",
+		Role:      "agent",
+		Content:   "new message triggers compaction",
+		Timestamp: now.Add(2 * time.Hour),
+	}
+	mgr.appendMessagesForTurn(context.Background(), sessionID, turnRef, "compact with turn", "planner_loop", "safe_scan", message)
+
+	var compacted *runtime.Event
+	for _, ev := range store.Events() {
+		if ev.Type == "memory_compacted" {
+			event := ev
+			compacted = &event
+			break
+		}
+	}
+	require.NotNil(t, compacted, "expected memory_compacted event")
+	require.Equal(t, turnRef.TaskID, compacted.TaskID)
+	require.Equal(t, turnRef.RunID, compacted.RunID)
+	require.Equal(t, turnRef.TurnID, compacted.TurnID)
+	require.Equal(t, sessionID, compacted.Data["session_id"])
+	require.Greater(t, compacted.Data["compacted_count"], 0)
+}
+
+func TestAgentManagerControlSessionCompactionUsesMutationTurnRef(t *testing.T) {
+	store := runtime.NewMemStore()
+	eng := runtime.NewEngine(store)
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	now := time.Date(2026, 6, 6, 13, 15, 0, 0, time.UTC)
+	mgr.mu.Lock()
+	session := mgr.sessions[sessionID]
+	session.Status = "running"
+	session.Messages = nil
+	for i := 0; i < agentSessionMaxMessages+4; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "agent"
+		}
+		session.Messages = append(session.Messages, agentMessage{
+			ID:        fmt.Sprintf("msg-control-compaction-%03d", i),
+			Role:      role,
+			Content:   fmt.Sprintf("control history %03d", i),
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+		})
+	}
+	session.ActiveTask = &agentTask{
+		ID:          "task-control-compaction",
+		Goal:        "pause with memory compaction",
+		Kind:        "analysis",
+		Status:      "running",
+		ActiveRunID: "run-control-compaction",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	session.Todos = []agentTodo{
+		{ID: "todo-control-compaction", Title: "pause session", Status: "running", Priority: 1, UpdatedAt: now},
+	}
+	mgr.mu.Unlock()
+
+	_, err = mgr.ControlSession(context.Background(), sessionID, agentControlRequest{
+		Action:         "pause",
+		Operator:       "operator-1",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+		Reason:         "operator pause",
+	}, routerServices{})
+	require.NoError(t, err)
+
+	var compacted *runtime.Event
+	for _, ev := range store.Events() {
+		if ev.Type == "memory_compacted" {
+			event := ev
+			compacted = &event
+			break
+		}
+	}
+	require.NotNil(t, compacted, "expected memory_compacted event")
+	require.Equal(t, "task-control-compaction", compacted.TaskID)
+	require.Equal(t, "run-control-compaction", compacted.RunID)
+	require.Equal(t, "turn_pause", compacted.TurnID)
+	require.Equal(t, sessionID, compacted.Data["session_id"])
+	require.Greater(t, compacted.Data["compacted_count"], 0)
+}
+
 func TestAgentManagerRunRuntimeRecordUserMessageDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
@@ -321,6 +451,9 @@ func TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator(t *testing
 		called = true
 		require.Equal(t, runtime.SessionMutationControlSession, req.Kind)
 		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, "task-control-session-mutation", req.Turn.TaskID)
+		require.Equal(t, "run_pause", req.Turn.RunID)
+		require.Equal(t, "turn_pause", req.Turn.TurnID)
 		require.Equal(t, "resume later", req.Turn.Prompt)
 		require.Equal(t, "operator", req.Turn.Origin)
 		require.Equal(t, "safe_scan", req.Turn.OperationLevel)
@@ -437,6 +570,9 @@ func TestAgentManagerRunRuntimeResolveAuthorizationDispatchesSessionMutator(t *t
 		called = true
 		require.Equal(t, runtime.SessionMutationResolveAuthorization, req.Kind)
 		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, "task-auth-session-mutation", req.Turn.TaskID)
+		require.Equal(t, "run_auth-session-mutation", req.Turn.RunID)
+		require.Equal(t, "turn_auth-session-mutation", req.Turn.TurnID)
 		require.Equal(t, "operator", req.Turn.Origin)
 		require.Equal(t, "safe_scan", req.Turn.OperationLevel)
 		require.Equal(t, "session_mutation", req.Turn.Metadata["mutator"])
@@ -497,4 +633,83 @@ func TestAgentManagerRunRuntimeResolveAuthorizationDispatchesSessionMutator(t *t
 	require.Nil(t, got.PendingAuthorization)
 	require.Equal(t, "blocked", got.Status)
 	require.Equal(t, result.Message.ID, got.Messages[len(got.Messages)-1].ID)
+}
+
+func TestAgentManagerResolveAuthorizationCompactionUsesMutationTurnRef(t *testing.T) {
+	store := runtime.NewMemStore()
+	eng := runtime.NewEngine(store)
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	now := time.Date(2026, 6, 6, 13, 30, 0, 0, time.UTC)
+	mgr.mu.Lock()
+	session := mgr.sessions[sessionID]
+	session.Status = "waiting_authorization"
+	session.Messages = nil
+	for i := 0; i < agentSessionMaxMessages+4; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "agent"
+		}
+		session.Messages = append(session.Messages, agentMessage{
+			ID:        fmt.Sprintf("msg-auth-compaction-%03d", i),
+			Role:      role,
+			Content:   fmt.Sprintf("authorization history %03d", i),
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+		})
+	}
+	session.ActiveTask = &agentTask{
+		ID:          "task-auth-compaction",
+		Goal:        "deny with memory compaction",
+		Kind:        "tool",
+		Status:      "blocked",
+		ActiveRunID: "run-auth-compaction",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	session.PendingAuthorization = &agentAuthorizationRequest{
+		ID:             "auth-compaction",
+		ActionName:     "workspace.files.write",
+		Arguments:      map[string]any{"path": "README.md"},
+		RequiredLevel:  "workspace_write",
+		Policy:         "manual",
+		Reason:         "workspace write requires operator confirmation",
+		OriginalPrompt: "write README.md",
+		Status:         "pending",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	mgr.mu.Unlock()
+
+	_, err = mgr.DecideAgentAuthorization(context.Background(), sessionID, agentAuthorizationDecisionRequest{
+		Action:          "deny",
+		AuthorizationID: "auth-compaction",
+		Operator:        "operator-1",
+		Language:        "en",
+		OperationLevel:  "safe_scan",
+		Reason:          "not within scope",
+	}, routerServices{})
+	require.NoError(t, err)
+
+	var compacted *runtime.Event
+	for _, ev := range store.Events() {
+		if ev.Type == "memory_compacted" {
+			event := ev
+			compacted = &event
+			break
+		}
+	}
+	require.NotNil(t, compacted, "expected memory_compacted event")
+	require.Equal(t, "task-auth-compaction", compacted.TaskID)
+	require.Equal(t, "run-auth-compaction", compacted.RunID)
+	require.Equal(t, "turn_auth-compaction", compacted.TurnID)
+	require.Equal(t, sessionID, compacted.Data["session_id"])
+	require.Greater(t, compacted.Data["compacted_count"], 0)
 }

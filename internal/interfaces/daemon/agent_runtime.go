@@ -128,6 +128,31 @@ func (m *agentManager) externalSessionMutationTurnRef(ctx context.Context, sessi
 	return agentRuntimeTurnRef{TaskID: taskID, RunID: runID, TurnID: turnID}
 }
 
+func (m *agentManager) ensureExternalSessionMutationTurnRef(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, seed string) agentRuntimeTurnRef {
+	if turnRef.TaskID != "" && turnRef.RunID != "" && turnRef.TurnID != "" {
+		return turnRef
+	}
+	external := m.externalSessionMutationTurnRef(ctx, sessionID, seed)
+	if turnRef.TaskID == "" {
+		turnRef.TaskID = external.TaskID
+	}
+	if turnRef.RunID == "" {
+		turnRef.RunID = external.RunID
+	}
+	if turnRef.TurnID == "" {
+		turnRef.TurnID = external.TurnID
+	}
+	return turnRef
+}
+
+func agentRuntimeTurnRefFromTurn(turn runtime.TurnContext) agentRuntimeTurnRef {
+	return agentRuntimeTurnRef{
+		TaskID: turn.TaskID,
+		RunID:  turn.RunID,
+		TurnID: turn.TurnID,
+	}
+}
+
 func (m *agentManager) emitAgentRuntimeEvents(ctx context.Context, eng *runtime.Engine, sessionID string, session agentSession, messages ...agentMessage) {
 	if eng == nil {
 		return

@@ -99,7 +99,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			err := errors.New("daemon: invalid append messages mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
 		}
-		resultPayload, mutated := r.manager.appendMessagesWithPlannerLegacy(payload.SessionID, payload.Plan, payload.Messages...)
+		resultPayload, mutated := r.manager.appendMessagesWithPlannerLegacyForTurn(ctx, payload.SessionID, agentRuntimeTurnRefFromTurn(req.Turn), payload.Plan, payload.Messages...)
 		resultPayload.Mutated = mutated
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
@@ -144,7 +144,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			err := errors.New("daemon: invalid control session mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
 		}
-		resultPayload, err := r.manager.controlSessionLegacy(ctx, payload.SessionID, payload.Action, payload.Prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, payload.OperationLevel)
+		resultPayload, err := r.manager.controlSessionLegacyForTurn(ctx, agentRuntimeTurnRefFromTurn(req.Turn), payload.SessionID, payload.Action, payload.Prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, payload.OperationLevel)
 		if err != nil {
 			return daemonSessionMutationErrorResult(req, err), err
 		}
@@ -170,7 +170,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			err := errors.New("daemon: invalid resolve authorization mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
 		}
-		resultPayload, err := r.manager.resolveAuthorizationLegacy(ctx, payload.SessionID, payload.Decision, payload.AuthorizationID, payload.Reason, payload.Operator, payload.Language, payload.OperationLevel, payload.OperationLevelProvided)
+		resultPayload, err := r.manager.resolveAuthorizationLegacyForTurn(ctx, agentRuntimeTurnRefFromTurn(req.Turn), payload.SessionID, payload.Decision, payload.AuthorizationID, payload.Reason, payload.Operator, payload.Language, payload.OperationLevel, payload.OperationLevelProvided)
 		if err != nil {
 			return daemonSessionMutationErrorResult(req, err), err
 		}
@@ -339,6 +339,15 @@ func (m *agentManager) runRuntimeRecordUserMessageMutation(ctx context.Context, 
 }
 
 func (m *agentManager) runRuntimeControlSessionMutation(ctx context.Context, sessionID, action string, req agentControlRequest, operator, language, operationLevel string) (daemonControlSessionMutationResultPayload, bool, error) {
+	turnRef := m.controlSessionMutationTurnRef(ctx, sessionID, action, req)
+	return m.runRuntimeControlSessionMutationForTurn(ctx, sessionID, turnRef, action, req, operator, language, operationLevel)
+}
+
+func (m *agentManager) controlSessionMutationTurnRef(ctx context.Context, sessionID, action string, req agentControlRequest) agentRuntimeTurnRef {
+	return m.externalSessionMutationTurnRef(ctx, sessionID, firstNonEmpty(strings.TrimSpace(req.JobID), strings.TrimSpace(req.RunID), strings.TrimSpace(action)))
+}
+
+func (m *agentManager) runRuntimeControlSessionMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, action string, req agentControlRequest, operator, language, operationLevel string) (daemonControlSessionMutationResultPayload, bool, error) {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.SessionMutator() == nil {
 		return daemonControlSessionMutationResultPayload{}, false, nil
@@ -349,6 +358,9 @@ func (m *agentManager) runRuntimeControlSessionMutation(ctx context.Context, ses
 	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
 		Turn: runtime.TurnContext{
 			SessionID:      sessionID,
+			TaskID:         turnRef.TaskID,
+			RunID:          turnRef.RunID,
+			TurnID:         turnRef.TurnID,
 			Prompt:         req.Prompt,
 			Origin:         "operator",
 			OperationLevel: operationLevel,
@@ -398,6 +410,15 @@ func (m *agentManager) runRuntimeControlSessionMutation(ctx context.Context, ses
 }
 
 func (m *agentManager) runRuntimeResolveAuthorizationMutation(ctx context.Context, sessionID, decision string, req agentAuthorizationDecisionRequest, operator, language, operationLevel string) (daemonResolveAuthorizationMutationResultPayload, bool, error) {
+	turnRef := m.resolveAuthorizationMutationTurnRef(ctx, sessionID, decision, req)
+	return m.runRuntimeResolveAuthorizationMutationForTurn(ctx, sessionID, turnRef, decision, req, operator, language, operationLevel)
+}
+
+func (m *agentManager) resolveAuthorizationMutationTurnRef(ctx context.Context, sessionID, decision string, req agentAuthorizationDecisionRequest) agentRuntimeTurnRef {
+	return m.externalSessionMutationTurnRef(ctx, sessionID, firstNonEmpty(strings.TrimSpace(req.AuthorizationID), strings.TrimSpace(decision)))
+}
+
+func (m *agentManager) runRuntimeResolveAuthorizationMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, decision string, req agentAuthorizationDecisionRequest, operator, language, operationLevel string) (daemonResolveAuthorizationMutationResultPayload, bool, error) {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.SessionMutator() == nil {
 		return daemonResolveAuthorizationMutationResultPayload{}, false, nil
@@ -409,6 +430,9 @@ func (m *agentManager) runRuntimeResolveAuthorizationMutation(ctx context.Contex
 	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
 		Turn: runtime.TurnContext{
 			SessionID:      sessionID,
+			TaskID:         turnRef.TaskID,
+			RunID:          turnRef.RunID,
+			TurnID:         turnRef.TurnID,
 			Origin:         "operator",
 			OperationLevel: operationLevel,
 			Metadata: map[string]any{
@@ -492,6 +516,10 @@ func (m *agentManager) recordUserMessageLegacy(sessionID, prompt, operator, lang
 }
 
 func (m *agentManager) controlSessionLegacy(ctx context.Context, sessionID, action, prompt, reason, runID, jobID string, clearInput bool, operator, language, operationLevel string) (daemonControlSessionMutationResultPayload, error) {
+	return m.controlSessionLegacyForTurn(ctx, agentRuntimeTurnRef{}, sessionID, action, prompt, reason, runID, jobID, clearInput, operator, language, operationLevel)
+}
+
+func (m *agentManager) controlSessionLegacyForTurn(ctx context.Context, turnRef agentRuntimeTurnRef, sessionID, action, prompt, reason, runID, jobID string, clearInput bool, operator, language, operationLevel string) (daemonControlSessionMutationResultPayload, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -540,7 +568,8 @@ func (m *agentManager) controlSessionLegacy(ctx context.Context, sessionID, acti
 		}
 		sessionState := cloneAgentSession(session)
 		m.mu.Unlock()
-		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
+		turnRef = m.ensureExternalSessionMutationTurnRef(ctx, sessionID, turnRef, message.ID)
+		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, turnRef, compaction)
 		return daemonControlSessionMutationResultPayload{
 			Session:    sessionState,
 			Message:    message,
@@ -734,7 +763,8 @@ func (m *agentManager) controlSessionLegacy(ctx context.Context, sessionID, acti
 	}
 	sessionState := cloneAgentSession(session)
 	m.mu.Unlock()
-	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
+	turnRef = m.ensureExternalSessionMutationTurnRef(ctx, sessionID, turnRef, message.ID)
+	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, turnRef, compaction)
 	m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, sessionState, message)
 	return daemonControlSessionMutationResultPayload{
 		Session:     sessionState,
@@ -746,6 +776,10 @@ func (m *agentManager) controlSessionLegacy(ctx context.Context, sessionID, acti
 }
 
 func (m *agentManager) resolveAuthorizationLegacy(ctx context.Context, sessionID, decision, authorizationID, reason, operator, language, operationLevel string, operationLevelProvided bool) (daemonResolveAuthorizationMutationResultPayload, error) {
+	return m.resolveAuthorizationLegacyForTurn(ctx, agentRuntimeTurnRef{}, sessionID, decision, authorizationID, reason, operator, language, operationLevel, operationLevelProvided)
+}
+
+func (m *agentManager) resolveAuthorizationLegacyForTurn(ctx context.Context, turnRef agentRuntimeTurnRef, sessionID, decision, authorizationID, reason, operator, language, operationLevel string, operationLevelProvided bool) (daemonResolveAuthorizationMutationResultPayload, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -840,7 +874,8 @@ func (m *agentManager) resolveAuthorizationLegacy(ctx context.Context, sessionID
 	m.mu.Unlock()
 
 	m.emitRuntimeApprovalResolved(ctx, sessionID, sessionState, *pending, pending.Status)
-	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
+	turnRef = m.ensureExternalSessionMutationTurnRef(ctx, sessionID, turnRef, pending.ID)
+	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, turnRef, compaction)
 	m.emitAgentRuntimeEvents(ctx, m.runtimeEngine(), sessionID, sessionState, message)
 	return daemonResolveAuthorizationMutationResultPayload{
 		Session:        sessionState,

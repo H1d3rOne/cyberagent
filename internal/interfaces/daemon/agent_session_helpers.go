@@ -258,10 +258,17 @@ func (m *agentManager) appendMessagesWithPlannerForTurn(ctx context.Context, ses
 	if m.runRuntimeAppendMessagesMutationForTurn(ctx, sessionID, turnRef, prompt, origin, operationLevel, plan, messages...) {
 		return
 	}
-	_, _ = m.appendMessagesWithPlannerLegacy(sessionID, plan, messages...)
+	_, _ = m.appendMessagesWithPlannerLegacyForTurn(ctx, sessionID, turnRef, plan, messages...)
 }
 
 func (m *agentManager) appendMessagesWithPlannerLegacy(sessionID string, plan *agentPlannerResponse, messages ...agentMessage) (daemonAppendMessagesMutationResultPayload, bool) {
+	return m.appendMessagesWithPlannerLegacyForTurn(context.Background(), sessionID, agentRuntimeTurnRef{}, plan, messages...)
+}
+
+func (m *agentManager) appendMessagesWithPlannerLegacyForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, plan *agentPlannerResponse, messages ...agentMessage) (daemonAppendMessagesMutationResultPayload, bool) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	eng := m.runtimeEngine()
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
@@ -281,8 +288,13 @@ func (m *agentManager) appendMessagesWithPlannerLegacy(sessionID string, plan *a
 	_ = m.persistSessionLocked(session)
 	sessionState := cloneAgentSession(session)
 	m.mu.Unlock()
-	m.emitRuntimeMemoryCompacted(context.Background(), sessionID, sessionState, agentRuntimeTurnRef{}, compaction)
-	m.emitAgentRuntimeEvents(context.Background(), eng, sessionID, sessionState, messages...)
+	seed := sessionID
+	if len(messages) > 0 {
+		seed = messages[0].ID
+	}
+	turnRef = m.ensureExternalSessionMutationTurnRef(ctx, sessionID, turnRef, seed)
+	m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionState, turnRef, compaction)
+	m.emitAgentRuntimeEvents(ctx, eng, sessionID, sessionState, messages...)
 	return daemonAppendMessagesMutationResultPayload{
 		Session:    sessionState,
 		Compaction: compaction,
