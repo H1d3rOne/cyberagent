@@ -340,6 +340,112 @@ func TestRoutePromptSafeHTTPUsesHeuristicRegistryDispatch(t *testing.T) {
 	}
 }
 
+func TestRoutePromptAdvancedHTTPUsesHeuristicRegistryDispatch(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("http.request")
+	if !ok {
+		t.Fatal("http.request missing from registry")
+	}
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		if in.SessionID != "agent_route_http_advanced_registry" || in.Operator != "tester" || in.Language != "zh" || in.OperationLevel != "advanced" {
+			t.Fatalf("unexpected handler input: %#v", in)
+		}
+		if got := stringFromAny(in.RawArgs["url"]); got != "https://example.com/api" {
+			t.Fatalf("handler RawArgs url = %q, want https://example.com/api", got)
+		}
+		if got := stringFromAny(in.RawArgs["method"]); got != "POST" {
+			t.Fatalf("handler RawArgs method = %q, want POST", got)
+		}
+		tool := runningAgentToolCall("http.request", "route.http.advanced.registry")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"route_registry": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("zh", "tool", "advanced http registry dispatched", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	actions := agentHeuristicActionsFromPrompt("POST https://example.com/api")
+	if len(actions) != 1 || normalizeAgentPlannerActionName(actions[0].Name) != "http.request" {
+		t.Fatalf("advanced http prompt should produce http.request action: %#v", actions)
+	}
+	if agentAdvancedHTTPRouteAction("http.request", map[string]any{"method": "GET", "url": "https://example.com/api"}) {
+		t.Fatal("GET http.request must stay outside the advanced HTTP registry route slice")
+	}
+	if !agentAdvancedHTTPRouteAction("http.request", map[string]any{"method": "POST", "url": "https://example.com/api"}) {
+		t.Fatal("POST http.request with url should be inside the advanced HTTP registry route slice")
+	}
+
+	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_http_advanced_registry", "POST https://example.com/api", "zh", "tester", "advanced", routerServices{})
+	if err != nil {
+		t.Fatalf("routePrompt() error = %v", err)
+	}
+	if !called {
+		t.Fatal("routePrompt did not dispatch advanced http.request through the registry handler")
+	}
+	if len(messages) != 1 || messages[0].Content != "advanced http registry dispatched" {
+		t.Fatalf("unexpected messages: %#v", messages)
+	}
+	if len(calls) != 1 || calls[0].Name != "http.request" || calls[0].Result["route_registry"] != true {
+		t.Fatalf("unexpected tool calls: %#v", calls)
+	}
+	if calls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+		t.Fatalf("advanced http route tool source metadata = %#v", calls[0].Metadata)
+	}
+	if messages[0].ToolCalls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+		t.Fatalf("advanced http route message tool source metadata = %#v", messages[0].ToolCalls[0].Metadata)
+	}
+}
+
+func TestRoutePromptAdvancedHTTPRegistryDispatchPreservesOperationGate(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("http.request")
+	if !ok {
+		t.Fatal("http.request missing from registry")
+	}
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		tool := runningAgentToolCall("http.request", "route.http.advanced.registry")
+		tool = finishAgentToolCall(tool, nil)
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("zh", "tool", "unexpected advanced http", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	prompt := "POST https://example.com/api"
+	requiredLevel := agentOperationLevelRequiredForPrompt(prompt)
+	if requiredLevel != "advanced" {
+		t.Fatalf("advanced http prompt required level = %q, want advanced", requiredLevel)
+	}
+	if agentOperationLevelAtLeast("safe_scan", requiredLevel) {
+		t.Fatalf("safe_scan unexpectedly satisfies required level %q", requiredLevel)
+	}
+
+	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_http_advanced_gate", prompt, "zh", "tester", "safe_scan", routerServices{})
+	if err != nil {
+		t.Fatalf("routePrompt() error = %v", err)
+	}
+	if called {
+		t.Fatal("advanced http registry handler was called despite insufficient operation level")
+	}
+	if len(calls) != 0 {
+		t.Fatalf("operation gate should not return tool calls: %#v", calls)
+	}
+	if len(messages) != 1 || messages[0].Role != "agent" || messages[0].Content == "" {
+		t.Fatalf("unexpected operation gate messages: %#v", messages)
+	}
+}
+
 func TestRoutePromptSafePortScanUsesHeuristicRegistryDispatch(t *testing.T) {
 	mgr := newAgentManager(t.TempDir())
 	spec, ok := toolRegistry().Lookup("ports.scan.safe")

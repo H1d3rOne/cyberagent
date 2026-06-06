@@ -33,6 +33,10 @@ func (m *agentManager) routeSafeHTTPHeuristicActions(ctx context.Context, sessio
 	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentSafeHTTPRouteAction, "safe HTTP registry route slice")
 }
 
+func (m *agentManager) routeAdvancedHTTPHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentAdvancedHTTPRouteAction, "advanced HTTP registry route slice")
+}
+
 func (m *agentManager) routeSafePortScanHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
 	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentSafePortScanRouteAction, "safe port scan registry route slice")
 }
@@ -135,6 +139,20 @@ func agentSafeHTTPRouteAction(actionName string, args map[string]any) bool {
 		return false
 	}
 	return agentHTTPMethodIsSafe(firstNonEmpty(stringFromAny(args["method"]), "GET"))
+}
+
+func agentAdvancedHTTPRouteAction(actionName string, args map[string]any) bool {
+	if normalizeAgentPlannerActionName(actionName) != "http.request" {
+		return false
+	}
+	if agentHTTPMethodIsSafe(firstNonEmpty(stringFromAny(args["method"]), "GET")) {
+		return false
+	}
+	return strings.TrimSpace(firstNonEmpty(
+		stringFromAny(args["url"]),
+		stringFromAny(args["target"]),
+		stringFromAny(args["input"]),
+	)) != ""
 }
 
 func agentSafePortScanRouteAction(actionName string, args map[string]any) bool {
@@ -367,7 +385,8 @@ func (m *agentManager) routePromptForTurn(ctx context.Context, sessionID string,
 			routeMetadataSource = "deterministic_route/registry_dispatch"
 			return m.routeSafeHTTPHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 		}
-		return m.handleAgentHTTPRequest(ctx, agentExtractHTTPMethod(prompt), agentExtractURL(prompt), nil, "", language, nil)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeAdvancedHTTPHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsWorkspaceSearchIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
 		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)

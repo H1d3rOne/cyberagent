@@ -41,6 +41,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 删除 planner action legacy per-tool switch fallback。
 - [x] 将 read-only/system route 收敛为 heuristic action → Tool Registry dispatch。
 - [x] 将 safe HTTP GET/HEAD/OPTIONS 收敛为 Tool Registry dispatch。
+- [x] 将 non-safe HTTP POST/PUT/PATCH/DELETE 收敛为 Tool Registry dispatch；继续保留 `advanced` gate。
 - [x] 将 `ports.scan.safe` 收敛为 Tool Registry dispatch。
 - [x] 将 `scan.web.safe` 收敛为 Tool Registry dispatch。
 - [x] 将 workspace staged diff/rebase route 收敛为 Tool Registry dispatch。
@@ -150,6 +151,7 @@ go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerDecideAgentA
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerAppendMessagesForTurnCompactionUsesTurnRef|TestAgentManagerControlSessionCompactionUsesMutationTurnRef|TestAgentManagerResolveAuthorizationCompactionUsesMutationTurnRef|TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator|TestAgentManagerRunRuntimeResolveAuthorizationDispatchesSessionMutator'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerDeterministicRoutePlanOnlyAppendUsesTurnRef'
 go test -count=1 ./internal/interfaces/daemon -run 'TestRoutePromptSchedule|TestSchedule'
+go test -count=1 ./internal/interfaces/daemon -run 'TestRoutePromptAdvancedHTTP|TestRoutePromptSafeHTTP'
 go test -count=1 ./internal/interfaces/daemon -run 'TestRoutePrompt'
 ```
 
@@ -189,4 +191,5 @@ Authorization external runner turnRef threading 小切片验证通过：`DecideA
 Session mutation compaction metadata 小切片验证通过：append messages、control session 与 resolve authorization 的 `memory_compacted` event 现在携带 mutation task/run/turn metadata；legacy fallback 会补齐 external turnRef，不发布额外 Begin/Finish lifecycle。
 Deterministic route plan-only append 小切片验证通过：capability-gap route 的 planner apply 已通过 `routePromptForTurn` 沿用外层 deterministic route turnRef，plan-only `append_messages` mutation metadata 与外层 task/run/turn 对齐。
 Schedule route registry 化小切片验证通过：schedule create/list/delete 均经 `deterministic_route/registry_dispatch`；create/delete 在权限不足时不会调用 registry handler。
+Advanced HTTP route registry 化小切片验证通过：POST/PUT/PATCH/DELETE 等 non-safe `http.request` route 已经 registry dispatch，`safe_scan` 不会越过 `advanced` gate。
 ```
