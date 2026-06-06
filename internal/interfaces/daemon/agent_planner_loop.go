@@ -586,20 +586,27 @@ func (toolCtx agentPlannerActionReplanCycleToolContext) legacyRouterServices() r
 
 type agentPlannerActionReplanCyclePlan struct {
 	plan                *agentPlannerResponse
+	actionsSnapshot     []agentPlannerAction
 	actionCountSnapshot int
 	autoContinue        bool
 }
 
 func agentPlannerActionReplanCyclePlanFromPlannerResponse(plan *agentPlannerResponse) agentPlannerActionReplanCyclePlan {
+	actionsSnapshot := cloneAgentPlannerActions(agentPlannerActions(plan))
 	return agentPlannerActionReplanCyclePlan{
 		plan:                cloneAgentPlannerResponse(plan),
-		actionCountSnapshot: len(agentPlannerActions(plan)),
+		actionsSnapshot:     actionsSnapshot,
+		actionCountSnapshot: len(actionsSnapshot),
 		autoContinue:        plan != nil && plan.NextAction != nil && plan.NextAction.AutoContinue,
 	}
 }
 
 func (plan agentPlannerActionReplanCyclePlan) legacyPlannerResponse() *agentPlannerResponse {
 	return cloneAgentPlannerResponse(plan.plan)
+}
+
+func (plan agentPlannerActionReplanCyclePlan) actions() []agentPlannerAction {
+	return cloneAgentPlannerActions(plan.actionsSnapshot)
 }
 
 func (plan agentPlannerActionReplanCyclePlan) actionCount() int {
@@ -715,7 +722,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		Plan:  req.Plan,
 	}
 
-	actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(
+	actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActionList(
 		ctx,
 		req.Turn.SessionID,
 		turnRef,
@@ -724,7 +731,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		req.Operator,
 		req.Turn.OperationLevel,
 		req.ToolContext.legacyRouterServices(),
-		req.Plan.legacyPlannerResponse(),
+		req.Plan.actions(),
 		agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(req.Authorization.AuthProfiles),
 		req.Authorization.DefaultAuthProfileID,
 	)
@@ -884,7 +891,11 @@ func agentPlannerActionQueueMetadata(queueID string, index, count int, actionNam
 }
 
 func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
-	actions := agentPlannerActions(plan)
+	return m.executeAgentPlannerActionList(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, agentPlannerActions(plan), authProfiles, defaultAuthProfileID)
+}
+
+func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, actions []agentPlannerAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
+	actions = cloneAgentPlannerActions(actions)
 	if len(actions) == 0 {
 		return nil, nil, false
 	}

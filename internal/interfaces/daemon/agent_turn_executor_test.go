@@ -1645,6 +1645,9 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Equal(t, 2, cyclePlan.actionCount())
 	require.True(t, cyclePlan.hasActions())
 	require.True(t, cyclePlan.shouldAutoContinue())
+	require.Len(t, cyclePlan.actions(), 2)
+	require.Equal(t, "cycle-plan", cyclePlan.actions()[0].Arguments["probe"])
+	require.Equal(t, 1, cyclePlan.actions()[1].Arguments["limit"])
 
 	plan.Phase = "mutated"
 	plan.SuggestedPrompts[0] = "mutated prompt"
@@ -1663,6 +1666,9 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Equal(t, 2, cyclePlan.actionCount())
 	require.True(t, cyclePlan.hasActions())
 	require.True(t, cyclePlan.shouldAutoContinue())
+	require.Len(t, cyclePlan.actions(), 2)
+	require.Equal(t, "cycle-plan", cyclePlan.actions()[0].Arguments["probe"])
+	require.Equal(t, 1, cyclePlan.actions()[1].Arguments["limit"])
 
 	got := cyclePlan.legacyPlannerResponse()
 	require.NotNil(t, got)
@@ -1700,6 +1706,13 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.True(t, cyclePlan.hasActions())
 	require.True(t, cyclePlan.shouldAutoContinue())
 
+	returnedActions := cyclePlan.actions()
+	require.Len(t, returnedActions, 2)
+	returnedActions[0].Arguments["probe"] = "mutated-returned-actions"
+	returnedActions[1].Arguments["limit"] = 101
+	require.Equal(t, "cycle-plan", cyclePlan.actions()[0].Arguments["probe"])
+	require.Equal(t, 1, cyclePlan.actions()[1].Arguments["limit"])
+
 	cyclePlan.plan.Actions = nil
 	cyclePlan.plan.ToolCalls = nil
 	cyclePlan.plan.NextAction.AutoContinue = false
@@ -1707,6 +1720,9 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Equal(t, 2, cyclePlan.actionCount())
 	require.True(t, cyclePlan.hasActions())
 	require.True(t, cyclePlan.shouldAutoContinue())
+	require.Len(t, cyclePlan.actions(), 2)
+	require.Equal(t, "cycle-plan", cyclePlan.actions()[0].Arguments["probe"])
+	require.Equal(t, 1, cyclePlan.actions()[1].Arguments["limit"])
 
 	gotAgain := cyclePlan.legacyPlannerResponse()
 	require.NotNil(t, gotAgain)
@@ -1877,6 +1893,111 @@ func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *te
 	require.Equal(t, "appended-message", finalResponses[1].ToolCalls[0].Result["source"])
 	require.Len(t, finalTools, 2)
 	require.Equal(t, "appended-tool", finalTools[1].Result["source"])
+}
+
+func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	actionMessage := agentMessage{
+		ID:      "msg-cycle-action-snapshot-action",
+		Role:    "tool",
+		Content: "snapshot action executed",
+		ToolCalls: []agentToolCall{{
+			ID:   "tool-cycle-action-snapshot-action",
+			Name: "daemon.health",
+		}},
+	}
+	synthesisMessage := agentMessage{ID: "msg-cycle-action-snapshot-synthesis", Role: "agent", Content: "snapshot summarized"}
+	synthesisPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "snapshot summarized"}
+
+	cyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(&agentPlannerResponse{
+		Phase: "step_replan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+		Actions: []agentPlannerAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "snapshot-action"},
+		}},
+	})
+	require.Len(t, cyclePlan.actions(), 1)
+	cyclePlan.plan.Actions = nil
+	cyclePlan.plan.ToolCalls = nil
+
+	actionCalled := false
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		actionCalled = true
+		require.Equal(t, "session-cycle-action-snapshot", turn.SessionID)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
+		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
+
+		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, "snapshot-action", stringFromAny(payload.Action.Arguments["probe"]))
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "snapshot action handled",
+			Payload: daemonPlannerActionExecutionTurnResultPayload{
+				Messages:  []agentMessage{actionMessage},
+				ToolCalls: actionMessage.ToolCalls,
+			},
+		}, nil
+	}))
+
+	synthesisCalled := false
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		synthesisCalled = true
+		require.Equal(t, runtime.LLMStageToolSynthesis, req.Stage)
+		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		require.True(t, ok, "payload type = %T", req.Payload)
+		require.Len(t, payload.ToolMessages, 1)
+		require.Equal(t, actionMessage.ID, payload.ToolMessages[0].ID)
+
+		return runtime.LLMStageResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "snapshot synthesis handled",
+			Payload: daemonLLMToolSynthesisResultPayload{
+				Messages: []agentMessage{synthesisMessage},
+				Plan:     synthesisPlan,
+			},
+		}, nil
+	}))
+
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+
+	result := mgr.runAgentPlannerActionReplanCycle(context.Background(), agentPlannerActionReplanCycleRequest{
+		Turn:          agentPlannerActionReplanCycleTurnContext("session-cycle-action-snapshot", agentRuntimeTurnRef{TaskID: "task-cycle-action-snapshot", RunID: "run-cycle-action-snapshot", TurnID: "turn-cycle-action-snapshot"}, "daemon health", "user", "read_only"),
+		Language:      "en",
+		Operator:      "tester",
+		LLMRequest:    agentPlannerActionReplanCycleLLMRequest{Model: "gpt-cycle-action-snapshot"},
+		Authorization: agentPlannerActionReplanCycleAuthorization{},
+		ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(routerServices{}),
+		Plan:          cyclePlan,
+		State: agentPlannerActionReplanCycleStateFromLegacy(
+			[]agentMessage{{ID: "msg-cycle-action-snapshot-plan", Role: "agent", Content: "plan"}},
+			nil,
+			[]agentMessage{{ID: "history-cycle-action-snapshot", Role: "user", Content: "daemon health"}},
+		),
+		Options: agentPlannerActionReplanCycleOptions{ActionAppendOrigin: "planner_loop"},
+	})
+
+	require.True(t, actionCalled)
+	require.True(t, synthesisCalled)
+	require.True(t, result.Continue)
+	require.False(t, result.Plan.hasActions())
+	responses := result.State.ResponseMessages.legacyAgentMessages()
+	require.Len(t, responses, 3)
+	require.Equal(t, actionMessage.ID, responses[1].ID)
+	require.Equal(t, "step", responses[1].Phase)
+	require.Equal(t, synthesisMessage.ID, responses[2].ID)
+	require.Len(t, appendMutations, 2)
+	require.Equal(t, "planner_loop", appendMutations[0].Turn.Origin)
+	require.Equal(t, string(runtime.LLMStageToolSynthesis), appendMutations[1].Turn.Origin)
 }
 
 func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T) {
