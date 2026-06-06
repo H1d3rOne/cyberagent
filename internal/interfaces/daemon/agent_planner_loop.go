@@ -588,11 +588,59 @@ type agentPlannerActionReplanCyclePlan struct {
 }
 
 func agentPlannerActionReplanCyclePlanFromPlannerResponse(plan *agentPlannerResponse) agentPlannerActionReplanCyclePlan {
-	return agentPlannerActionReplanCyclePlan{plan: plan}
+	return agentPlannerActionReplanCyclePlan{plan: cloneAgentPlannerResponse(plan)}
 }
 
 func (plan agentPlannerActionReplanCyclePlan) legacyPlannerResponse() *agentPlannerResponse {
-	return plan.plan
+	return cloneAgentPlannerResponse(plan.plan)
+}
+
+func cloneAgentPlannerResponse(plan *agentPlannerResponse) *agentPlannerResponse {
+	if plan == nil {
+		return nil
+	}
+	cloned := *plan
+	if plan.SuggestedPrompts != nil {
+		cloned.SuggestedPrompts = append([]string(nil), plan.SuggestedPrompts...)
+	}
+	if plan.RecommendationOptions != nil {
+		cloned.RecommendationOptions = append([]agentRecommendationOpt(nil), plan.RecommendationOptions...)
+	}
+	if plan.Task != nil {
+		task := *plan.Task
+		cloned.Task = &task
+	}
+	if plan.Todos != nil {
+		cloned.Todos = make([]agentPlannerTodo, len(plan.Todos))
+		copy(cloned.Todos, plan.Todos)
+		for i := range plan.Todos {
+			if plan.Todos[i].ContextRefIDs != nil {
+				cloned.Todos[i].ContextRefIDs = append([]string(nil), plan.Todos[i].ContextRefIDs...)
+			}
+		}
+	}
+	if plan.ContextRefs != nil {
+		cloned.ContextRefs = append([]agentContextRef(nil), plan.ContextRefs...)
+	}
+	if plan.NextAction != nil {
+		nextAction := *plan.NextAction
+		cloned.NextAction = &nextAction
+	}
+	cloned.Actions = cloneAgentPlannerActions(plan.Actions)
+	cloned.ToolCalls = cloneAgentPlannerActions(plan.ToolCalls)
+	return &cloned
+}
+
+func cloneAgentPlannerActions(actions []agentPlannerAction) []agentPlannerAction {
+	if actions == nil {
+		return nil
+	}
+	cloned := make([]agentPlannerAction, len(actions))
+	copy(cloned, actions)
+	for i := range actions {
+		cloned[i].Arguments = cloneMapStringAny(actions[i].Arguments)
+	}
+	return cloned
 }
 
 type agentPlannerActionReplanCycleMemorySummary struct {
