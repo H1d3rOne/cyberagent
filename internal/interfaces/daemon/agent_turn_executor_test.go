@@ -9,6 +9,7 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/agent/toolregistry"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
+	"github.com/H1d3rOne/cyberagent/internal/core/services"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2065,26 +2066,49 @@ func TestAgentPlannerActionReplanCycleMemorySummaryWrapsLegacyMemory(t *testing.
 }
 
 func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *testing.T) {
+	messageAt := time.Date(2026, 6, 6, 15, 28, 0, 0, time.UTC)
+	startedAt := time.Date(2026, 6, 6, 15, 29, 0, 0, time.UTC)
 	finishedAt := time.Date(2026, 6, 6, 15, 30, 0, 0, time.UTC)
 	responseMessages := []agentMessage{{
-		ID:      "msg-cycle-state-response",
-		Role:    "tool",
-		Content: "response message",
+		ID:        "msg-cycle-state-response",
+		Role:      "tool",
+		Content:   "response message",
+		Timestamp: messageAt,
+		Phase:     "tool",
 		ToolCalls: []agentToolCall{{
 			ID:         "tool-cycle-state-response",
 			Name:       "daemon.health",
 			Status:     contracts.StatusSucceeded,
+			Detail:     "response detail",
+			StartedAt:  startedAt,
 			FinishedAt: &finishedAt,
 			Result:     map[string]any{"source": "response"},
+			Error:      &daemonJobError{Code: services.CodeBadRequest, Message: "response warning"},
 			Metadata:   map[string]interface{}{"phase": "response"},
+		}},
+		Links: []agentLink{{
+			To:    "/runs/run-cycle-state",
+			Label: "Run",
+			Kind:  "run",
+		}},
+		Reasoning:        "cycle state reasoning",
+		SuggestedPrompts: []string{"continue cycle state"},
+		RecommendationOptions: []agentRecommendationOpt{{
+			ID:     "rec-cycle-state",
+			Title:  "Continue",
+			Detail: "Continue cycle state",
+			Prompt: "continue cycle state",
 		}},
 	}}
 	toolCalls := []agentToolCall{{
-		ID:       "tool-cycle-state-top-level",
-		Name:     "LLM synthesis",
-		Status:   contracts.StatusSucceeded,
-		Result:   map[string]any{"source": "tool"},
-		Metadata: map[string]interface{}{"phase": "tool"},
+		ID:        "tool-cycle-state-top-level",
+		Name:      "LLM synthesis",
+		Status:    contracts.StatusSucceeded,
+		Detail:    "top level detail",
+		StartedAt: startedAt,
+		Result:    map[string]any{"source": "tool"},
+		Error:     &daemonJobError{Code: services.CodeInternal, Message: "top-level warning"},
+		Metadata:  map[string]interface{}{"phase": "tool"},
 	}}
 	loopHistory := []agentMessage{{
 		ID:      "msg-cycle-state-history",
@@ -2103,7 +2127,12 @@ func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *te
 
 	responseMessages[0].Content = "mutated response"
 	responseMessages[0].ToolCalls[0].Result["source"] = "mutated response result"
+	responseMessages[0].ToolCalls[0].Error.Message = "mutated response error"
+	responseMessages[0].Links[0].Label = "Mutated run"
+	responseMessages[0].SuggestedPrompts[0] = "mutated prompt"
+	responseMessages[0].RecommendationOptions[0].Title = "Mutated"
 	toolCalls[0].Result["source"] = "mutated tool result"
+	toolCalls[0].Error.Message = "mutated tool error"
 	loopHistory[0].Content = "mutated history"
 	loopHistory[0].ToolCalls[0].Metadata["phase"] = "mutated history metadata"
 
@@ -2115,13 +2144,31 @@ func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *te
 	require.Len(t, gotResponses, 1)
 	require.Len(t, gotResponses[0].ToolCalls, 1)
 	require.Equal(t, "response message", gotResponses[0].Content)
+	require.Equal(t, messageAt, gotResponses[0].Timestamp)
+	require.Equal(t, "tool", gotResponses[0].Phase)
+	require.Equal(t, "cycle state reasoning", gotResponses[0].Reasoning)
+	require.Equal(t, "Run", gotResponses[0].Links[0].Label)
+	require.Equal(t, "continue cycle state", gotResponses[0].SuggestedPrompts[0])
+	require.Equal(t, "Continue", gotResponses[0].RecommendationOptions[0].Title)
 	require.Equal(t, "response", gotResponses[0].ToolCalls[0].Result["source"])
+	require.Equal(t, "response detail", gotResponses[0].ToolCalls[0].Detail)
+	require.Equal(t, startedAt, gotResponses[0].ToolCalls[0].StartedAt)
 	require.Equal(t, "response", gotResponses[0].ToolCalls[0].Metadata["phase"])
 	require.NotNil(t, gotResponses[0].ToolCalls[0].FinishedAt)
 	require.Equal(t, finishedAt, *gotResponses[0].ToolCalls[0].FinishedAt)
+	require.NotSame(t, responseMessages[0].ToolCalls[0].FinishedAt, gotResponses[0].ToolCalls[0].FinishedAt)
+	require.NotNil(t, gotResponses[0].ToolCalls[0].Error)
+	require.Equal(t, services.CodeBadRequest, gotResponses[0].ToolCalls[0].Error.Code)
+	require.Equal(t, "response warning", gotResponses[0].ToolCalls[0].Error.Message)
+	require.NotSame(t, responseMessages[0].ToolCalls[0].Error, gotResponses[0].ToolCalls[0].Error)
 	require.Len(t, gotTools, 1)
 	require.Equal(t, "tool", gotTools[0].Result["source"])
+	require.Equal(t, "top level detail", gotTools[0].Detail)
+	require.Equal(t, startedAt, gotTools[0].StartedAt)
 	require.Equal(t, "tool", gotTools[0].Metadata["phase"])
+	require.NotNil(t, gotTools[0].Error)
+	require.Equal(t, services.CodeInternal, gotTools[0].Error.Code)
+	require.Equal(t, "top-level warning", gotTools[0].Error.Message)
 	require.Len(t, gotHistory, 1)
 	require.Equal(t, "history message", gotHistory[0].Content)
 	require.Equal(t, "history", gotHistory[0].ToolCalls[0].Result["source"])
@@ -2129,13 +2176,23 @@ func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *te
 
 	gotResponses[0].Content = "mutated returned response"
 	gotResponses[0].ToolCalls[0].Result["source"] = "mutated returned response result"
+	gotResponses[0].ToolCalls[0].Error.Message = "mutated returned response error"
+	gotResponses[0].Links[0].Label = "Mutated returned run"
+	gotResponses[0].SuggestedPrompts[0] = "mutated returned prompt"
+	gotResponses[0].RecommendationOptions[0].Title = "Mutated returned"
 	gotTools[0].Result["source"] = "mutated returned tool result"
+	gotTools[0].Error.Message = "mutated returned tool error"
 	gotHistory[0].Content = "mutated returned history"
 	gotHistory[0].ToolCalls[0].Metadata["phase"] = "mutated returned history metadata"
 
 	require.Equal(t, "response message", state.ResponseMessages.legacyAgentMessages()[0].Content)
 	require.Equal(t, "response", state.ResponseMessages.legacyAgentMessages()[0].ToolCalls[0].Result["source"])
+	require.Equal(t, "response warning", state.ResponseMessages.legacyAgentMessages()[0].ToolCalls[0].Error.Message)
+	require.Equal(t, "Run", state.ResponseMessages.legacyAgentMessages()[0].Links[0].Label)
+	require.Equal(t, "continue cycle state", state.ResponseMessages.legacyAgentMessages()[0].SuggestedPrompts[0])
+	require.Equal(t, "Continue", state.ResponseMessages.legacyAgentMessages()[0].RecommendationOptions[0].Title)
 	require.Equal(t, "tool", state.ToolCalls.legacyAgentToolCalls()[0].Result["source"])
+	require.Equal(t, "top-level warning", state.ToolCalls.legacyAgentToolCalls()[0].Error.Message)
 	require.Equal(t, "history message", state.LoopHistory.legacyAgentMessages()[0].Content)
 	require.Equal(t, "history", state.LoopHistory.legacyAgentMessages()[0].ToolCalls[0].Metadata["phase"])
 
