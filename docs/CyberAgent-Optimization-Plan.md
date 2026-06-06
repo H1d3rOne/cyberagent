@@ -980,6 +980,13 @@ P1-F5 已落地 Agent Cockpit a11y 回归：
 - 新增 `scripts/agent-cockpit-a11y-smoke.mjs`，使用随机端口 daemon + Vite + 系统 Chrome 校验 visible button accessible name、form label、dialog name、Trace drawer focus trap、Escape close 与 focus return。
 - 验证命令：`npm test --prefix web/frontend -- --run`、`npm run build --prefix web/frontend`、`node --check scripts/agent-cockpit-browser-smoke.mjs`、`node --check scripts/agent-cockpit-a11y-smoke.mjs`、`node scripts/agent-cockpit-browser-smoke.mjs`、`node scripts/agent-cockpit-a11y-smoke.mjs`、`git diff --check`。
 
+P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
+
+- 新增 `scripts/agent-cockpit-visual-smoke.mjs`，沿用 standalone Playwright + 系统 Chrome，随机端口启动 daemon 与 Vite，不引入 `@playwright/test`、不下载浏览器。
+- 脚本生成 `.tmp/e2e/.../screenshots/` 下 6 张人工可审查截图：initial desktop、session desktop、Trace drawer、approval pending desktop、destructive hover desktop、approval pending mobile。
+- DOM computed style 断言覆盖 layered gradient backdrop、glass blur/fallback、半透明卡片、Trace drawer elevated overlay、approval pending warning、destructive deny hover 与移动端 approval layout。
+- 验证命令：`npm test --prefix web/frontend -- --run`、`npm run build --prefix web/frontend`、`node --check scripts/agent-cockpit-visual-smoke.mjs`、`node scripts/agent-cockpit-visual-smoke.mjs`、`git diff --check`。
+
 覆盖路径：
 
 - `/agent` 初始加载。
@@ -1245,6 +1252,7 @@ P1-F5 已落地 Agent Cockpit a11y 回归：
 | v39 | 完成 P1-F3 移动端 Agent Cockpit 降噪：新增移动端任务切换器、隐藏小屏桌面 TaskTree、收敛 header/timeline/tool card/approval/composer 密度，并补移动端 Tool Inspector bottom sheet；前端测试、build 与 diff check 通过。 |
 | v40 | 完成 P1-F4 真实浏览器 Agent Cockpit smoke：新增 Playwright 脚本，用随机端口 daemon + Vite + 系统 Chrome 验证 `/agent` health prompt、manual authorization approval 与 workspace write/read 最小链路；前端测试、build、脚本语法检查、browser smoke 与 diff check 通过。 |
 | v41 | 完成 P1-F5 Agent Cockpit a11y 回归：补 Trace drawer/mobile Tool Inspector dialog label/focus trap/Escape/focus return、Composer textarea label、TaskTree/timeline 键盘焦点态，并新增真实浏览器 a11y smoke；前端测试、build、browser smoke、a11y smoke 与 diff check 通过。 |
+| v42 | 完成 P1-F6 Agent Cockpit 视觉回归 smoke：新增 standalone Playwright 脚本生成 6 张可审查截图，并用 computed style 校验 layered gradient、glass blur/fallback、半透明卡片、Trace drawer、approval pending、destructive hover 与移动端 approval layout；前端测试、build、脚本语法检查、visual smoke 与 diff check 通过。 |
 
 ---
 

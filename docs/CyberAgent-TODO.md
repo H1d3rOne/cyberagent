@@ -88,7 +88,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 移动端 Agent Cockpit 降噪，避免横向滚动和信息堆叠。
 - [x] 真实浏览器 E2E smoke。
 - [x] a11y 回归：icon-only button、dialog/drawer 语义、焦点管理。
-- [ ] 视觉回归：毛玻璃背景、半透明卡片、approval pending、破坏性操作状态。
+- [x] 视觉回归：毛玻璃背景、半透明卡片、approval pending、破坏性操作状态。
 
 ---
 
@@ -144,7 +144,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P1-F3：移动端 Agent Cockpit 降噪：优先处理 Timeline/Tool card 横向滚动、密集 metadata badge、approval pending 卡片堆叠。
 - [x] P1-F4：补真实浏览器 E2E smoke：daemon health、session create、send deterministic route、approval pending/decision 最小链路。
 - [x] P1-F5：补 a11y 回归：icon-only button label、dialog/drawer role、焦点返回、键盘可达。
-- [ ] P1-F6：补视觉回归清单：毛玻璃背景、半透明卡片、approval pending、破坏性操作状态。
+- [x] P1-F6：补视觉回归清单：毛玻璃背景、半透明卡片、approval pending、破坏性操作状态。
 
 当前盘点（2026-06-06，P1-F1）：
 
@@ -163,6 +163,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - P1-F3 已实现：移动端 `/agent` 顶层由堆叠式 TaskTree + 主工作区改为轻量 MobileTaskSwitcher；桌面 TaskTree 仅在 `xl` 以上显示；小屏 header 隐藏 seq/task/displayHint 等低优先 metadata，主要按钮提升到 44px 触摸目标；Timeline tool cards 改到 `md` 以上双列，message bubble 放宽到 94%；选择工具后移动端使用底部 Tool Inspector sheet；Approval banner 动作按钮可换行并在小屏铺满；Composer 增加 safe-area padding 与移动端大按钮；移动端 agent scroll gutter 收敛，避免横向滚动。
 - P1-F4 已实现：新增 `scripts/agent-cockpit-browser-smoke.mjs`，用系统 Chrome + Playwright 启动真实浏览器，随机端口启动 daemon 与 Vite dev server，并注入 `cyberagent_console_settings` 指向本轮 daemon token；脚本验证 `/agent` 可创建 session、发送 daemon health prompt、触发 `workspace.files.write` 授权 pending、点击“允许并继续”，最终通过 daemon workspace read API 校验 `e2e-smoke.txt` 内容为 `browser-smoke`。前端 `devDependencies` 已加入 `playwright`，不引入 `@playwright/test`，不下载浏览器。
 - P1-F5 已实现：新增 `web/frontend/src/agent/components/dialog-a11y.ts` focus helper，Trace drawer 与移动端 Tool Inspector sheet 现在具备 `aria-labelledby`/`aria-describedby`、可编程聚焦、Escape 关闭、焦点返回；Composer textarea 增加真实 label 与键盘提示；TaskTree、mobile session list、timeline 工具/建议按钮补齐 focus-visible ring 与当前项语义；新增 `scripts/agent-cockpit-a11y-smoke.mjs`，真实浏览器校验 visible button accessible name、form label、dialog name、focus trap、Escape close 与 focus return。
+- P1-F6 已实现：新增 `scripts/agent-cockpit-visual-smoke.mjs`，仍用 standalone Playwright + 系统 Chrome，不引入 `@playwright/test`；脚本随机端口启动 daemon 与 Vite，生成 `.tmp/e2e/.../screenshots/` 下 6 张可审查截图，并用 DOM computed style 断言 layered gradient backdrop、glass blur/fallback、半透明卡片、Trace drawer elevated overlay、approval pending warning、destructive deny hover 与移动端 approval layout 视觉契约。
 
 ### 7.3 P2 Production / Observability
 
@@ -255,6 +256,18 @@ git diff --check
 ```
 
 结果：Vitest `6 files / 25 tests` 通过；production build 通过；browser smoke 返回 `ok: true`；a11y smoke 返回 `ok: true`，覆盖 button names、form labels、dialog names、focus trap、Escape close、focus return；diff whitespace check 通过。
+
+P1-F6 Agent Cockpit 视觉回归 smoke：
+
+```bash
+npm test --prefix web/frontend -- --run
+npm run build --prefix web/frontend
+node --check scripts/agent-cockpit-visual-smoke.mjs
+node scripts/agent-cockpit-visual-smoke.mjs
+git diff --check
+```
+
+结果：Vitest `6 files / 25 tests` 通过；production build 通过；visual smoke 返回 `ok: true`，生成 6 张截图（initial desktop、session desktop、Trace drawer、approval pending desktop、destructive hover desktop、approval pending mobile），并覆盖 layered gradient backdrop、glass blur/fallback、semi-transparent cards、Trace drawer elevated overlay、approval pending warning、destructive hover 与移动端 approval layout；diff whitespace check 通过。
 
 ```bash
 go test ./...
