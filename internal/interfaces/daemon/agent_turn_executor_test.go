@@ -1445,6 +1445,168 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 	require.Equal(t, messages[0].ToolCalls[0].Metadata["action_queue_id"], toolCalls[0].Metadata["action_queue_id"])
 }
 
+func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+
+	planMessage := agentMessage{ID: "msg-planner-cycle-plan", Role: "agent", Content: "planning daemon health", Phase: "plan"}
+	planTool := agentToolCall{ID: "tool-planner-cycle-plan", Name: "LLM chat"}
+	actionTool := agentToolCall{ID: "tool-planner-cycle-action", Name: "daemon.health"}
+	actionMessage := agentMessage{
+		ID:        "msg-planner-cycle-action",
+		Role:      "tool",
+		Content:   "health ok through shared cycle",
+		ToolCalls: []agentToolCall{actionTool},
+	}
+	synthesisTool := agentToolCall{ID: "tool-planner-cycle-synthesis", Name: "LLM synthesis"}
+	synthesisMessage := agentMessage{ID: "msg-planner-cycle-synthesis", Role: "agent", Content: "health summarized", Phase: "step_replan", ToolCalls: []agentToolCall{synthesisTool}}
+	actionPlan := &agentPlannerResponse{
+		Phase: "plan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+		Actions: []agentPlannerAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "planner-cycle"},
+		}},
+	}
+	finalPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "health summarized"}
+
+	turnExecutions := []runtime.TurnContext{}
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		turnExecutions = append(turnExecutions, turn)
+		require.Equal(t, sessionID, turn.SessionID)
+		require.Equal(t, "task-planner-cycle", turn.TaskID)
+		require.Equal(t, "run-planner-cycle", turn.RunID)
+		require.Equal(t, "turn-planner-cycle", turn.TurnID)
+		require.Equal(t, "daemon health", turn.Prompt)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Metadata["kind"])
+		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
+
+		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, sessionID, payload.SessionID)
+		require.Equal(t, "tester", payload.Operator)
+		require.Equal(t, "en", payload.Language)
+		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, "planner-cycle", stringFromAny(payload.Action.Arguments["probe"]))
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "action handled by test executor",
+			Payload: daemonPlannerActionExecutionTurnResultPayload{
+				Messages:  []agentMessage{actionMessage},
+				ToolCalls: []agentToolCall{actionTool},
+			},
+		}, nil
+	}))
+
+	llmStages := []runtime.LLMStageRequest{}
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		llmStages = append(llmStages, req)
+		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, "task-planner-cycle", req.Turn.TaskID)
+		require.Equal(t, "run-planner-cycle", req.Turn.RunID)
+		require.Equal(t, "turn-planner-cycle", req.Turn.TurnID)
+		require.Equal(t, "daemon health", req.Turn.Prompt)
+		require.Equal(t, "read_only", req.Turn.OperationLevel)
+
+		switch req.Stage {
+		case runtime.LLMStagePlannerChat:
+			payload, ok := req.Payload.(daemonLLMPlannerChatPayload)
+			require.True(t, ok, "payload type = %T", req.Payload)
+			require.Len(t, payload.History, 1)
+			return runtime.LLMStageResult{
+				Status: runtime.TurnResultFinished,
+				Reason: "planner handled by test runner",
+				Payload: daemonLLMPlannerChatResultPayload{
+					Messages:  []agentMessage{planMessage},
+					ToolCalls: []agentToolCall{planTool},
+					Plan:      actionPlan,
+				},
+			}, nil
+		case runtime.LLMStageToolSynthesis:
+			payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+			require.True(t, ok, "payload type = %T", req.Payload)
+			require.Len(t, payload.History, 3)
+			require.Len(t, payload.ToolMessages, 1)
+			require.Equal(t, actionMessage.ID, payload.ToolMessages[0].ID)
+			return runtime.LLMStageResult{
+				Status: runtime.TurnResultFinished,
+				Reason: "synthesis handled by test runner",
+				Payload: daemonLLMToolSynthesisResultPayload{
+					Messages:  []agentMessage{synthesisMessage},
+					ToolCalls: []agentToolCall{synthesisTool},
+					Plan:      finalPlan,
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected llm stage %s", req.Stage)
+			return runtime.LLMStageResult{}, nil
+		}
+	}))
+
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+
+	messages, toolCalls, err := mgr.runAgentLLMToolLoop(
+		context.Background(),
+		sessionID,
+		agentRuntimeTurnRef{TaskID: "task-planner-cycle", RunID: "run-planner-cycle", TurnID: "turn-planner-cycle"},
+		"daemon health",
+		"en",
+		"tester",
+		"read_only",
+		sendAgentMessageRequest{Model: "gpt-planner-cycle"},
+		[]agentMessage{{ID: "history-planner-cycle", Role: "user", Content: "daemon health"}},
+		&agentMemorySummary{Summary: "memory"},
+		routerServices{},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, llmStages, 2)
+	require.Equal(t, runtime.LLMStagePlannerChat, llmStages[0].Stage)
+	require.Equal(t, runtime.LLMStageToolSynthesis, llmStages[1].Stage)
+	require.Len(t, turnExecutions, 1)
+	require.Len(t, appendMutations, 3)
+	require.Equal(t, string(runtime.LLMStagePlannerChat), appendMutations[0].Turn.Origin)
+	require.Equal(t, "planner_loop", appendMutations[1].Turn.Origin)
+	require.Equal(t, string(runtime.LLMStageToolSynthesis), appendMutations[2].Turn.Origin)
+	require.Equal(t, true, appendMutations[0].Turn.Metadata["planner_apply"])
+	require.Equal(t, false, appendMutations[1].Turn.Metadata["planner_apply"])
+	require.Equal(t, true, appendMutations[2].Turn.Metadata["planner_apply"])
+
+	actionPayload, ok := appendMutations[1].Payload.(daemonAppendMessagesMutationPayload)
+	require.True(t, ok, "payload type = %T", appendMutations[1].Payload)
+	require.Len(t, actionPayload.Messages, 1)
+	require.Equal(t, "step", actionPayload.Messages[0].Phase)
+	require.Equal(t, "daemon.health", actionPayload.Messages[0].ToolCalls[0].Metadata["action_name"])
+	require.NotEmpty(t, actionPayload.Messages[0].ToolCalls[0].Metadata["action_queue_id"])
+
+	require.Len(t, messages, 3)
+	require.Equal(t, planMessage.ID, messages[0].ID)
+	require.Equal(t, actionMessage.ID, messages[1].ID)
+	require.Equal(t, "step", messages[1].Phase)
+	require.Equal(t, synthesisMessage.ID, messages[2].ID)
+	require.Len(t, toolCalls, 3)
+	require.Equal(t, planTool.ID, toolCalls[0].ID)
+	require.Equal(t, actionTool.ID, toolCalls[1].ID)
+	require.Equal(t, "daemon.health", toolCalls[1].Metadata["action_name"])
+	require.Equal(t, synthesisTool.ID, toolCalls[2].ID)
+}
+
 func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStage(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

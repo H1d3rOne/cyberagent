@@ -312,46 +312,17 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			}
 		}
 
-		actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
-		actionMessages = agentMessagesWithPhase(actionMessages, "step")
-		actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
-		if len(actionMessages) > 0 {
-			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "planner_loop", operationLevel, actionMessages...)
-			responseMessages = append(responseMessages, actionMessages...)
-			loopHistory = append(loopHistory, actionMessages...)
-		}
-		toolCalls = append(toolCalls, actionToolCalls...)
-		if authorizationRequired {
+		cycle := m.runAgentPlannerActionReplanCycle(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, memorySummary, svc, plan, responseMessages, toolCalls, loopHistory, agentPlannerActionReplanCycleOptions{
+			ActionAppendOrigin:                      "planner_loop",
+			AppendActionToolCallsBeforeEmptyMessage: true,
+		})
+		responseMessages = cycle.ResponseMessages
+		toolCalls = cycle.ToolCalls
+		loopHistory = cycle.LoopHistory
+		if !cycle.Continue {
 			break
 		}
-		if len(actionMessages) == 0 {
-			break
-		}
-
-		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, turnRef, prompt, language, operationLevel, req, loopHistory, memorySummary, actionMessages)
-		if synthesisErr != nil {
-			warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
-			warningTool = agentToolCallWithPhase(warningTool, "step_replan")
-			warningMessage := agentMessageWithPhase(m.message(
-				language,
-				"tool",
-				agentText(language, "工具已执行，但 StepReplan 总结失败："+synthesisErr.Error(), "Tools executed, but StepReplan synthesis failed: "+synthesisErr.Error()),
-				[]agentToolCall{warningTool},
-				nil,
-			), "step_replan")
-			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "planner_loop", operationLevel, warningMessage)
-			responseMessages = append(responseMessages, warningMessage)
-			toolCalls = append(toolCalls, warningTool)
-			break
-		}
-		if len(synthesisMessages) > 0 {
-			m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
-			responseMessages = append(responseMessages, synthesisMessages...)
-			loopHistory = append(loopHistory, synthesisMessages...)
-			toolCalls = append(toolCalls, synthesisToolCalls...)
-		}
-
-		plan = synthesisPlan
+		plan = cycle.Plan
 		if plan == nil || len(agentPlannerActions(plan)) == 0 {
 			break
 		}
@@ -379,46 +350,90 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			break
 		}
 
-		actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
-		actionMessages = agentMessagesWithPhase(actionMessages, "step")
-		actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
-		if len(actionMessages) == 0 {
+		cycle := m.runAgentPlannerActionReplanCycle(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, memorySummary, svc, plan, responseMessages, toolCalls, loopHistory, agentPlannerActionReplanCycleOptions{
+			ActionAppendOrigin: daemonTurnExecutionReplanActionContinuation,
+		})
+		responseMessages = cycle.ResponseMessages
+		toolCalls = cycle.ToolCalls
+		loopHistory = cycle.LoopHistory
+		plan = cycle.Plan
+		if !cycle.Continue {
 			break
 		}
-		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionReplanActionContinuation, operationLevel, actionMessages...)
-		responseMessages = append(responseMessages, actionMessages...)
-		toolCalls = append(toolCalls, actionToolCalls...)
-		loopHistory = append(loopHistory, actionMessages...)
-		if authorizationRequired {
-			break
-		}
-
-		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, turnRef, prompt, language, operationLevel, req, loopHistory, memorySummary, actionMessages)
-		if synthesisErr != nil {
-			warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
-			warningTool = agentToolCallWithPhase(warningTool, "step_replan")
-			warningMessage := agentMessageWithPhase(m.message(
-				language,
-				"tool",
-				agentText(language, "工具已执行，但 StepReplan 总结失败："+synthesisErr.Error(), "Tools executed, but StepReplan synthesis failed: "+synthesisErr.Error()),
-				[]agentToolCall{warningTool},
-				nil,
-			), "step_replan")
-			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionReplanActionContinuation, operationLevel, warningMessage)
-			responseMessages = append(responseMessages, warningMessage)
-			toolCalls = append(toolCalls, warningTool)
-			break
-		}
-		if len(synthesisMessages) > 0 {
-			m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
-			responseMessages = append(responseMessages, synthesisMessages...)
-			toolCalls = append(toolCalls, synthesisToolCalls...)
-			loopHistory = append(loopHistory, synthesisMessages...)
-		}
-
-		plan = synthesisPlan
 	}
 	return responseMessages, toolCalls
+}
+
+type agentPlannerActionReplanCycleOptions struct {
+	ActionAppendOrigin                      string
+	AppendActionToolCallsBeforeEmptyMessage bool
+}
+
+type agentPlannerActionReplanCycleResult struct {
+	ResponseMessages []agentMessage
+	ToolCalls        []agentToolCall
+	LoopHistory      []agentMessage
+	Plan             *agentPlannerResponse
+	Continue         bool
+}
+
+func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, responseMessages []agentMessage, toolCalls []agentToolCall, loopHistory []agentMessage, opts agentPlannerActionReplanCycleOptions) agentPlannerActionReplanCycleResult {
+	if opts.ActionAppendOrigin == "" {
+		opts.ActionAppendOrigin = "planner_loop"
+	}
+	result := agentPlannerActionReplanCycleResult{
+		ResponseMessages: responseMessages,
+		ToolCalls:        toolCalls,
+		LoopHistory:      loopHistory,
+		Plan:             plan,
+	}
+
+	actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActions(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc, plan, req.AuthProfiles, req.DefaultAuthProfileID)
+	actionMessages = agentMessagesWithPhase(actionMessages, "step")
+	actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
+	if len(actionMessages) > 0 {
+		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, opts.ActionAppendOrigin, operationLevel, actionMessages...)
+		result.ResponseMessages = append(result.ResponseMessages, actionMessages...)
+		result.LoopHistory = append(result.LoopHistory, actionMessages...)
+	}
+	if opts.AppendActionToolCallsBeforeEmptyMessage {
+		result.ToolCalls = append(result.ToolCalls, actionToolCalls...)
+	}
+	if len(actionMessages) == 0 {
+		return result
+	}
+	if !opts.AppendActionToolCallsBeforeEmptyMessage {
+		result.ToolCalls = append(result.ToolCalls, actionToolCalls...)
+	}
+	if authorizationRequired {
+		return result
+	}
+
+	synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, turnRef, prompt, language, operationLevel, req, result.LoopHistory, memorySummary, actionMessages)
+	if synthesisErr != nil {
+		warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
+		warningTool = agentToolCallWithPhase(warningTool, "step_replan")
+		warningMessage := agentMessageWithPhase(m.message(
+			language,
+			"tool",
+			agentText(language, "工具已执行，但 StepReplan 总结失败："+synthesisErr.Error(), "Tools executed, but StepReplan synthesis failed: "+synthesisErr.Error()),
+			[]agentToolCall{warningTool},
+			nil,
+		), "step_replan")
+		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, opts.ActionAppendOrigin, operationLevel, warningMessage)
+		result.ResponseMessages = append(result.ResponseMessages, warningMessage)
+		result.ToolCalls = append(result.ToolCalls, warningTool)
+		return result
+	}
+	if len(synthesisMessages) > 0 {
+		m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisPlan, synthesisMessages...)
+		result.ResponseMessages = append(result.ResponseMessages, synthesisMessages...)
+		result.LoopHistory = append(result.LoopHistory, synthesisMessages...)
+		result.ToolCalls = append(result.ToolCalls, synthesisToolCalls...)
+	}
+	result.Plan = synthesisPlan
+	result.Continue = true
+	return result
 }
 
 func reqMaxAgentReplans(req sendAgentMessageRequest) int {

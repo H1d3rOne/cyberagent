@@ -369,8 +369,8 @@ ownership 边界：
 迁移顺序：
 
 1. ✅ P0.5-N6 已把 action queue metadata 与 authorization/capability gate decision 抽成无副作用 helper，并补 parity tests。
-2. 将 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 内部循环合并到 daemon-private `runAgentLoop` helper，两种 mode 共享状态机；外层函数签名保持不变。
-3. 让现有 `daemon_legacy_llm_tool_loop` runner 与 `replan_action_continuation` turn executor 都调用同一个 helper，证明 response/message/tool parity。
+2. ✅ P0.5-N9 已将 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 的 Action → append → tool synthesis → append 循环合并到 daemon-private `runAgentPlannerActionReplanCycle` helper；外层函数签名、mode precondition 与 append origin 保持不变。
+3. ✅ 现有 `daemon_legacy_llm_tool_loop` runner 与 `replan_action_continuation` turn executor 已经通过各自外层函数复用同一 cycle helper，并用 focused tests 证明 planner/action/synthesis append origin、planner apply metadata、response/message/tool parity。
 4. 把 helper 的输入/输出替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
 5. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
@@ -1253,6 +1253,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v40 | 完成 P1-F4 真实浏览器 Agent Cockpit smoke：新增 Playwright 脚本，用随机端口 daemon + Vite + 系统 Chrome 验证 `/agent` health prompt、manual authorization approval 与 workspace write/read 最小链路；前端测试、build、脚本语法检查、browser smoke 与 diff check 通过。 |
 | v41 | 完成 P1-F5 Agent Cockpit a11y 回归：补 Trace drawer/mobile Tool Inspector dialog label/focus trap/Escape/focus return、Composer textarea label、TaskTree/timeline 键盘焦点态，并新增真实浏览器 a11y smoke；前端测试、build、browser smoke、a11y smoke 与 diff check 通过。 |
 | v42 | 完成 P1-F6 Agent Cockpit 视觉回归 smoke：新增 standalone Playwright 脚本生成 6 张可审查截图，并用 computed style 校验 layered gradient、glass blur/fallback、半透明卡片、Trace drawer、approval pending、destructive hover 与移动端 approval layout；前端测试、build、脚本语法检查、visual smoke 与 diff check 通过。 |
+| v43 | 完成 P0.5-N9 planner action/replan cycle helper 抽取：`llm_tool_loop` 与 `replan_action_continuation` 共享 daemon 内部 Action → append → tool synthesis → append 循环骨架，append origin、authorization/capability gate、response/tool parity 保持不变；focused daemon tests 与 daemon 包测试通过。 |
 
 ---
 
