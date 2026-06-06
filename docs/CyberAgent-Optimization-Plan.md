@@ -242,7 +242,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入、`ControlSession` 状态写入、planner/manual authorization request 与 capability mismatch blocked state 已经 engine session mutation dispatch，LLM fallback manual authorization branch 已补覆盖确认 provider failure warning + authorization append mutation 与 pending authorization request mutation 的 turn metadata 对齐；no-LLM deterministic route、control auto-continue route、active-run continue context fetch、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation、authorization approved planner action execution，以及 LLM planner/replan loop 内部 action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters；planner/replan/LLM/SendMessage append 与外部 control/authorization append 已经改为携带 turnRef 的 `append_messages` dispatch；authorization approve 后的 planner action execution、tool synthesis 与 follow-up continuation runtime runner 也已贯穿同一个 external turnRef；append/control/resolve authorization 的 `memory_compacted` events 已补齐 mutation turnRef metadata；deterministic route 内部 capability-gap plan-only planner apply 已沿用外层 turnRef 进入 turn-aware append mutation。下一步准备继续收敛 remaining SendMessage branches。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入、`ControlSession` 状态写入、planner/manual authorization request 与 capability mismatch blocked state 已经 engine session mutation dispatch，LLM fallback manual authorization branch 已补覆盖确认 provider failure warning + authorization append mutation 与 pending authorization request mutation 的 turn metadata 对齐；no-LLM deterministic route、control auto-continue route、active-run continue context fetch、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation、authorization approved planner action execution，以及 LLM planner/replan loop 内部 action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters；planner/replan/LLM/SendMessage append 与外部 control/authorization append 已经改为携带 turnRef 的 `append_messages` dispatch；authorization approve 后的 planner action execution、tool synthesis 与 follow-up continuation runtime runner 也已贯穿同一个 external turnRef；append/control/resolve authorization 的 `memory_compacted` events 已补齐 mutation turnRef metadata；deterministic route 内部 capability-gap plan-only planner apply 已沿用外层 turnRef 进入 turn-aware append mutation；`llm_tool_loop` / `replan_action_continuation` engine-native loop runner 草案已补齐。下一步准备将 action queue metadata 与 authorization gate decision 抽成可测试 helper。
 4. 最后收敛 remaining SendMessage branches 为 engine turn lifecycle。
 
 已完成的 seam 边界：
@@ -280,6 +280,106 @@ engine-native turn lifecycle 下沉入口建议：
 - `capability_blocked` 实际执行仍复用 daemon legacy helper，保持 non-equivalent tool mismatch 的 blocked session/task/todo、blocked reason、next_action、persist 与外层 `step_replan` message/tool 返回顺序不变。
 - `control_session` 实际执行仍复用 daemon legacy helper，保持 continue/revise/pause/cancel/stop/new_task 对 session/task/todo/next_action/message、persist、`memory_compacted` 与 message runtime events 的原有语义；stop/cancel 的 daemon job cancel 副作用仍留在 `ControlSession` 外层 control flow。
 - `resolve_authorization` 实际执行仍复用 daemon legacy helper，保持 pending authorization ID 校验、operation level uplift、approve/deny message 文案与 phase、ActiveTask/Todos/NextAction、`approval_resolved`、`memory_compacted` 与 message runtime events 语义不变；approve 后挂起 action 执行、tool message append、synthesis 与 auto-continue 仍留在原 `DecideAgentAuthorization` 后续路径，但 runtime runner dispatch 与 append mutation 已共享同一个 authorization external turnRef。
+
+### 4.1 Engine-native LLM tool/replan runner 设计草案（P0.5-N5）
+
+目标：把当前 daemon-owned `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 后续收敛为一个 engine-native loop runner，同时不改变现有消息顺序、授权 gate、planner apply、tool call metadata、session persist、SSE/runtime event 与 `SendMessage` response merge 语义。
+
+推荐形态：先设计为单个 loop runner、两个 mode，而不是继续维护两套循环：
+
+- `llm_tool_loop`：从 planner chat 开始，负责 Plan → Action → StepReplan 循环。
+- `replan_action_continuation`：从已有 `agentPlannerResponse` 开始，只在 `NextAction.AutoContinue=true` 时继续 Action → StepReplan 循环。
+
+候选请求 payload（迁移期可继续放在 daemon-private adapter 内；类型 runtime-neutral 后再下沉到 `internal/agent/runtime`）：
+
+```go
+type AgentLoopMode string
+
+const (
+    AgentLoopLLMToolLoop           AgentLoopMode = "llm_tool_loop"
+    AgentLoopReplanContinuation    AgentLoopMode = "replan_action_continuation"
+)
+
+type AgentLoopRequest struct {
+    Turn           runtime.TurnContext
+    Mode           AgentLoopMode
+    Prompt         string
+    Language       string
+    Operator       string
+    OperationLevel string
+
+    LLMRequest     sendAgentMessageRequest // 迁移期；长期拆成 provider/model/instructions/limits + ephemeral credentials。
+    History        []agentMessage
+    MemorySummary  *agentMemorySummary
+    InitialPlan    *agentPlannerResponse
+    MaxLoops       int
+
+    AuthProfiles           []agentHTTPAuthProfile
+    DefaultAuthProfileID   string
+    Services               routerServices // 迁移期；长期替换为 Tool Registry/runner service handles。
+}
+```
+
+候选结果 payload：
+
+```go
+type AgentLoopResult struct {
+    Messages              []agentMessage
+    ToolCalls             []agentToolCall
+    FinalPlan             *agentPlannerResponse
+    StopReason            string // planner_error | no_actions | authorization_required | capability_blocked | max_loops | synthesis_error | completed
+    AuthorizationRequired bool
+    CapabilityBlocked     bool
+    LoopCount             int
+    ActionQueueIDs        []string
+}
+```
+
+执行状态机：
+
+1. `llm_tool_loop` mode 先调用 `LLMStagePlannerChat`，返回 plan messages / planner tool calls / parsed plan；planner chat 失败时把 partial messages/toolCalls 原样返回 error，让 `SendMessage` 现有 LLM fallback branch 继续负责 warning + local route/manual authorization fallback。
+2. planner chat 成功后立即经 `SessionMutationAppendMessages` append plan messages，并携带 `origin=planner_chat`、当前 task/run/turn/prompt/operation_level；如果 plan 内有 planner state，则同一次 mutation 负责 planner apply。
+3. 若 plan 无 actions：
+   - 仅当第 0 轮且 operator prompt 明确要求立即执行时，按当前 `agentFallbackPlannerFromPrompt` 生成 fallback actions。
+   - 否则以 `no_actions` 停止，保持模型 Plan-only 行为。
+4. 每轮最多取前 6 个 actions，并生成稳定 `action_queue_id`；所有 action tool call 与 message 内 tool call 都统一打上 `action_queue_id`、`action_index`、`action_count`、`action_name`。
+5. action gate 顺序保持现有语义：
+   - capability mismatch：先 `SessionMutationCapabilityBlocked` 写入 blocked session/task/todo/next_action，再返回 `step_replan` message/tool，停止。
+   - prompt 未显式允许：`SessionMutationRequestAuthorization`，policy=`explicit_operator_intent_required`，停止。
+   - operation level 不足：`SessionMutationRequestAuthorization`，policy=`operation_level_required`，停止。
+   - manual authorization tool：`SessionMutationRequestAuthorization`，policy=`manual_tool_authorization_required`，停止。
+   - gate 通过：调用 `planner_action_execution` turn executor（短期）或未来 engine-native tool runner（长期）。
+6. action batch 返回后立即经 `SessionMutationAppendMessages` append，`llm_tool_loop` 使用 `origin=planner_loop`，`replan_action_continuation` 使用 `origin=replan_action_continuation`；authorization/capability gate 产生的 message 也走同一 append 顺序，然后停止。
+7. action batch 无 message 时停止，避免空循环。
+8. action batch 成功且无需授权时调用 `LLMStageToolSynthesis`；synthesis 失败不作为 loop error 外抛，而是生成当前 warning tool/message，append 后以 `synthesis_error` 停止。
+9. synthesis 成功时经 `SessionMutationAppendMessages` append synthesis messages + planner apply，更新 `FinalPlan`。
+10. 仅当新 plan 仍有 actions 且 `NextAction.AutoContinue=true` 时进入下一轮；达到 `MaxLoops` 后以 `max_loops` 停止。
+
+ownership 边界：
+
+- Engine loop runner owned：loop state、mode 分派、planner/action/synthesis 顺序、action queue metadata、stop reason、调用 stage runner / action executor / session mutator 的编排。
+- LLM stage runner owned：provider fallback、streaming、planner JSON/native tool call extraction、StepReplan/final_answer 解析；不直接 append/persist。
+- Planner action executor owned：单个 tool/action 的执行与失败 tool call 构造；不直接持久化 action batch message，除非 tool handler 自身有业务状态副作用。
+- Session mutator owned：messages append、planner apply、PendingAuthorization / capability blocked 状态写入、session persist、memory compaction、message/memory runtime events。
+- `SendMessage` owned（直到 P0.5-N8）：user message record、BeginTurn/FinishTurn、LLM provider failure fallback response merge、route-before-LLM/no-LLM/control/pending-auth 分支 response merge。
+- Credential ownership：API key / auth profile secret 只作为请求期 ephemeral input 传入 adapter，不进入 runtime events、persisted turn state 或长期 `AgentLoopResult`；持久化 metadata 只保留 provider/model/phase/status。
+
+迁移顺序：
+
+1. P0.5-N6 先把 action queue metadata 与 authorization gate decision 抽成无副作用 helper，并补 parity tests。
+2. 将 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 内部循环合并到 daemon-private `runAgentLoop` helper，两种 mode 共享状态机；外层函数签名保持不变。
+3. 让现有 `daemon_legacy_llm_tool_loop` runner 与 `replan_action_continuation` turn executor 都调用同一个 helper，证明 response/message/tool parity。
+4. 把 helper 的输入/输出替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+5. P0.5-N7 收敛 `SendMessage` response merge regression matrix，P0.5-N8 再决定是否把主编排下沉到 engine turn lifecycle runner。
+
+最低回归覆盖：
+
+- planner chat error partial output → LLM fallback branch warning/route/manual authorization 不变。
+- plan-only 无 actions 与 immediate-execution fallback actions 分支不混淆。
+- capability mismatch、explicit intent、operation level、manual authorization 四个 gate 的 mutation metadata 与 message append 顺序不变。
+- action queue metadata 在 tool call 与 message 内 tool call 上一致。
+- synthesis success/failure、auto-continue、max loops、空 action message 停止条件不变。
+- `planner_loop` 与 `replan_action_continuation` append origin、task/run/turn/prompt/operation_level metadata 对齐。
 
 ---
 
@@ -1072,6 +1172,7 @@ Glass surface：
 | v30 | 扩展 session mutation seam：planner/manual authorization request 的 `PendingAuthorization` 创建、session status/next_action 更新与 persist 已经 `request_authorization` mutation dispatch；授权提示 message append 顺序保持原路径。 |
 | v31 | 扩展 session mutation seam：capability mismatch blocked state 已经 `capability_blocked` mutation dispatch；blocked session/task/todo/next_action 与 mismatch `step_replan` 返回顺序保持原路径。 |
 | v32 | 补齐 LLM fallback manual authorization branch 覆盖：provider failure warning 与 authorization message append 经同一 turn-aware append mutation，pending authorization request mutation metadata 与 fallback turnRef 对齐。 |
+| v33 | 输出 engine-native loop runner 设计草案：`llm_tool_loop` 与 `replan_action_continuation` 统一为单个 runner 的两个 mode，明确 payload、authorization/capability gate、action queue、synthesis、append/persist ownership 与 N6-N8 迁移顺序。 |
 
 ---
 
