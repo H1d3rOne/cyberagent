@@ -905,6 +905,26 @@ P1-F2 建议执行方式：
 - 在 `App.tsx` 使用 `React.lazy` + `Suspense` 包住 route element，fallback 使用轻量 glass/loading skeleton，避免空白跳转。
 - build 后记录主入口 JS、每个 route chunk 与 gzip 变化；确认 `/agent`、`/scan/:id`、`/settings` 不再进入初始 JS。
 
+P1-F2 实施结果：
+
+- `web/frontend/src/App.tsx` 已改为 `React.lazy` + `Suspense` route element；`Layout`、`ConsoleProvider` 与基础 shell 继续 eager。
+- route fallback 使用 `role=status` / `aria-live=polite` / `aria-busy=true` 的轻量 glass loading skeleton，避免路由切换空白。
+- build 后主入口 JS 从 `442.68KB` / gzip `127.29KB` 降到 `233.51KB` / gzip `75.24KB`（raw 约 -47.3%，gzip 约 -40.9%）。
+
+主要 chunk：
+
+| Chunk | Raw | Gzip |
+| --- | ---: | ---: |
+| `index-Bbx7BD2J.js` | `233.51KB` | `75.24KB` |
+| `agent-cockpit-BtTFLFE1.js` | `80.31KB` | `23.18KB` |
+| `scan-detail-Do3Ftj3a.js` | `43.15KB` | `11.22KB` |
+| `settings-C_ppjGEo.js` | `32.35KB` | `9.20KB` |
+| `new-scan-CVnQm8IU.js` | `23.29KB` | `7.49KB` |
+| `dashboard-BXeJBaa2.js` | `6.41KB` | `2.81KB` |
+| `skills-OGZH4Wev.js` | `5.98KB` | `2.11KB` |
+| `mcp-BPTOjz8r.js` | `6.01KB` | `2.46KB` |
+| `history-CW1qVKtj.js` | `4.48KB` | `1.88KB` |
+
 验收：
 
 - 首屏 bundle 降低。
@@ -1196,7 +1216,8 @@ P1-F2 建议执行方式：
 | v34 | 抽出 planner loop action queue metadata 与 authorization/capability gate decision helper；保持 gate 顺序、policy/reason、queue metadata 与 append/response 语义不变，并补 helper parity 覆盖。 |
 | v35 | 补齐 SendMessage response merge regression matrix：覆盖 control continue/revise + LLM、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback route/authorization、active-run continue parity。 |
 | v36 | 新增 `runtime.Engine.RunTurnLifecycle`，将 `SendMessage` Begin/Finish lifecycle 包装为 engine bounded runner；response merge branch body 拆入 daemon helper，补 runtime lifecycle 与 SendMessage event-order 回归。 |
-| v37 | 完成 P1-F1 前端路由与 bundle 基线盘点：记录当前静态 route 单入口 JS/CSS 体积，并确定 `/agent`、`/scan/:id`、`/settings`、`/tasks`/`/scan/new`、`/skills`/`/mcp`、`/history`、`/` 与 `/ops` 的 route-level lazy 边界。 |
+| v37 | 完成 P1-F1 前端路由与 bundle 基线盘点：记录当前静态 route 单入口 JS/CSS 体积，并确定 `/agent`、`/scan/:id`、`/settings`、`/tasks` 与 `/scan/new`、`/skills` 与 `/mcp`、`/history`、`/` 与 `/ops` 的 route-level lazy 边界。 |
+| v38 | 完成 P1-F2 route-level lazy / bundle splitting：`App.tsx` 使用 `React.lazy` + `Suspense` 延迟加载页面 route，主入口 JS 从 `442.68KB` / gzip `127.29KB` 降到 `233.51KB` / gzip `75.24KB`，并记录主要 route chunk。 |
 
 ---
 

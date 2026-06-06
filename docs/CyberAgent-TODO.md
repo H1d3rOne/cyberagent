@@ -84,7 +84,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 
 ## 4. P1：核心体验增强
 
-- [ ] Frontend route-level lazy / bundle splitting，降低初始 bundle。
+- [x] Frontend route-level lazy / bundle splitting，降低初始 bundle。
 - [ ] 移动端 Agent Cockpit 降噪，避免横向滚动和信息堆叠。
 - [ ] 真实浏览器 E2E smoke。
 - [ ] a11y 回归：icon-only button、dialog/drawer 语义、焦点管理。
@@ -140,7 +140,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 ### 7.2 P1 Frontend / QA
 
 - [x] P1-F1：梳理 `web/frontend` 路由与初始 bundle，确定 Cockpit、scan/dashboard、trace 等 route-level lazy 边界。
-- [ ] P1-F2：实现 route-level lazy / bundle splitting，并记录 build 后主要 chunk 变化。
+- [x] P1-F2：实现 route-level lazy / bundle splitting，并记录 build 后主要 chunk 变化。
 - [ ] P1-F3：移动端 Agent Cockpit 降噪：优先处理 Timeline/Tool card 横向滚动、密集 metadata badge、approval pending 卡片堆叠。
 - [ ] P1-F4：补真实浏览器 E2E smoke：daemon health、session create、send deterministic route、approval pending/decision 最小链路。
 - [ ] P1-F5：补 a11y 回归：icon-only button label、dialog/drawer role、焦点返回、键盘可达。
@@ -158,6 +158,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
   - `/history`：run list/history 单独 lazy。
   - `/` 与 `/ops`：继续指向 `DashboardPage`；P1-F2 可让 dashboard route lazy 后由当前 route 立即加载，不再拖入 cockpit/settings/detail。
 - P1-F2 实施建议：在 `App.tsx` 使用 `React.lazy` + `Suspense` 包住 route element，保留 `Layout` 为 eager shell，增加轻量 route loading fallback；build 后记录主入口 JS、route chunks 与 gzip 变化。
+- P1-F2 已实现：`App.tsx` 改为 `React.lazy` + `Suspense` route element；`Layout`/shell 保持 eager，route fallback 为可访问 `role=status` glass loading skeleton。
+- P1-F2 build 结果：初始 JS 从 `442.68 kB / gzip 127.29 kB` 降到 `233.51 kB / gzip 75.24 kB`（raw 约 -47.3%，gzip 约 -40.9%）；主要 route chunk 为 `/agent` `80.31 kB / gzip 23.18 kB`、`/scan/:id` `43.15 kB / gzip 11.22 kB`、`/settings` `32.35 kB / gzip 9.20 kB`、`/tasks` 与 `/scan/new` `23.29 kB / gzip 7.49 kB`、dashboard `6.41 kB / gzip 2.81 kB`。
 
 ### 7.3 P2 Production / Observability
 
@@ -207,6 +209,14 @@ cd web/frontend && npm test
 ```
 
 结果：当前静态路由 build 通过，单入口 JS `442.68 kB / gzip 127.29 kB`，CSS `50.80 kB / gzip 9.98 kB`；Vitest `6 files / 25 tests` 通过。
+
+P1-F2 route-level lazy / bundle splitting：
+
+```bash
+cd web/frontend && npm test && npm run build
+```
+
+结果：Vitest `6 files / 25 tests` 通过；build 后主入口 JS `233.51 kB / gzip 75.24 kB`，主要 route chunks：`agent-cockpit 80.31 kB / gzip 23.18 kB`、`scan-detail 43.15 kB / gzip 11.22 kB`、`settings 32.35 kB / gzip 9.20 kB`、`new-scan 23.29 kB / gzip 7.49 kB`、`dashboard 6.41 kB / gzip 2.81 kB`。
 
 ```bash
 go test ./...
@@ -259,7 +269,8 @@ Go test / vet / build 通过。
 gofmt / diff whitespace check 通过。
 Frontend vitest 6 files / 25 tests 通过。
 Frontend production build 通过。
-P1-F1 route lazy 边界盘点完成：`App.tsx` 当前静态导入所有页面，单入口 JS `442.68 kB / gzip 127.29 kB`；已确定 `/agent`、`/scan/:id`、`/settings`、`/tasks`/`/scan/new`、`/skills`/`/mcp`、`/history`、`/` 与 `/ops` 的 lazy chunk 边界。
+P1-F1 route lazy 边界盘点完成：`App.tsx` 当前静态导入所有页面，单入口 JS `442.68 kB / gzip 127.29 kB`；已确定 `/agent`、`/scan/:id`、`/settings`、`/tasks` 与 `/scan/new`、`/skills` 与 `/mcp`、`/history`、`/` 与 `/ops` 的 lazy chunk 边界。
+P1-F2 route-level lazy / bundle splitting 完成：`App.tsx` 使用 `React.lazy` + `Suspense` 延迟加载页面 route，主入口 JS 降为 `233.51 kB / gzip 75.24 kB`，Cockpit/ScanDetail/Settings/NewScan 等拆为 route chunks。
 Binary version 输出正常。
 Daemon API smoke 通过：healthz/version/capabilities、Agent session create、自然语言 `daemon health` → `deterministic_route/registry_dispatch`、runtime SQLite DB 创建。
 Workspace mutation route 小切片验证通过：write/patch/apply/apply-all/discard/discard-all/delete/move/copy/mkdir 均经 `deterministic_route/registry_dispatch`，且 `read_only` 不会越过 `workspace_write` gate。
