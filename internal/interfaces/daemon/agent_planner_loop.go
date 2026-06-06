@@ -700,6 +700,12 @@ type agentPlannerActionReplanCycleResult struct {
 	Continue bool
 }
 
+type agentPlannerActionReplanCycleActionExecutionResult struct {
+	Messages              agentPlannerActionReplanCycleMessages
+	ToolCalls             agentPlannerActionReplanCycleToolCalls
+	AuthorizationRequired bool
+}
+
 type agentPlannerActionReplanCycleSynthesisResult struct {
 	Messages   agentPlannerActionReplanCycleMessages
 	ToolCalls  agentPlannerActionReplanCycleToolCalls
@@ -729,21 +735,9 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		Plan:  req.Plan,
 	}
 
-	actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActionList(
-		ctx,
-		req.Turn.SessionID,
-		turnRef,
-		req.Turn.Prompt,
-		req.Language,
-		req.Operator,
-		req.Turn.OperationLevel,
-		req.ToolContext.legacyRouterServices(),
-		req.Plan.actions(),
-		agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(req.Authorization.AuthProfiles),
-		req.Authorization.DefaultAuthProfileID,
-	)
-	actionMessages = agentMessagesWithPhase(actionMessages, "step")
-	actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
+	actionExecution := m.runAgentPlannerActionReplanCycleActionExecution(ctx, req)
+	actionMessages := agentMessagesWithPhase(actionExecution.Messages.legacyAgentMessages(), "step")
+	actionToolCalls := agentToolCallsWithPhase(actionExecution.ToolCalls.legacyAgentToolCalls(), "step")
 	if len(actionMessages) > 0 {
 		m.appendMessagesForTurn(ctx, req.Turn.SessionID, turnRef, req.Turn.Prompt, req.Options.ActionAppendOrigin, req.Turn.OperationLevel, actionMessages...)
 		result.State.ResponseMessages.appendLegacyAgentMessages(actionMessages...)
@@ -758,7 +752,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 	if !req.Options.AppendActionToolCallsBeforeEmptyMessage {
 		result.State.ToolCalls.appendLegacyAgentToolCalls(actionToolCalls...)
 	}
-	if authorizationRequired {
+	if actionExecution.AuthorizationRequired {
 		return result
 	}
 
@@ -793,6 +787,28 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 	result.Plan = synthesis.Plan
 	result.Continue = true
 	return result
+}
+
+func (m *agentManager) runAgentPlannerActionReplanCycleActionExecution(ctx context.Context, req agentPlannerActionReplanCycleRequest) agentPlannerActionReplanCycleActionExecutionResult {
+	turnRef := agentRuntimeTurnRefFromTurn(req.Turn)
+	actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActionList(
+		ctx,
+		req.Turn.SessionID,
+		turnRef,
+		req.Turn.Prompt,
+		req.Language,
+		req.Operator,
+		req.Turn.OperationLevel,
+		req.ToolContext.legacyRouterServices(),
+		req.Plan.actions(),
+		agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(req.Authorization.AuthProfiles),
+		req.Authorization.DefaultAuthProfileID,
+	)
+	return agentPlannerActionReplanCycleActionExecutionResult{
+		Messages:              agentPlannerActionReplanCycleMessagesFromAgentMessages(actionMessages),
+		ToolCalls:             agentPlannerActionReplanCycleToolCallsFromAgentToolCalls(actionToolCalls),
+		AuthorizationRequired: authorizationRequired,
+	}
 }
 
 func (m *agentManager) runAgentPlannerActionReplanCycleSynthesis(ctx context.Context, req agentPlannerActionReplanCycleRequest, state agentPlannerActionReplanCycleState, actionMessages agentPlannerActionReplanCycleMessages) (agentPlannerActionReplanCycleSynthesisResult, error) {

@@ -1509,6 +1509,139 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
 }
 
+func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleRequest(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	jobs := newJobManager(jobManagerConfig{RunsDir: t.TempDir()})
+	enabled := true
+	authProfiles := []agentHTTPAuthProfile{{
+		ID:      "auth-cycle-action-exec",
+		Type:    "bearer",
+		BaseURL: "https://sandbox.example",
+		Token:   "token-cycle-action-exec",
+		Enabled: &enabled,
+	}}
+	cycleAuthProfiles := agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles)
+	plan := &agentPlannerResponse{Actions: []agentPlannerAction{{
+		Name:      "daemon.health",
+		Arguments: map[string]any{"probe": "cycle-action-exec"},
+	}}}
+	cyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(plan)
+	plan.Actions[0].Arguments["probe"] = "mutated-source-plan"
+	cyclePlan.plan.Actions = nil
+	cyclePlan.plan.ToolCalls = nil
+	authProfiles[0].Token = "mutated-source-token"
+	*authProfiles[0].Enabled = false
+
+	req := agentPlannerActionReplanCycleRequest{
+		Turn: agentPlannerActionReplanCycleTurnContext(
+			"session-cycle-action-exec",
+			agentRuntimeTurnRef{TaskID: "task-cycle-action-exec", RunID: "run-cycle-action-exec", TurnID: "turn-cycle-action-exec"},
+			"daemon health",
+			"user",
+			"read_only",
+		),
+		Language: "en",
+		Operator: "tester",
+		Authorization: agentPlannerActionReplanCycleAuthorization{
+			AuthProfiles:         cycleAuthProfiles,
+			DefaultAuthProfileID: "auth-cycle-action-exec",
+		},
+		ToolContext: agentPlannerActionReplanCycleToolContextFromRouterServices(routerServices{jobs: jobs}),
+		Plan:        cyclePlan,
+	}
+
+	actionMessage := agentMessage{
+		ID:      "msg-cycle-action-exec",
+		Role:    "tool",
+		Content: "cycle action executed",
+		ToolCalls: []agentToolCall{{
+			ID:     "tool-cycle-action-exec-message",
+			Name:   "daemon.health",
+			Result: map[string]any{"ok": true},
+		}},
+	}
+	actionTool := agentToolCall{
+		ID:     "tool-cycle-action-exec",
+		Name:   "daemon.health",
+		Result: map[string]any{"ok": true},
+	}
+
+	called := false
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		called = true
+		require.Equal(t, "session-cycle-action-exec", turn.SessionID)
+		require.Equal(t, "task-cycle-action-exec", turn.TaskID)
+		require.Equal(t, "run-cycle-action-exec", turn.RunID)
+		require.Equal(t, "turn-cycle-action-exec", turn.TurnID)
+		require.Equal(t, "daemon health", turn.Prompt)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Metadata["kind"])
+		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
+
+		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, "session-cycle-action-exec", payload.SessionID)
+		require.Equal(t, "en", payload.Language)
+		require.Equal(t, "tester", payload.Operator)
+		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, "cycle-action-exec", stringFromAny(payload.Action.Arguments["probe"]))
+		require.Len(t, payload.AuthProfiles, 1)
+		require.Equal(t, "auth-cycle-action-exec", payload.DefaultAuthProfileID)
+		require.Equal(t, "token-cycle-action-exec", payload.AuthProfiles[0].Token)
+		require.NotNil(t, payload.AuthProfiles[0].Enabled)
+		require.True(t, *payload.AuthProfiles[0].Enabled)
+		require.Same(t, jobs, payload.Services.jobs)
+
+		payload.Action.Arguments["probe"] = "mutated-payload-action"
+		payload.AuthProfiles[0].Token = "mutated-payload-token"
+		*payload.AuthProfiles[0].Enabled = false
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "cycle action execution handled",
+			Payload: daemonPlannerActionExecutionTurnResultPayload{
+				Messages:  []agentMessage{actionMessage},
+				ToolCalls: []agentToolCall{actionTool},
+			},
+		}, nil
+	}))
+
+	result := mgr.runAgentPlannerActionReplanCycleActionExecution(context.Background(), req)
+
+	require.True(t, called)
+	require.False(t, result.AuthorizationRequired)
+	require.Equal(t, "cycle-action-exec", stringFromAny(req.Plan.actions()[0].Arguments["probe"]))
+	require.Equal(t, "token-cycle-action-exec", req.Authorization.AuthProfiles[0].Token)
+	require.True(t, *req.Authorization.AuthProfiles[0].Enabled)
+
+	gotMessages := result.Messages.legacyAgentMessages()
+	gotToolCalls := result.ToolCalls.legacyAgentToolCalls()
+	require.Len(t, gotMessages, 1)
+	require.Len(t, gotToolCalls, 1)
+	require.Equal(t, "cycle action executed", gotMessages[0].Content)
+	require.Equal(t, "daemon.health", gotMessages[0].ToolCalls[0].Metadata["action_name"])
+	require.Equal(t, 1, gotMessages[0].ToolCalls[0].Metadata["action_index"])
+	require.Equal(t, 1, gotMessages[0].ToolCalls[0].Metadata["action_count"])
+	require.NotEmpty(t, gotMessages[0].ToolCalls[0].Metadata["action_queue_id"])
+	require.Equal(t, "daemon.health", gotToolCalls[0].Metadata["action_name"])
+	require.Equal(t, gotMessages[0].ToolCalls[0].Metadata["action_queue_id"], gotToolCalls[0].Metadata["action_queue_id"])
+
+	actionMessage.Content = "mutated source message"
+	actionMessage.ToolCalls[0].Result["ok"] = false
+	actionTool.Result["ok"] = false
+	gotMessages[0].Content = "mutated got message"
+	gotMessages[0].ToolCalls[0].Result["ok"] = "mutated"
+	gotToolCalls[0].Result["ok"] = "mutated"
+
+	require.Equal(t, "cycle action executed", result.Messages.legacyAgentMessages()[0].Content)
+	require.Equal(t, true, result.Messages.legacyAgentMessages()[0].ToolCalls[0].Result["ok"])
+	require.Equal(t, true, result.ToolCalls.legacyAgentToolCalls()[0].Result["ok"])
+}
+
 func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTurnExecutor(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
