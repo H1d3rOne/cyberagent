@@ -878,14 +878,32 @@ Glass surface：
 当前发现：
 
 - `App.tsx` 静态导入所有页面。
-- 生产 JS 约 `432.84KB`。
-- gzip 约 `125.34KB`。
+- 2026-06-06 P1-F1 基线：生产 JS `442.68KB` / gzip `127.29KB`，CSS `50.80KB` / gzip `9.98KB`。
+- 当前只有 `assets/index-*.js` 单入口页面 bundle，切到任一路由都会先下载 Cockpit、ScanDetail、Settings 等所有页面代码。
 
 优化方向：
 
 - Dashboard / Agent / Settings / Skills / MCP / History / ScanDetail 分包。
 - 加 skeleton / loading state。
 - 控制毛玻璃动效和 blur 面积。
+
+P1-F1 已确定 lazy 边界：
+
+| 路由 | Lazy chunk 边界 | 说明 |
+| --- | --- | --- |
+| `/agent` | `pages/agent-cockpit` + `agent/components/*` + `agent/state/*` | Cockpit 专属交互、timeline、trace drawer、tool inspector，不应进入非 agent 首屏。 |
+| `/scan/:id` | `pages/scan-detail` | trace/audit/evidence/approval 细节最多，独立分包。 |
+| `/settings` | `pages/settings` | provider/auth/web search/operation level 配置表单，独立分包。 |
+| `/tasks`、`/scan/new` | `pages/new-scan` + `components/schedules-panel` | 两个 route 共享同一页面 chunk。 |
+| `/skills`、`/mcp` | `pages/skills`、`pages/mcp` | 先 route lazy；如果 P1-F2 build 后 chunk 过碎，再合并为 registry chunk。 |
+| `/history` | `pages/history` | run list/history 单独 lazy。 |
+| `/`、`/ops` | `pages/dashboard` | 继续作为 landing route；可 lazy，但当前 route 会立即加载 dashboard chunk。 |
+
+P1-F2 建议执行方式：
+
+- 保留 `Layout`、`ConsoleProvider`、基础 UI shell eager。
+- 在 `App.tsx` 使用 `React.lazy` + `Suspense` 包住 route element，fallback 使用轻量 glass/loading skeleton，避免空白跳转。
+- build 后记录主入口 JS、每个 route chunk 与 gzip 变化；确认 `/agent`、`/scan/:id`、`/settings` 不再进入初始 JS。
 
 验收：
 
@@ -1178,6 +1196,7 @@ Glass surface：
 | v34 | 抽出 planner loop action queue metadata 与 authorization/capability gate decision helper；保持 gate 顺序、policy/reason、queue metadata 与 append/response 语义不变，并补 helper parity 覆盖。 |
 | v35 | 补齐 SendMessage response merge regression matrix：覆盖 control continue/revise + LLM、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback route/authorization、active-run continue parity。 |
 | v36 | 新增 `runtime.Engine.RunTurnLifecycle`，将 `SendMessage` Begin/Finish lifecycle 包装为 engine bounded runner；response merge branch body 拆入 daemon helper，补 runtime lifecycle 与 SendMessage event-order 回归。 |
+| v37 | 完成 P1-F1 前端路由与 bundle 基线盘点：记录当前静态 route 单入口 JS/CSS 体积，并确定 `/agent`、`/scan/:id`、`/settings`、`/tasks`/`/scan/new`、`/skills`/`/mcp`、`/history`、`/` 与 `/ops` 的 route-level lazy 边界。 |
 
 ---
 
