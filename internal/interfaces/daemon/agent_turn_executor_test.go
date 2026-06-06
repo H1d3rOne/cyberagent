@@ -1467,6 +1467,12 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		Content:   "health ok through shared cycle",
 		ToolCalls: []agentToolCall{actionTool},
 	}
+	authProfiles := []agentHTTPAuthProfile{{
+		ID:      "auth-planner-cycle",
+		Type:    "bearer",
+		BaseURL: "https://sandbox.example",
+		Token:   "token",
+	}}
 	synthesisTool := agentToolCall{ID: "tool-planner-cycle-synthesis", Name: "LLM synthesis"}
 	synthesisMessage := agentMessage{ID: "msg-planner-cycle-synthesis", Role: "agent", Content: "health summarized", Phase: "step_replan", ToolCalls: []agentToolCall{synthesisTool}}
 	actionPlan := &agentPlannerResponse{
@@ -1502,6 +1508,8 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		require.Equal(t, "en", payload.Language)
 		require.Equal(t, "read_only", payload.OperationLevel)
 		require.Equal(t, "planner-cycle", stringFromAny(payload.Action.Arguments["probe"]))
+		require.Equal(t, authProfiles, payload.AuthProfiles)
+		require.Equal(t, "auth-planner-cycle", payload.DefaultAuthProfileID)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -1527,6 +1535,7 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		case runtime.LLMStagePlannerChat:
 			payload, ok := req.Payload.(daemonLLMPlannerChatPayload)
 			require.True(t, ok, "payload type = %T", req.Payload)
+			require.Equal(t, "gpt-planner-cycle", payload.Req.Model)
 			require.Len(t, payload.History, 1)
 			return runtime.LLMStageResult{
 				Status: runtime.TurnResultFinished,
@@ -1540,6 +1549,9 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		case runtime.LLMStageToolSynthesis:
 			payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
 			require.True(t, ok, "payload type = %T", req.Payload)
+			require.Equal(t, "gpt-planner-cycle", payload.Req.Model)
+			require.Equal(t, authProfiles, payload.Req.AuthProfiles)
+			require.Equal(t, "auth-planner-cycle", payload.Req.DefaultAuthProfileID)
 			require.Len(t, payload.History, 3)
 			require.Len(t, payload.ToolMessages, 1)
 			require.Equal(t, actionMessage.ID, payload.ToolMessages[0].ID)
@@ -1569,7 +1581,11 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		"en",
 		"tester",
 		"read_only",
-		sendAgentMessageRequest{Model: "gpt-planner-cycle"},
+		sendAgentMessageRequest{
+			Model:                "gpt-planner-cycle",
+			AuthProfiles:         authProfiles,
+			DefaultAuthProfileID: "auth-planner-cycle",
+		},
 		[]agentMessage{{ID: "history-planner-cycle", Role: "user", Content: "daemon health"}},
 		&agentMemorySummary{Summary: "memory"},
 		routerServices{},

@@ -373,8 +373,9 @@ ownership 边界：
 3. ✅ 现有 `daemon_legacy_llm_tool_loop` runner 与 `replan_action_continuation` turn executor 已经通过各自外层函数复用同一 cycle helper，并用 focused tests 证明 planner/action/synthesis append origin、planner apply metadata、response/message/tool parity。
 4. ✅ P0.5-N10 已先把 shared cycle helper 的散列参数收敛成 daemon-private `agentPlannerActionReplanCycleRequest` / `State` / `Result` DTO，明确 turn/message request/services/plan/options 与 response/tool/history state 边界。
 5. ✅ P0.5-N11 已把 shared cycle request 的 turn identity/prompt/origin/operation level 收敛为 `runtime.TurnContext`；helper 只在调用 append/action/synthesis legacy adapter 时临时转换 `agentRuntimeTurnRef`。
-6. 下一步把 daemon-private cycle DTO 中剩余 daemon 类型（message request/services/planner/message/tool）替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-7. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+6. ✅ P0.5-N12 已拆分 shared cycle request 的 authorization 输入与 LLM synthesis request：action execution 不再读取完整 `sendAgentMessageRequest`，完整请求暂只作为 LLM synthesis runner 兼容输入。
+7. 下一步把 daemon-private cycle DTO 中剩余 daemon 类型（LLM request/authorization profiles/services/planner/message/tool）替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+8. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1258,6 +1259,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v43 | 完成 P0.5-N9 planner action/replan cycle helper 抽取：`llm_tool_loop` 与 `replan_action_continuation` 共享 daemon 内部 Action → append → tool synthesis → append 循环骨架，append origin、authorization/capability gate、response/tool parity 保持不变；focused daemon tests 与 daemon 包测试通过。 |
 | v44 | 完成 P0.5-N10 planner action/replan cycle DTO 收敛：`runAgentPlannerActionReplanCycle` 改为 daemon-private request/state/result DTO，减少参数面并明确 future engine-native runner state 边界；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v45 | 完成 P0.5-N11 planner action/replan cycle TurnContext 边界：shared cycle request 使用 `runtime.TurnContext` 承载 session/task/run/turn/prompt/origin/operation level，legacy adapter 调用点临时转换 turnRef；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
+| v46 | 完成 P0.5-N12 planner action/replan cycle auth/request 边界拆分：shared cycle request 将 authorization profiles/default profile 从 LLM synthesis request 中拆出，action execution 不再直接读取完整 `sendAgentMessageRequest`；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 
 ---
 

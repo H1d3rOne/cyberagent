@@ -313,13 +313,17 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		}
 
 		cycle := m.runAgentPlannerActionReplanCycle(ctx, agentPlannerActionReplanCycleRequest{
-			Turn:           agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
-			Language:       language,
-			Operator:       operator,
-			MessageRequest: req,
-			MemorySummary:  memorySummary,
-			Services:       svc,
-			Plan:           plan,
+			Turn:       agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
+			Language:   language,
+			Operator:   operator,
+			LLMRequest: req,
+			Authorization: agentPlannerActionReplanCycleAuthorization{
+				AuthProfiles:         req.AuthProfiles,
+				DefaultAuthProfileID: req.DefaultAuthProfileID,
+			},
+			MemorySummary: memorySummary,
+			Services:      svc,
+			Plan:          plan,
 			State: agentPlannerActionReplanCycleState{
 				ResponseMessages: responseMessages,
 				ToolCalls:        toolCalls,
@@ -365,13 +369,17 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 		}
 
 		cycle := m.runAgentPlannerActionReplanCycle(ctx, agentPlannerActionReplanCycleRequest{
-			Turn:           agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
-			Language:       language,
-			Operator:       operator,
-			MessageRequest: req,
-			MemorySummary:  memorySummary,
-			Services:       svc,
-			Plan:           plan,
+			Turn:       agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
+			Language:   language,
+			Operator:   operator,
+			LLMRequest: req,
+			Authorization: agentPlannerActionReplanCycleAuthorization{
+				AuthProfiles:         req.AuthProfiles,
+				DefaultAuthProfileID: req.DefaultAuthProfileID,
+			},
+			MemorySummary: memorySummary,
+			Services:      svc,
+			Plan:          plan,
 			State: agentPlannerActionReplanCycleState{
 				ResponseMessages: responseMessages,
 				ToolCalls:        toolCalls,
@@ -403,16 +411,22 @@ type agentPlannerActionReplanCycleState struct {
 	LoopHistory      []agentMessage
 }
 
+type agentPlannerActionReplanCycleAuthorization struct {
+	AuthProfiles         []agentHTTPAuthProfile
+	DefaultAuthProfileID string
+}
+
 type agentPlannerActionReplanCycleRequest struct {
-	Turn           runtime.TurnContext
-	Language       string
-	Operator       string
-	MessageRequest sendAgentMessageRequest
-	MemorySummary  *agentMemorySummary
-	Services       routerServices
-	Plan           *agentPlannerResponse
-	State          agentPlannerActionReplanCycleState
-	Options        agentPlannerActionReplanCycleOptions
+	Turn          runtime.TurnContext
+	Language      string
+	Operator      string
+	LLMRequest    sendAgentMessageRequest
+	Authorization agentPlannerActionReplanCycleAuthorization
+	MemorySummary *agentMemorySummary
+	Services      routerServices
+	Plan          *agentPlannerResponse
+	State         agentPlannerActionReplanCycleState
+	Options       agentPlannerActionReplanCycleOptions
 }
 
 type agentPlannerActionReplanCycleResult struct {
@@ -453,8 +467,8 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		req.Turn.OperationLevel,
 		req.Services,
 		req.Plan,
-		req.MessageRequest.AuthProfiles,
-		req.MessageRequest.DefaultAuthProfileID,
+		req.Authorization.AuthProfiles,
+		req.Authorization.DefaultAuthProfileID,
 	)
 	actionMessages = agentMessagesWithPhase(actionMessages, "step")
 	actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
@@ -483,7 +497,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		req.Turn.Prompt,
 		req.Language,
 		req.Turn.OperationLevel,
-		req.MessageRequest,
+		req.LLMRequest,
 		result.State.LoopHistory,
 		req.MemorySummary,
 		actionMessages,
