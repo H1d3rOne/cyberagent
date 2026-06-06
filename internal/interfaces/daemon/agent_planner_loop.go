@@ -318,7 +318,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			Operator:      operator,
 			LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
 			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
-			MemorySummary: memorySummary,
+			MemorySummary: agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(memorySummary),
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
 			Plan:          agentPlannerActionReplanCyclePlanFromPlannerResponse(plan),
 			State:         agentPlannerActionReplanCycleStateFromLegacy(responseMessages, toolCalls, loopHistory),
@@ -367,7 +367,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			Operator:      operator,
 			LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
 			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
-			MemorySummary: memorySummary,
+			MemorySummary: agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(memorySummary),
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
 			Plan:          agentPlannerActionReplanCyclePlanFromPlannerResponse(plan),
 			State:         agentPlannerActionReplanCycleStateFromLegacy(responseMessages, toolCalls, loopHistory),
@@ -595,13 +595,25 @@ func (plan agentPlannerActionReplanCyclePlan) legacyPlannerResponse() *agentPlan
 	return plan.plan
 }
 
+type agentPlannerActionReplanCycleMemorySummary struct {
+	summary *agentMemorySummary
+}
+
+func agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(summary *agentMemorySummary) agentPlannerActionReplanCycleMemorySummary {
+	return agentPlannerActionReplanCycleMemorySummary{summary: cloneAgentMemorySummary(summary)}
+}
+
+func (summary agentPlannerActionReplanCycleMemorySummary) legacyAgentMemorySummary() *agentMemorySummary {
+	return cloneAgentMemorySummary(summary.summary)
+}
+
 type agentPlannerActionReplanCycleRequest struct {
 	Turn          runtime.TurnContext
 	Language      string
 	Operator      string
 	LLMRequest    agentPlannerActionReplanCycleLLMRequest
 	Authorization agentPlannerActionReplanCycleAuthorization
-	MemorySummary *agentMemorySummary
+	MemorySummary agentPlannerActionReplanCycleMemorySummary
 	ToolContext   agentPlannerActionReplanCycleToolContext
 	Plan          agentPlannerActionReplanCyclePlan
 	State         agentPlannerActionReplanCycleState
@@ -678,7 +690,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		req.Turn.OperationLevel,
 		req.LLMRequest.sendMessageRequest(),
 		result.State.LoopHistory.legacyAgentMessages(),
-		req.MemorySummary,
+		req.MemorySummary.legacyAgentMemorySummary(),
 		actionMessages,
 	)
 	if synthesisErr != nil {

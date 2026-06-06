@@ -379,8 +379,9 @@ ownership 边界：
 9. ✅ P0.5-N15 已把 shared cycle request 的 auth profile 输入收敛为 cycle-private auth profile DTO；authorization 与 LLM request 都只在 legacy action/synthesis adapter 边界转换回 `agentHTTPAuthProfile`。
 10. ✅ P0.5-N16 已把 shared cycle request/result 的 plan 输入输出封装为 cycle-private plan handle；cycle DTO 不再直接暴露 `*agentPlannerResponse` 字段，legacy action executor、synthesis 与外层 loop 边界临时解包。
 11. ✅ P0.5-N17 已把 shared cycle state 的 response/history messages 与 top-level tool calls 封装为 cycle-private wrappers；cycle DTO 不再直接暴露 `[]agentMessage` / `[]agentToolCall` 字段，外层 loop、legacy synthesis 与返回边界显式转换。
-12. 下一步把 daemon-private cycle wrappers/handles 内部仍临时包住的 legacy message/tool/plan 与 LLM/tool adapter compatibility 替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-13. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+12. ✅ P0.5-N18 已把 shared cycle request 的 memory summary 封装为 cycle-private memory wrapper；cycle DTO 不再直接暴露 `*agentMemorySummary` 字段，LLM synthesis legacy adapter 边界显式转换。
+13. 下一步把 daemon-private cycle wrappers/handles 内部仍临时包住的 legacy message/tool/plan/memory 与 LLM/tool adapter compatibility 替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+14. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1270,6 +1271,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v49 | 完成 P0.5-N15 planner action/replan cycle auth profile DTO 收敛：shared cycle request 的 authorization 与 LLM request 改为持有 cycle-private auth profile DTO，只在 legacy action/synthesis adapter 边界转换回 `agentHTTPAuthProfile`；新增 secret/enabled 深拷贝隔离测试，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v50 | 完成 P0.5-N16 planner action/replan cycle plan handle 封装：shared cycle request/result 使用 cycle-private `agentPlannerActionReplanCyclePlan`，不再直接暴露 `*agentPlannerResponse` 字段；legacy action executor、synthesis 与外层 loop 边界临时解包，新增 plan handle 边界测试，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v51 | 完成 P0.5-N17 planner action/replan cycle state message/tool wrappers：shared cycle state 使用 cycle-private `agentPlannerActionReplanCycleMessages` / `agentPlannerActionReplanCycleToolCalls`，不再直接暴露 `[]agentMessage` / `[]agentToolCall` 字段；新增 state 深拷贝隔离测试，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
+| v52 | 完成 P0.5-N18 planner action/replan cycle memory summary wrapper：shared cycle request 使用 cycle-private `agentPlannerActionReplanCycleMemorySummary`，不再直接暴露 `*agentMemorySummary` 字段；新增 memory summary / `LastMessageAt` 深拷贝隔离测试，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 
 ---
 

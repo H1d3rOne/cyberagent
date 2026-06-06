@@ -1593,6 +1593,58 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Len(t, agentPlannerActions(cyclePlan.legacyPlannerResponse()), 1)
 }
 
+func TestAgentPlannerActionReplanCycleMemorySummaryWrapsLegacyMemory(t *testing.T) {
+	require.Nil(t, agentPlannerActionReplanCycleMemorySummary{}.legacyAgentMemorySummary())
+	require.Nil(t, agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(nil).legacyAgentMemorySummary())
+
+	lastMessageAt := time.Date(2026, 6, 6, 15, 45, 0, 0, time.UTC)
+	originalLastMessageAt := lastMessageAt
+	updatedAt := time.Date(2026, 6, 6, 15, 50, 0, 0, time.UTC)
+	memory := &agentMemorySummary{
+		Summary:       "cycle memory",
+		MessageCount:  7,
+		LastMessageID: "msg-cycle-memory",
+		LastMessageAt: &lastMessageAt,
+		UpdatedAt:     updatedAt,
+	}
+
+	cycleMemory := agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(memory)
+
+	mutatedLastMessageAt := time.Date(2026, 6, 6, 16, 0, 0, 0, time.UTC)
+	memory.Summary = "mutated memory"
+	memory.MessageCount = 99
+	memory.LastMessageID = "msg-mutated-memory"
+	*memory.LastMessageAt = mutatedLastMessageAt
+	memory.UpdatedAt = mutatedLastMessageAt
+
+	got := cycleMemory.legacyAgentMemorySummary()
+	require.NotNil(t, got)
+	require.Equal(t, "cycle memory", got.Summary)
+	require.Equal(t, 7, got.MessageCount)
+	require.Equal(t, "msg-cycle-memory", got.LastMessageID)
+	require.NotNil(t, got.LastMessageAt)
+	require.Equal(t, originalLastMessageAt, *got.LastMessageAt)
+	require.Equal(t, updatedAt, got.UpdatedAt)
+	require.NotSame(t, memory.LastMessageAt, got.LastMessageAt)
+
+	returnedLastMessageAt := time.Date(2026, 6, 6, 16, 15, 0, 0, time.UTC)
+	got.Summary = "mutated returned memory"
+	got.MessageCount = 100
+	got.LastMessageID = "msg-mutated-returned-memory"
+	*got.LastMessageAt = returnedLastMessageAt
+	got.UpdatedAt = returnedLastMessageAt
+
+	gotAgain := cycleMemory.legacyAgentMemorySummary()
+	require.NotNil(t, gotAgain)
+	require.Equal(t, "cycle memory", gotAgain.Summary)
+	require.Equal(t, 7, gotAgain.MessageCount)
+	require.Equal(t, "msg-cycle-memory", gotAgain.LastMessageID)
+	require.NotNil(t, gotAgain.LastMessageAt)
+	require.Equal(t, originalLastMessageAt, *gotAgain.LastMessageAt)
+	require.Equal(t, updatedAt, gotAgain.UpdatedAt)
+	require.NotSame(t, got.LastMessageAt, gotAgain.LastMessageAt)
+}
+
 func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *testing.T) {
 	finishedAt := time.Date(2026, 6, 6, 15, 30, 0, 0, time.UTC)
 	responseMessages := []agentMessage{{
