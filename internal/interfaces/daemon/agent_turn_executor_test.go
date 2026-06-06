@@ -1577,6 +1577,22 @@ func TestAgentPlannerActionReplanCycleAuthorizationFromMessageRequestUsesPrivate
 	require.True(t, *auth.AuthProfiles[0].Enabled)
 }
 
+func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.T) {
+	require.Nil(t, agentPlannerActionReplanCyclePlan{}.legacyPlannerResponse())
+
+	plan := &agentPlannerResponse{
+		Phase: "step_replan",
+		Actions: []agentPlannerAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "cycle-plan"},
+		}},
+	}
+
+	cyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(plan)
+	require.Same(t, plan, cyclePlan.legacyPlannerResponse())
+	require.Len(t, agentPlannerActions(cyclePlan.legacyPlannerResponse()), 1)
+}
+
 func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

@@ -320,7 +320,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
 			MemorySummary: memorySummary,
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
-			Plan:          plan,
+			Plan:          agentPlannerActionReplanCyclePlanFromPlannerResponse(plan),
 			State: agentPlannerActionReplanCycleState{
 				ResponseMessages: responseMessages,
 				ToolCalls:        toolCalls,
@@ -337,7 +337,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		if !cycle.Continue {
 			break
 		}
-		plan = cycle.Plan
+		plan = cycle.Plan.legacyPlannerResponse()
 		if plan == nil || len(agentPlannerActions(plan)) == 0 {
 			break
 		}
@@ -373,7 +373,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
 			MemorySummary: memorySummary,
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
-			Plan:          plan,
+			Plan:          agentPlannerActionReplanCyclePlanFromPlannerResponse(plan),
 			State: agentPlannerActionReplanCycleState{
 				ResponseMessages: responseMessages,
 				ToolCalls:        toolCalls,
@@ -386,7 +386,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 		responseMessages = cycle.State.ResponseMessages
 		toolCalls = cycle.State.ToolCalls
 		loopHistory = cycle.State.LoopHistory
-		plan = cycle.Plan
+		plan = cycle.Plan.legacyPlannerResponse()
 		if !cycle.Continue {
 			break
 		}
@@ -545,6 +545,18 @@ func (toolCtx agentPlannerActionReplanCycleToolContext) legacyRouterServices() r
 	return toolCtx.services
 }
 
+type agentPlannerActionReplanCyclePlan struct {
+	plan *agentPlannerResponse
+}
+
+func agentPlannerActionReplanCyclePlanFromPlannerResponse(plan *agentPlannerResponse) agentPlannerActionReplanCyclePlan {
+	return agentPlannerActionReplanCyclePlan{plan: plan}
+}
+
+func (plan agentPlannerActionReplanCyclePlan) legacyPlannerResponse() *agentPlannerResponse {
+	return plan.plan
+}
+
 type agentPlannerActionReplanCycleRequest struct {
 	Turn          runtime.TurnContext
 	Language      string
@@ -553,14 +565,14 @@ type agentPlannerActionReplanCycleRequest struct {
 	Authorization agentPlannerActionReplanCycleAuthorization
 	MemorySummary *agentMemorySummary
 	ToolContext   agentPlannerActionReplanCycleToolContext
-	Plan          *agentPlannerResponse
+	Plan          agentPlannerActionReplanCyclePlan
 	State         agentPlannerActionReplanCycleState
 	Options       agentPlannerActionReplanCycleOptions
 }
 
 type agentPlannerActionReplanCycleResult struct {
 	State    agentPlannerActionReplanCycleState
-	Plan     *agentPlannerResponse
+	Plan     agentPlannerActionReplanCyclePlan
 	Continue bool
 }
 
@@ -595,7 +607,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		req.Operator,
 		req.Turn.OperationLevel,
 		req.ToolContext.legacyRouterServices(),
-		req.Plan,
+		req.Plan.legacyPlannerResponse(),
 		agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(req.Authorization.AuthProfiles),
 		req.Authorization.DefaultAuthProfileID,
 	)
@@ -652,7 +664,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		result.State.LoopHistory = append(result.State.LoopHistory, synthesisMessages...)
 		result.State.ToolCalls = append(result.State.ToolCalls, synthesisToolCalls...)
 	}
-	result.Plan = synthesisPlan
+	result.Plan = agentPlannerActionReplanCyclePlanFromPlannerResponse(synthesisPlan)
 	result.Continue = true
 	return result
 }
