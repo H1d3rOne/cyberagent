@@ -388,8 +388,9 @@ ownership 边界：
 18. ✅ P0.5-N24 已把 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 外层循环改为持有 cycle state handle；每轮直接传递/接收 `cycleState`，不再把 response/tool/history 解包回 legacy slice 后重新包装。
 19. ✅ P0.5-N25 已把 shared cycle StepReplan synthesis legacy adapter 调用集中到 `runAgentPlannerActionReplanCycleSynthesis`；主 cycle 不再直接展开 LLM request/history/memory/action message legacy 转换，返回值继续用 cycle wrappers/plan handle 承载。
 20. ✅ P0.5-N26 已把 shared cycle action execution legacy adapter 调用集中到 `runAgentPlannerActionReplanCycleActionExecution`；主 cycle 不再直接展开 tool context / auth profile / plan action snapshot legacy 转换，返回值继续用 cycle wrappers 承载。
-21. 下一步把 daemon-private cycle wrappers/handles 内部仍临时包住的 legacy message/tool/plan/memory 与 LLM/tool adapter compatibility 替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-22. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+21. ✅ P0.5-N27 已把 shared cycle action/synthesis result 的 phase tagging 与 response/tool/history append 收敛到 cycle wrapper/state helper；主 cycle 仅在 append mutation 与 synthesis legacy adapter 边界临时展开 legacy messages/tool calls。
+22. 下一步把 daemon-private cycle wrappers/handles 内部仍临时包住的 legacy message/tool/plan/memory 与 LLM/tool adapter compatibility 替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+23. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1288,6 +1289,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v58 | 完成 P0.5-N24 planner loop 保持 cycle state handle：`runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 外层循环持有 `agentPlannerActionReplanCycleState`，每轮直接传递/接收 `cycleState`，不再解包 response/tool/history legacy slice 后重新包装；新增多轮 continuation state/history 回归，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v59 | 完成 P0.5-N25 planner cycle synthesis adapter helper：StepReplan synthesis legacy adapter 调用集中到 `runAgentPlannerActionReplanCycleSynthesis`，主 cycle 不再直接展开 LLM request/history/memory/action message legacy 转换；新增 helper state/payload/deep-copy/legacy-plan pointer 兼容覆盖，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v60 | 完成 P0.5-N26 planner cycle action execution adapter helper：action execution legacy adapter 调用集中到 `runAgentPlannerActionReplanCycleActionExecution`，主 cycle 不再直接展开 tool context / auth profile / plan action snapshot legacy 转换；新增 helper request/payload/deep-copy/action-queue metadata 兼容覆盖，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
+| v61 | 完成 P0.5-N27 planner cycle wrapper phase/append helper：cycle message/tool wrappers 新增 `len` / `withPhase` / wrapper append helper，state 新增 response/history/tool append helper；主 cycle 的 action/synthesis result phase tagging 与 state append 不再直接展开 legacy slice，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 
 ---
 
