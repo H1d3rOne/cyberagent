@@ -57,6 +57,10 @@ func (m *agentManager) routeReportDraftHeuristicActions(ctx context.Context, ses
 	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentReportDraftRouteAction, "report draft registry route slice")
 }
 
+func (m *agentManager) routeScheduleHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentScheduleRouteAction, "schedule registry route slice")
+}
+
 func (m *agentManager) routeHeuristicRegistryActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string, allowed func(string, map[string]any) bool, sliceName string) ([]agentMessage, []agentToolCall, error) {
 	actions := agentHeuristicActionsFromPrompt(prompt)
 	if len(actions) == 0 {
@@ -260,6 +264,15 @@ func agentReportDraftRouteAction(actionName string, _ map[string]any) bool {
 	return normalizeAgentPlannerActionName(actionName) == "reports.draft"
 }
 
+func agentScheduleRouteAction(actionName string, _ map[string]any) bool {
+	switch normalizeAgentPlannerActionName(actionName) {
+	case "schedule.create", "schedule.list", "schedule.delete":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) (messages []agentMessage, toolCalls []agentToolCall, err error) {
 	return m.routePromptForTurn(ctx, sessionID, agentRuntimeTurnRef{}, prompt, language, operator, operationLevel, svc)
 }
@@ -284,12 +297,14 @@ func (m *agentManager) routePromptForTurn(ctx context.Context, sessionID string,
 	}
 	switch {
 	case agentIsScheduleCreateIntent(prompt):
-		return m.handleAgentScheduleCreate(sessionID, language, operator, svc, agentScheduleArgsFromPrompt(prompt, language))
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeScheduleHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsScheduleListIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeScheduleHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsScheduleDeleteIntent(prompt):
-		return m.handleAgentScheduleDelete(language, svc, map[string]any{"id": agentExtractScheduleID(prompt)})
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeScheduleHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsResumeApprovedIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
 		return m.routeApprovalOperationHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)

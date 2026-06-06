@@ -143,6 +143,149 @@ func TestRoutePromptReadOnlySystemUsesHeuristicRegistryDispatch(t *testing.T) {
 	}
 }
 
+func TestRoutePromptScheduleUsesHeuristicRegistryDispatch(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	tests := []struct {
+		name     string
+		prompt   string
+		tool     string
+		level    string
+		wantArgs map[string]string
+	}{
+		{
+			name:   "create",
+			prompt: "7:20执行端口扫描 example.com ports=80,443",
+			tool:   "schedule.create",
+			level:  "advanced",
+			wantArgs: map[string]string{
+				"cron":      "20 7 * * *",
+				"action":    "agent_prompt",
+				"prompt":    "端口扫描 example.com ports=80,443",
+				"ops_level": "safe_scan",
+			},
+		},
+		{
+			name:   "list",
+			prompt: "列出所有定时任务",
+			tool:   "schedule.list",
+			level:  "read_only",
+		},
+		{
+			name:   "delete",
+			prompt: "delete schedule id=sched_123",
+			tool:   "schedule.delete",
+			level:  "advanced",
+			wantArgs: map[string]string{
+				"id": "sched_123",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, ok := toolRegistry().Lookup(tt.tool)
+			if !ok {
+				t.Fatalf("%s missing from registry", tt.tool)
+			}
+			oldHandler := spec.Handler
+			t.Cleanup(func() { spec.Handler = oldHandler })
+
+			called := false
+			spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+				called = true
+				if in.SessionID != "agent_route_schedule_"+tt.name || in.Operator != "tester" || in.Language != "zh" || in.OperationLevel != tt.level {
+					t.Fatalf("unexpected handler input: %#v", in)
+				}
+				for key, want := range tt.wantArgs {
+					if got := stringFromAny(in.RawArgs[key]); got != want {
+						t.Fatalf("handler RawArgs[%q] = %q, want %q (raw=%#v)", key, got, want, in.RawArgs)
+					}
+				}
+				tool := runningAgentToolCall(tt.tool, "route.schedule.registry")
+				tool = finishAgentToolCall(tool, nil)
+				tool.Result = map[string]any{"route_registry": true}
+				return agentRegistryHandlerResult{
+					Messages:  []agentMessage{mgr.message("zh", "tool", "schedule registry dispatched", []agentToolCall{tool}, nil)},
+					ToolCalls: []agentToolCall{tool},
+				}, nil
+			}
+
+			actions := agentHeuristicActionsFromPrompt(tt.prompt)
+			if len(actions) != 1 || normalizeAgentPlannerActionName(actions[0].Name) != tt.tool {
+				t.Fatalf("schedule prompt should produce %s action: %#v", tt.tool, actions)
+			}
+
+			messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_schedule_"+tt.name, tt.prompt, "zh", "tester", tt.level, routerServices{})
+			if err != nil {
+				t.Fatalf("routePrompt() error = %v", err)
+			}
+			if !called {
+				t.Fatalf("routePrompt did not dispatch %s through the registry handler", tt.tool)
+			}
+			if len(messages) != 1 || messages[0].Content != "schedule registry dispatched" {
+				t.Fatalf("unexpected messages: %#v", messages)
+			}
+			if len(calls) != 1 || calls[0].Name != tt.tool || calls[0].Result["route_registry"] != true {
+				t.Fatalf("unexpected tool calls: %#v", calls)
+			}
+			if calls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+				t.Fatalf("schedule route tool source metadata = %#v", calls[0].Metadata)
+			}
+			if messages[0].ToolCalls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+				t.Fatalf("schedule route message tool source metadata = %#v", messages[0].ToolCalls[0].Metadata)
+			}
+		})
+	}
+
+	if agentScheduleRouteAction("workspace.command", map[string]any{}) {
+		t.Fatal("workspace.command must stay outside the schedule registry route slice")
+	}
+}
+
+func TestRoutePromptScheduleRegistryDispatchPreservesOperationGate(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("schedule.create")
+	if !ok {
+		t.Fatal("schedule.create missing from registry")
+	}
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		tool := runningAgentToolCall("schedule.create", "route.schedule.registry")
+		tool = finishAgentToolCall(tool, nil)
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("zh", "tool", "unexpected schedule create", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	prompt := "每小时扫描 https://example.com"
+	requiredLevel := agentOperationLevelRequiredForPrompt(prompt)
+	if requiredLevel != "advanced" {
+		t.Fatalf("schedule create prompt required level = %q, want advanced", requiredLevel)
+	}
+	if agentOperationLevelAtLeast("read_only", requiredLevel) {
+		t.Fatalf("read_only unexpectedly satisfies required level %q", requiredLevel)
+	}
+
+	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_schedule_gate", prompt, "zh", "tester", "read_only", routerServices{})
+	if err != nil {
+		t.Fatalf("routePrompt() error = %v", err)
+	}
+	if called {
+		t.Fatal("schedule registry handler was called despite insufficient operation level")
+	}
+	if len(calls) != 0 {
+		t.Fatalf("operation gate should not return tool calls: %#v", calls)
+	}
+	if len(messages) != 1 || messages[0].Role != "agent" || messages[0].Content == "" {
+		t.Fatalf("unexpected operation gate messages: %#v", messages)
+	}
+}
+
 func TestRoutePromptSafeHTTPUsesHeuristicRegistryDispatch(t *testing.T) {
 	mgr := newAgentManager(t.TempDir())
 	spec, ok := toolRegistry().Lookup("http.request")
