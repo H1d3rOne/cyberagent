@@ -495,6 +495,134 @@ func TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMuta
 	require.Equal(t, "authorization_required", got.NextAction.Type)
 }
 
+func TestAgentManagerExecutePlannerActionCapabilityBlockedThroughSessionMutator(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	now := time.Date(2026, 6, 6, 14, 0, 0, 0, time.UTC)
+	mgr.mu.Lock()
+	session := mgr.sessions[sessionID]
+	session.Status = "running"
+	session.ActiveTask = &agentTask{
+		ID:        "task-capability-blocked",
+		Goal:      "run content discovery with an equivalent tool",
+		Kind:      "content_discovery",
+		Status:    "running",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	session.Todos = []agentTodo{
+		{ID: "todo-capability-running", Title: "select content discovery tool", Status: "running", Priority: 1, UpdatedAt: now},
+		{ID: "todo-capability-pending", Title: "execute bounded discovery", Status: "pending", Priority: 2, UpdatedAt: now},
+		{ID: "todo-capability-done", Title: "capture scope", Status: "done", Priority: 3, UpdatedAt: now},
+	}
+	mgr.mu.Unlock()
+
+	turnRef := agentRuntimeTurnRef{
+		TaskID: "task-capability-blocked",
+		RunID:  "run-capability-blocked",
+		TurnID: "turn-capability-blocked",
+	}
+	operatorPrompt := "run ffuf directory enumeration on https://example.com"
+	action := agentPlannerAction{
+		Name:      "scan.web.safe",
+		Arguments: map[string]any{"target": "https://example.com"},
+	}
+	expectedReason, expectedSuggestedPrompt, mismatch := agentPlannerActionCapabilityMismatch(operatorPrompt, action.Name, "en")
+	require.True(t, mismatch)
+	require.NotEmpty(t, expectedSuggestedPrompt)
+	intentID := agentClassifyCapabilityIntent(operatorPrompt).ID
+	require.Equal(t, agentIntentContentDiscovery, intentID)
+
+	records := []runtime.SessionMutationRequest{}
+	legacy := daemonSessionMutator{manager: mgr}
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		if req.Kind == runtime.SessionMutationCapabilityBlocked {
+			records = append(records, req)
+		}
+		return legacy.MutateSession(ctx, req)
+	}))
+
+	messages, toolCalls, authorizationRequired := mgr.executeAgentPlannerActions(
+		context.Background(),
+		sessionID,
+		turnRef,
+		operatorPrompt,
+		"en",
+		"tester",
+		"safe_scan",
+		routerServices{},
+		&agentPlannerResponse{Actions: []agentPlannerAction{action}},
+		nil,
+		"",
+	)
+
+	require.True(t, authorizationRequired)
+	require.Len(t, messages, 1)
+	require.Equal(t, "step_replan", messages[0].Phase)
+	require.Equal(t, expectedReason, messages[0].Content)
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, "step_replan", toolCalls[0].Metadata["agent_phase"])
+	require.Len(t, records, 1)
+
+	req := records[0]
+	require.Equal(t, runtime.SessionMutationCapabilityBlocked, req.Kind)
+	require.Equal(t, sessionID, req.Turn.SessionID)
+	require.Equal(t, turnRef.TaskID, req.Turn.TaskID)
+	require.Equal(t, turnRef.RunID, req.Turn.RunID)
+	require.Equal(t, turnRef.TurnID, req.Turn.TurnID)
+	require.Equal(t, operatorPrompt, req.Turn.Prompt)
+	require.Equal(t, string(runtime.SessionMutationCapabilityBlocked), req.Turn.Origin)
+	require.Equal(t, "safe_scan", req.Turn.OperationLevel)
+	require.Equal(t, "session_mutation", req.Turn.Metadata["mutator"])
+	require.Equal(t, string(runtime.SessionMutationCapabilityBlocked), req.Turn.Metadata["kind"])
+	require.Equal(t, "scan.web.safe", req.Turn.Metadata["action_name"])
+	require.Equal(t, intentID, req.Turn.Metadata["intent_id"])
+	require.Equal(t, expectedSuggestedPrompt, req.Turn.Metadata["suggested_prompt"])
+	require.Equal(t, "safe_scan", req.Turn.Metadata["operation_level"])
+	require.Equal(t, string(runtime.SessionMutationCapabilityBlocked), req.Metadata["kind"])
+	require.Equal(t, "scan.web.safe", req.Metadata["action_name"])
+	require.Equal(t, intentID, req.Metadata["intent_id"])
+	require.Equal(t, expectedSuggestedPrompt, req.Metadata["suggested_prompt"])
+	require.Equal(t, "safe_scan", req.Metadata["operation_level"])
+
+	payload, ok := req.Payload.(daemonCapabilityBlockedMutationPayload)
+	require.True(t, ok, "payload type = %T", req.Payload)
+	require.Equal(t, sessionID, payload.SessionID)
+	require.Equal(t, "en", payload.Language)
+	require.Equal(t, operatorPrompt, payload.OperatorPrompt)
+	require.Equal(t, "safe_scan", payload.OperationLevel)
+	require.Equal(t, "scan.web.safe", payload.ActionName)
+	require.Equal(t, intentID, payload.IntentID)
+	require.Equal(t, expectedReason, payload.Reason)
+	require.Equal(t, expectedSuggestedPrompt, payload.SuggestedPrompt)
+
+	got, err := mgr.GetSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.Equal(t, "blocked", got.Status)
+	require.NotNil(t, got.ActiveTask)
+	require.Equal(t, "blocked", got.ActiveTask.Status)
+	require.Len(t, got.Todos, 3)
+	require.Equal(t, "blocked", got.Todos[0].Status)
+	require.Equal(t, expectedReason, got.Todos[0].BlockedReason)
+	require.Equal(t, "blocked", got.Todos[1].Status)
+	require.Equal(t, expectedReason, got.Todos[1].BlockedReason)
+	require.Equal(t, "done", got.Todos[2].Status)
+	require.NotNil(t, got.NextAction)
+	require.Equal(t, "blocked", got.NextAction.Type)
+	require.Equal(t, trimSummary(expectedReason, 360), got.NextAction.Reason)
+	require.Equal(t, expectedSuggestedPrompt, got.NextAction.SuggestedPrompt)
+	require.False(t, got.NextAction.AutoContinue)
+}
+
 func TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

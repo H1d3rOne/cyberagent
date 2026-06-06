@@ -21,6 +21,7 @@ const (
 	SessionMutationAppendMessages       SessionMutationKind = "append_messages"
 	SessionMutationRecordUserMessage    SessionMutationKind = "record_user_message"
 	SessionMutationRequestAuthorization SessionMutationKind = "request_authorization"
+	SessionMutationCapabilityBlocked    SessionMutationKind = "capability_blocked"
 	SessionMutationControlSession       SessionMutationKind = "control_session"
 	SessionMutationResolveAuthorization SessionMutationKind = "resolve_authorization"
 )

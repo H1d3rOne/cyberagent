@@ -60,6 +60,26 @@ type daemonRequestAuthorizationMutationResultPayload struct {
 	Mutated       bool
 }
 
+type daemonCapabilityBlockedMutationPayload struct {
+	SessionID       string
+	Language        string
+	OperatorPrompt  string
+	OperationLevel  string
+	ActionName      string
+	IntentID        string
+	Reason          string
+	SuggestedPrompt string
+}
+
+type daemonCapabilityBlockedMutationResultPayload struct {
+	Session         agentSession
+	ActionName      string
+	IntentID        string
+	Reason          string
+	SuggestedPrompt string
+	Mutated         bool
+}
+
 type daemonResolveAuthorizationMutationPayload struct {
 	SessionID              string
 	Decision               string
@@ -177,6 +197,28 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 				"required_level":   resultPayload.Authorization.RequiredLevel,
 				"policy":           resultPayload.Authorization.Policy,
 				"message_id":       resultPayload.Message.ID,
+				"operation_level":  payload.OperationLevel,
+				"mutated":          resultPayload.Mutated,
+			},
+		}, nil
+	case runtime.SessionMutationCapabilityBlocked:
+		payload, ok := req.Payload.(daemonCapabilityBlockedMutationPayload)
+		if !ok {
+			err := errors.New("daemon: invalid capability blocked mutation payload")
+			return daemonSessionMutationErrorResult(req, err), err
+		}
+		resultPayload := r.manager.markAgentCapabilityBlockedLegacy(payload.SessionID, payload.Language, payload.ActionName, payload.IntentID, payload.Reason, payload.SuggestedPrompt)
+		return runtime.SessionMutationResult{
+			Status:  runtime.TurnResultFinished,
+			Reason:  "legacy daemon capability blocked mutation executed",
+			Payload: resultPayload,
+			Data: map[string]any{
+				"mutator":          "daemon_legacy_session",
+				"kind":             string(req.Kind),
+				"session_id":       payload.SessionID,
+				"action_name":      resultPayload.ActionName,
+				"intent_id":        resultPayload.IntentID,
+				"suggested_prompt": resultPayload.SuggestedPrompt,
 				"operation_level":  payload.OperationLevel,
 				"mutated":          resultPayload.Mutated,
 			},
@@ -438,6 +480,68 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 	payload, ok := result.Payload.(daemonRequestAuthorizationMutationResultPayload)
 	if !ok {
 		return daemonRequestAuthorizationMutationResultPayload{}, false
+	}
+	return payload, true
+}
+
+func (m *agentManager) runRuntimeCapabilityBlockedMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operationLevel, actionName, intentID, reason, suggestedPrompt string) (daemonCapabilityBlockedMutationResultPayload, bool) {
+	eng := m.runtimeEngine()
+	if eng == nil || eng.SessionMutator() == nil {
+		return daemonCapabilityBlockedMutationResultPayload{}, false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	actionName = firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(actionName))
+	intentID = strings.TrimSpace(intentID)
+	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
+		Turn: runtime.TurnContext{
+			SessionID:      sessionID,
+			TaskID:         turnRef.TaskID,
+			RunID:          turnRef.RunID,
+			TurnID:         turnRef.TurnID,
+			Prompt:         operatorPrompt,
+			Origin:         string(runtime.SessionMutationCapabilityBlocked),
+			OperationLevel: operationLevel,
+			Metadata: map[string]any{
+				"mutator":          "session_mutation",
+				"kind":             string(runtime.SessionMutationCapabilityBlocked),
+				"action_name":      actionName,
+				"intent_id":        intentID,
+				"suggested_prompt": strings.TrimSpace(suggestedPrompt),
+				"operation_level":  operationLevel,
+			},
+		},
+		Kind: runtime.SessionMutationCapabilityBlocked,
+		Payload: daemonCapabilityBlockedMutationPayload{
+			SessionID:       sessionID,
+			Language:        language,
+			OperatorPrompt:  operatorPrompt,
+			OperationLevel:  operationLevel,
+			ActionName:      actionName,
+			IntentID:        intentID,
+			Reason:          reason,
+			SuggestedPrompt: suggestedPrompt,
+		},
+		Metadata: map[string]any{
+			"mutator":          "session_mutation",
+			"kind":             string(runtime.SessionMutationCapabilityBlocked),
+			"action_name":      actionName,
+			"intent_id":        intentID,
+			"suggested_prompt": strings.TrimSpace(suggestedPrompt),
+			"operation_level":  operationLevel,
+		},
+	})
+	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
+		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
+		return daemonCapabilityBlockedMutationResultPayload{}, false
+	}
+	if err != nil || result.Status == runtime.TurnResultBlocked {
+		return daemonCapabilityBlockedMutationResultPayload{}, false
+	}
+	payload, ok := result.Payload.(daemonCapabilityBlockedMutationResultPayload)
+	if !ok {
+		return daemonCapabilityBlockedMutationResultPayload{}, false
 	}
 	return payload, true
 }

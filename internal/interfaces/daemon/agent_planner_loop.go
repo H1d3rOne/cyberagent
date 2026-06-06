@@ -454,19 +454,20 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 		var err error
 		requiredLevel := agentOperationLevelRequiredForPlannerAction(actionName, action.Arguments)
 		if mismatchReason, suggestedPrompt, mismatch := agentPlannerActionCapabilityMismatch(operatorPrompt, actionName, language); mismatch {
+			intentID := agentClassifyCapabilityIntent(operatorPrompt).ID
 			policyErr := services.NewError(services.CodePolicyDenied, "non-equivalent tool action blocked", map[string]any{
-				"intent":              agentClassifyCapabilityIntent(operatorPrompt).ID,
+				"intent":              intentID,
 				"action":              actionName,
 				"suggested_prompt":    suggestedPrompt,
 				"capability_mismatch": true,
 			}, nil)
 			tool := failedAgentToolCall("agent.capability_match", policyErr)
 			tool.Result = map[string]any{
-				"intent":           agentClassifyCapabilityIntent(operatorPrompt).ID,
+				"intent":           intentID,
 				"action":           actionName,
 				"suggested_prompt": suggestedPrompt,
 			}
-			m.markAgentCapabilityBlocked(sessionID, language, mismatchReason, suggestedPrompt)
+			m.markAgentCapabilityBlockedForTurn(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, actionName, intentID, mismatchReason, suggestedPrompt)
 			message := agentMessageWithPhase(m.message(language, "agent", mismatchReason, []agentToolCall{tool}, nil), "step_replan")
 			messages = append(messages, message)
 			toolCalls = append(toolCalls, agentToolCallWithPhase(tool, "step_replan"))
@@ -646,7 +647,16 @@ func (m *agentManager) requestAgentAuthorizationLegacy(sessionID, language, oper
 	}
 }
 
-func (m *agentManager) markAgentCapabilityBlocked(sessionID, language, reason, suggestedPrompt string) {
+func (m *agentManager) markAgentCapabilityBlockedForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operationLevel, actionName, intentID, reason, suggestedPrompt string) {
+	if _, handled := m.runRuntimeCapabilityBlockedMutationForTurn(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, actionName, intentID, reason, suggestedPrompt); handled {
+		return
+	}
+	m.markAgentCapabilityBlockedLegacy(sessionID, language, actionName, intentID, reason, suggestedPrompt)
+}
+
+func (m *agentManager) markAgentCapabilityBlockedLegacy(sessionID, language, actionName, intentID, reason, suggestedPrompt string) daemonCapabilityBlockedMutationResultPayload {
+	actionName = firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(actionName), "agent.action")
+	intentID = strings.TrimSpace(intentID)
 	now := time.Now().UTC()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -659,7 +669,13 @@ func (m *agentManager) markAgentCapabilityBlocked(sessionID, language, reason, s
 		}
 	}
 	if !ok || session == nil {
-		return
+		return daemonCapabilityBlockedMutationResultPayload{
+			ActionName:      actionName,
+			IntentID:        intentID,
+			Reason:          reason,
+			SuggestedPrompt: suggestedPrompt,
+			Mutated:         false,
+		}
 	}
 	session.Status = "blocked"
 	if session.ActiveTask != nil {
@@ -679,6 +695,14 @@ func (m *agentManager) markAgentCapabilityBlocked(sessionID, language, reason, s
 	}
 	session.UpdatedAt = now
 	_ = m.persistSessionLocked(session)
+	return daemonCapabilityBlockedMutationResultPayload{
+		Session:         cloneAgentSession(session),
+		ActionName:      actionName,
+		IntentID:        intentID,
+		Reason:          reason,
+		SuggestedPrompt: suggestedPrompt,
+		Mutated:         true,
+	}
 }
 
 func agentAuthorizationPromptMessage(language string, auth *agentAuthorizationRequest) string {
