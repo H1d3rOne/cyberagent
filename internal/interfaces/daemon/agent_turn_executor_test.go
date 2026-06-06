@@ -1512,6 +1512,8 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 	require.NoError(t, err)
 	sessionID := created.Session.SessionID
 
+	jobs := newJobManager(jobManagerConfig{RunsDir: t.TempDir()})
+	toolServices := routerServices{jobs: jobs}
 	planMessage := agentMessage{ID: "msg-planner-cycle-plan", Role: "agent", Content: "planning daemon health", Phase: "plan"}
 	planTool := agentToolCall{ID: "tool-planner-cycle-plan", Name: "LLM chat"}
 	actionTool := agentToolCall{ID: "tool-planner-cycle-action", Name: "daemon.health"}
@@ -1564,6 +1566,7 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		require.Equal(t, "planner-cycle", stringFromAny(payload.Action.Arguments["probe"]))
 		require.Equal(t, authProfiles, payload.AuthProfiles)
 		require.Equal(t, "auth-planner-cycle", payload.DefaultAuthProfileID)
+		require.Same(t, jobs, payload.Services.jobs)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -1642,7 +1645,7 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		},
 		[]agentMessage{{ID: "history-planner-cycle", Role: "user", Content: "daemon health"}},
 		&agentMemorySummary{Summary: "memory"},
-		routerServices{},
+		toolServices,
 	)
 
 	require.NoError(t, err)

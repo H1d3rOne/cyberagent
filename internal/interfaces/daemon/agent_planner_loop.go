@@ -322,7 +322,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 				DefaultAuthProfileID: req.DefaultAuthProfileID,
 			},
 			MemorySummary: memorySummary,
-			Services:      svc,
+			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
 			Plan:          plan,
 			State: agentPlannerActionReplanCycleState{
 				ResponseMessages: responseMessages,
@@ -378,7 +378,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 				DefaultAuthProfileID: req.DefaultAuthProfileID,
 			},
 			MemorySummary: memorySummary,
-			Services:      svc,
+			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
 			Plan:          plan,
 			State: agentPlannerActionReplanCycleState{
 				ResponseMessages: responseMessages,
@@ -456,6 +456,18 @@ func (req agentPlannerActionReplanCycleLLMRequest) sendMessageRequest() sendAgen
 	}
 }
 
+type agentPlannerActionReplanCycleToolContext struct {
+	services routerServices
+}
+
+func agentPlannerActionReplanCycleToolContextFromRouterServices(svc routerServices) agentPlannerActionReplanCycleToolContext {
+	return agentPlannerActionReplanCycleToolContext{services: svc}
+}
+
+func (toolCtx agentPlannerActionReplanCycleToolContext) legacyRouterServices() routerServices {
+	return toolCtx.services
+}
+
 type agentPlannerActionReplanCycleRequest struct {
 	Turn          runtime.TurnContext
 	Language      string
@@ -463,7 +475,7 @@ type agentPlannerActionReplanCycleRequest struct {
 	LLMRequest    agentPlannerActionReplanCycleLLMRequest
 	Authorization agentPlannerActionReplanCycleAuthorization
 	MemorySummary *agentMemorySummary
-	Services      routerServices
+	ToolContext   agentPlannerActionReplanCycleToolContext
 	Plan          *agentPlannerResponse
 	State         agentPlannerActionReplanCycleState
 	Options       agentPlannerActionReplanCycleOptions
@@ -505,7 +517,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req
 		req.Language,
 		req.Operator,
 		req.Turn.OperationLevel,
-		req.Services,
+		req.ToolContext.legacyRouterServices(),
 		req.Plan,
 		req.Authorization.AuthProfiles,
 		req.Authorization.DefaultAuthProfileID,
