@@ -2029,6 +2029,14 @@ func TestAgentPlannerActionReplanCycleMemorySummaryWrapsLegacyMemory(t *testing.
 	}
 
 	cycleMemory := agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(memory)
+	require.True(t, cycleMemory.present)
+	require.Equal(t, "cycle memory", cycleMemory.item.Summary)
+	require.Equal(t, 7, cycleMemory.item.MessageCount)
+	require.Equal(t, "msg-cycle-memory", cycleMemory.item.LastMessageID)
+	require.NotNil(t, cycleMemory.item.LastMessageAt)
+	require.Equal(t, originalLastMessageAt, *cycleMemory.item.LastMessageAt)
+	require.Equal(t, updatedAt, cycleMemory.item.UpdatedAt)
+	require.NotSame(t, memory.LastMessageAt, cycleMemory.item.LastMessageAt)
 
 	mutatedLastMessageAt := time.Date(2026, 6, 6, 16, 0, 0, 0, time.UTC)
 	memory.Summary = "mutated memory"
@@ -2046,6 +2054,7 @@ func TestAgentPlannerActionReplanCycleMemorySummaryWrapsLegacyMemory(t *testing.
 	require.Equal(t, originalLastMessageAt, *got.LastMessageAt)
 	require.Equal(t, updatedAt, got.UpdatedAt)
 	require.NotSame(t, memory.LastMessageAt, got.LastMessageAt)
+	require.NotSame(t, cycleMemory.item.LastMessageAt, got.LastMessageAt)
 
 	returnedLastMessageAt := time.Date(2026, 6, 6, 16, 15, 0, 0, time.UTC)
 	got.Summary = "mutated returned memory"

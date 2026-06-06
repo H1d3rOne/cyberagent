@@ -1029,15 +1029,63 @@ func cloneAgentPlannerActions(actions []agentPlannerAction) []agentPlannerAction
 }
 
 type agentPlannerActionReplanCycleMemorySummary struct {
-	summary *agentMemorySummary
+	present bool
+	item    agentPlannerActionReplanCycleMemorySummaryItem
+}
+
+type agentPlannerActionReplanCycleMemorySummaryItem struct {
+	Summary       string
+	MessageCount  int
+	LastMessageID string
+	LastMessageAt *time.Time
+	UpdatedAt     time.Time
 }
 
 func agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(summary *agentMemorySummary) agentPlannerActionReplanCycleMemorySummary {
-	return agentPlannerActionReplanCycleMemorySummary{summary: cloneAgentMemorySummary(summary)}
+	if summary == nil {
+		return agentPlannerActionReplanCycleMemorySummary{}
+	}
+	return agentPlannerActionReplanCycleMemorySummary{
+		present: true,
+		item:    agentPlannerActionReplanCycleMemorySummaryItemFromAgentMemorySummary(*summary),
+	}
 }
 
 func (summary agentPlannerActionReplanCycleMemorySummary) legacyAgentMemorySummary() *agentMemorySummary {
-	return cloneAgentMemorySummary(summary.summary)
+	if !summary.present {
+		return nil
+	}
+	return summary.item.agentMemorySummary()
+}
+
+func agentPlannerActionReplanCycleMemorySummaryItemFromAgentMemorySummary(summary agentMemorySummary) agentPlannerActionReplanCycleMemorySummaryItem {
+	var lastMessageAt *time.Time
+	if summary.LastMessageAt != nil {
+		last := *summary.LastMessageAt
+		lastMessageAt = &last
+	}
+	return agentPlannerActionReplanCycleMemorySummaryItem{
+		Summary:       summary.Summary,
+		MessageCount:  summary.MessageCount,
+		LastMessageID: summary.LastMessageID,
+		LastMessageAt: lastMessageAt,
+		UpdatedAt:     summary.UpdatedAt,
+	}
+}
+
+func (summary agentPlannerActionReplanCycleMemorySummaryItem) agentMemorySummary() *agentMemorySummary {
+	var lastMessageAt *time.Time
+	if summary.LastMessageAt != nil {
+		last := *summary.LastMessageAt
+		lastMessageAt = &last
+	}
+	return &agentMemorySummary{
+		Summary:       summary.Summary,
+		MessageCount:  summary.MessageCount,
+		LastMessageID: summary.LastMessageID,
+		LastMessageAt: lastMessageAt,
+		UpdatedAt:     summary.UpdatedAt,
+	}
 }
 
 type agentPlannerActionReplanCycleRequest struct {
