@@ -51,6 +51,14 @@ func attachRecordingSessionMutator(t *testing.T, eng *runtime.Engine, mgr *agent
 	}))
 }
 
+func agentMessageIDs(messages []agentMessage) []string {
+	ids := make([]string, 0, len(messages))
+	for _, message := range messages {
+		ids = append(ids, message.ID)
+	}
+	return ids
+}
+
 func TestAgentManagerDeterministicRoutePlanOnlyAppendUsesTurnRef(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
@@ -2277,6 +2285,7 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 	}))
 
 	synthesisCount := 0
+	synthesisHistorySnapshots := [][]string{}
 	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
 		require.Equal(t, sessionID, req.Turn.SessionID)
 		require.Equal(t, "task-cycle-handle", req.Turn.TaskID)
@@ -2299,6 +2308,7 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 			payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
 			require.True(t, ok, "payload type = %T", req.Payload)
 			require.Len(t, payload.ToolMessages, 1)
+			synthesisHistorySnapshots = append(synthesisHistorySnapshots, agentMessageIDs(payload.History))
 			switch synthesisCount {
 			case 1:
 				require.Equal(t, firstActionMessage.ID, payload.ToolMessages[0].ID)
@@ -2350,6 +2360,10 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 	require.NoError(t, err)
 	require.Equal(t, []string{"first", "second"}, actionProbes)
 	require.Equal(t, 2, synthesisCount)
+	require.Equal(t, [][]string{
+		{"history-cycle-handle", planMessage.ID, firstActionMessage.ID},
+		{"history-cycle-handle", planMessage.ID, firstActionMessage.ID, firstSynthesisMessage.ID, secondActionMessage.ID},
+	}, synthesisHistorySnapshots)
 	require.Len(t, appendMutations, 5)
 	require.Equal(t, string(runtime.LLMStagePlannerChat), appendMutations[0].Turn.Origin)
 	require.Equal(t, "planner_loop", appendMutations[1].Turn.Origin)
@@ -2363,6 +2377,183 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 	require.Equal(t, firstSynthesisMessage.ID, messages[2].ID)
 	require.Equal(t, secondActionMessage.ID, messages[3].ID)
 	require.Equal(t, finalSynthesisMessage.ID, messages[4].ID)
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, firstActionMessage.ToolCalls[0].ID, toolCalls[0].ID)
+	require.Equal(t, secondActionMessage.ToolCalls[0].ID, toolCalls[1].ID)
+}
+
+func TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoContinueSteps(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+
+	firstActionMessage := agentMessage{
+		ID:      "msg-continuation-state-action-1",
+		Role:    "tool",
+		Content: "first continuation action executed",
+		ToolCalls: []agentToolCall{{
+			ID:   "tool-continuation-state-action-1",
+			Name: "daemon.health",
+		}},
+	}
+	firstSynthesisMessage := agentMessage{ID: "msg-continuation-state-synthesis-1", Role: "agent", Content: "continue with second", Phase: "step_replan"}
+	secondActionMessage := agentMessage{
+		ID:      "msg-continuation-state-action-2",
+		Role:    "tool",
+		Content: "second continuation action executed",
+		ToolCalls: []agentToolCall{{
+			ID:   "tool-continuation-state-action-2",
+			Name: "daemon.health",
+		}},
+	}
+	finalSynthesisMessage := agentMessage{ID: "msg-continuation-state-synthesis-final", Role: "agent", Content: "done", Phase: "final_answer"}
+
+	initialPlan := &agentPlannerResponse{
+		Phase: "step_replan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+		Actions: []agentPlannerAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "first"},
+		}},
+	}
+	secondPlan := &agentPlannerResponse{
+		Phase: "step_replan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+		Actions: []agentPlannerAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "second"},
+		}},
+	}
+	finalPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "done"}
+
+	actionProbes := []string{}
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		probe := stringFromAny(payload.Action.Arguments["probe"])
+		actionProbes = append(actionProbes, probe)
+		require.Equal(t, sessionID, turn.SessionID)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+
+		switch probe {
+		case "first":
+			return runtime.TurnResult{
+				Status: runtime.TurnResultFinished,
+				Reason: "first continuation action handled",
+				Payload: daemonPlannerActionExecutionTurnResultPayload{
+					Messages:  []agentMessage{firstActionMessage},
+					ToolCalls: firstActionMessage.ToolCalls,
+				},
+			}, nil
+		case "second":
+			return runtime.TurnResult{
+				Status: runtime.TurnResultFinished,
+				Reason: "second continuation action handled",
+				Payload: daemonPlannerActionExecutionTurnResultPayload{
+					Messages:  []agentMessage{secondActionMessage},
+					ToolCalls: secondActionMessage.ToolCalls,
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected action probe %q", probe)
+			return runtime.TurnResult{}, nil
+		}
+	}))
+
+	synthesisCount := 0
+	synthesisHistorySnapshots := [][]string{}
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		require.Equal(t, runtime.LLMStageToolSynthesis, req.Stage)
+		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, "task-continuation-state", req.Turn.TaskID)
+		require.Equal(t, "run-continuation-state", req.Turn.RunID)
+		require.Equal(t, "turn-continuation-state", req.Turn.TurnID)
+		require.Equal(t, "continue daemon health twice", req.Turn.Prompt)
+		require.Equal(t, "read_only", req.Turn.OperationLevel)
+
+		synthesisCount++
+		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		require.True(t, ok, "payload type = %T", req.Payload)
+		require.Len(t, payload.ToolMessages, 1)
+		synthesisHistorySnapshots = append(synthesisHistorySnapshots, agentMessageIDs(payload.History))
+		switch synthesisCount {
+		case 1:
+			require.Equal(t, firstActionMessage.ID, payload.ToolMessages[0].ID)
+			return runtime.LLMStageResult{
+				Status: runtime.TurnResultFinished,
+				Reason: "first continuation synthesis handled",
+				Payload: daemonLLMToolSynthesisResultPayload{
+					Messages: []agentMessage{firstSynthesisMessage},
+					Plan:     secondPlan,
+				},
+			}, nil
+		case 2:
+			require.Equal(t, secondActionMessage.ID, payload.ToolMessages[0].ID)
+			return runtime.LLMStageResult{
+				Status: runtime.TurnResultFinished,
+				Reason: "final continuation synthesis handled",
+				Payload: daemonLLMToolSynthesisResultPayload{
+					Messages: []agentMessage{finalSynthesisMessage},
+					Plan:     finalPlan,
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected synthesis count %d", synthesisCount)
+			return runtime.LLMStageResult{}, nil
+		}
+	}))
+
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+
+	messages, toolCalls := mgr.runAgentReplanActionContinuation(
+		context.Background(),
+		sessionID,
+		agentRuntimeTurnRef{TaskID: "task-continuation-state", RunID: "run-continuation-state", TurnID: "turn-continuation-state"},
+		"continue daemon health twice",
+		"en",
+		"tester",
+		"read_only",
+		sendAgentMessageRequest{Model: "gpt-continuation-state"},
+		[]agentMessage{{ID: "history-continuation-state", Role: "agent", Content: "previous step"}},
+		&agentMemorySummary{Summary: "memory"},
+		routerServices{},
+		initialPlan,
+		3,
+	)
+
+	require.Equal(t, []string{"first", "second"}, actionProbes)
+	require.Equal(t, 2, synthesisCount)
+	require.Equal(t, [][]string{
+		{"history-continuation-state", firstActionMessage.ID},
+		{"history-continuation-state", firstActionMessage.ID, firstSynthesisMessage.ID, secondActionMessage.ID},
+	}, synthesisHistorySnapshots)
+	require.Len(t, appendMutations, 4)
+	require.Equal(t, daemonTurnExecutionReplanActionContinuation, appendMutations[0].Turn.Origin)
+	require.Equal(t, string(runtime.LLMStageToolSynthesis), appendMutations[1].Turn.Origin)
+	require.Equal(t, daemonTurnExecutionReplanActionContinuation, appendMutations[2].Turn.Origin)
+	require.Equal(t, string(runtime.LLMStageToolSynthesis), appendMutations[3].Turn.Origin)
+
+	require.Len(t, messages, 4)
+	require.Equal(t, firstActionMessage.ID, messages[0].ID)
+	require.Equal(t, firstSynthesisMessage.ID, messages[1].ID)
+	require.Equal(t, secondActionMessage.ID, messages[2].ID)
+	require.Equal(t, finalSynthesisMessage.ID, messages[3].ID)
 	require.Len(t, toolCalls, 2)
 	require.Equal(t, firstActionMessage.ToolCalls[0].ID, toolCalls[0].ID)
 	require.Equal(t, secondActionMessage.ToolCalls[0].ID, toolCalls[1].ID)

@@ -289,9 +289,11 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 	}
 
 	m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStagePlannerChat), operationLevel, plan, planMessages...)
-	responseMessages := append([]agentMessage{}, planMessages...)
-	toolCalls := append([]agentToolCall{}, planToolCalls...)
-	loopHistory := append(cloneAgentMessages(history), planMessages...)
+	cycleState := agentPlannerActionReplanCycleStateFromLegacy(
+		planMessages,
+		planToolCalls,
+		append(cloneAgentMessages(history), planMessages...),
+	)
 
 	maxLoops := reqMaxAgentReplans(req)
 	cyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(plan)
@@ -321,15 +323,13 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			MemorySummary: agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(memorySummary),
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
 			Plan:          cyclePlan,
-			State:         agentPlannerActionReplanCycleStateFromLegacy(responseMessages, toolCalls, loopHistory),
+			State:         cycleState,
 			Options: agentPlannerActionReplanCycleOptions{
 				ActionAppendOrigin:                      "planner_loop",
 				AppendActionToolCallsBeforeEmptyMessage: true,
 			},
 		})
-		responseMessages = cycle.State.ResponseMessages.legacyAgentMessages()
-		toolCalls = cycle.State.ToolCalls.legacyAgentToolCalls()
-		loopHistory = cycle.State.LoopHistory.legacyAgentMessages()
+		cycleState = cycle.State
 		if !cycle.Continue {
 			break
 		}
@@ -342,16 +342,18 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		cyclePlan = cycle.Plan
 	}
 
-	return responseMessages, toolCalls, nil
+	return cycleState.ResponseMessages.legacyAgentMessages(), cycleState.ToolCalls.legacyAgentToolCalls(), nil
 }
 
 func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]agentMessage, []agentToolCall) {
 	if maxLoops <= 0 {
 		return nil, nil
 	}
-	responseMessages := []agentMessage{}
-	toolCalls := []agentToolCall{}
-	loopHistory := cloneAgentMessages(history)
+	cycleState := agentPlannerActionReplanCycleStateFromLegacy(
+		[]agentMessage{},
+		[]agentToolCall{},
+		history,
+	)
 
 	cyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(plan)
 	for step := 0; step < maxLoops; step++ {
@@ -371,20 +373,18 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			MemorySummary: agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(memorySummary),
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
 			Plan:          cyclePlan,
-			State:         agentPlannerActionReplanCycleStateFromLegacy(responseMessages, toolCalls, loopHistory),
+			State:         cycleState,
 			Options: agentPlannerActionReplanCycleOptions{
 				ActionAppendOrigin: daemonTurnExecutionReplanActionContinuation,
 			},
 		})
-		responseMessages = cycle.State.ResponseMessages.legacyAgentMessages()
-		toolCalls = cycle.State.ToolCalls.legacyAgentToolCalls()
-		loopHistory = cycle.State.LoopHistory.legacyAgentMessages()
+		cycleState = cycle.State
 		if !cycle.Continue {
 			break
 		}
 		cyclePlan = cycle.Plan
 	}
-	return responseMessages, toolCalls
+	return cycleState.ResponseMessages.legacyAgentMessages(), cycleState.ToolCalls.legacyAgentToolCalls()
 }
 
 type agentPlannerActionReplanCycleOptions struct {
