@@ -585,11 +585,17 @@ func (toolCtx agentPlannerActionReplanCycleToolContext) legacyRouterServices() r
 }
 
 type agentPlannerActionReplanCyclePlan struct {
-	plan *agentPlannerResponse
+	plan                *agentPlannerResponse
+	actionCountSnapshot int
+	autoContinue        bool
 }
 
 func agentPlannerActionReplanCyclePlanFromPlannerResponse(plan *agentPlannerResponse) agentPlannerActionReplanCyclePlan {
-	return agentPlannerActionReplanCyclePlan{plan: cloneAgentPlannerResponse(plan)}
+	return agentPlannerActionReplanCyclePlan{
+		plan:                cloneAgentPlannerResponse(plan),
+		actionCountSnapshot: len(agentPlannerActions(plan)),
+		autoContinue:        plan != nil && plan.NextAction != nil && plan.NextAction.AutoContinue,
+	}
 }
 
 func (plan agentPlannerActionReplanCyclePlan) legacyPlannerResponse() *agentPlannerResponse {
@@ -597,7 +603,7 @@ func (plan agentPlannerActionReplanCyclePlan) legacyPlannerResponse() *agentPlan
 }
 
 func (plan agentPlannerActionReplanCyclePlan) actionCount() int {
-	return len(agentPlannerActions(plan.plan))
+	return plan.actionCountSnapshot
 }
 
 func (plan agentPlannerActionReplanCyclePlan) hasActions() bool {
@@ -605,7 +611,7 @@ func (plan agentPlannerActionReplanCyclePlan) hasActions() bool {
 }
 
 func (plan agentPlannerActionReplanCyclePlan) shouldAutoContinue() bool {
-	return plan.hasActions() && plan.plan != nil && plan.plan.NextAction != nil && plan.plan.NextAction.AutoContinue
+	return plan.hasActions() && plan.autoContinue
 }
 
 func cloneAgentPlannerResponse(plan *agentPlannerResponse) *agentPlannerResponse {

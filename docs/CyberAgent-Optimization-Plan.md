@@ -382,8 +382,9 @@ ownership 边界：
 12. ✅ P0.5-N18 已把 shared cycle request 的 memory summary 封装为 cycle-private memory wrapper；cycle DTO 不再直接暴露 `*agentMemorySummary` 字段，LLM synthesis legacy adapter 边界显式转换。
 13. ✅ P0.5-N19 已把 shared cycle plan handle 的 legacy planner response 改为入口/出口深拷贝隔离；cycle 内部仍临时保存 legacy plan，但不再与外层 loop 或 legacy adapter 返回值共享可变指针。
 14. ✅ P0.5-N20 已给 shared cycle plan handle 增加 cycle-native action/auto-continue 查询 helper；`llm_tool_loop` 与 `replan_action_continuation` 的循环判断不再为 actions/`NextAction.AutoContinue` 提前解包 legacy plan。
-15. 下一步把 daemon-private cycle wrappers/handles 内部仍临时包住的 legacy message/tool/plan/memory 与 LLM/tool adapter compatibility 替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-16. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+15. ✅ P0.5-N21 已把 shared cycle plan handle 的 action count / auto-continue 查询状态固化为构造时快照；helper 不再从内部 legacy plan 指针重新计算。
+16. 下一步把 daemon-private cycle wrappers/handles 内部仍临时包住的 legacy message/tool/plan/memory 与 LLM/tool adapter compatibility 替换为 runtime-neutral DTO 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+17. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1276,6 +1277,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v52 | 完成 P0.5-N18 planner action/replan cycle memory summary wrapper：shared cycle request 使用 cycle-private `agentPlannerActionReplanCycleMemorySummary`，不再直接暴露 `*agentMemorySummary` 字段；新增 memory summary / `LastMessageAt` 深拷贝隔离测试，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v53 | 完成 P0.5-N19 planner action/replan cycle plan handle 深拷贝隔离：`agentPlannerActionReplanCyclePlan` 对 legacy planner response 做入口/出口 clone，覆盖 plan/action/todo/context/next_action 可变字段，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v54 | 完成 P0.5-N20 planner action/replan cycle plan handle 查询 helper：`agentPlannerActionReplanCyclePlan` 新增 `actionCount` / `hasActions` / `shouldAutoContinue`，外层 loop 优先通过 handle 判断 actions 与 auto-continue，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
+| v55 | 完成 P0.5-N21 planner action/replan cycle plan handle 查询快照：`agentPlannerActionReplanCyclePlan` 将 action count / auto-continue 固化为构造时 `actionCountSnapshot` / `autoContinue`，查询 helper 不再读取内部 legacy plan 指针，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 
 ---
 

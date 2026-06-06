@@ -1700,6 +1700,14 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.True(t, cyclePlan.hasActions())
 	require.True(t, cyclePlan.shouldAutoContinue())
 
+	cyclePlan.plan.Actions = nil
+	cyclePlan.plan.ToolCalls = nil
+	cyclePlan.plan.NextAction.AutoContinue = false
+
+	require.Equal(t, 2, cyclePlan.actionCount())
+	require.True(t, cyclePlan.hasActions())
+	require.True(t, cyclePlan.shouldAutoContinue())
+
 	gotAgain := cyclePlan.legacyPlannerResponse()
 	require.NotNil(t, gotAgain)
 	require.Equal(t, "step_replan", gotAgain.Phase)
@@ -1710,9 +1718,8 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Equal(t, "ctx-cycle-plan", gotAgain.Todos[0].ContextRefIDs[0])
 	require.Equal(t, "Cycle plan", gotAgain.ContextRefs[0].Label)
 	require.Equal(t, "continue", gotAgain.NextAction.Type)
-	require.True(t, gotAgain.NextAction.AutoContinue)
-	require.Equal(t, "cycle-plan", gotAgain.Actions[0].Arguments["probe"])
-	require.Equal(t, 1, gotAgain.ToolCalls[0].Arguments["limit"])
+	require.False(t, gotAgain.NextAction.AutoContinue)
+	require.Empty(t, agentPlannerActions(gotAgain))
 }
 
 func TestAgentPlannerActionReplanCycleMemorySummaryWrapsLegacyMemory(t *testing.T) {
