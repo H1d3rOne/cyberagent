@@ -12,7 +12,7 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/workspace"
 )
 
-func (m *agentManager) handleAgentActiveRunContinue(ctx context.Context, sessionID, language string, svc routerServices) ([]agentMessage, []agentToolCall, bool) {
+func (m *agentManager) handleAgentActiveRunContinueForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, bool) {
 	sessionState, err := m.GetSession(ctx, sessionID)
 	if err != nil || sessionState.ActiveTask == nil {
 		return nil, nil, false
@@ -38,7 +38,7 @@ func (m *agentManager) handleAgentActiveRunContinue(ctx context.Context, session
 		}
 	}
 	prompt := fmt.Sprintf("读取运行 %s 的 %s 上下文", runID, contextKind)
-	messages, toolCalls, routeErr := m.handleAgentRunContextAnalysis(ctx, prompt, language, svc)
+	messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 	if routeErr != nil || len(messages) == 0 {
 		return nil, nil, false
 	}

@@ -74,6 +74,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 将 deterministic route 内部 capability-gap plan-only append/apply planner 改为 turn-aware `SessionMutationAppendMessages` dispatch；`routePromptForTurn` 会沿用外层 task/run/turn/prompt/origin/operation_level metadata，直接 `routePrompt` 调用仍保留 legacy wrapper 兼容。
 - [x] 将 deterministic route 的 schedule create/list/delete 统一收敛为 `agentHeuristicActionsFromPrompt` → Tool Registry dispatch；create/delete 继续保留 `advanced` gate，list 保留 `read_only` gate。
 - [x] 将 generic workspace fallback 收敛为 `agentHeuristicActionsFromPrompt` → `workspace.files.list` Tool Registry dispatch；保留 `read_only` gate，并用根目录 list fallback 替代 legacy `workspace.prepare` direct handler。
+- [x] 将 no-LLM control continue 的 active-run 上下文读取改为经 `runtime.Engine.ExecuteTurn` 的 `deterministic_route` dispatch；保留 contextKind 选择、evidence conclusion、`active_run_continue` append 与 response merge 语义。
 - [ ] 继续把剩余 session mutation 分批迁成 engine-native runner。
 - [ ] 最后继续收敛 remaining SendMessage branches 为 engine turn lifecycle。
 
@@ -154,6 +155,7 @@ go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerDeterministi
 go test -count=1 ./internal/interfaces/daemon -run 'TestRoutePromptSchedule|TestSchedule'
 go test -count=1 ./internal/interfaces/daemon -run 'TestRoutePromptAdvancedHTTP|TestRoutePromptSafeHTTP'
 go test -count=1 ./internal/interfaces/daemon -run 'TestRoutePromptGenericWorkspace|TestRoutePromptWorkspace'
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor|TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor'
 go test -count=1 ./internal/interfaces/daemon -run 'TestRoutePrompt'
 ```
 
@@ -195,4 +197,5 @@ Deterministic route plan-only append 小切片验证通过：capability-gap rout
 Schedule route registry 化小切片验证通过：schedule create/list/delete 均经 `deterministic_route/registry_dispatch`；create/delete 在权限不足时不会调用 registry handler。
 Advanced HTTP route registry 化小切片验证通过：POST/PUT/PATCH/DELETE 等 non-safe `http.request` route 已经 registry dispatch，`safe_scan` 不会越过 `advanced` gate。
 Generic workspace fallback registry 化小切片验证通过：仅命中 generic workspace 的自然语言 route 现在映射到 `workspace.files.list` 并经 `deterministic_route/registry_dispatch` 执行。
+Active-run continue context executor 小切片验证通过：无 LLM 的 control continue 会把 active run context prompt 交给 `deterministic_route` turn executor，append 仍使用 `active_run_continue` origin 与当前 turnRef。
 ```

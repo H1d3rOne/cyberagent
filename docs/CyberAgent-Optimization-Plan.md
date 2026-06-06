@@ -147,6 +147,7 @@ Leader 负责：
 1. `internal/interfaces/daemon/agent_session_flow.go`
    - `SendMessage` 仍是 Agent 对话主入口。
    - runtime engine 已接管 SQLite 事件桥、SSE replay、recovery 与部分 lifecycle / turn / LLM / session mutation seam dispatch；尚未完整接管 `SendMessage` 调度和 planner loop。
+   - no-LLM control continue 的 active-run 上下文读取已改为经 `runtime.Engine.ExecuteTurn` 的 `deterministic_route` dispatch，不再直接调用 run context analysis handler；`active_run_continue` append 与 response merge 语义保持不变。
 2. `internal/interfaces/daemon/agent_planner_loop.go`
    - LLM JSON planner / native tool calls 仍由 daemon 解析、回写 session state，并通过 `executeAgentPlannerActions` 执行。
    - operation level、explicit intent gate、manual authorization gate、action queue metadata 仍在 daemon 层。
@@ -212,7 +213,11 @@ Leader 负责：
    - 覆盖只表达 `workspace` / `工作空间`、未命中具体 list/tree/search/read/write/mutation 的自然语言 fallback。
    - 现在映射到 `workspace.files.list path=.`，保留 `read_only` operation-level gate。
    - route source metadata 从 `deterministic_route/direct_handler` 更新为 `deterministic_route/registry_dispatch`；legacy `workspace.prepare` 直连 handler 暂不再作为该 fallback 的执行路径。
-14. 当前收敛策略：不一次性搬迁 legacy turn，继续按 registry dispatch → lifecycle seam → LLM runner seam → engine-native runner 分层推进。
+14. ✅ 将 no-LLM control continue 的 active-run 上下文读取小切片收敛为 `runtime.Engine.ExecuteTurn` 的 `deterministic_route` dispatch：
+   - 覆盖用户输入 `continue` / `继续` 且当前 session 有 active run、未配置 LLM 时的自动上下文读取。
+   - contextKind 选择仍按 pending approvals、report JSON、findings、artifacts、events 顺序；evidence action conclusion、`active_run_continue` append origin 与 response merge 保持原语义。
+   - 实际工具执行继续落到 `routePromptForTurn` → `agentHeuristicActionsFromPrompt` → `runs.context` Tool Registry handler。
+15. 当前收敛策略：不一次性搬迁 legacy turn，继续按 registry dispatch → lifecycle seam → LLM runner seam → engine-native runner 分层推进。
    - 原因：`SendMessage`、planner loop、授权 gate、session mutation 仍由 daemon 保证语义；一次性把 `runAgentLLMToolLoop` 完整下沉会同时牵动 session persist、authorization resume、tool synthesis、auto-continue 与 SSE replay，切片过大。
    - 已完成确定性工具 registry 化、`BeginTurn`/`FinishTurn` lifecycle API 与 `RunLLMTurn` dispatch seam。
    - 后续更稳妥路径是继续拆分 planner chat、tool synthesis、step replan、session mutation，再收敛 authorization resume / auto-continue 与剩余 SendMessage branches。
@@ -237,7 +242,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch；no-LLM deterministic route、control auto-continue route、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation、authorization approved planner action execution，以及 LLM planner/replan loop 内部 action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters；planner/replan/LLM/SendMessage append 与外部 control/authorization append 已经改为携带 turnRef 的 `append_messages` dispatch；authorization approve 后的 planner action execution、tool synthesis 与 follow-up continuation runtime runner 也已贯穿同一个 external turnRef；append/control/resolve authorization 的 `memory_compacted` events 已补齐 mutation turnRef metadata；deterministic route 内部 capability-gap plan-only planner apply 已沿用外层 turnRef 进入 turn-aware append mutation。下一步准备继续收敛 remaining SendMessage branches。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入与 `ControlSession` 状态写入已经 engine session mutation dispatch；no-LLM deterministic route、control auto-continue route、active-run continue context fetch、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation、authorization approved planner action execution，以及 LLM planner/replan loop 内部 action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters；planner/replan/LLM/SendMessage append 与外部 control/authorization append 已经改为携带 turnRef 的 `append_messages` dispatch；authorization approve 后的 planner action execution、tool synthesis 与 follow-up continuation runtime runner 也已贯穿同一个 external turnRef；append/control/resolve authorization 的 `memory_compacted` events 已补齐 mutation turnRef metadata；deterministic route 内部 capability-gap plan-only planner apply 已沿用外层 turnRef 进入 turn-aware append mutation。下一步准备继续收敛 remaining SendMessage branches。
 4. 最后收敛 remaining SendMessage branches 为 engine turn lifecycle。
 
 已完成的 seam 边界：
@@ -1061,6 +1066,7 @@ Glass surface：
 | v26 | 收敛 schedule deterministic route：schedule create/list/delete 统一经 heuristic action → Tool Registry dispatch；create/delete 保留 `advanced` gate，list 保留 `read_only` gate。 |
 | v27 | 收敛 advanced HTTP deterministic route：POST/PUT/PATCH/DELETE `http.request` 统一经 heuristic action → Tool Registry dispatch；保留 `advanced` gate 与原 HTTP handler/policy 语义。 |
 | v28 | 收敛 generic workspace fallback deterministic route：未命中具体 workspace 子 intent 时 fallback 为 `workspace.files.list path=.` 并经 Tool Registry dispatch；不再走 legacy `workspace.prepare` direct handler。 |
+| v29 | 收敛 active-run continue context fetch：no-LLM control continue 的 active run 上下文读取经 `deterministic_route` turn executor 调度，继续复用 `runs.context` registry handler 与 `active_run_continue` append 语义。 |
 
 ---
 

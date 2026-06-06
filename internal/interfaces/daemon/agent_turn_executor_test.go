@@ -578,6 +578,127 @@ func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
 	require.Equal(t, expectedMessage.ID, payload.Messages[0].ID)
 }
 
+func TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	runID := "run_active_continue"
+	now := time.Date(2026, 6, 6, 14, 0, 0, 0, time.UTC)
+	mgr.mu.Lock()
+	session := mgr.sessions[sessionID]
+	session.Status = "running"
+	session.ActiveTask = &agentTask{
+		ID:          "task-active-run-continue",
+		Goal:        "track active run context",
+		Kind:        "scan",
+		Status:      "running",
+		ActiveRunID: runID,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	session.NextAction = &agentNextAction{
+		Type:            "continue",
+		Reason:          "tracking run",
+		SuggestedPrompt: "continue tracking run context",
+	}
+	mgr.mu.Unlock()
+
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+	expectedToolCall := agentToolCall{
+		ID:     "tool-active-run-context",
+		Name:   "runs.context",
+		Status: contracts.StatusSucceeded,
+		Result: map[string]any{
+			"run_id":  runID,
+			"context": "events",
+		},
+	}
+	expectedMessage := agentMessage{
+		ID:        "msg-active-run-context",
+		Role:      "tool",
+		Content:   "active run context routed through executor",
+		ToolCalls: []agentToolCall{expectedToolCall},
+	}
+
+	routeCalled := false
+	runtimeRunID := ""
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		routeCalled = true
+		require.Equal(t, sessionID, turn.SessionID)
+		require.Equal(t, "task-active-run-continue", turn.TaskID)
+		require.NotEmpty(t, turn.RunID)
+		require.NotEmpty(t, turn.TurnID)
+		runtimeRunID = turn.RunID
+		require.Contains(t, turn.Prompt, "读取运行 "+runID)
+		require.Contains(t, turn.Prompt, "events")
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
+		require.Equal(t, "read_only", turn.OperationLevel)
+		require.Equal(t, "turn_execution", turn.Metadata["executor"])
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Metadata["kind"])
+
+		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, sessionID, payload.SessionID)
+		require.Equal(t, turn.Prompt, payload.Prompt)
+		require.Equal(t, "en", payload.Language)
+		require.Equal(t, "operator-1", payload.Operator)
+		require.Equal(t, "read_only", payload.OperationLevel)
+
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "done",
+			Payload: daemonDeterministicRouteTurnResultPayload{
+				Messages:  []agentMessage{expectedMessage},
+				ToolCalls: []agentToolCall{expectedToolCall},
+			},
+		}, nil
+	}))
+
+	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
+		Message:        "继续",
+		Operator:       "operator-1",
+		Language:       "en",
+		OperationLevel: "read_only",
+	}, routerServices{})
+
+	require.NoError(t, err)
+	require.True(t, routeCalled)
+	require.Len(t, resp.Messages, 3)
+	require.Equal(t, "user", resp.Messages[0].Role)
+	require.Equal(t, "agent", resp.Messages[1].Role)
+	require.Equal(t, expectedMessage, resp.Messages[2])
+	require.Equal(t, []agentToolCall{expectedToolCall}, resp.ToolCalls)
+
+	got, err := mgr.GetSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.Equal(t, expectedMessage.ID, got.Messages[len(got.Messages)-1].ID)
+	require.Len(t, appendMutations, 1)
+	appendReq := appendMutations[0]
+	require.Equal(t, runtime.SessionMutationAppendMessages, appendReq.Kind)
+	require.Equal(t, sessionID, appendReq.Turn.SessionID)
+	require.Equal(t, "task-active-run-continue", appendReq.Turn.TaskID)
+	require.Equal(t, runtimeRunID, appendReq.Turn.RunID)
+	require.NotEmpty(t, appendReq.Turn.TurnID)
+	require.Equal(t, "继续", appendReq.Turn.Prompt)
+	require.Equal(t, "active_run_continue", appendReq.Turn.Origin)
+	require.Equal(t, "read_only", appendReq.Turn.OperationLevel)
+	require.Equal(t, 1, appendReq.Turn.Metadata["message_count"])
+	require.Equal(t, false, appendReq.Turn.Metadata["planner_apply"])
+	payload, ok := appendReq.Payload.(daemonAppendMessagesMutationPayload)
+	require.True(t, ok, "payload type = %T", appendReq.Payload)
+	require.Len(t, payload.Messages, 1)
+	require.Equal(t, expectedMessage.ID, payload.Messages[0].ID)
+}
+
 func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

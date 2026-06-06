@@ -228,7 +228,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, errMessage}, errMessage.ToolCalls, sessionState), nil
 		}
 		if controlReq.Action == "continue" && !agentLLMConfigured(req) {
-			if contextMessages, contextToolCalls, ok := m.handleAgentActiveRunContinue(ctx, sessionID, language, svc); ok {
+			if contextMessages, contextToolCalls, ok := m.handleAgentActiveRunContinueForTurn(ctx, sessionID, turnRef, language, operator, operationLevel, svc); ok {
 				m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "active_run_continue", operationLevel, contextMessages...)
 				sessionState, getErr := m.GetSession(ctx, sessionID)
 				if getErr != nil {
