@@ -122,7 +122,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N1：盘点 remaining `SendMessage` branches 与 planner loop mutation 点，记录哪些已走 `ExecuteTurn` / `RunLLMTurn` / `RunLLMStage` / `MutateSession`，哪些仍是 daemon-owned legacy adapter。
 - [x] P0.5-N2：将 planner authorization request（`PendingAuthorization` 创建、session status/next_action 更新、persist）拆成 `SessionMutationRequestAuthorization`，先经 engine `MutateSession` dispatch 到 daemon legacy mutator，不改变授权 gate 文案、PendingAuthorization、append 顺序。
 - [x] P0.5-N3：将 capability mismatch blocked state（`markAgentCapabilityBlocked`）拆成独立 session mutation，保留 blocked todo/task/next_action 语义与 plan-only append 顺序。
-- [ ] P0.5-N4：为 LLM fallback manual authorization branch 补 turn/external mutation 覆盖测试，确认 warning + authorization message append 与 pending auth mutation metadata 对齐。
+- [x] P0.5-N4：为 LLM fallback manual authorization branch 补 turn/external mutation 覆盖测试，确认 warning + authorization message append 与 pending auth mutation metadata 对齐。
 - [ ] P0.5-N5：为 `runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 输出一个 engine-native runner 设计草案：输入/输出 payload、authorization gate、action queue、synthesis、append/persist ownership 边界。
 - [ ] P0.5-N6：把 planner loop 的 action queue metadata 生成与 authorization gate decision 封装为可测试的小 helper，先不改变行为，为后续 engine-native runner 做准备。
 - [ ] P0.5-N7：收敛 remaining `SendMessage` response merge 分支的 regression matrix，覆盖 control continue/revise、pending auth gate、route-before-LLM、LLM fallback、no-LLM route。
@@ -165,9 +165,10 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 
 2026-06-06 当前工作树验证通过：
 
-本轮增量（P0.5-N1/N2/N3：未完成项滚动清单 + authorization request / capability blocked session mutation seam）：
+本轮增量（P0.5-N1/N2/N3/N4：未完成项滚动清单 + authorization request / capability blocked session mutation seam + LLM fallback authorization branch 覆盖）：
 
 ```bash
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations|TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor|TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMutator'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerExecutePlannerActionCapabilityBlockedThroughSessionMutator|TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMutator|TestCapabilityClassifierPreventsCommonNonEquivalentTools|TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTurnExecutor'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMutator|TestAgentManagerRunRuntimeRecordUserMessageDispatchesSessionMutator'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMutator|TestHTTPAgentPlannerApprovalActionRequiresExplicitPrompt|TestHTTPAgentChatNativeApprovalDecisions|TestHTTPAgentChatNativeResumeApproved|TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefThroughRuntimeRunners'
@@ -243,6 +244,7 @@ User-message mutation 小切片验证通过：`SendMessage` 开头的 user messa
 Authorization mutation 小切片验证通过：`DecideAgentAuthorization` 的 approve/deny session 状态写入已改为 `SessionMutationResolveAuthorization`；pending 校验、operation level uplift、approve/deny message、ActiveTask/Todos/NextAction、persist、memory compaction、approval_resolved 与 message runtime events 仍复用 daemon legacy helper，approve 后 action 执行与 synthesis/auto-continue 继续保持原路径。
 Authorization request mutation 小切片验证通过：planner/manual authorization request 的 `PendingAuthorization` 创建、waiting_authorization 状态、next_action 与授权提示 message 已经通过 `SessionMutationRequestAuthorization` 调度；授权提示 append 仍由外层 turn-aware append mutation 保持原顺序。
 Capability blocked mutation 小切片验证通过：planner capability mismatch 的 blocked session/task/todo/next_action 已经通过 `SessionMutationCapabilityBlocked` 调度；外层 mismatch `step_replan` message/tool 返回顺序保持不变。
+LLM fallback authorization branch mutation metadata 覆盖通过：provider failure warning 与 authorization message append 经同一个 turn-aware `append_messages` mutation，pending authorization request mutation 的 task/run/turn/prompt/operation_level metadata 与 fallback turnRef 对齐。
 Control session mutation 小切片验证通过：`ControlSession` 的 bounded session 状态写入已改为 `SessionMutationControlSession`；continue/revise/pause/cancel/stop/new_task 的 session/task/todo/next_action/message、persist、memory compaction 与 message runtime events 仍复用 daemon legacy helper，stop/cancel 的 daemon job cancel 副作用继续保留在外层 control flow。
 Deterministic route turn executor 小切片验证通过：`SendMessage` 的 no-LLM 本地规则 route 与 control auto-continue route 已改为 `runtime.Engine.ExecuteTurn` 的 `deterministic_route` payload dispatch；实际 `routePrompt` 执行、local route source metadata、外层 appendMessages 与 response merge 仍保持原语义。
 LLM fallback route 小切片验证通过：LLM provider failure 后的本地 fallback route 已复用 `runtime.Engine.ExecuteTurn` 的 `deterministic_route` adapter；AI failure warning message、fallback messages prepend、tool calls merge 与 session append 顺序保持不变。

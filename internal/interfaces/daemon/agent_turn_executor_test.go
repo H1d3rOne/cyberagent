@@ -803,6 +803,138 @@ func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 	require.Equal(t, expectedMessage.ID, payload.Messages[1].ID)
 }
 
+func TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "workspace_write",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	prompt := "write file notes.md content: hello from fallback authorization"
+
+	var authMutations []runtime.SessionMutationRequest
+	var appendMutations []runtime.SessionMutationRequest
+	legacy := daemonSessionMutator{manager: mgr}
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		switch req.Kind {
+		case runtime.SessionMutationRequestAuthorization:
+			authMutations = append(authMutations, req)
+		case runtime.SessionMutationAppendMessages:
+			appendMutations = append(appendMutations, req)
+		}
+		return legacy.MutateSession(ctx, req)
+	}))
+
+	llmErr := errors.New("provider down")
+	llmCalled := false
+	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, req runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
+		llmCalled = true
+		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, prompt, req.Turn.Prompt)
+		require.NotEmpty(t, req.Turn.TaskID)
+		require.NotEmpty(t, req.Turn.RunID)
+		require.NotEmpty(t, req.Turn.TurnID)
+		require.Equal(t, "workspace_write", req.Turn.OperationLevel)
+		return runtime.LLMTurnResult{
+			Status: runtime.TurnResultFailed,
+			Reason: llmErr.Error(),
+			Error:  llmErr,
+			Payload: daemonLLMTurnResultPayload{
+				Messages:  nil,
+				ToolCalls: nil,
+			},
+		}, llmErr
+	}))
+
+	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
+		Message:        prompt,
+		Operator:       "operator-1",
+		Language:       "en",
+		OperationLevel: "workspace_write",
+		Provider:       "openai",
+		APIKey:         "test-key",
+	}, routerServices{})
+
+	require.NoError(t, err)
+	require.True(t, llmCalled)
+	require.Len(t, resp.Messages, 3)
+	require.Equal(t, "user", resp.Messages[0].Role)
+	require.Equal(t, prompt, resp.Messages[0].Content)
+	require.Equal(t, "tool", resp.Messages[1].Role)
+	require.Contains(t, resp.Messages[1].Content, "provider down")
+	require.Equal(t, "agent", resp.Messages[2].Role)
+	require.Equal(t, "step", resp.Messages[2].Phase)
+	require.Contains(t, resp.Messages[2].Content, "Authorization required")
+	require.Len(t, resp.ToolCalls, 1)
+	require.Equal(t, "LLM chat", resp.ToolCalls[0].Name)
+
+	require.Len(t, authMutations, 1)
+	authReq := authMutations[0]
+	require.Equal(t, runtime.SessionMutationRequestAuthorization, authReq.Kind)
+	require.Equal(t, sessionID, authReq.Turn.SessionID)
+	require.NotEmpty(t, authReq.Turn.TaskID)
+	require.NotEmpty(t, authReq.Turn.RunID)
+	require.NotEmpty(t, authReq.Turn.TurnID)
+	require.Equal(t, prompt, authReq.Turn.Prompt)
+	require.Equal(t, string(runtime.SessionMutationRequestAuthorization), authReq.Turn.Origin)
+	require.Equal(t, "workspace_write", authReq.Turn.OperationLevel)
+	require.Equal(t, string(runtime.SessionMutationRequestAuthorization), authReq.Metadata["kind"])
+	require.Equal(t, "workspace.files.write", authReq.Metadata["action_name"])
+	require.Equal(t, "workspace_write", authReq.Metadata["required_level"])
+	require.Equal(t, "manual_tool_authorization_required", authReq.Metadata["policy"])
+
+	authPayload, ok := authReq.Payload.(daemonRequestAuthorizationMutationPayload)
+	require.True(t, ok, "payload type = %T", authReq.Payload)
+	require.Equal(t, sessionID, authPayload.SessionID)
+	require.Equal(t, "en", authPayload.Language)
+	require.Equal(t, prompt, authPayload.OperatorPrompt)
+	require.Equal(t, "workspace_write", authPayload.OperationLevel)
+	require.Equal(t, "workspace.files.write", authPayload.ActionName)
+	require.Equal(t, "workspace_write", authPayload.RequiredLevel)
+	require.Equal(t, "manual_tool_authorization_required", authPayload.Policy)
+	require.Equal(t, "workspace.files.write", authPayload.Action.Name)
+	require.Equal(t, "notes.md", authPayload.Action.Arguments["path"])
+	require.Equal(t, "hello from fallback authorization", authPayload.Action.Arguments["content"])
+
+	require.Len(t, appendMutations, 1)
+	appendReq := appendMutations[0]
+	require.Equal(t, runtime.SessionMutationAppendMessages, appendReq.Kind)
+	require.Equal(t, sessionID, appendReq.Turn.SessionID)
+	require.Equal(t, authReq.Turn.TaskID, appendReq.Turn.TaskID)
+	require.Equal(t, authReq.Turn.RunID, appendReq.Turn.RunID)
+	require.Equal(t, authReq.Turn.TurnID, appendReq.Turn.TurnID)
+	require.Equal(t, prompt, appendReq.Turn.Prompt)
+	require.Equal(t, "llm_fallback_authorization", appendReq.Turn.Origin)
+	require.Equal(t, "workspace_write", appendReq.Turn.OperationLevel)
+	require.Equal(t, 2, appendReq.Turn.Metadata["message_count"])
+	require.Equal(t, false, appendReq.Turn.Metadata["planner_apply"])
+
+	appendPayload, ok := appendReq.Payload.(daemonAppendMessagesMutationPayload)
+	require.True(t, ok, "payload type = %T", appendReq.Payload)
+	require.Len(t, appendPayload.Messages, 2)
+	require.Contains(t, appendPayload.Messages[0].Content, "provider down")
+	require.Contains(t, appendPayload.Messages[1].Content, "Authorization required")
+	require.Equal(t, resp.Messages[1].ID, appendPayload.Messages[0].ID)
+	require.Equal(t, resp.Messages[2].ID, appendPayload.Messages[1].ID)
+
+	got, err := mgr.GetSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.Equal(t, "waiting_authorization", got.Status)
+	require.NotNil(t, got.PendingAuthorization)
+	require.Equal(t, "workspace.files.write", got.PendingAuthorization.ActionName)
+	require.Equal(t, "workspace_write", got.PendingAuthorization.RequiredLevel)
+	require.Equal(t, "manual_tool_authorization_required", got.PendingAuthorization.Policy)
+	require.Equal(t, prompt, got.PendingAuthorization.OriginalPrompt)
+	require.Equal(t, "pending", got.PendingAuthorization.Status)
+	require.NotNil(t, got.NextAction)
+	require.Equal(t, "authorization_required", got.NextAction.Type)
+}
+
 func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
