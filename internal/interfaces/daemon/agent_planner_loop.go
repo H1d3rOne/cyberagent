@@ -294,17 +294,17 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 	loopHistory := append(cloneAgentMessages(history), planMessages...)
 
 	maxLoops := reqMaxAgentReplans(req)
+	cyclePlan := agentPlannerActionReplanCyclePlanFromPlannerResponse(plan)
 	for step := 0; step < maxLoops; step++ {
-		if len(agentPlannerActions(plan)) == 0 {
+		if !cyclePlan.hasActions() {
 			// Respect a structured model plan that intentionally stops at Plan and
 			// asks the operator/runtime to continue. Fallback actions are only
 			// created when the latest operator prompt clearly asks to execute now
 			// but the provider forgot to emit actions.
 			if step == 0 && agentPromptRequestsImmediateExecution(prompt) {
 				fallback := agentFallbackPlannerFromPrompt(prompt, "", language)
-				if fallback != nil && len(agentPlannerActions(fallback)) > 0 {
-					plan = fallback
-				} else {
+				cyclePlan = agentPlannerActionReplanCyclePlanFromPlannerResponse(fallback)
+				if !cyclePlan.hasActions() {
 					break
 				}
 			} else {
@@ -320,7 +320,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
 			MemorySummary: agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(memorySummary),
 			ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(svc),
-			Plan:          agentPlannerActionReplanCyclePlanFromPlannerResponse(plan),
+			Plan:          cyclePlan,
 			State:         agentPlannerActionReplanCycleStateFromLegacy(responseMessages, toolCalls, loopHistory),
 			Options: agentPlannerActionReplanCycleOptions{
 				ActionAppendOrigin:                      "planner_loop",
@@ -339,7 +339,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		if !cycle.Plan.shouldAutoContinue() {
 			break
 		}
-		plan = cycle.Plan.legacyPlannerResponse()
+		cyclePlan = cycle.Plan
 	}
 
 	return responseMessages, toolCalls, nil
