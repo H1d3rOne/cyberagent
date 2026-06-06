@@ -1593,6 +1593,111 @@ func TestAgentPlannerActionReplanCyclePlanWrapsLegacyPlannerResponse(t *testing.
 	require.Len(t, agentPlannerActions(cyclePlan.legacyPlannerResponse()), 1)
 }
 
+func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *testing.T) {
+	finishedAt := time.Date(2026, 6, 6, 15, 30, 0, 0, time.UTC)
+	responseMessages := []agentMessage{{
+		ID:      "msg-cycle-state-response",
+		Role:    "tool",
+		Content: "response message",
+		ToolCalls: []agentToolCall{{
+			ID:         "tool-cycle-state-response",
+			Name:       "daemon.health",
+			Status:     contracts.StatusSucceeded,
+			FinishedAt: &finishedAt,
+			Result:     map[string]any{"source": "response"},
+			Metadata:   map[string]interface{}{"phase": "response"},
+		}},
+	}}
+	toolCalls := []agentToolCall{{
+		ID:       "tool-cycle-state-top-level",
+		Name:     "LLM synthesis",
+		Status:   contracts.StatusSucceeded,
+		Result:   map[string]any{"source": "tool"},
+		Metadata: map[string]interface{}{"phase": "tool"},
+	}}
+	loopHistory := []agentMessage{{
+		ID:      "msg-cycle-state-history",
+		Role:    "agent",
+		Content: "history message",
+		ToolCalls: []agentToolCall{{
+			ID:       "tool-cycle-state-history",
+			Name:     "history.tool",
+			Status:   contracts.StatusSucceeded,
+			Result:   map[string]any{"source": "history"},
+			Metadata: map[string]interface{}{"phase": "history"},
+		}},
+	}}
+
+	state := agentPlannerActionReplanCycleStateFromLegacy(responseMessages, toolCalls, loopHistory)
+
+	responseMessages[0].Content = "mutated response"
+	responseMessages[0].ToolCalls[0].Result["source"] = "mutated response result"
+	toolCalls[0].Result["source"] = "mutated tool result"
+	loopHistory[0].Content = "mutated history"
+	loopHistory[0].ToolCalls[0].Metadata["phase"] = "mutated history metadata"
+
+	gotResponses := state.ResponseMessages.legacyAgentMessages()
+	gotTools := state.ToolCalls.legacyAgentToolCalls()
+	gotHistory := state.LoopHistory.legacyAgentMessages()
+	require.Len(t, gotResponses, 1)
+	require.Len(t, gotResponses[0].ToolCalls, 1)
+	require.Equal(t, "response message", gotResponses[0].Content)
+	require.Equal(t, "response", gotResponses[0].ToolCalls[0].Result["source"])
+	require.Equal(t, "response", gotResponses[0].ToolCalls[0].Metadata["phase"])
+	require.NotNil(t, gotResponses[0].ToolCalls[0].FinishedAt)
+	require.Equal(t, finishedAt, *gotResponses[0].ToolCalls[0].FinishedAt)
+	require.Len(t, gotTools, 1)
+	require.Equal(t, "tool", gotTools[0].Result["source"])
+	require.Equal(t, "tool", gotTools[0].Metadata["phase"])
+	require.Len(t, gotHistory, 1)
+	require.Equal(t, "history message", gotHistory[0].Content)
+	require.Equal(t, "history", gotHistory[0].ToolCalls[0].Result["source"])
+	require.Equal(t, "history", gotHistory[0].ToolCalls[0].Metadata["phase"])
+
+	gotResponses[0].Content = "mutated returned response"
+	gotResponses[0].ToolCalls[0].Result["source"] = "mutated returned response result"
+	gotTools[0].Result["source"] = "mutated returned tool result"
+	gotHistory[0].Content = "mutated returned history"
+	gotHistory[0].ToolCalls[0].Metadata["phase"] = "mutated returned history metadata"
+
+	require.Equal(t, "response message", state.ResponseMessages.legacyAgentMessages()[0].Content)
+	require.Equal(t, "response", state.ResponseMessages.legacyAgentMessages()[0].ToolCalls[0].Result["source"])
+	require.Equal(t, "tool", state.ToolCalls.legacyAgentToolCalls()[0].Result["source"])
+	require.Equal(t, "history message", state.LoopHistory.legacyAgentMessages()[0].Content)
+	require.Equal(t, "history", state.LoopHistory.legacyAgentMessages()[0].ToolCalls[0].Metadata["phase"])
+
+	appendedMessage := agentMessage{
+		ID:      "msg-cycle-state-appended",
+		Role:    "agent",
+		Content: "appended message",
+		ToolCalls: []agentToolCall{{
+			ID:       "tool-cycle-state-appended-message",
+			Name:     "appended.message.tool",
+			Result:   map[string]any{"source": "appended-message"},
+			Metadata: map[string]interface{}{"phase": "appended-message"},
+		}},
+	}
+	appendedTool := agentToolCall{
+		ID:       "tool-cycle-state-appended",
+		Name:     "appended.tool",
+		Result:   map[string]any{"source": "appended-tool"},
+		Metadata: map[string]interface{}{"phase": "appended-tool"},
+	}
+	state.ResponseMessages.appendLegacyAgentMessages(appendedMessage)
+	state.ToolCalls.appendLegacyAgentToolCalls(appendedTool)
+	appendedMessage.Content = "mutated appended message"
+	appendedMessage.ToolCalls[0].Result["source"] = "mutated appended message result"
+	appendedTool.Result["source"] = "mutated appended tool result"
+
+	finalResponses := state.ResponseMessages.legacyAgentMessages()
+	finalTools := state.ToolCalls.legacyAgentToolCalls()
+	require.Len(t, finalResponses, 2)
+	require.Equal(t, "appended message", finalResponses[1].Content)
+	require.Equal(t, "appended-message", finalResponses[1].ToolCalls[0].Result["source"])
+	require.Len(t, finalTools, 2)
+	require.Equal(t, "appended-tool", finalTools[1].Result["source"])
+}
+
 func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
