@@ -153,7 +153,8 @@ Leader 负责：
 3. `internal/interfaces/daemon/agent_prompt_dispatch.go`
    - `routePrompt` 仍是 no-LLM、本地 fallback、确定性 pre-route、auto-continue 的规则路由入口。
    - 本切片已删除 `executeAgentPlannerAction` 内部的 legacy per-tool switch fallback；builtin action 只能通过 Tool Registry handler 执行，handler 缺失会以 `internal_error` 失败。
-   - 本切片已将 read-only/system、safe HTTP、non-safe HTTP、safe scan、workspace staged change、reports draft、workspace mutation、approval approve/deny/resume-approved 与 schedule create/list/delete 路由分支收敛为 `agentHeuristicActionsFromPrompt` 产出 action，再通过 Tool Registry handler 执行；generic workspace fallback 仍保留原路由。
+   - 本切片已将 read-only/system、safe HTTP、non-safe HTTP、safe scan、workspace staged change、reports draft、workspace mutation、approval approve/deny/resume-approved、schedule create/list/delete 与 generic workspace fallback 路由分支收敛为 `agentHeuristicActionsFromPrompt` 产出 action，再通过 Tool Registry handler 执行。
+   - generic workspace prompt 未命中具体 read/list/tree/search/write 类 intent 时，现在 fallback 为 `workspace.files.list path=.` registry route，不再走 legacy `workspace.prepare` direct handler。
    - 本切片已为 routePrompt 工具结果统一增加 metadata source：registry 分发为 `deterministic_route/registry_dispatch`，保留直连 handler 的分支为 `deterministic_route/direct_handler`。
    - 本切片已将 source 提升到后端 trace timeline 顶层，并在 Agent Cockpit Timeline 工具卡显示轻量 source badge。
 4. `internal/interfaces/daemon/agent_intents.go` 与 `internal/interfaces/daemon/agent_prompt_extractors.go`
@@ -207,7 +208,11 @@ Leader 负责：
    - 保留 `advanced` operation-level gate；`safe_scan` / `read_only` 权限不足时不会调用 registry handler。
    - registry handler 继续复用原 `handleAgentHTTPRequest`，method/url 校验、SSRF policy、响应截断与错误语义保持不变。
    - route source metadata 从 `deterministic_route/direct_handler` 更新为 `deterministic_route/registry_dispatch`。
-13. 当前收敛策略：不一次性搬迁 legacy turn，继续按 registry dispatch → lifecycle seam → LLM runner seam → engine-native runner 分层推进。
+13. ✅ 将 `routePrompt` 的 generic workspace fallback 本地路由小切片收敛为 `agentHeuristicActionsFromPrompt` → registry dispatch：
+   - 覆盖只表达 `workspace` / `工作空间`、未命中具体 list/tree/search/read/write/mutation 的自然语言 fallback。
+   - 现在映射到 `workspace.files.list path=.`，保留 `read_only` operation-level gate。
+   - route source metadata 从 `deterministic_route/direct_handler` 更新为 `deterministic_route/registry_dispatch`；legacy `workspace.prepare` 直连 handler 暂不再作为该 fallback 的执行路径。
+14. 当前收敛策略：不一次性搬迁 legacy turn，继续按 registry dispatch → lifecycle seam → LLM runner seam → engine-native runner 分层推进。
    - 原因：`SendMessage`、planner loop、授权 gate、session mutation 仍由 daemon 保证语义；一次性把 `runAgentLLMToolLoop` 完整下沉会同时牵动 session persist、authorization resume、tool synthesis、auto-continue 与 SSE replay，切片过大。
    - 已完成确定性工具 registry 化、`BeginTurn`/`FinishTurn` lifecycle API 与 `RunLLMTurn` dispatch seam。
    - 后续更稳妥路径是继续拆分 planner chat、tool synthesis、step replan、session mutation，再收敛 authorization resume / auto-continue 与剩余 SendMessage branches。
@@ -216,7 +221,7 @@ Leader 负责：
 
 | 批次 | 动作 | 风险与状态 | 迁移建议 |
 | --- | --- | --- | --- |
-| A | read-only/system：daemon.health、plugins.list、runs.list、runs.context、runs.approvals.list、workspace list/tree/read/search、allowlisted workspace.command | 已完成 | 保持 registry dispatch，并用 source metadata 观察回归 |
+| A | read-only/system：daemon.health、plugins.list、runs.list、runs.context、runs.approvals.list、workspace list/tree/read/search、generic workspace fallback、allowlisted workspace.command | 已完成 | 保持 registry dispatch，并用 source metadata 观察回归；generic workspace fallback 现在映射为 `workspace.files.list path=.` |
 | B | safe HTTP：GET / HEAD / OPTIONS `http.request` | 已完成本切片；仍会受 safe_scan 权限与 HTTP SSRF policy 约束 | 继续补 trace / auth profile 场景 |
 | B2 | non-safe HTTP：POST / PUT / PATCH / DELETE `http.request` | 已完成自然语言本地路由 registry dispatch；会发起写语义 HTTP 请求但不改本地 workspace | 继续观察 `advanced` gate、SSRF policy、method/url/body/auth profile parity 与 source metadata |
 | C | `ports.scan.safe` | 已完成本切片；网络探测但不落盘，参数边界较清晰 | 继续观察 port allowlist / source metadata parity |
@@ -1055,6 +1060,7 @@ Glass surface：
 | v25 | 收敛 deterministic route 内部 plan-only append：capability-gap planner apply 通过 `routePromptForTurn` 沿用外层 turnRef dispatch 到 `append_messages` mutation，直接 `routePrompt` 保持 legacy 兼容。 |
 | v26 | 收敛 schedule deterministic route：schedule create/list/delete 统一经 heuristic action → Tool Registry dispatch；create/delete 保留 `advanced` gate，list 保留 `read_only` gate。 |
 | v27 | 收敛 advanced HTTP deterministic route：POST/PUT/PATCH/DELETE `http.request` 统一经 heuristic action → Tool Registry dispatch；保留 `advanced` gate 与原 HTTP handler/policy 语义。 |
+| v28 | 收敛 generic workspace fallback deterministic route：未命中具体 workspace 子 intent 时 fallback 为 `workspace.files.list path=.` 并经 Tool Registry dispatch；不再走 legacy `workspace.prepare` direct handler。 |
 
 ---
 

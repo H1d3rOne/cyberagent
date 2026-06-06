@@ -397,7 +397,8 @@ func (m *agentManager) routePromptForTurn(ctx context.Context, sessionID string,
 		routeMetadataSource = "deterministic_route/registry_dispatch"
 		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	case agentIsWorkspaceIntent(prompt):
-		return m.handleAgentWorkspace(ctx, sessionID, prompt, language)
+		routeMetadataSource = "deterministic_route/registry_dispatch"
+		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
 	default:
 		_ = operator
 		return []agentMessage{m.message(language, "agent", agentExplain(language), nil, nil)}, nil, nil

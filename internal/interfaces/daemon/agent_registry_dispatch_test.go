@@ -143,6 +143,62 @@ func TestRoutePromptReadOnlySystemUsesHeuristicRegistryDispatch(t *testing.T) {
 	}
 }
 
+func TestRoutePromptGenericWorkspaceUsesHeuristicRegistryDispatch(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("workspace.files.list")
+	if !ok {
+		t.Fatal("workspace.files.list missing from registry")
+	}
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		if in.SessionID != "agent_route_workspace_generic" || in.Operator != "tester" || in.Language != "zh" || in.OperationLevel != "read_only" {
+			t.Fatalf("unexpected handler input: %#v", in)
+		}
+		if got := stringFromAny(in.RawArgs["path"]); got != "." {
+			t.Fatalf("handler RawArgs path = %q, want .", got)
+		}
+		tool := runningAgentToolCall("workspace.files.list", "route.workspace.generic.registry")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"route_registry": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("zh", "tool", "generic workspace registry dispatched", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	actions := agentHeuristicActionsFromPrompt("workspace")
+	if len(actions) != 1 || normalizeAgentPlannerActionName(actions[0].Name) != "workspace.files.list" {
+		t.Fatalf("generic workspace prompt should produce workspace.files.list action: %#v", actions)
+	}
+	if got := stringFromAny(actions[0].Arguments["path"]); got != "." {
+		t.Fatalf("generic workspace action path = %q, want .", got)
+	}
+
+	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_workspace_generic", "workspace", "zh", "tester", "read_only", routerServices{})
+	if err != nil {
+		t.Fatalf("routePrompt() error = %v", err)
+	}
+	if !called {
+		t.Fatal("routePrompt did not dispatch generic workspace through the registry handler")
+	}
+	if len(messages) != 1 || messages[0].Content != "generic workspace registry dispatched" {
+		t.Fatalf("unexpected messages: %#v", messages)
+	}
+	if len(calls) != 1 || calls[0].Name != "workspace.files.list" || calls[0].Result["route_registry"] != true {
+		t.Fatalf("unexpected tool calls: %#v", calls)
+	}
+	if calls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+		t.Fatalf("generic workspace route tool source metadata = %#v", calls[0].Metadata)
+	}
+	if messages[0].ToolCalls[0].Metadata["source"] != "deterministic_route/registry_dispatch" {
+		t.Fatalf("generic workspace route message tool source metadata = %#v", messages[0].ToolCalls[0].Metadata)
+	}
+}
+
 func TestRoutePromptScheduleUsesHeuristicRegistryDispatch(t *testing.T) {
 	mgr := newAgentManager(t.TempDir())
 	tests := []struct {
