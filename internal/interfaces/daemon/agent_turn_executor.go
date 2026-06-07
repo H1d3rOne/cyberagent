@@ -378,12 +378,14 @@ func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, s
 	return payload.Messages, payload.ToolCalls
 }
 
-func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, svc routerServices, action runtime.AgentLoopAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, svc routerServices, action runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]agentMessage, []agentToolCall, error) {
 	action = cloneAgentLoopAction(action)
+	authorization = authorization.Clone()
 	legacyAction := agentPlannerActionFromAgentLoopAction(action)
+	legacyAuthProfiles := agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(authorization.AuthProfiles)
 	eng := m.runtimeEngine()
 	if eng == nil || eng.TurnExecutor() == nil {
-		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, legacyAction, authProfiles, defaultAuthProfileID)
+		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -404,10 +406,7 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 			OperationLevel: operationLevel,
 			Services:       agentLoopToolServiceBindingFromRouterServices(svc),
 			Action:         action,
-			Authorization: runtime.AgentLoopAuthorization{
-				AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles),
-				DefaultAuthProfileID: defaultAuthProfileID,
-			},
+			Authorization:  authorization,
 		},
 		Metadata: map[string]any{
 			"executor":        "turn_execution",
@@ -420,7 +419,7 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 		errors.Is(result.Error, runtime.ErrTurnExecutorNotAttached) ||
 		result.Status == runtime.TurnResultBlocked ||
 		(result.Status == runtime.TurnResultRunning && result.Payload == nil) {
-		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, legacyAction, authProfiles, defaultAuthProfileID)
+		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
 	}
 	payload, ok := result.Payload.(daemonPlannerActionExecutionTurnResultPayload)
 	if ok {

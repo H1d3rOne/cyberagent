@@ -1523,8 +1523,10 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 		"safe_scan",
 		routerServices{},
 		runtimeAction,
-		authProfiles,
-		"auth-default",
+		runtime.AgentLoopAuthorization{
+			AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles),
+			DefaultAuthProfileID: "auth-default",
+		},
 	)
 
 	require.NoError(t, err)
