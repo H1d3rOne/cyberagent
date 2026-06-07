@@ -21,9 +21,7 @@ func (r daemonAgentLoopRunner) RunAgentLoop(ctx context.Context, req runtime.Age
 
 	switch req.Mode {
 	case runtime.AgentLoopModeLLMToolLoop, runtime.AgentLoopModeReplanContinuation:
-		cycleReq := agentPlannerActionReplanCycleRequestFromAgentLoopRequest(req, agentPlannerActionReplanCycleOptions{})
-		cycleResult := r.manager.runAgentPlannerActionReplanCycle(ctx, cycleReq)
-		return cycleResult.agentLoopResult("legacy_daemon_agent_loop_executed"), nil
+		return r.manager.runAgentPlannerActionReplanCycleAgentLoop(ctx, req), nil
 	default:
 		err := fmt.Errorf("unsupported agent loop mode %q", req.Mode)
 		return runtime.AgentLoopResult{
