@@ -28,13 +28,8 @@ type daemonDeterministicRouteTurnResultPayload struct {
 }
 
 type daemonPlannerActionExecutionTurnPayload struct {
-	SessionID      string
-	Language       string
-	Operator       string
-	OperationLevel string
-	Services       runtime.AgentLoopToolServiceBinding
-	Action         runtime.AgentLoopAction
-	Authorization  runtime.AgentLoopAuthorization
+	Request runtime.AgentLoopRequest
+	Action  runtime.AgentLoopAction
 }
 
 type daemonAgentTurnExecutor struct {
@@ -157,15 +152,16 @@ func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn(ctx context.C
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	loopReq := payload.Request.Clone()
 	action := agentPlannerActionFromAgentLoopAction(payload.Action)
-	authorization := payload.Authorization.Clone()
+	authorization := loopReq.Authorization.Clone()
 	messages, toolCalls, err := e.manager.executeAgentPlannerAction(
 		ctx,
-		payload.SessionID,
-		payload.Language,
-		payload.Operator,
-		payload.OperationLevel,
-		legacyRouterServicesFromAgentLoopToolServiceBinding(payload.Services),
+		loopReq.Turn.SessionID,
+		loopReq.Language,
+		loopReq.Operator,
+		loopReq.Turn.OperationLevel,
+		legacyRouterServicesFromAgentLoopToolServiceBinding(loopReq.ToolServices),
 		action,
 		agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(authorization.AuthProfiles),
 		authorization.DefaultAuthProfileID,
@@ -187,14 +183,14 @@ func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn(ctx context.C
 		Data: map[string]any{
 			"executor":         "daemon_legacy_adapter",
 			"kind":             daemonTurnExecutionPlannerActionExecution,
-			"session_id":       payload.SessionID,
+			"session_id":       loopReq.Turn.SessionID,
 			"task_id":          turn.TaskID,
 			"run_id":           turn.RunID,
 			"turn_id":          turn.TurnID,
 			"action_name":      normalizeAgentPlannerActionName(payload.Action.Name),
 			"message_count":    len(messages),
 			"tool_call_count":  len(toolCalls),
-			"operation_level":  payload.OperationLevel,
+			"operation_level":  loopReq.Turn.OperationLevel,
 			"manager_attached": true,
 		},
 	}, err
@@ -340,47 +336,24 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 	toolServices = toolServices.Clone()
 	action = cloneAgentLoopAction(action)
 	authorization = authorization.Clone()
+	loopReq := agentPlannerActionExecutionRequestFromRuntime(sessionID, turnRef, prompt, language, operator, operationLevel, toolServices, authorization)
 	legacyAction := agentPlannerActionFromAgentLoopAction(action)
-	legacyAuthProfiles := agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(authorization.AuthProfiles)
-	legacyServices := legacyRouterServicesFromAgentLoopToolServiceBinding(toolServices)
+	legacyAuthProfiles := agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(loopReq.Authorization.AuthProfiles)
+	legacyServices := legacyRouterServicesFromAgentLoopToolServiceBinding(loopReq.ToolServices)
 	eng := m.runtimeEngine()
 	if eng == nil || eng.TurnExecutor() == nil {
-		messages, toolCalls, execErr := m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, legacyServices, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
+		messages, toolCalls, execErr := m.executeAgentPlannerAction(ctx, loopReq.Turn.SessionID, loopReq.Language, loopReq.Operator, loopReq.Turn.OperationLevel, legacyServices, legacyAction, legacyAuthProfiles, loopReq.Authorization.DefaultAuthProfileID)
 		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), execErr
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	result, err := eng.ExecuteTurn(ctx, runtime.TurnContext{
-		SessionID:      sessionID,
-		TaskID:         turnRef.TaskID,
-		RunID:          turnRef.RunID,
-		TurnID:         turnRef.TurnID,
-		Prompt:         prompt,
-		Origin:         daemonTurnExecutionPlannerActionExecution,
-		OperationLevel: operationLevel,
-		TurnIndex:      1,
-		Payload: daemonPlannerActionExecutionTurnPayload{
-			SessionID:      sessionID,
-			Language:       language,
-			Operator:       operator,
-			OperationLevel: operationLevel,
-			Services:       toolServices,
-			Action:         action,
-			Authorization:  authorization,
-		},
-		Metadata: map[string]any{
-			"executor":        "turn_execution",
-			"kind":            daemonTurnExecutionPlannerActionExecution,
-			"operation_level": operationLevel,
-			"action_name":     normalizeAgentPlannerActionName(action.Name),
-		},
-	})
+	result, err := eng.ExecuteTurn(ctx, agentPlannerActionExecutionTurnContextFromRequest(loopReq, action))
 	if errors.Is(err, runtime.ErrTurnExecutorNotAttached) ||
 		errors.Is(result.Error, runtime.ErrTurnExecutorNotAttached) ||
 		result.Status == runtime.TurnResultBlocked ||
 		(result.Status == runtime.TurnResultRunning && result.Payload == nil) {
-		messages, toolCalls, execErr := m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, legacyServices, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
+		messages, toolCalls, execErr := m.executeAgentPlannerAction(ctx, loopReq.Turn.SessionID, loopReq.Language, loopReq.Operator, loopReq.Turn.OperationLevel, legacyServices, legacyAction, legacyAuthProfiles, loopReq.Authorization.DefaultAuthProfileID)
 		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), execErr
 	}
 	payload, ok := result.Payload.(runtime.AgentLoopTurnResultPayload)
@@ -391,4 +364,36 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 		return nil, nil, err
 	}
 	return nil, nil, errors.New("daemon: planner action execution turn executor returned invalid payload")
+}
+
+func agentPlannerActionExecutionRequestFromRuntime(sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, authorization runtime.AgentLoopAuthorization) runtime.AgentLoopRequest {
+	return runtime.AgentLoopRequest{
+		Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, daemonTurnExecutionPlannerActionExecution, operationLevel),
+		Language:      language,
+		Operator:      operator,
+		Authorization: authorization.Clone(),
+		ToolServices:  toolServices.Clone(),
+	}
+}
+
+func agentPlannerActionExecutionTurnContextFromRequest(loopReq runtime.AgentLoopRequest, action runtime.AgentLoopAction) runtime.TurnContext {
+	turn := runtime.CloneAgentLoopTurnContext(loopReq.Turn)
+	turn.Origin = daemonTurnExecutionPlannerActionExecution
+	if turn.TurnIndex == 0 {
+		turn.TurnIndex = 1
+	}
+	turn.Payload = daemonPlannerActionExecutionTurnPayload{
+		Request: loopReq.Clone(),
+		Action:  cloneAgentLoopAction(action),
+	}
+	metadata := runtime.CloneAgentLoopMapStringAny(turn.Metadata)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["executor"] = "turn_execution"
+	metadata["kind"] = daemonTurnExecutionPlannerActionExecution
+	metadata["operation_level"] = turn.OperationLevel
+	metadata["action_name"] = normalizeAgentPlannerActionName(action.Name)
+	turn.Metadata = metadata
+	return turn
 }

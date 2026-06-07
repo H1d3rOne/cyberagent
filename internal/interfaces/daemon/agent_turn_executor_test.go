@@ -1502,13 +1502,13 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 
 		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, "session-planner-action", payload.SessionID)
-		require.Equal(t, "en", payload.Language)
-		require.Equal(t, "tester", payload.Operator)
-		require.Equal(t, "safe_scan", payload.OperationLevel)
+		require.Equal(t, "session-planner-action", payload.Request.Turn.SessionID)
+		require.Equal(t, "en", payload.Request.Language)
+		require.Equal(t, "tester", payload.Request.Operator)
+		require.Equal(t, "safe_scan", payload.Request.Turn.OperationLevel)
 		require.Equal(t, runtimeAction, payload.Action)
-		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), payload.Authorization.AuthProfiles)
-		require.Equal(t, "auth-default", payload.Authorization.DefaultAuthProfileID)
+		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), payload.Request.Authorization.AuthProfiles)
+		require.Equal(t, "auth-default", payload.Request.Authorization.DefaultAuthProfileID)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -1617,23 +1617,23 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 
 		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, "session-cycle-action-exec", payload.SessionID)
-		require.Equal(t, "en", payload.Language)
-		require.Equal(t, "tester", payload.Operator)
-		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, "session-cycle-action-exec", payload.Request.Turn.SessionID)
+		require.Equal(t, "en", payload.Request.Language)
+		require.Equal(t, "tester", payload.Request.Operator)
+		require.Equal(t, "read_only", payload.Request.Turn.OperationLevel)
 		require.Equal(t, "cycle-action-exec", stringFromAny(payload.Action.Arguments["probe"]))
-		require.Len(t, payload.Authorization.AuthProfiles, 1)
-		require.Equal(t, "auth-cycle-action-exec", payload.Authorization.DefaultAuthProfileID)
-		require.Equal(t, "token-cycle-action-exec", payload.Authorization.AuthProfiles[0].Token)
-		require.NotNil(t, payload.Authorization.AuthProfiles[0].Enabled)
-		require.True(t, *payload.Authorization.AuthProfiles[0].Enabled)
-		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Services)
+		require.Len(t, payload.Request.Authorization.AuthProfiles, 1)
+		require.Equal(t, "auth-cycle-action-exec", payload.Request.Authorization.DefaultAuthProfileID)
+		require.Equal(t, "token-cycle-action-exec", payload.Request.Authorization.AuthProfiles[0].Token)
+		require.NotNil(t, payload.Request.Authorization.AuthProfiles[0].Enabled)
+		require.True(t, *payload.Request.Authorization.AuthProfiles[0].Enabled)
+		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Request.ToolServices)
 		require.True(t, ok)
 		require.Same(t, jobs, payloadServices.jobs)
 
 		payload.Action.Arguments["probe"] = "mutated-payload-action"
-		payload.Authorization.AuthProfiles[0].Token = "mutated-payload-token"
-		*payload.Authorization.AuthProfiles[0].Enabled = false
+		payload.Request.Authorization.AuthProfiles[0].Token = "mutated-payload-token"
+		*payload.Request.Authorization.AuthProfiles[0].Enabled = false
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -1710,10 +1710,10 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 
 		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, "session-planner-loop-action", payload.SessionID)
-		require.Equal(t, "en", payload.Language)
-		require.Equal(t, "tester", payload.Operator)
-		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, "session-planner-loop-action", payload.Request.Turn.SessionID)
+		require.Equal(t, "en", payload.Request.Language)
+		require.Equal(t, "tester", payload.Request.Operator)
+		require.Equal(t, "read_only", payload.Request.Turn.OperationLevel)
 		require.Equal(t, agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action), payload.Action)
 
 		return runtime.TurnResult{
@@ -2548,14 +2548,14 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 
 		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
-		require.Equal(t, "tester", payload.Operator)
-		require.Equal(t, "en", payload.Language)
-		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, sessionID, payload.Request.Turn.SessionID)
+		require.Equal(t, "tester", payload.Request.Operator)
+		require.Equal(t, "en", payload.Request.Language)
+		require.Equal(t, "read_only", payload.Request.Turn.OperationLevel)
 		require.Equal(t, "planner-cycle", stringFromAny(payload.Action.Arguments["probe"]))
-		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), payload.Authorization.AuthProfiles)
-		require.Equal(t, "auth-planner-cycle", payload.Authorization.DefaultAuthProfileID)
-		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Services)
+		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), payload.Request.Authorization.AuthProfiles)
+		require.Equal(t, "auth-planner-cycle", payload.Request.Authorization.DefaultAuthProfileID)
+		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Request.ToolServices)
 		require.True(t, ok)
 		require.Same(t, jobs, payloadServices.jobs)
 
