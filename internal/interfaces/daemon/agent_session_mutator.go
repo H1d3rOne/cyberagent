@@ -14,11 +14,8 @@ import (
 
 // Session mutation result payloads below are daemon adapter DTOs consumed by
 // legacy callers. Runtime-neutral mutation input payloads live under the
-// runtime package; record_user_message, request_authorization,
-// capability_blocked, control_session, and resolve_authorization results now
-// roundtrip through runtime AgentLoop session snapshot/result DTOs before
-// converting back at this boundary, while the remaining result payloads stay
-// daemon-private until their adapters are migrated one by one.
+// runtime package; session mutation results roundtrip through runtime AgentLoop
+// session snapshot/result DTOs before converting back at this boundary.
 type daemonAppendMessagesMutationResultPayload struct {
 	Session    agentSession
 	Compaction *agentMemoryCompaction
@@ -118,7 +115,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
 			Reason:  "legacy daemon session append mutation executed",
-			Payload: resultPayload,
+			Payload: agentLoopAppendMessagesResultPayloadFromDaemon(resultPayload),
 			Data: map[string]any{
 				"mutator":       "daemon_legacy_session",
 				"kind":          string(req.Kind),

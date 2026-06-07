@@ -215,6 +215,40 @@ func daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(payload runtime.A
 	}
 }
 
+func daemonAppendMessagesMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonAppendMessagesMutationResultPayload, bool) {
+	if payload, ok := daemonSessionMutationResultPayload[daemonAppendMessagesMutationResultPayload](result); ok {
+		return payload, true
+	}
+	switch payload := result.Payload.(type) {
+	case runtime.AgentLoopAppendMessagesResultPayload:
+		return daemonAppendMessagesMutationResultPayloadFromAgentLoop(payload), true
+	case *runtime.AgentLoopAppendMessagesResultPayload:
+		if payload == nil {
+			return daemonAppendMessagesMutationResultPayload{}, false
+		}
+		return daemonAppendMessagesMutationResultPayloadFromAgentLoop(payload.Clone()), true
+	default:
+		return daemonAppendMessagesMutationResultPayload{}, false
+	}
+}
+
+func agentLoopAppendMessagesResultPayloadFromDaemon(payload daemonAppendMessagesMutationResultPayload) runtime.AgentLoopAppendMessagesResultPayload {
+	return runtime.AgentLoopAppendMessagesResultPayload{
+		Session:    agentLoopSessionSnapshotFromAgentSession(payload.Session),
+		Compaction: agentLoopMemoryCompactionFromAgentMemoryCompaction(payload.Compaction),
+		Mutated:    payload.Mutated,
+	}
+}
+
+func daemonAppendMessagesMutationResultPayloadFromAgentLoop(payload runtime.AgentLoopAppendMessagesResultPayload) daemonAppendMessagesMutationResultPayload {
+	payload = payload.Clone()
+	return daemonAppendMessagesMutationResultPayload{
+		Session:    agentSessionFromAgentLoopSessionSnapshot(payload.Session),
+		Compaction: agentMemoryCompactionFromAgentLoopMemoryCompaction(payload.Compaction),
+		Mutated:    payload.Mutated,
+	}
+}
+
 func agentLoopSessionSnapshotFromAgentSession(session agentSession) runtime.AgentLoopSessionSnapshot {
 	return runtime.AgentLoopSessionSnapshot{
 		SessionID:            session.SessionID,

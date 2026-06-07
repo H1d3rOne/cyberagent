@@ -138,6 +138,29 @@ func CloneAgentLoopCapabilityBlockedResultPayload(payload AgentLoopCapabilityBlo
 	return payload.Clone()
 }
 
+// AgentLoopAppendMessagesResultPayload is the runtime-neutral result for an
+// append_messages mutation. It carries the updated session snapshot and
+// optional memory compaction artifact.
+type AgentLoopAppendMessagesResultPayload struct {
+	Session    AgentLoopSessionSnapshot
+	Compaction *AgentLoopMemoryCompaction
+	Mutated    bool
+}
+
+// Clone returns a copy with all mutable fields isolated.
+func (payload AgentLoopAppendMessagesResultPayload) Clone() AgentLoopAppendMessagesResultPayload {
+	cloned := payload
+	cloned.Session = payload.Session.Clone()
+	cloned.Compaction = CloneAgentLoopMemoryCompaction(payload.Compaction)
+	return cloned
+}
+
+// CloneAgentLoopAppendMessagesResultPayload clones an append-messages mutation
+// result payload.
+func CloneAgentLoopAppendMessagesResultPayload(payload AgentLoopAppendMessagesResultPayload) AgentLoopAppendMessagesResultPayload {
+	return payload.Clone()
+}
+
 // AgentLoopSessionSnapshot is the runtime-neutral session state carried by
 // session mutation result DTOs. It mirrors the operator-visible session
 // boundary without depending on daemon-private structs.

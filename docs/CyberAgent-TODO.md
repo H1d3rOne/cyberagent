@@ -242,13 +242,14 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N94：将 resolve_authorization result 迁移到 runtime-neutral session mutation result DTO，复用 session snapshot/authorization/message/compaction adapter。
 - [x] P0.5-N95：将 request_authorization result 迁移到 runtime-neutral session mutation result DTO，复用 session snapshot/authorization/message adapter。
 - [x] P0.5-N96：将 capability_blocked result 迁移到 runtime-neutral session mutation result DTO，复用 session snapshot adapter 并保持 blocked response metadata。
-- [ ] P0.5-N97：将 append_messages result 迁移到 runtime-neutral session mutation result DTO，复用 session snapshot/compaction adapter，并收敛最后一个 session mutation result legacy payload。
+- [x] P0.5-N97：将 append_messages result 迁移到 runtime-neutral session mutation result DTO，复用 session snapshot/compaction adapter，并收敛最后一个 session mutation result legacy payload。
+- [ ] P0.5-N98：审计并清理 session mutation result legacy fallback/helper 用法，确认 append/record/request_authorization/capability_blocked/control/resolve 的 daemon mutator 输出均为 runtime DTO，legacy result struct 只留作 adapter/caller DTO。
 
 当前盘点（2026-06-08）：
 
 - 已经走 engine seam：`record_user_message`、`append_messages`、`control_session`、`resolve_authorization`、`request_authorization`、`capability_blocked`；deterministic route / replan continuation / planner action execution；LLM turn runner；planner chat 与 tool synthesis stage。
-- 已清理 session mutation 输入 payload 的 daemon-private wrapper：append/record/request_authorization/capability_blocked/control/resolve 均由 runtime DTO + TurnContext 承载；record_user_message、request_authorization、capability_blocked、control_session 与 resolve_authorization result 已先经 runtime `AgentLoopRecordUserMessageResultPayload` / `AgentLoopRequestAuthorizationResultPayload` / `AgentLoopCapabilityBlockedResultPayload` / `AgentLoopControlSessionResultPayload` / `AgentLoopResolveAuthorizationResultPayload` / `AgentLoopSessionSnapshot` roundtrip，剩余 result payload 仍作为 legacy session snapshot adapter 逐步迁移。
-- session mutation result payload 开始迁入 runtime-neutral DTO：record_user_message、request_authorization、capability_blocked、control_session 与 resolve_authorization 结果已具备 `AgentLoopSessionSnapshot` / `AgentLoopAuthorizationRequestSnapshot` / `AgentLoopMemoryCompaction` 支撑骨架并由 daemon adapter roundtrip；append 仍返回 legacy session/compaction snapshot，继续通过 typed egress/helper 读取等待后续切片迁移。
+- 已清理 session mutation 输入 payload 的 daemon-private wrapper：append/record/request_authorization/capability_blocked/control/resolve 均由 runtime DTO + TurnContext 承载；append_messages、record_user_message、request_authorization、capability_blocked、control_session 与 resolve_authorization result 已先经 runtime `AgentLoopAppendMessagesResultPayload` / `AgentLoopRecordUserMessageResultPayload` / `AgentLoopRequestAuthorizationResultPayload` / `AgentLoopCapabilityBlockedResultPayload` / `AgentLoopControlSessionResultPayload` / `AgentLoopResolveAuthorizationResultPayload` / `AgentLoopSessionSnapshot` roundtrip，legacy result struct 仅作为 daemon adapter/caller DTO 与兼容 fallback 保留。
+- session mutation result payload 开始迁入 runtime-neutral DTO：session mutation result payload 已整体迁入 runtime-neutral DTO：append/record/request_authorization/capability_blocked/control/resolve 均具备 runtime result DTO 与 daemon adapter roundtrip；后续只需审计 legacy fallback/helper 是否仍有不必要输出路径。
 - 已输出 engine-native runner 草案：建议将 `llm_tool_loop` 与 `replan_action_continuation` 统一为单个 loop runner 的两个 mode，明确请求/响应 payload、authorization gate、action queue metadata、synthesis、append/persist ownership 与迁移顺序。
 - 已抽出 planner loop helper：`decideAgentPlannerActionGate` 负责无副作用计算 capability mismatch / explicit intent / operation level / manual authorization / allow 决策；`agentPlannerActionQueueMetadata` 负责统一 action queue metadata 字段与类型。
 - 已抽出 planner action/replan cycle helper：`runAgentPlannerActionReplanCycle` 统一 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 的 Action → action append → tool synthesis → synthesis append 骨架；两种入口仍保留各自前置条件、append origin 与 response/tool merge 语义；action execution 与 StepReplan synthesis 的 legacy adapter 调用已分别收敛到 cycle-private helper。
@@ -336,6 +337,15 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 ---
 
 ## 8. 最新本地验证记录
+
+2026-06-08 本轮增量（P0.5-N97：append_messages result runtime DTO roundtrip）：
+
+```bash
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：runtime/daemon 包测试通过；append_messages session mutation result 已经由 daemon legacy result 转为 runtime `AgentLoopAppendMessagesResultPayload`，并补 daemon mutator 输出 runtime DTO 覆盖；diff check 通过。
 
 2026-06-08 本轮增量（P0.5-N96：capability_blocked result runtime DTO roundtrip）：
 

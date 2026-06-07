@@ -551,6 +551,115 @@ func TestAgentLoopCapabilityBlockedResultPayloadAdapterRoundTrip(t *testing.T) {
 	require.Equal(t, roundTrip, convertedPointer)
 }
 
+func TestAgentLoopAppendMessagesResultPayloadAdapterRoundTrip(t *testing.T) {
+	now := time.Date(2026, 6, 8, 13, 30, 0, 0, time.UTC)
+	lastMessageAt := now.Add(-time.Hour)
+	lastCompactedAt := now.Add(-30 * time.Minute)
+	resultPayload := daemonAppendMessagesMutationResultPayload{
+		Session: agentSession{
+			SessionID:      "session-append-result",
+			CreatedAt:      now.Add(-2 * time.Hour),
+			UpdatedAt:      now,
+			Operator:       "operator-1",
+			Language:       "en",
+			OperationLevel: "safe_scan",
+			Status:         "running",
+			Messages: []agentMessage{{
+				ID:      "msg-append-result",
+				Role:    "agent",
+				Content: "appended",
+				ToolCalls: []agentToolCall{{
+					ID:     "tool-append-result",
+					Name:   "workspace.files.read",
+					Status: "succeeded",
+					Result: map[string]any{"path": "README.md"},
+				}},
+			}},
+			MemorySummary: &agentMemorySummary{
+				Summary:       "session memory",
+				MessageCount:  3,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+				UpdatedAt:     now,
+			},
+		},
+		Compaction: &agentMemoryCompaction{
+			Summary: &agentMemorySummary{
+				Summary:       "compacted memory",
+				MessageCount:  2,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+				UpdatedAt:     now,
+			},
+			CompactedCount:  2,
+			RetainedCount:   80,
+			PreviousCount:   82,
+			LastCompactedID: "msg-old",
+			LastCompactedAt: &lastCompactedAt,
+			Trigger:         "turn_count",
+			OccurredAt:      now,
+		},
+		Mutated: true,
+	}
+
+	runtimePayload := agentLoopAppendMessagesResultPayloadFromDaemon(resultPayload)
+	expectedPayload := daemonAppendMessagesMutationResultPayloadFromAgentLoop(runtimePayload)
+	resultPayload.Session.Messages[0].ToolCalls[0].Result["path"] = "mutated"
+	resultPayload.Compaction.Summary.Summary = "mutated"
+	roundTrip := daemonAppendMessagesMutationResultPayloadFromAgentLoop(runtimePayload)
+
+	require.Equal(t, expectedPayload, roundTrip)
+	require.Equal(t, "README.md", roundTrip.Session.Messages[0].ToolCalls[0].Result["path"])
+	require.Equal(t, "compacted memory", roundTrip.Compaction.Summary.Summary)
+	require.Equal(t, lastCompactedAt, *roundTrip.Compaction.LastCompactedAt)
+	require.True(t, roundTrip.Mutated)
+
+	converted, ok := daemonAppendMessagesMutationResultPayloadFromSessionMutationResult(runtime.SessionMutationResult{Payload: runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, roundTrip, converted)
+
+	convertedPointer, ok := daemonAppendMessagesMutationResultPayloadFromSessionMutationResult(runtime.SessionMutationResult{Payload: &runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, roundTrip, convertedPointer)
+}
+
+func TestDaemonSessionMutatorAppendMessagesReturnsAgentLoopResultPayload(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	created, err := mgr.CreateSession(createAgentSessionRequest{
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+	})
+	require.NoError(t, err)
+	sessionID := created.Session.SessionID
+	mutator := daemonSessionMutator{manager: mgr}
+
+	result, err := mutator.MutateSession(context.Background(), runtime.SessionMutationRequest{
+		Turn: runtime.TurnContext{
+			SessionID: sessionID,
+			Metadata: map[string]any{
+				"kind": string(runtime.SessionMutationAppendMessages),
+			},
+		},
+		Kind: runtime.SessionMutationAppendMessages,
+		Payload: runtime.AgentLoopAppendMessagesPayload{
+			Messages: []runtime.AgentLoopMessage{{
+				ID:      "msg-append-runtime-result",
+				Role:    "agent",
+				Content: "append through daemon mutator",
+			}},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, runtime.TurnResultFinished, result.Status)
+	payload, ok := result.Payload.(runtime.AgentLoopAppendMessagesResultPayload)
+	require.True(t, ok, "payload type = %T", result.Payload)
+	require.True(t, payload.Mutated)
+	require.Equal(t, sessionID, payload.Session.SessionID)
+	require.Len(t, payload.Session.Messages, len(created.Session.Messages)+1)
+	require.Equal(t, "msg-append-runtime-result", payload.Session.Messages[len(payload.Session.Messages)-1].ID)
+}
+
 func TestAgentManagerAppendMessagesWithPlannerDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

@@ -539,3 +539,78 @@ func TestAgentLoopCapabilityBlockedResultPayloadCloneIsolatesMutableFields(t *te
 		t.Fatalf("clone changed scalar fields: %#v", cloned)
 	}
 }
+
+func TestAgentLoopAppendMessagesResultPayloadCloneIsolatesMutableFields(t *testing.T) {
+	lastMessageAt := time.Date(2026, 6, 8, 13, 0, 0, 0, time.UTC)
+	originalLastMessageAt := lastMessageAt
+	lastCompactedAt := time.Date(2026, 6, 8, 13, 1, 0, 0, time.UTC)
+	originalLastCompactedAt := lastCompactedAt
+
+	payload := AgentLoopAppendMessagesResultPayload{
+		Session: AgentLoopSessionSnapshot{
+			SessionID: "session-append-result",
+			Status:    "running",
+			Messages: []AgentLoopMessage{{
+				ID:      "msg-append",
+				Role:    "agent",
+				Content: "appended",
+				ToolCalls: []AgentLoopToolCall{{
+					ID:     "tool-append",
+					Name:   "workspace.files.read",
+					Result: map[string]any{"path": "README.md"},
+				}},
+			}},
+			MemorySummary: &AgentLoopMemorySummary{
+				Summary:       "session memory",
+				MessageCount:  3,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+			},
+		},
+		Compaction: &AgentLoopMemoryCompaction{
+			Summary: &AgentLoopMemorySummary{
+				Summary:       "compacted memory",
+				MessageCount:  2,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+			},
+			LastCompactedID: "msg-old",
+			LastCompactedAt: &lastCompactedAt,
+			Trigger:         "turn_count",
+		},
+		Mutated: true,
+	}
+
+	cloned := payload.Clone()
+
+	payload.Session.Messages[0].Content = "mutated"
+	payload.Session.Messages[0].ToolCalls[0].Result["path"] = "mutated"
+	*payload.Session.MemorySummary.LastMessageAt = lastMessageAt.Add(time.Hour)
+	payload.Compaction.Summary.Summary = "mutated"
+	*payload.Compaction.Summary.LastMessageAt = lastMessageAt.Add(2 * time.Hour)
+	*payload.Compaction.LastCompactedAt = lastCompactedAt.Add(time.Hour)
+
+	if cloned.Session.Messages[0].Content != "appended" ||
+		cloned.Session.Messages[0].ToolCalls[0].Result["path"] != "README.md" {
+		t.Fatalf("clone shares session messages: %#v", cloned.Session.Messages[0])
+	}
+	if cloned.Session.MemorySummary == payload.Session.MemorySummary ||
+		cloned.Session.MemorySummary.LastMessageAt == payload.Session.MemorySummary.LastMessageAt ||
+		cloned.Session.MemorySummary.LastMessageAt == nil ||
+		!cloned.Session.MemorySummary.LastMessageAt.Equal(originalLastMessageAt) {
+		t.Fatalf("clone shares session memory summary: %#v", cloned.Session.MemorySummary)
+	}
+	if cloned.Compaction == payload.Compaction ||
+		cloned.Compaction.Summary == payload.Compaction.Summary ||
+		cloned.Compaction.Summary.LastMessageAt == payload.Compaction.Summary.LastMessageAt ||
+		cloned.Compaction.Summary.LastMessageAt == nil ||
+		!cloned.Compaction.Summary.LastMessageAt.Equal(originalLastMessageAt) ||
+		cloned.Compaction.LastCompactedAt == payload.Compaction.LastCompactedAt ||
+		cloned.Compaction.LastCompactedAt == nil ||
+		!cloned.Compaction.LastCompactedAt.Equal(originalLastCompactedAt) {
+		t.Fatalf("clone shares compaction: %#v", cloned.Compaction)
+	}
+	if !cloned.Mutated || cloned.Session.SessionID != "session-append-result" {
+		t.Fatalf("clone changed scalar fields: %#v", cloned)
+	}
+}
