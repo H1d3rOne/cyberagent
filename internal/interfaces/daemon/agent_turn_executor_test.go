@@ -730,13 +730,10 @@ func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 		require.Equal(t, sessionID, req.Turn.SessionID)
 		require.Equal(t, "hello fallback route", req.Turn.Prompt)
 		return runtime.LLMTurnResult{
-			Status: runtime.TurnResultFailed,
-			Reason: llmErr.Error(),
-			Error:  llmErr,
-			Payload: daemonLLMTurnResultPayload{
-				Messages:  nil,
-				ToolCalls: nil,
-			},
+			Status:  runtime.TurnResultFailed,
+			Reason:  llmErr.Error(),
+			Error:   llmErr,
+			Payload: runtime.AgentLoopTurnResultPayload{},
 		}, llmErr
 	}))
 
@@ -850,13 +847,10 @@ func TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations(t *
 		require.NotEmpty(t, req.Turn.TurnID)
 		require.Equal(t, "workspace_write", req.Turn.OperationLevel)
 		return runtime.LLMTurnResult{
-			Status: runtime.TurnResultFailed,
-			Reason: llmErr.Error(),
-			Error:  llmErr,
-			Payload: daemonLLMTurnResultPayload{
-				Messages:  nil,
-				ToolCalls: nil,
-			},
+			Status:  runtime.TurnResultFailed,
+			Reason:  llmErr.Error(),
+			Error:   llmErr,
+			Payload: runtime.AgentLoopTurnResultPayload{},
 		}, llmErr
 	}))
 
@@ -1044,6 +1038,15 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 
 	expectedMessage := agentMessage{ID: "msg-llm", Role: "agent", Content: "ok"}
 	expectedToolCall := agentToolCall{ID: "tool-llm", Name: "LLM chat"}
+	lastMessageAt := time.Date(2026, 6, 7, 12, 20, 0, 0, time.UTC)
+	enabled := true
+	authProfiles := []agentHTTPAuthProfile{{
+		ID:      "auth-llm-runner",
+		Token:   "secret-token",
+		Enabled: &enabled,
+	}}
+	history := []agentMessage{{ID: "history-1", Role: "user", Content: "hello"}}
+	memorySummary := &agentMemorySummary{Summary: "memory", LastMessageAt: &lastMessageAt}
 	called := false
 	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, req runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
 		called = true
@@ -1057,23 +1060,38 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 
 		payload, ok := req.Payload.(daemonLLMTurnPayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
-		require.Equal(t, "session-llm-runner", payload.SessionID)
-		require.Equal(t, "task-llm-runner", payload.TurnRef.TaskID)
-		require.Equal(t, "run-llm-runner", payload.TurnRef.RunID)
-		require.Equal(t, "turn-llm-runner", payload.TurnRef.TurnID)
-		require.Equal(t, "plan safely", payload.Prompt)
-		require.Equal(t, "zh-CN", payload.Language)
-		require.Equal(t, "operator-1", payload.Operator)
-		require.Equal(t, "read_only", payload.OperationLevel)
-		require.Equal(t, "gpt-test", payload.Req.Model)
-		require.Len(t, payload.History, 1)
+		require.Equal(t, "session-llm-runner", payload.Loop.Turn.SessionID)
+		require.Equal(t, "task-llm-runner", payload.Loop.Turn.TaskID)
+		require.Equal(t, "run-llm-runner", payload.Loop.Turn.RunID)
+		require.Equal(t, "turn-llm-runner", payload.Loop.Turn.TurnID)
+		require.Equal(t, "plan safely", payload.Loop.Turn.Prompt)
+		require.Equal(t, "zh-CN", payload.Loop.Language)
+		require.Equal(t, "operator-1", payload.Loop.Operator)
+		require.Equal(t, "read_only", payload.Loop.Turn.OperationLevel)
+		require.Equal(t, "gpt-test", payload.Loop.LLMRequest.Model)
+		require.Equal(t, "secret-token", payload.Loop.LLMRequest.AuthProfiles[0].Token)
+		require.NotNil(t, payload.Loop.LLMRequest.AuthProfiles[0].Enabled)
+		require.True(t, *payload.Loop.LLMRequest.AuthProfiles[0].Enabled)
+		require.Len(t, payload.Loop.History, 1)
+		require.Equal(t, "hello", payload.Loop.History[0].Content)
+		require.Equal(t, "memory", payload.Loop.MemorySummary.Summary)
+		require.NotNil(t, payload.Loop.MemorySummary.LastMessageAt)
+		require.Equal(t, lastMessageAt, *payload.Loop.MemorySummary.LastMessageAt)
+
+		payload.Loop.History[0].Content = "mutated payload history"
+		payload.Loop.Turn.Metadata["runner"] = "mutated payload runner"
+		payload.Loop.MemorySummary.Summary = "mutated payload memory"
+		*payload.Loop.MemorySummary.LastMessageAt = lastMessageAt.Add(time.Hour)
+		payload.Loop.LLMRequest.AuthProfiles[0].Token = "mutated-token"
+		*payload.Loop.LLMRequest.AuthProfiles[0].Enabled = false
+		require.Equal(t, "llm_tool_loop", req.Turn.Metadata["runner"])
 
 		return runtime.LLMTurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonLLMTurnResultPayload{
-				Messages:  []agentMessage{expectedMessage},
-				ToolCalls: []agentToolCall{expectedToolCall},
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 			},
 		}, nil
 	}))
@@ -1086,9 +1104,9 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 		"zh-CN",
 		"operator-1",
 		"read_only",
-		sendAgentMessageRequest{Model: "gpt-test"},
-		[]agentMessage{{ID: "history-1", Role: "user", Content: "hello"}},
-		&agentMemorySummary{Summary: "memory"},
+		sendAgentMessageRequest{Model: "gpt-test", AuthProfiles: authProfiles},
+		history,
+		memorySummary,
 		routerServices{},
 	)
 
@@ -1096,6 +1114,11 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 	require.True(t, called)
 	require.Equal(t, []agentMessage{expectedMessage}, messages)
 	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
+	require.Equal(t, "hello", history[0].Content)
+	require.Equal(t, "memory", memorySummary.Summary)
+	require.Equal(t, lastMessageAt, *memorySummary.LastMessageAt)
+	require.Equal(t, "secret-token", authProfiles[0].Token)
+	require.True(t, *authProfiles[0].Enabled)
 }
 
 func TestAgentManagerRunRuntimeAgentLLMPlannerChatDispatchesEngineStageRunner(t *testing.T) {

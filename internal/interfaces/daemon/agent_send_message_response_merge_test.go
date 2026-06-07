@@ -70,20 +70,20 @@ func TestAgentManagerSendMessageResponseMergeControlLLMBranches(t *testing.T) {
 
 				payload, ok := req.Payload.(daemonLLMTurnPayload)
 				require.True(t, ok, "payload type = %T", req.Payload)
-				require.Equal(t, sessionID, payload.SessionID)
-				require.Equal(t, tc.prompt, payload.Prompt)
-				require.Equal(t, "operator-1", payload.Operator)
-				require.GreaterOrEqual(t, len(payload.History), 2)
-				require.Equal(t, "user", payload.History[len(payload.History)-2].Role)
-				require.Equal(t, tc.prompt, payload.History[len(payload.History)-2].Content)
-				require.Equal(t, "agent", payload.History[len(payload.History)-1].Role)
+				require.Equal(t, sessionID, payload.Loop.Turn.SessionID)
+				require.Equal(t, tc.prompt, payload.Loop.Turn.Prompt)
+				require.Equal(t, "operator-1", payload.Loop.Operator)
+				require.GreaterOrEqual(t, len(payload.Loop.History), 2)
+				require.Equal(t, "user", payload.Loop.History[len(payload.Loop.History)-2].Role)
+				require.Equal(t, tc.prompt, payload.Loop.History[len(payload.Loop.History)-2].Content)
+				require.Equal(t, "agent", payload.Loop.History[len(payload.Loop.History)-1].Role)
 
 				return runtime.LLMTurnResult{
 					Status: runtime.TurnResultFinished,
 					Reason: "done",
-					Payload: daemonLLMTurnResultPayload{
-						Messages:  []agentMessage{expectedMessage},
-						ToolCalls: []agentToolCall{expectedTool},
+					Payload: runtime.AgentLoopTurnResultPayload{
+						Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+						ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedTool}),
 					},
 				}, nil
 			}))
