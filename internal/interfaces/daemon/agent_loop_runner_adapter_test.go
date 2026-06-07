@@ -189,6 +189,68 @@ func TestAgentPlannerActionReplanCycleRequestAgentLoopAdapterRoundTripClones(t *
 	require.Equal(t, "history content", roundTrip.State.legacyLoopHistory()[0].Content)
 }
 
+func TestAgentPlannerActionReplanCycleRuntimeRequestHelpersCloneAndDefault(t *testing.T) {
+	loopReq := runtime.AgentLoopRequest{
+		Turn: runtime.TurnContext{
+			SessionID:      "session-runtime-helper",
+			TaskID:         "task-runtime-helper",
+			RunID:          "run-runtime-helper",
+			TurnID:         "turn-runtime-helper",
+			Prompt:         "continue daemon health",
+			OperationLevel: "read_only",
+			Metadata:       map[string]any{"turn_key": "turn_value"},
+		},
+		History: []runtime.AgentLoopMessage{{
+			ID:      "history-runtime-helper",
+			Role:    "user",
+			Content: "history from request",
+		}},
+		State: runtime.AgentLoopState{
+			ResponseMessages: []runtime.AgentLoopMessage{{
+				ID:      "response-runtime-helper",
+				Role:    "agent",
+				Content: "existing response",
+			}},
+		},
+		InitialPlan: &runtime.AgentLoopPlan{
+			Phase:      "step_replan",
+			NextAction: &runtime.AgentLoopNextAction{Type: "continue", AutoContinue: true},
+			Actions: []runtime.AgentLoopAction{{
+				Name:      "daemon.health",
+				Arguments: map[string]any{"probe": "runtime-helper"},
+			}},
+		},
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage: true,
+		},
+	}
+
+	turn := agentPlannerActionReplanCycleTurnFromAgentLoopRequest(loopReq)
+	turnRef := agentPlannerActionReplanCycleTurnRefFromAgentLoopRequest(loopReq)
+	options := agentPlannerActionReplanCycleOptionsFromAgentLoopRequest(loopReq)
+	state := agentPlannerActionReplanCycleStateFromAgentLoopRequest(loopReq)
+	plan := agentPlannerActionReplanCycleInitialPlanFromAgentLoopRequest(loopReq)
+
+	require.Equal(t, "turn_value", turn.Metadata["turn_key"])
+	require.Equal(t, agentRuntimeTurnRef{TaskID: "task-runtime-helper", RunID: "run-runtime-helper", TurnID: "turn-runtime-helper"}, turnRef)
+	require.Equal(t, "planner_loop", options.ActionAppendOrigin)
+	require.True(t, options.AppendActionToolCallsBeforeEmptyMessage)
+	require.Equal(t, []string{"history-runtime-helper"}, agentLoopMessageIDs(state.LoopHistory))
+	require.Equal(t, []string{"response-runtime-helper"}, agentLoopMessageIDs(state.ResponseMessages))
+	require.True(t, plan.shouldAutoContinue())
+	require.Equal(t, "runtime-helper", plan.actions()[0].Arguments["probe"])
+
+	loopReq.Turn.Metadata["turn_key"] = "mutated-turn"
+	loopReq.History[0].Content = "mutated history"
+	loopReq.State.ResponseMessages[0].Content = "mutated response"
+	loopReq.InitialPlan.Actions[0].Arguments["probe"] = "mutated-probe"
+
+	require.Equal(t, "turn_value", turn.Metadata["turn_key"])
+	require.Equal(t, "history from request", state.LoopHistory[0].Content)
+	require.Equal(t, "existing response", state.ResponseMessages[0].Content)
+	require.Equal(t, "runtime-helper", plan.actions()[0].Arguments["probe"])
+}
+
 func TestAgentPlannerActionReplanCycleResultAgentLoopAdapterRoundTripClones(t *testing.T) {
 	result := agentPlannerActionReplanCycleResult{
 		State: agentPlannerActionReplanCycleStateFromLegacy(

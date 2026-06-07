@@ -193,7 +193,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N45：将 shared cycle runner 的 action execution / tool synthesis 内部阶段进一步以 runtime `AgentLoopRequest` / `AgentLoopResult` / `AgentLoopState` 作为主状态传递，缩小 daemon-private cycle DTO ownership。
 - [x] P0.5-N46：将 shared cycle action execution / tool synthesis helper 的输入输出继续收敛为 runtime DTO，减少 `agentPlannerActionReplanCycleRequest` / `State` wrapper 在内部 helper 间传递。
 - [x] P0.5-N47：将 `runRuntimeAgentPlannerActionReplanCycle` 外层 dispatch 入口继续收敛为 runtime `AgentLoopRequest` / `AgentLoopResult`，让 `runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 轮次间更少依赖 cycle request/result wrapper。
-- [ ] P0.5-N48：将 `runAgentPlannerActionReplanCycleAgentLoop` 主流程继续减少 `agentPlannerActionReplanCycleRequest` wrapper 依赖，优先把 turn/options/plan/state 读取拆成 runtime-native helper，只在 append / legacy adapter 边界转换。
+- [x] P0.5-N48：将 `runAgentPlannerActionReplanCycleAgentLoop` 主流程继续减少 `agentPlannerActionReplanCycleRequest` wrapper 依赖，优先把 turn/options/plan/state 读取拆成 runtime-native helper，只在 append / legacy adapter 边界转换。
+- [ ] P0.5-N49：将 shared cycle 主流程中的 plan/action 查询继续替换为 runtime-native helper，减少 `agentPlannerActionReplanCyclePlan` handle 参与主流程，仅在 legacy action/synthesis adapter 边界转换。
 
 当前盘点（2026-06-07）：
 
