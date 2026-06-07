@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/agent/toolregistry"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
 )
@@ -51,6 +52,68 @@ func TestRegistryHandlerDispatch(t *testing.T) {
 	}
 	if len(calls) != 1 || calls[0].Result["dispatched"] != true {
 		t.Fatalf("unexpected tool calls: %#v", calls)
+	}
+}
+
+func TestRegistryHandlerRuntimeUsesToolServiceBinding(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	jobs := newJobManager(jobManagerConfig{RunsDir: t.TempDir()})
+	enabled := true
+	authProfiles := []agentHTTPAuthProfile{{
+		ID:      "auth-registry-binding",
+		Token:   "secret-token",
+		Enabled: &enabled,
+	}}
+
+	called := false
+	spec := &toolregistry.ToolSpec{
+		Name: "test.registry.binding",
+		Handler: func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+			called = true
+			rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+			if !ok {
+				t.Fatalf("runtime type = %T, want agentRegistryHandlerRuntime", in.Runtime)
+			}
+			var binding runtime.AgentLoopToolServiceBinding = rt.Services
+			if binding.Kind != daemonToolServiceBindingKind {
+				t.Fatalf("binding Kind = %q, want %q", binding.Kind, daemonToolServiceBindingKind)
+			}
+			if binding.Metadata["adapter"] != "daemon_legacy_router_services" {
+				t.Fatalf("binding Metadata = %#v", binding.Metadata)
+			}
+			recovered, ok := routerServicesFromAgentLoopToolServiceBinding(binding)
+			if !ok {
+				t.Fatal("routerServicesFromAgentLoopToolServiceBinding() ok = false")
+			}
+			if recovered.jobs != jobs {
+				t.Fatalf("recovered jobs = %p, want %p", recovered.jobs, jobs)
+			}
+			if rt.legacyRouterServices().jobs != jobs {
+				t.Fatalf("legacyRouterServices jobs = %p, want %p", rt.legacyRouterServices().jobs, jobs)
+			}
+			if len(rt.AuthProfiles) != 1 || rt.AuthProfiles[0].Token != "secret-token" {
+				t.Fatalf("unexpected auth profiles: %#v", rt.AuthProfiles)
+			}
+			if rt.DefaultAuthProfileID != "auth-registry-binding" {
+				t.Fatalf("DefaultAuthProfileID = %q", rt.DefaultAuthProfileID)
+			}
+			rt.AuthProfiles[0].Token = "mutated-token"
+			return map[string]any{"binding": true}, nil
+		},
+	}
+
+	messages, calls, err := mgr.executeAgentRegistryHandler(context.Background(), "registry_binding", "en", "tester", "read_only", routerServices{jobs: jobs}, spec, map[string]any{"probe": "ok"}, authProfiles, "auth-registry-binding")
+	if err != nil {
+		t.Fatalf("executeAgentRegistryHandler() error = %v", err)
+	}
+	if !called {
+		t.Fatal("registry handler was not called")
+	}
+	if len(messages) != 1 || len(calls) != 1 || calls[0].Result["binding"] != true {
+		t.Fatalf("unexpected registry output: messages=%#v calls=%#v", messages, calls)
+	}
+	if authProfiles[0].Token != "secret-token" {
+		t.Fatalf("auth profile token was mutated to %q", authProfiles[0].Token)
 	}
 }
 

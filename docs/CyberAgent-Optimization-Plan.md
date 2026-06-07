@@ -401,8 +401,9 @@ ownership 边界：
 32. ✅ P0.5-N38 已把 daemon LLM turn runner payload/result 迁到 runtime-neutral `runtime.AgentLoopTurnPayload` / `runtime.AgentLoopTurnResultPayload`；daemon `daemonLLMTurnPayload` 仅保留 runtime loop payload 与 service binding compatibility adapter。
 33. ✅ P0.5-N39 已把 LLM stage runner planner_chat/tool_synthesis payload/result 迁到 runtime-neutral `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload`；daemon stage runner 仅保留 legacy provider/plan/message 转换 adapter。
 34. ✅ P0.5-N40 已把 tool service binding/adapter compatibility 迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`；LLM turn、deterministic route、replan continuation、planner action execution payload 与 shared cycle tool context 不再直接持有 `routerServices`，daemon 只在 adapter 边界解包。
-35. 下一步继续移动到 engine-native loop runner ownership；daemon 只保留类型转换与 service binding adapter。
-36. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+35. ✅ P0.5-N41 已把 registry handler runtime 的 service 输入也迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`；builtin handlers 只通过 daemon compatibility helper 临时解包 legacy services。
+36. 下一步继续移动到 engine-native loop runner ownership；daemon 只保留类型转换与 service binding adapter。
+37. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1315,6 +1316,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v72 | 完成 P0.5-N38 daemon LLM turn runner payload runtime-neutral DTO：新增 `runtime.AgentLoopTurnPayload` / `runtime.AgentLoopTurnResultPayload` 与 clone helpers，LLM turn runner payload 改为持有 runtime DTO，legacy request/history/memory/message/tool 转换集中在 daemon adapter；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v73 | 完成 P0.5-N39 LLM stage payload/result runtime-neutral DTO：新增 `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload` 与 plan pointer clone helper，planner_chat/tool_synthesis stage payload/result 改为 runtime DTO，legacy request/history/memory/tool messages/plan 转换集中在 daemon stage adapter；daemon/runtime 包测试与 diff check 通过。 |
 | v74 | 完成 P0.5-N40 tool service binding runtime-neutral DTO：新增 `runtime.AgentLoopToolServiceBinding` 与 daemon binding adapter，LLM turn、deterministic route、replan continuation、planner action execution payload 与 shared cycle tool context 不再直接持有 `routerServices`；daemon/runtime 包测试与 diff check 通过。 |
+| v75 | 完成 P0.5-N41 registry handler runtime service binding 收敛：`agentRegistryHandlerRuntime.Services` 改为 `runtime.AgentLoopToolServiceBinding`，builtin handlers 通过 compatibility helper 解包 legacy services；focused daemon tests、daemon/runtime 包测试与 diff check 通过。 |
 
 ---
 

@@ -29,7 +29,7 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if scope != "" {
 			prompt += " scope=" + scope
 		}
-		messages, calls, err := rt.Manager.handleAgentScan(ctx, prompt, in.Language, rt.Services)
+		messages, calls, err := rt.Manager.handleAgentScan(ctx, prompt, in.Language, rt.legacyRouterServices())
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "ports.scan.safe", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
@@ -207,7 +207,7 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if !ok || rt.Manager == nil {
 			return nil, servicesMissingRegistryRuntimeError("daemon.health")
 		}
-		messages, calls, err := rt.Manager.handleAgentHealth(ctx, in.Language, rt.Services)
+		messages, calls, err := rt.Manager.handleAgentHealth(ctx, in.Language, rt.legacyRouterServices())
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "plugins.list", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
@@ -215,7 +215,7 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if !ok || rt.Manager == nil {
 			return nil, servicesMissingRegistryRuntimeError("plugins.list")
 		}
-		messages, calls, err := rt.Manager.handleAgentPlugins(ctx, in.Language, rt.Services)
+		messages, calls, err := rt.Manager.handleAgentPlugins(ctx, in.Language, rt.legacyRouterServices())
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "runs.list", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
@@ -223,7 +223,7 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if !ok || rt.Manager == nil {
 			return nil, servicesMissingRegistryRuntimeError("runs.list")
 		}
-		messages, calls, err := rt.Manager.handleAgentRuns(ctx, in.Language, rt.Services)
+		messages, calls, err := rt.Manager.handleAgentRuns(ctx, in.Language, rt.legacyRouterServices())
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	attachDaemonRunHandlers(r)
@@ -233,7 +233,7 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if !ok || rt.Manager == nil {
 			return nil, servicesMissingRegistryRuntimeError("schedule.create")
 		}
-		messages, calls, err := rt.Manager.handleAgentScheduleCreate(in.SessionID, in.Language, in.Operator, rt.Services, in.RawArgs)
+		messages, calls, err := rt.Manager.handleAgentScheduleCreate(in.SessionID, in.Language, in.Operator, rt.legacyRouterServices(), in.RawArgs)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "schedule.list", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
@@ -242,7 +242,7 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if !ok || rt.Manager == nil {
 			return nil, servicesMissingRegistryRuntimeError("schedule.list")
 		}
-		messages, calls, err := rt.Manager.handleAgentScheduleList(in.Language, rt.Services)
+		messages, calls, err := rt.Manager.handleAgentScheduleList(in.Language, rt.legacyRouterServices())
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "schedule.delete", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
@@ -251,7 +251,7 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if !ok || rt.Manager == nil {
 			return nil, servicesMissingRegistryRuntimeError("schedule.delete")
 		}
-		messages, calls, err := rt.Manager.handleAgentScheduleDelete(in.Language, rt.Services, in.RawArgs)
+		messages, calls, err := rt.Manager.handleAgentScheduleDelete(in.Language, rt.legacyRouterServices(), in.RawArgs)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "web.search", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
@@ -259,7 +259,7 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if !ok || rt.Manager == nil {
 			return nil, servicesMissingRegistryRuntimeError("web.search")
 		}
-		messages, calls, err := rt.Manager.handleAgentWebSearch(ctx, in.Language, rt.Services, in.RawArgs)
+		messages, calls, err := rt.Manager.handleAgentWebSearch(ctx, in.Language, rt.legacyRouterServices(), in.RawArgs)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "web.fetch", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
@@ -553,7 +553,7 @@ func attachDaemonRunHandlers(r *toolregistry.Registry) {
 			stringFromAny(in.RawArgs["section"]),
 			stringFromAny(in.RawArgs["type"]),
 		)
-		messages, calls, err := rt.Manager.handleAgentRunContextTool(ctx, in.SessionID, runID, contextKind, in.Language, rt.Services)
+		messages, calls, err := rt.Manager.handleAgentRunContextTool(ctx, in.SessionID, runID, contextKind, in.Language, rt.legacyRouterServices())
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "reports.draft", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
@@ -571,7 +571,7 @@ func attachDaemonRunHandlers(r *toolregistry.Registry) {
 			stringFromAny(in.RawArgs["output_path"]),
 			stringFromAny(in.RawArgs["file"]),
 		)
-		messages, calls, err := rt.Manager.handleAgentReportDraft(ctx, in.SessionID, runID, in.Language, rt.Services, outputPath)
+		messages, calls, err := rt.Manager.handleAgentReportDraft(ctx, in.SessionID, runID, in.Language, rt.legacyRouterServices(), outputPath)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "runs.approvals.list", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
@@ -585,10 +585,10 @@ func attachDaemonRunHandlers(r *toolregistry.Registry) {
 			stringFromAny(in.RawArgs["id"]),
 		)
 		if runID == "" {
-			messages, calls, err := rt.Manager.handleAgentApprovals(ctx, in.Language, rt.Services)
+			messages, calls, err := rt.Manager.handleAgentApprovals(ctx, in.Language, rt.legacyRouterServices())
 			return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 		}
-		messages, calls, err := rt.Manager.handleAgentRunContextAnalysis(ctx, "读取运行 "+runID+" 的 approvals 审批队列", in.Language, rt.Services)
+		messages, calls, err := rt.Manager.handleAgentRunContextAnalysis(ctx, "读取运行 "+runID+" 的 approvals 审批队列", in.Language, rt.legacyRouterServices())
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonApprovalDecisionHandler(r, "runs.approvals.approve", false)
@@ -607,7 +607,7 @@ func attachDaemonRunHandlers(r *toolregistry.Registry) {
 		if runID != "" {
 			prompt = "恢复已批准运行 " + runID
 		}
-		messages, calls, err := rt.Manager.handleAgentResumeApproved(ctx, in.SessionID, prompt, in.Language, in.Operator, rt.Services)
+		messages, calls, err := rt.Manager.handleAgentResumeApproved(ctx, in.SessionID, prompt, in.Language, in.Operator, rt.legacyRouterServices())
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 }
@@ -645,7 +645,7 @@ func setDaemonApprovalDecisionHandler(r *toolregistry.Registry, name string, den
 		if strings.TrimSpace(comment) != "" {
 			prompt += " comment=" + comment
 		}
-		messages, calls, err := rt.Manager.handleAgentApprovalDecision(ctx, in.SessionID, prompt, in.Language, in.Operator, rt.Services)
+		messages, calls, err := rt.Manager.handleAgentApprovalDecision(ctx, in.SessionID, prompt, in.Language, in.Operator, rt.legacyRouterServices())
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 }

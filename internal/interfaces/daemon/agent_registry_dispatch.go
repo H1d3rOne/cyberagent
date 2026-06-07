@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 
+	agentruntime "github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/agent/toolregistry"
 )
 
@@ -13,9 +14,13 @@ type agentRegistryHandlerResult struct {
 
 type agentRegistryHandlerRuntime struct {
 	Manager              *agentManager
-	Services             routerServices
+	Services             agentruntime.AgentLoopToolServiceBinding
 	AuthProfiles         []agentHTTPAuthProfile
 	DefaultAuthProfileID string
+}
+
+func (rt agentRegistryHandlerRuntime) legacyRouterServices() routerServices {
+	return legacyRouterServicesFromAgentLoopToolServiceBinding(rt.Services)
 }
 
 func (m *agentManager) executeAgentRegistryHandler(ctx context.Context, sessionID, language, operator, operationLevel string, svc routerServices, spec *toolregistry.ToolSpec, args map[string]any, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, error) {
@@ -30,7 +35,7 @@ func (m *agentManager) executeAgentRegistryHandler(ctx context.Context, sessionI
 		RawArgs:        cloneMapStringAny(args),
 		Runtime: agentRegistryHandlerRuntime{
 			Manager:              m,
-			Services:             svc,
+			Services:             agentLoopToolServiceBindingFromRouterServices(svc),
 			AuthProfiles:         append([]agentHTTPAuthProfile(nil), authProfiles...),
 			DefaultAuthProfileID: defaultAuthProfileID,
 		},

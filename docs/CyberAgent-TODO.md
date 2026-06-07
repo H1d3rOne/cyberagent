@@ -181,6 +181,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N38：将 daemon LLM turn runner payload 的 LLM request/history/memory/result 迁到 runtime-neutral `runtime.AgentLoopTurnPayload` / `runtime.AgentLoopTurnResultPayload`，daemon 仅保留 service binding compatibility adapter，并补 payload clone / adapter 隔离测试。
 - [x] P0.5-N39：将 LLM stage runner planner_chat/tool_synthesis payload 与 result 迁到 runtime-neutral `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload`，daemon stage runner 仅在 ingress/egress adapter 转换 legacy request/history/memory/tool messages/plan，并补 clone/adapter 隔离测试。
 - [x] P0.5-N40：新增 runtime-neutral `runtime.AgentLoopToolServiceBinding`，将 LLM turn payload、deterministic route / replan continuation / planner action execution payload 与 shared cycle tool context 的 service binding 从直接 `routerServices` 持有迁到 runtime binding；daemon 仅在 compatibility adapter 边界解包，并补 binding clone / jobs 引用保真测试。
+- [x] P0.5-N41：将 registry handler runtime 的 service 输入也迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`；builtin handlers 只通过 daemon compatibility helper 临时解包 legacy services，并补 registry binding jobs 引用保真与 auth profile clone 回归。
 
 当前盘点（2026-06-07）：
 
@@ -195,6 +196,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - 已将 daemon LLM turn runner payload/result 迁到 runtime-neutral `runtime.AgentLoopTurnPayload` / `runtime.AgentLoopTurnResultPayload`：`daemonLLMTurnPayload` 只包装 runtime loop payload 与 runtime service binding，legacy `sendAgentMessageRequest` / `[]agentMessage` / `*agentMemorySummary` / `[]agentToolCall` 转换集中在 runner ingress/egress adapter。
 - 已将 LLM stage runner payload/result 迁到 runtime-neutral `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload`：planner_chat 与 tool_synthesis 不再通过 daemon-private stage payload 携带 legacy request/history/memory/tool messages/plan，daemon stage runner 仅在 ingress/egress adapter 转换 legacy 类型，并通过 runtime DTO clone 隔离 mutable fields。
 - 已将 tool service binding adapter compatibility 迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`：`daemonLLMTurnPayload`、deterministic route / replan continuation / planner action execution payload 与 `agentPlannerActionReplanCycleToolContext` 不再直接持有 `routerServices`；daemon adapter 通过 `agentLoopToolServiceBindingFromRouterServices` / `legacyRouterServicesFromAgentLoopToolServiceBinding` 解包，并保持 `jobs` 等服务引用不丢失。
+- registry handler runtime 也已改为持有 runtime-neutral `runtime.AgentLoopToolServiceBinding`：`agentRegistryHandlerRuntime.Services` 不再暴露 daemon `routerServices`，builtin handler 只在调用 legacy handler adapter 时通过 `legacyRouterServices()` 解包，并保持 auth profiles slice clone 语义。
 - shared cycle request 已使用 runtime-native turn boundary：`agentPlannerActionReplanCycleRequest.Turn` 现在是 `runtime.TurnContext`，session/task/run/turn/prompt/origin/operation_level 不再作为散列 daemon 参数传入；仅在落回 append/action/synthesis legacy adapter 时转换为 `agentRuntimeTurnRef`。
 - shared cycle request 已拆分 authorization 与 LLM synthesis request：action execution 只读取 runtime-neutral `runtime.AgentLoopAuthorization`，并通过 `runAgentPlannerActionReplanCycleActionExecution` 在 helper 内临时转换 tool context / auth profiles / action snapshot；StepReplan synthesis 兼容路径已集中到 `runAgentPlannerActionReplanCycleSynthesis`，由 cycle-private DTO 临时转换到 legacy request。
 - shared cycle request 的 LLM synthesis 输入已迁到 runtime-neutral `runtime.AgentLoopLLMRequest`：只保留 provider/model/API key/base URL/instructions/origin/operation_level/auth hints，并在调用 legacy synthesis adapter 时临时转换回 `sendAgentMessageRequest`。
@@ -679,6 +681,17 @@ git diff --check
 ```
 
 结果：新增 runtime-neutral `runtime.AgentLoopToolServiceBinding` 与 clone helper，daemon 使用 `agentLoopToolServiceBindingFromRouterServices` / `legacyRouterServicesFromAgentLoopToolServiceBinding` 在 compatibility 边界绑定/解包 legacy services；`daemonLLMTurnPayload`、deterministic route / replan continuation / planner action execution payload 与 shared cycle tool context 不再直接持有 `routerServices`。新增 runtime binding clone 隔离、daemon binding adapter、LLM turn payload jobs 引用与 planner action execution jobs 引用保真覆盖，并复跑 daemon/runtime 全量包测试。
+
+本轮增量（P0.5-N41：registry handler runtime service binding 收敛）
+
+```bash
+gofmt -w internal/interfaces/daemon/agent_registry_dispatch.go internal/interfaces/daemon/agent_registry_handlers.go internal/interfaces/daemon/agent_registry_dispatch_test.go
+go test -count=1 ./internal/interfaces/daemon -run 'TestRegistryHandler(RuntimeUsesToolServiceBinding|Dispatch)|TestRoutePrompt|TestAgentManagerExecuteAgentPlannerActions'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：`agentRegistryHandlerRuntime.Services` 已从 daemon `routerServices` 改为 runtime-neutral `runtime.AgentLoopToolServiceBinding`，`executeAgentRegistryHandler` 在入口绑定 legacy services，builtin registry handlers 通过 `legacyRouterServices()` helper 在 adapter 边界解包。新增 registry handler runtime binding 覆盖，验证 binding kind/metadata、`jobs` 引用保真、legacy helper 解包与 auth profile slice clone 语义，并复跑 focused 与 daemon/runtime 包测试。
 
 P1-F1 前端路由/bundle 盘点：
 
