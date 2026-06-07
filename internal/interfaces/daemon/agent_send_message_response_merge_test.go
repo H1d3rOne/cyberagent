@@ -68,17 +68,17 @@ func TestAgentManagerSendMessageResponseMergeControlLLMBranches(t *testing.T) {
 				require.Equal(t, tc.prompt, req.Turn.Prompt)
 				require.Equal(t, "read_only", req.Turn.OperationLevel)
 
-				payload, ok := req.Payload.(daemonLLMTurnPayload)
+				payload, ok := req.Payload.(runtime.AgentLoopRequest)
 				require.True(t, ok, "payload type = %T", req.Payload)
-				require.Equal(t, sessionID, payload.Loop.Turn.SessionID)
-				require.Equal(t, tc.prompt, payload.Loop.Turn.Prompt)
-				require.Equal(t, "operator-1", payload.Loop.Operator)
-				require.Equal(t, runtime.AgentLoopModeLLMToolLoop, payload.Loop.Mode)
-				require.Equal(t, "planner_loop", payload.Loop.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
-				require.GreaterOrEqual(t, len(payload.Loop.History), 2)
-				require.Equal(t, "user", payload.Loop.History[len(payload.Loop.History)-2].Role)
-				require.Equal(t, tc.prompt, payload.Loop.History[len(payload.Loop.History)-2].Content)
-				require.Equal(t, "agent", payload.Loop.History[len(payload.Loop.History)-1].Role)
+				require.Equal(t, sessionID, payload.Turn.SessionID)
+				require.Equal(t, tc.prompt, payload.Turn.Prompt)
+				require.Equal(t, "operator-1", payload.Operator)
+				require.Equal(t, runtime.AgentLoopModeLLMToolLoop, payload.Mode)
+				require.Equal(t, "planner_loop", payload.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
+				require.GreaterOrEqual(t, len(payload.History), 2)
+				require.Equal(t, "user", payload.History[len(payload.History)-2].Role)
+				require.Equal(t, tc.prompt, payload.History[len(payload.History)-2].Content)
+				require.Equal(t, "agent", payload.History[len(payload.History)-1].Role)
 
 				return runtime.LLMTurnResult{
 					Status: runtime.TurnResultFinished,

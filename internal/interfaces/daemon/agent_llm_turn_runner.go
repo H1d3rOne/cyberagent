@@ -7,10 +7,6 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 )
 
-type daemonLLMTurnPayload struct {
-	Loop runtime.AgentLoopRequest
-}
-
 type daemonAgentLLMTurnRunner struct {
 	manager *agentManager
 }
@@ -20,13 +16,12 @@ func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LL
 		err := errors.New("daemon: llm turn runner has no manager")
 		return daemonLLMTurnErrorResult(req, err), err
 	}
-	payload, ok := req.Payload.(daemonLLMTurnPayload)
+	loop, ok := req.Payload.(runtime.AgentLoopRequest)
 	if !ok {
 		err := errors.New("daemon: invalid llm turn payload")
 		return daemonLLMTurnErrorResult(req, err), err
 	}
-
-	loop := payload.Loop.Clone()
+	loop = loop.Clone()
 	messages, toolCalls, err := r.manager.runAgentLLMToolLoopAgentLoop(ctx, loop)
 
 	status := runtime.TurnResultFinished
@@ -95,26 +90,24 @@ func (m *agentManager) runRuntimeLLMToolLoop(ctx context.Context, sessionID stri
 	loopHistory := agentLoopMessagesFromAgentMessages(history)
 	result, err := eng.RunLLMTurn(ctx, runtime.LLMTurnRequest{
 		Turn: turn,
-		Payload: daemonLLMTurnPayload{
-			Loop: runtime.AgentLoopRequest{
-				Mode:          runtime.AgentLoopModeLLMToolLoop,
-				Turn:          runtime.CloneAgentLoopTurnContext(turn),
-				Language:      language,
-				Operator:      operator,
-				LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
-				History:       runtime.CloneAgentLoopMessages(loopHistory),
-				MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
-				State: runtime.AgentLoopState{
-					LoopHistory: runtime.CloneAgentLoopMessages(loopHistory),
-				},
-				Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
-				ToolServices:  agentLoopToolServiceBindingFromRouterServices(svc),
-				MaxLoops:      reqMaxAgentReplans(req),
-				Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
-					ActionAppendOrigin:                      "planner_loop",
-					AppendActionToolCallsBeforeEmptyMessage: true,
-				}),
+		Payload: runtime.AgentLoopRequest{
+			Mode:          runtime.AgentLoopModeLLMToolLoop,
+			Turn:          runtime.CloneAgentLoopTurnContext(turn),
+			Language:      language,
+			Operator:      operator,
+			LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
+			History:       runtime.CloneAgentLoopMessages(loopHistory),
+			MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
+			State: runtime.AgentLoopState{
+				LoopHistory: runtime.CloneAgentLoopMessages(loopHistory),
 			},
+			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
+			ToolServices:  agentLoopToolServiceBindingFromRouterServices(svc),
+			MaxLoops:      reqMaxAgentReplans(req),
+			Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
+				ActionAppendOrigin:                      "planner_loop",
+				AppendActionToolCallsBeforeEmptyMessage: true,
+			}),
 		},
 		Metadata: map[string]any{
 			"runner":   "llm_tool_loop",

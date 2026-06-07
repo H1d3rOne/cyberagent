@@ -218,7 +218,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N70：抽出 runtime-native replan continuation request runner，让 `runAgentReplanActionContinuation` 成为 legacy wrapper，continuation turn executor adapter 不再把 `runtime.AgentLoopRequest` 转回散列 legacy 参数后再进入 loop。
 - [x] P0.5-N71：抽出 runtime-native LLM tool loop request runner，让 `runAgentLLMToolLoop` 成为 legacy wrapper，LLMTurn runner adapter 不再把 runtime turn payload 转回散列 legacy 参数后再进入 loop。
 - [x] P0.5-N72：将 `daemonLLMTurnPayload` 的 Loop/Services 进一步收敛为 `runtime.AgentLoopRequest`，复用 LLM tool loop request runner，减少 LLMTurn adapter 私有 payload wrapper。
-- [ ] P0.5-N73：将 LLM turn runner payload 进一步改为直接携带 `runtime.AgentLoopRequest`，移除 `daemonLLMTurnPayload` 单字段 compatibility wrapper。
+- [x] P0.5-N73：将 LLM turn runner payload 进一步改为直接携带 `runtime.AgentLoopRequest`，移除 `daemonLLMTurnPayload` 单字段 compatibility wrapper。
+- [ ] P0.5-N74：清理已闲置的 `runtime.AgentLoopTurnPayload` DTO 与测试，LLM turn payload 契约统一到 `runtime.AgentLoopRequest` / `AgentLoopTurnResultPayload`。
 
 当前盘点（2026-06-08）：
 
@@ -255,7 +256,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - replan continuation 外层 runner 已抽为 runtime-native request 主入口：`runAgentReplanActionContinuationAgentLoop` 直接消费 `runtime.AgentLoopRequest` 并串联 cycle state/plan，`runAgentReplanActionContinuation` 降为 legacy wrapper，continuation turn executor adapter 不再把 runtime request 转回散列 legacy 参数后再进入 loop。
 - LLM tool loop 外层 runner 已抽为 runtime-native request 主入口：`runAgentLLMToolLoopAgentLoop` 直接消费 `runtime.AgentLoopRequest`，统一默认 mode/max loops/append metadata，并用 runtime history/state/memory/auth/service binding 串联 planner chat 与 shared cycle；`runAgentLLMToolLoop` 降为 legacy wrapper，LLMTurn runner adapter 不再把 runtime turn payload 展开回散列 legacy 参数后再进入 loop。
 - LLM turn runner 私有 payload 已进一步收敛：`daemonLLMTurnPayload` 现在只包装一个 `runtime.AgentLoopRequest`，Loop/history/state/memory/auth/service binding/max_loops/metadata 都在 request 内 clone 传递，`daemonAgentLLMTurnRunner` 直接复用 LLM tool loop request runner。
-- 仍是 daemon-owned legacy adapter：LLM planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition、follow-up continuation egress，以及 `daemonLLMTurnPayload` 单字段 compatibility wrapper；`runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 已降为 runtime request runner 前的 legacy wrapper。action execution、StepReplan synthesis、plan handle ingress/egress、state/memory/auth/LLM request/message/tool/LLM loop 返回/LLM turn payload/result/LLM stage payload/result/tool service binding ingress/egress 以及 action/synthesis/result/route/control response phase/append 的 legacy 转换已集中到 cycle-private helpers/wrappers 或 daemon adapter，plan/action/state/memory/auth/LLM request/message/tool/LLM turn/LLM stage/tool service binding 以及 loop request/result DTO 已迁到 runtime-neutral package，`Engine.RunAgentLoop` / `AgentLoopRunner` seam 已挂接 legacy shared cycle adapter，外层 LLM tool loop 与 replan continuation dispatch 已使用 runtime request/result；后续目标是逐步迁移 engine-native runner ownership。
+- LLM turn runner payload 已去除 daemon-private wrapper：`runtime.LLMTurnRequest.Payload` 现在直接携带 `runtime.AgentLoopRequest`，daemon runner 直接 clone request 并调用 `runAgentLLMToolLoopAgentLoop`。
+- 仍是 daemon-owned legacy adapter：LLM planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition 与 follow-up continuation egress；`runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 已降为 runtime request runner 前的 legacy wrapper。action execution、StepReplan synthesis、plan handle ingress/egress、state/memory/auth/LLM request/message/tool/LLM loop 返回/LLM turn payload/result/LLM stage payload/result/tool service binding ingress/egress 以及 action/synthesis/result/route/control response phase/append 的 legacy 转换已集中到 cycle-private helpers/wrappers 或 daemon adapter，plan/action/state/memory/auth/LLM request/message/tool/LLM turn/LLM stage/tool service binding 以及 loop request/result DTO 已迁到 runtime-neutral package，`Engine.RunAgentLoop` / `AgentLoopRunner` seam 已挂接 legacy shared cycle adapter，外层 LLM tool loop 与 replan continuation dispatch 已使用 runtime request/result；后续目标是逐步迁移 engine-native runner ownership。
 
 ### 7.2 P1 Frontend / QA
 
@@ -914,6 +916,18 @@ git diff --check
 ```
 
 结果：`daemonLLMTurnPayload` 从 `AgentLoopTurnPayload + Services` 收敛为单个 `runtime.AgentLoopRequest`，service binding、authorization、history/state、max loops 与 planner append metadata 都随 request clone；`daemonAgentLLMTurnRunner` 直接调用 `runAgentLLMToolLoopAgentLoop`，不再在 adapter 内重新拼 runtime request；focused daemon tests、runtime/daemon 包测试与 diff check 通过。
+
+
+本轮增量（P0.5-N73：LLM turn payload 直接携带 runtime request）：
+
+```bash
+gofmt -w internal/interfaces/daemon/agent_llm_turn_runner.go internal/interfaces/daemon/agent_turn_executor_test.go internal/interfaces/daemon/agent_send_message_response_merge_test.go
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner|TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineTurnRunner|TestAgentManagerRunRuntimeLLMToolLoopDispatchesLLMTurnRunner|TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueSteps|TestAgentManagerRunAgentLLMToolLoopThreadsRuntimeCycleDTOState|TestAgentManagerSendMessageResponseMergeControlLLMBranches'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：`runRuntimeLLMToolLoop` 现在把 `runtime.AgentLoopRequest` 直接放入 `runtime.LLMTurnRequest.Payload`，`daemonAgentLLMTurnRunner` 直接按该 runtime request clone/dispatch，不再需要 `daemonLLMTurnPayload` compatibility wrapper；focused daemon tests、runtime/daemon 包测试与 diff check 通过。
 
 P1-F1 前端路由/bundle 盘点：
 

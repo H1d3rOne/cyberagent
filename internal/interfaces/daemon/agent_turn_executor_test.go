@@ -1064,41 +1064,41 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 		require.Equal(t, "read_only", req.Turn.OperationLevel)
 		require.Equal(t, "llm_tool_loop", req.Metadata["runner"])
 
-		payload, ok := req.Payload.(daemonLLMTurnPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopRequest)
 		require.True(t, ok, "payload type = %T", req.Payload)
-		require.Equal(t, "session-llm-runner", payload.Loop.Turn.SessionID)
-		require.Equal(t, "task-llm-runner", payload.Loop.Turn.TaskID)
-		require.Equal(t, "run-llm-runner", payload.Loop.Turn.RunID)
-		require.Equal(t, "turn-llm-runner", payload.Loop.Turn.TurnID)
-		require.Equal(t, "plan safely", payload.Loop.Turn.Prompt)
-		require.Equal(t, "zh-CN", payload.Loop.Language)
-		require.Equal(t, "operator-1", payload.Loop.Operator)
-		require.Equal(t, "read_only", payload.Loop.Turn.OperationLevel)
-		require.Equal(t, runtime.AgentLoopModeLLMToolLoop, payload.Loop.Mode)
-		require.Equal(t, 3, payload.Loop.MaxLoops)
-		require.Equal(t, "planner_loop", payload.Loop.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
-		require.Equal(t, true, payload.Loop.Metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage])
-		require.Equal(t, "gpt-test", payload.Loop.LLMRequest.Model)
-		require.Equal(t, "secret-token", payload.Loop.LLMRequest.AuthProfiles[0].Token)
-		require.NotNil(t, payload.Loop.LLMRequest.AuthProfiles[0].Enabled)
-		require.True(t, *payload.Loop.LLMRequest.AuthProfiles[0].Enabled)
-		require.Len(t, payload.Loop.History, 1)
-		require.Equal(t, "hello", payload.Loop.History[0].Content)
-		require.Len(t, payload.Loop.State.LoopHistory, 1)
-		require.Equal(t, "hello", payload.Loop.State.LoopHistory[0].Content)
-		require.Equal(t, "memory", payload.Loop.MemorySummary.Summary)
-		require.NotNil(t, payload.Loop.MemorySummary.LastMessageAt)
-		require.Equal(t, lastMessageAt, *payload.Loop.MemorySummary.LastMessageAt)
-		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Loop.ToolServices)
+		require.Equal(t, "session-llm-runner", payload.Turn.SessionID)
+		require.Equal(t, "task-llm-runner", payload.Turn.TaskID)
+		require.Equal(t, "run-llm-runner", payload.Turn.RunID)
+		require.Equal(t, "turn-llm-runner", payload.Turn.TurnID)
+		require.Equal(t, "plan safely", payload.Turn.Prompt)
+		require.Equal(t, "zh-CN", payload.Language)
+		require.Equal(t, "operator-1", payload.Operator)
+		require.Equal(t, "read_only", payload.Turn.OperationLevel)
+		require.Equal(t, runtime.AgentLoopModeLLMToolLoop, payload.Mode)
+		require.Equal(t, 3, payload.MaxLoops)
+		require.Equal(t, "planner_loop", payload.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
+		require.Equal(t, true, payload.Metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage])
+		require.Equal(t, "gpt-test", payload.LLMRequest.Model)
+		require.Equal(t, "secret-token", payload.LLMRequest.AuthProfiles[0].Token)
+		require.NotNil(t, payload.LLMRequest.AuthProfiles[0].Enabled)
+		require.True(t, *payload.LLMRequest.AuthProfiles[0].Enabled)
+		require.Len(t, payload.History, 1)
+		require.Equal(t, "hello", payload.History[0].Content)
+		require.Len(t, payload.State.LoopHistory, 1)
+		require.Equal(t, "hello", payload.State.LoopHistory[0].Content)
+		require.Equal(t, "memory", payload.MemorySummary.Summary)
+		require.NotNil(t, payload.MemorySummary.LastMessageAt)
+		require.Equal(t, lastMessageAt, *payload.MemorySummary.LastMessageAt)
+		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.ToolServices)
 		require.True(t, ok)
 		require.Same(t, jobs, payloadServices.jobs)
 
-		payload.Loop.History[0].Content = "mutated payload history"
-		payload.Loop.Turn.Metadata["runner"] = "mutated payload runner"
-		payload.Loop.MemorySummary.Summary = "mutated payload memory"
-		*payload.Loop.MemorySummary.LastMessageAt = lastMessageAt.Add(time.Hour)
-		payload.Loop.LLMRequest.AuthProfiles[0].Token = "mutated-token"
-		*payload.Loop.LLMRequest.AuthProfiles[0].Enabled = false
+		payload.History[0].Content = "mutated payload history"
+		payload.Turn.Metadata["runner"] = "mutated payload runner"
+		payload.MemorySummary.Summary = "mutated payload memory"
+		*payload.MemorySummary.LastMessageAt = lastMessageAt.Add(time.Hour)
+		payload.LLMRequest.AuthProfiles[0].Token = "mutated-token"
+		*payload.LLMRequest.AuthProfiles[0].Enabled = false
 		require.Equal(t, "llm_tool_loop", req.Turn.Metadata["runner"])
 
 		return runtime.LLMTurnResult{
