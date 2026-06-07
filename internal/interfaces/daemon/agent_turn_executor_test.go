@@ -1332,7 +1332,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 
 	require.NoError(t, err)
 	require.True(t, called)
-	require.Equal(t, "operator asked", state.LoopHistory.legacyAgentMessages()[0].Content)
+	require.Equal(t, "operator asked", state.legacyLoopHistory()[0].Content)
 	require.Equal(t, "action observation", actionMessages.legacyAgentMessages()[0].Content)
 	require.Equal(t, "cycle memory", req.MemorySummary.legacyAgentMemorySummary().Summary)
 	require.Equal(t, lastMessageAt, *req.MemorySummary.legacyAgentMemorySummary().LastMessageAt)
@@ -2238,11 +2238,11 @@ func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *te
 	loopHistory[0].Content = "mutated history"
 	loopHistory[0].ToolCalls[0].Metadata["phase"] = "mutated history metadata"
 
-	gotResponses := state.ResponseMessages.legacyAgentMessages()
-	gotTools := state.ToolCalls.legacyAgentToolCalls()
-	gotHistory := state.LoopHistory.legacyAgentMessages()
-	require.Equal(t, 1, state.ResponseMessages.len())
-	require.Equal(t, 1, state.ToolCalls.len())
+	gotResponses := state.legacyResponseMessages()
+	gotTools := state.legacyToolCalls()
+	gotHistory := state.legacyLoopHistory()
+	require.Equal(t, 1, state.responseMessages().len())
+	require.Equal(t, 1, state.toolCalls().len())
 	require.Len(t, gotResponses, 1)
 	require.Len(t, gotResponses[0].ToolCalls, 1)
 	require.Equal(t, "response message", gotResponses[0].Content)
@@ -2287,23 +2287,23 @@ func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *te
 	gotHistory[0].Content = "mutated returned history"
 	gotHistory[0].ToolCalls[0].Metadata["phase"] = "mutated returned history metadata"
 
-	require.Equal(t, "response message", state.ResponseMessages.legacyAgentMessages()[0].Content)
-	require.Equal(t, "response", state.ResponseMessages.legacyAgentMessages()[0].ToolCalls[0].Result["source"])
-	require.Equal(t, "response warning", state.ResponseMessages.legacyAgentMessages()[0].ToolCalls[0].Error.Message)
-	require.Equal(t, "Run", state.ResponseMessages.legacyAgentMessages()[0].Links[0].Label)
-	require.Equal(t, "continue cycle state", state.ResponseMessages.legacyAgentMessages()[0].SuggestedPrompts[0])
-	require.Equal(t, "Continue", state.ResponseMessages.legacyAgentMessages()[0].RecommendationOptions[0].Title)
-	require.Equal(t, "tool", state.ToolCalls.legacyAgentToolCalls()[0].Result["source"])
-	require.Equal(t, "top-level warning", state.ToolCalls.legacyAgentToolCalls()[0].Error.Message)
-	require.Equal(t, "history message", state.LoopHistory.legacyAgentMessages()[0].Content)
-	require.Equal(t, "history", state.LoopHistory.legacyAgentMessages()[0].ToolCalls[0].Metadata["phase"])
+	require.Equal(t, "response message", state.legacyResponseMessages()[0].Content)
+	require.Equal(t, "response", state.legacyResponseMessages()[0].ToolCalls[0].Result["source"])
+	require.Equal(t, "response warning", state.legacyResponseMessages()[0].ToolCalls[0].Error.Message)
+	require.Equal(t, "Run", state.legacyResponseMessages()[0].Links[0].Label)
+	require.Equal(t, "continue cycle state", state.legacyResponseMessages()[0].SuggestedPrompts[0])
+	require.Equal(t, "Continue", state.legacyResponseMessages()[0].RecommendationOptions[0].Title)
+	require.Equal(t, "tool", state.legacyToolCalls()[0].Result["source"])
+	require.Equal(t, "top-level warning", state.legacyToolCalls()[0].Error.Message)
+	require.Equal(t, "history message", state.legacyLoopHistory()[0].Content)
+	require.Equal(t, "history", state.legacyLoopHistory()[0].ToolCalls[0].Metadata["phase"])
 
-	phasedResponses := state.ResponseMessages.withPhase("step")
-	phasedTools := state.ToolCalls.withPhase("step")
-	require.Equal(t, "response", state.ResponseMessages.legacyAgentMessages()[0].ToolCalls[0].Metadata["phase"])
-	require.Nil(t, state.ResponseMessages.legacyAgentMessages()[0].ToolCalls[0].Metadata["agent_phase"])
-	require.Equal(t, "tool", state.ToolCalls.legacyAgentToolCalls()[0].Metadata["phase"])
-	require.Nil(t, state.ToolCalls.legacyAgentToolCalls()[0].Metadata["agent_phase"])
+	phasedResponses := state.responseMessages().withPhase("step")
+	phasedTools := state.toolCalls().withPhase("step")
+	require.Equal(t, "response", state.legacyResponseMessages()[0].ToolCalls[0].Metadata["phase"])
+	require.Nil(t, state.legacyResponseMessages()[0].ToolCalls[0].Metadata["agent_phase"])
+	require.Equal(t, "tool", state.legacyToolCalls()[0].Metadata["phase"])
+	require.Nil(t, state.legacyToolCalls()[0].Metadata["agent_phase"])
 	require.Equal(t, "step", phasedResponses.legacyAgentMessages()[0].Phase)
 	require.Equal(t, "response", phasedResponses.legacyAgentMessages()[0].ToolCalls[0].Metadata["phase"])
 	require.Equal(t, "step", phasedResponses.legacyAgentMessages()[0].ToolCalls[0].Metadata["agent_phase"])
@@ -2311,8 +2311,8 @@ func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *te
 	require.Equal(t, "step", phasedTools.legacyAgentToolCalls()[0].Metadata["agent_phase"])
 	phasedResponses.legacyAgentMessages()[0].Content = "mutated phased response"
 	phasedTools.legacyAgentToolCalls()[0].Result["source"] = "mutated phased tool"
-	require.Equal(t, "response message", state.ResponseMessages.legacyAgentMessages()[0].Content)
-	require.Equal(t, "tool", state.ToolCalls.legacyAgentToolCalls()[0].Result["source"])
+	require.Equal(t, "response message", state.legacyResponseMessages()[0].Content)
+	require.Equal(t, "tool", state.legacyToolCalls()[0].Result["source"])
 
 	appendedMessage := agentMessage{
 		ID:      "msg-cycle-state-appended",
@@ -2338,9 +2338,9 @@ func TestAgentPlannerActionReplanCycleStateWrapsLegacyMessagesAndToolCalls(t *te
 	appendedMessage.ToolCalls[0].Result["source"] = "mutated appended message result"
 	appendedTool.Result["source"] = "mutated appended tool result"
 
-	finalResponses := state.ResponseMessages.legacyAgentMessages()
-	finalTools := state.ToolCalls.legacyAgentToolCalls()
-	finalHistory := state.LoopHistory.legacyAgentMessages()
+	finalResponses := state.legacyResponseMessages()
+	finalTools := state.legacyToolCalls()
+	finalHistory := state.legacyLoopHistory()
 	require.Len(t, finalResponses, 2)
 	require.Equal(t, "appended message", finalResponses[1].Content)
 	require.Equal(t, "appended-message", finalResponses[1].ToolCalls[0].Result["source"])
@@ -2445,7 +2445,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *t
 	require.True(t, synthesisCalled)
 	require.True(t, result.Continue)
 	require.False(t, result.Plan.hasActions())
-	responses := result.State.ResponseMessages.legacyAgentMessages()
+	responses := result.State.legacyResponseMessages()
 	require.Len(t, responses, 3)
 	require.Equal(t, actionMessage.ID, responses[1].ID)
 	require.Equal(t, "step", responses[1].Phase)
