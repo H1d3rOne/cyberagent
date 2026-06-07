@@ -379,7 +379,7 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 			turnExecutions = append(turnExecutions, turn)
 			payload, ok := turn.Payload.(daemonReplanActionContinuationTurnPayload)
 			require.True(t, ok, "payload type = %T", turn.Payload)
-			require.Equal(t, synthesisPlan, payload.Plan)
+			require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(synthesisPlan), payload.Request.InitialPlan)
 			return runtime.TurnResult{
 				Status:  runtime.TurnResultFinished,
 				Reason:  "follow-up handled by test executor",
@@ -1415,19 +1415,20 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t 
 
 		payload, ok := turn.Payload.(daemonReplanActionContinuationTurnPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, "session-replan-continuation", payload.SessionID)
-		require.Equal(t, "task-replan-continuation", payload.TurnRef.TaskID)
-		require.Equal(t, "run-replan-continuation", payload.TurnRef.RunID)
-		require.Equal(t, "turn-replan-continuation", payload.TurnRef.TurnID)
-		require.Equal(t, "continue daemon health", payload.Prompt)
-		require.Equal(t, "en", payload.Language)
-		require.Equal(t, "tester", payload.Operator)
-		require.Equal(t, "read_only", payload.OperationLevel)
-		require.Equal(t, "gpt-continuation", payload.Req.Model)
-		require.Len(t, payload.History, 1)
-		require.Equal(t, "memory", payload.MemorySummary.Summary)
-		require.Same(t, expectedPlan, payload.Plan)
-		require.Equal(t, 2, payload.MaxLoops)
+		require.Equal(t, runtime.AgentLoopModeReplanContinuation, payload.Request.Mode)
+		require.Equal(t, "session-replan-continuation", payload.Request.Turn.SessionID)
+		require.Equal(t, "task-replan-continuation", payload.Request.Turn.TaskID)
+		require.Equal(t, "run-replan-continuation", payload.Request.Turn.RunID)
+		require.Equal(t, "turn-replan-continuation", payload.Request.Turn.TurnID)
+		require.Equal(t, "continue daemon health", payload.Request.Turn.Prompt)
+		require.Equal(t, "en", payload.Request.Language)
+		require.Equal(t, "tester", payload.Request.Operator)
+		require.Equal(t, "read_only", payload.Request.Turn.OperationLevel)
+		require.Equal(t, "gpt-continuation", payload.Request.LLMRequest.Model)
+		require.Len(t, payload.Request.History, 1)
+		require.Equal(t, "memory", payload.Request.MemorySummary.Summary)
+		require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(expectedPlan), payload.Request.InitialPlan)
+		require.Equal(t, 2, payload.Request.MaxLoops)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,

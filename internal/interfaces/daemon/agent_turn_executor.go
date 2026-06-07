@@ -28,18 +28,7 @@ type daemonDeterministicRouteTurnResultPayload struct {
 }
 
 type daemonReplanActionContinuationTurnPayload struct {
-	SessionID      string
-	TurnRef        agentRuntimeTurnRef
-	Prompt         string
-	Language       string
-	Operator       string
-	OperationLevel string
-	Req            sendAgentMessageRequest
-	History        []agentMessage
-	MemorySummary  *agentMemorySummary
-	Services       runtime.AgentLoopToolServiceBinding
-	Plan           *agentPlannerResponse
-	MaxLoops       int
+	Request runtime.AgentLoopRequest
 }
 
 type daemonReplanActionContinuationTurnResultPayload struct {
@@ -143,20 +132,25 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	loopReq := payload.Request.Clone()
+	history := runtime.CloneAgentLoopMessages(loopReq.History)
+	if len(history) == 0 && len(loopReq.State.LoopHistory) > 0 {
+		history = runtime.CloneAgentLoopMessages(loopReq.State.LoopHistory)
+	}
 	messages, toolCalls := e.manager.runAgentReplanActionContinuation(
 		ctx,
-		payload.SessionID,
-		payload.TurnRef,
-		payload.Prompt,
-		payload.Language,
-		payload.Operator,
-		payload.OperationLevel,
-		payload.Req,
-		payload.History,
-		payload.MemorySummary,
-		legacyRouterServicesFromAgentLoopToolServiceBinding(payload.Services),
-		payload.Plan,
-		payload.MaxLoops,
+		loopReq.Turn.SessionID,
+		agentRuntimeTurnRefFromTurn(loopReq.Turn),
+		loopReq.Turn.Prompt,
+		loopReq.Language,
+		loopReq.Operator,
+		loopReq.Turn.OperationLevel,
+		sendMessageRequestFromAgentLoopLLMRequest(loopReq.LLMRequest),
+		agentMessagesFromAgentLoopMessages(history),
+		agentMemorySummaryPtrFromAgentLoopMemorySummary(loopReq.MemorySummary),
+		legacyRouterServicesFromAgentLoopToolServiceBinding(loopReq.ToolServices),
+		agentPlannerResponsePtrFromAgentLoopPlan(loopReq.InitialPlan),
+		loopReq.MaxLoops,
 	)
 	resultPayload := daemonReplanActionContinuationTurnResultPayload{
 		Messages:  runtime.CloneAgentLoopMessages(messages),
@@ -169,14 +163,14 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 		Data: map[string]any{
 			"executor":         "daemon_legacy_adapter",
 			"kind":             daemonTurnExecutionReplanActionContinuation,
-			"session_id":       payload.SessionID,
+			"session_id":       loopReq.Turn.SessionID,
 			"task_id":          turn.TaskID,
 			"run_id":           turn.RunID,
 			"turn_id":          turn.TurnID,
 			"message_count":    len(messages),
 			"tool_call_count":  len(toolCalls),
-			"operation_level":  payload.OperationLevel,
-			"max_loops":        payload.MaxLoops,
+			"operation_level":  loopReq.Turn.OperationLevel,
+			"max_loops":        loopReq.MaxLoops,
 			"manager_attached": true,
 		},
 	}, nil
@@ -332,6 +326,25 @@ func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, s
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	loopReq := runtime.AgentLoopRequest{
+		Mode:          runtime.AgentLoopModeReplanContinuation,
+		Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
+		Language:      language,
+		Operator:      operator,
+		LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
+		History:       agentLoopMessagesFromAgentMessages(history),
+		MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
+		InitialPlan:   agentLoopPlanFromPlannerResponse(plan),
+		State: runtime.AgentLoopState{
+			LoopHistory: agentLoopMessagesFromAgentMessages(history),
+		},
+		Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
+		ToolServices:  agentLoopToolServiceBindingFromRouterServices(svc),
+		MaxLoops:      maxLoops,
+		Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
+			ActionAppendOrigin: daemonTurnExecutionReplanActionContinuation,
+		}),
+	}
 	result, err := eng.ExecuteTurn(ctx, runtime.TurnContext{
 		SessionID:      sessionID,
 		TaskID:         turnRef.TaskID,
@@ -342,18 +355,7 @@ func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, s
 		OperationLevel: operationLevel,
 		TurnIndex:      1,
 		Payload: daemonReplanActionContinuationTurnPayload{
-			SessionID:      sessionID,
-			TurnRef:        turnRef,
-			Prompt:         prompt,
-			Language:       language,
-			Operator:       operator,
-			OperationLevel: operationLevel,
-			Req:            req,
-			History:        history,
-			MemorySummary:  memorySummary,
-			Services:       agentLoopToolServiceBindingFromRouterServices(svc),
-			Plan:           plan,
-			MaxLoops:       maxLoops,
+			Request: loopReq.Clone(),
 		},
 		Metadata: map[string]any{
 			"executor":        "turn_execution",
