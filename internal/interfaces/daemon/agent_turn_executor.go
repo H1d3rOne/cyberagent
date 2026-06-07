@@ -13,11 +13,6 @@ const (
 	daemonTurnExecutionPlannerActionExecution   = "planner_action_execution"
 )
 
-type daemonPlannerActionExecutionTurnPayload struct {
-	Request runtime.AgentLoopRequest
-	Action  runtime.AgentLoopAction
-}
-
 type daemonAgentTurnExecutor struct {
 	manager *agentManager
 }
@@ -131,7 +126,7 @@ func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn(ctx context.C
 		err := errors.New("daemon: turn executor has no manager")
 		return daemonTurnExecutionErrorResult(turn, err), err
 	}
-	payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+	payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 	if !ok {
 		err := errors.New("daemon: invalid planner action execution turn payload")
 		return daemonTurnExecutionErrorResult(turn, err), err
@@ -375,9 +370,9 @@ func agentPlannerActionExecutionTurnContextFromRequest(loopReq runtime.AgentLoop
 	if turn.TurnIndex == 0 {
 		turn.TurnIndex = 1
 	}
-	turn.Payload = daemonPlannerActionExecutionTurnPayload{
+	turn.Payload = runtime.AgentLoopActionExecutionPayload{
 		Request: loopReq.Clone(),
-		Action:  cloneAgentLoopAction(action),
+		Action:  runtime.CloneAgentLoopAction(action),
 	}
 	metadata := runtime.CloneAgentLoopMapStringAny(turn.Metadata)
 	if metadata == nil {

@@ -364,7 +364,7 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 		switch kind {
 		case daemonTurnExecutionPlannerActionExecution:
 			turnExecutions = append(turnExecutions, turn)
-			payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+			payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 			require.True(t, ok, "payload type = %T", turn.Payload)
 			require.Equal(t, "daemon.health", payload.Action.Name)
 			return runtime.TurnResult{
@@ -1500,7 +1500,7 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 		require.Equal(t, "safe_scan", turn.Metadata["operation_level"])
 		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
 
-		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		require.Equal(t, "session-planner-action", payload.Request.Turn.SessionID)
 		require.Equal(t, "en", payload.Request.Language)
@@ -1615,7 +1615,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Metadata["kind"])
 		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
 
-		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		require.Equal(t, "session-cycle-action-exec", payload.Request.Turn.SessionID)
 		require.Equal(t, "en", payload.Request.Language)
@@ -1708,7 +1708,7 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Metadata["kind"])
 		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
 
-		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		require.Equal(t, "session-planner-loop-action", payload.Request.Turn.SessionID)
 		require.Equal(t, "en", payload.Request.Language)
@@ -2425,7 +2425,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *t
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
 		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
 
-		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		require.Equal(t, "snapshot-action", stringFromAny(payload.Action.Arguments["probe"]))
 
@@ -2546,7 +2546,7 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Metadata["kind"])
 		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
 
-		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		require.Equal(t, sessionID, payload.Request.Turn.SessionID)
 		require.Equal(t, "tester", payload.Request.Operator)
@@ -2724,7 +2724,7 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 
 	actionProbes := []string{}
 	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
-		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		probe := stringFromAny(payload.Action.Arguments["probe"])
 		actionProbes = append(actionProbes, probe)
@@ -2907,7 +2907,7 @@ func TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoC
 
 	actionProbes := []string{}
 	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
-		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		probe := stringFromAny(payload.Action.Arguments["probe"])
 		actionProbes = append(actionProbes, probe)

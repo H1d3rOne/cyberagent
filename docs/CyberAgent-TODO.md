@@ -228,7 +228,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N80：将 planner action execution turn executor payload 的 turn/language/operator/operation/services/authorization 输入收敛为 `runtime.AgentLoopRequest`，仅额外携带 `runtime.AgentLoopAction`。
 - [x] P0.5-N81：将 deterministic route turn executor payload 的 session/prompt/language/operator/operation/services 输入收敛为 `runtime.AgentLoopRequest`，减少 deterministic route daemon-private payload 字段。
 - [x] P0.5-N82：将 deterministic route turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonDeterministicRouteTurnResultPayload` daemon-private wrapper。
-- [ ] P0.5-N83：为 planner action execution 的 `runtime.AgentLoopRequest + runtime.AgentLoopAction` 组合新增 runtime-neutral payload DTO，移除最后一个 turn executor daemon-private payload wrapper。
+- [x] P0.5-N83：为 planner action execution 的 `runtime.AgentLoopRequest + runtime.AgentLoopAction` 组合新增 runtime-neutral payload DTO，移除最后一个 turn executor daemon-private payload wrapper。
+- [ ] P0.5-N84：将 `append_messages` session mutation payload 的 SessionID/Messages/Plan 输入收敛到 runtime turn/context + `runtime.AgentLoopMessage` / `runtime.AgentLoopPlan`，legacy 转换留在 mutator adapter 边界。
 
 当前盘点（2026-06-08）：
 
@@ -1048,6 +1049,18 @@ git diff --check
 ```
 
 结果：移除 `daemonDeterministicRouteTurnResultPayload`，deterministic route turn executor result payload 统一为 `runtime.AgentLoopTurnResultPayload`，legacy message/tool call 转换推迟到 route prompt adapter egress；focused daemon tests、runtime/daemon 包测试与 diff check 通过。
+
+
+本轮增量（P0.5-N83：planner action execution runtime payload DTO）：
+
+```bash
+gofmt -w internal/agent/runtime/agent_loop_plan.go internal/agent/runtime/agent_loop_action_execution_payload.go internal/agent/runtime/agent_loop_action_execution_payload_test.go internal/interfaces/daemon/agent_turn_executor.go internal/interfaces/daemon/agent_turn_executor_test.go internal/interfaces/daemon/agent_loop_runner_adapter_test.go
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestAgentLoopActionExecutionPayloadCloneIsolatesMutableFields|TestAgentLoopPlanCloneIsolatesMutableFields|TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor|TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleRequest|TestDaemonAgentLoopRunnerExecutesSharedCycleFromRuntimeRequest|TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefThroughRuntimeRunners'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：新增 `runtime.AgentLoopActionExecutionPayload` 与 action clone helper，planner action execution turn payload 不再使用 daemon-private wrapper；focused runtime/daemon tests、runtime/daemon 包测试与 diff check 通过。
 
 P1-F1 前端路由/bundle 盘点：
 

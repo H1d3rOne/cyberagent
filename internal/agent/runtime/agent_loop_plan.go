@@ -71,6 +71,14 @@ type AgentLoopAction struct {
 	Arguments map[string]any
 }
 
+// Clone returns a copy with top-level action arguments isolated.
+func (action AgentLoopAction) Clone() AgentLoopAction {
+	return AgentLoopAction{
+		Name:      action.Name,
+		Arguments: CloneAgentLoopActionArguments(action.Arguments),
+	}
+}
+
 // Clone returns a deep-enough copy for runtime loop DTO boundaries. Maps are
 // cloned at the top level, matching the daemon legacy planner action semantics.
 func (plan AgentLoopPlan) Clone() AgentLoopPlan {
@@ -153,12 +161,14 @@ func CloneAgentLoopActions(actions []AgentLoopAction) []AgentLoopAction {
 	}
 	out := make([]AgentLoopAction, len(actions))
 	for i, action := range actions {
-		out[i] = AgentLoopAction{
-			Name:      action.Name,
-			Arguments: CloneAgentLoopActionArguments(action.Arguments),
-		}
+		out[i] = action.Clone()
 	}
 	return out
+}
+
+// CloneAgentLoopAction clones one runtime-neutral planner action.
+func CloneAgentLoopAction(action AgentLoopAction) AgentLoopAction {
+	return action.Clone()
 }
 
 // CloneAgentLoopActionArguments clones a top-level action argument map.

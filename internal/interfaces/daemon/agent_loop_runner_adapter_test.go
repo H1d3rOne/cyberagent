@@ -605,7 +605,7 @@ func TestDaemonAgentLoopRunnerExecutesSharedCycleFromRuntimeRequest(t *testing.T
 		actionCalled = true
 		require.Equal(t, "session-loop-runner", turn.SessionID)
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
-		payload, ok := turn.Payload.(daemonPlannerActionExecutionTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		require.Equal(t, "runtime-request", stringFromAny(payload.Action.Arguments["probe"]))
 
