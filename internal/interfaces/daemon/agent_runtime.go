@@ -17,6 +17,7 @@ func (m *agentManager) AttachEngine(e *runtime.Engine) {
 		e.AttachTurnExecutor(daemonAgentTurnExecutor{manager: m})
 		e.AttachLLMTurnRunner(daemonAgentLLMTurnRunner{manager: m})
 		e.AttachLLMStageRunner(daemonAgentLLMStageRunner{manager: m})
+		e.AttachAgentLoopRunner(daemonAgentLoopRunner{manager: m})
 		e.AttachSessionMutator(daemonSessionMutator{manager: m})
 	}
 }

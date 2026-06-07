@@ -334,6 +334,157 @@ func TestRunLLMStageWithoutRunnerReturnsStableError(t *testing.T) {
 	}
 }
 
+func TestRunAgentLoopDispatchesAttachedRunnerWithCloneIsolation(t *testing.T) {
+	e, _ := newTestEngine()
+	ctx := context.WithValue(context.Background(), struct{}{}, "ctx-value")
+	turnPayload := map[string]any{"shared": "payload"}
+	serviceHandle := &struct{ name string }{name: "jobs"}
+	req := AgentLoopRequest{
+		Turn: TurnContext{
+			SessionID:      "session-agent-loop",
+			TaskID:         "task-agent-loop",
+			RunID:          "run-agent-loop",
+			TurnID:         "turn-agent-loop",
+			Prompt:         "run loop",
+			OperationLevel: "safe_scan",
+			Payload:        turnPayload,
+			Metadata:       map[string]any{"turn": "source"},
+		},
+		Mode:       AgentLoopModeLLMToolLoop,
+		Language:   "en",
+		Operator:   "tester",
+		LLMRequest: AgentLoopLLMRequest{Model: "gpt-agent-loop"},
+		History: []AgentLoopMessage{{
+			ID:      "history-agent-loop",
+			Role:    "user",
+			Content: "history",
+		}},
+		MemorySummary: &AgentLoopMemorySummary{Summary: "memory"},
+		InitialPlan: &AgentLoopPlan{Actions: []AgentLoopAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "source"},
+		}}},
+		State: AgentLoopState{
+			ResponseMessages: []AgentLoopMessage{{ID: "response-agent-loop", Content: "response"}},
+			ToolCalls: []AgentLoopToolCall{{
+				ID:       "tool-agent-loop",
+				Name:     "daemon.health",
+				Metadata: map[string]any{"phase": "source"},
+			}},
+			LoopHistory: []AgentLoopMessage{{ID: "loop-history-agent-loop", Content: "loop history"}},
+		},
+		Authorization: AgentLoopAuthorization{DefaultAuthProfileID: "auth-agent-loop"},
+		ToolServices: AgentLoopToolServiceBinding{
+			Handle:   serviceHandle,
+			Metadata: map[string]any{"adapter": "source"},
+		},
+		Metadata: map[string]any{"phase": "loop"},
+	}
+	runnerResult := AgentLoopResult{
+		State: AgentLoopState{
+			ResponseMessages: []AgentLoopMessage{{ID: "result-response-agent-loop", Content: "result"}},
+			ToolCalls: []AgentLoopToolCall{{
+				ID:       "result-tool-agent-loop",
+				Name:     "daemon.health",
+				Metadata: map[string]any{"phase": "result"},
+			}},
+			LoopHistory: []AgentLoopMessage{{ID: "result-history-agent-loop", Content: "result history"}},
+		},
+		FinalPlan: &AgentLoopPlan{Actions: []AgentLoopAction{{
+			Name:      "workspace.read_file",
+			Arguments: map[string]any{"path": "README.md"},
+		}}},
+		StopReason: "done",
+		Metadata:   map[string]any{"continue": true},
+	}
+
+	called := false
+	e.AttachAgentLoopRunner(AgentLoopRunnerFunc(func(gotCtx context.Context, got AgentLoopRequest) (AgentLoopResult, error) {
+		called = true
+		if gotCtx != ctx {
+			t.Fatalf("RunAgentLoop ctx = %#v, want original ctx", gotCtx)
+		}
+		payload, ok := got.Turn.Payload.(map[string]any)
+		if !ok || payload["shared"] != "payload" {
+			t.Fatalf("AgentLoopRequest.Turn.Payload = %#v, want shared payload map", got.Turn.Payload)
+		}
+		if got.Mode != AgentLoopModeLLMToolLoop ||
+			got.Turn.SessionID != "session-agent-loop" ||
+			got.Turn.Metadata["turn"] != "source" ||
+			got.InitialPlan.Actions[0].Arguments["probe"] != "source" ||
+			got.State.ToolCalls[0].Metadata["phase"] != "source" ||
+			got.ToolServices.Handle != serviceHandle ||
+			got.Metadata["phase"] != "loop" {
+			t.Fatalf("AgentLoopRequest = %#v, want cloned source values", got)
+		}
+
+		got.Turn.Metadata["turn"] = "mutated-runner"
+		got.InitialPlan.Actions[0].Arguments["probe"] = "mutated-runner"
+		got.State.ToolCalls[0].Metadata["phase"] = "mutated-runner"
+		got.ToolServices.Metadata["adapter"] = "mutated-runner"
+		got.Metadata["phase"] = "mutated-runner"
+		return runnerResult, nil
+	}))
+
+	result, err := e.RunAgentLoop(ctx, req)
+	if err != nil {
+		t.Fatalf("RunAgentLoop() error = %v", err)
+	}
+	if !called {
+		t.Fatalf("RunAgentLoop() did not call attached runner")
+	}
+	if req.Turn.Metadata["turn"] != "source" ||
+		req.InitialPlan.Actions[0].Arguments["probe"] != "source" ||
+		req.State.ToolCalls[0].Metadata["phase"] != "source" ||
+		req.ToolServices.Metadata["adapter"] != "source" ||
+		req.Metadata["phase"] != "loop" {
+		t.Fatalf("RunAgentLoop() mutated request = %#v", req)
+	}
+
+	runnerResult.State.ResponseMessages[0].Content = "mutated-result"
+	runnerResult.State.ToolCalls[0].Metadata["phase"] = "mutated-result"
+	runnerResult.FinalPlan.Actions[0].Arguments["path"] = "mutated.md"
+	runnerResult.Metadata["continue"] = false
+
+	if result.StopReason != "done" ||
+		result.State.ResponseMessages[0].Content != "result" ||
+		result.State.ToolCalls[0].Metadata["phase"] != "result" ||
+		result.FinalPlan.Actions[0].Arguments["path"] != "README.md" ||
+		result.Metadata["continue"] != true {
+		t.Fatalf("RunAgentLoop() result = %#v, want cloned runner result", result)
+	}
+}
+
+func TestRunAgentLoopWithoutRunnerReturnsStableError(t *testing.T) {
+	e, _ := newTestEngine()
+
+	result, err := e.RunAgentLoop(context.Background(), AgentLoopRequest{
+		Turn: TurnContext{SessionID: "session-agent-loop"},
+		Mode: AgentLoopModeLLMToolLoop,
+	})
+	if !errors.Is(err, ErrAgentLoopRunnerNotAttached) {
+		t.Fatalf("RunAgentLoop() error = %v, want ErrAgentLoopRunnerNotAttached", err)
+	}
+	if !result.CapabilityBlocked || result.StopReason == "" || result.Metadata["error"] == "" {
+		t.Fatalf("RunAgentLoop() result = %#v, want blocked missing-runner result", result)
+	}
+}
+
+func TestRunAgentLoopNilEngineReturnsStableError(t *testing.T) {
+	var e *Engine
+
+	result, err := e.RunAgentLoop(context.Background(), AgentLoopRequest{
+		Turn: TurnContext{SessionID: "session-agent-loop"},
+		Mode: AgentLoopModeLLMToolLoop,
+	})
+	if !errors.Is(err, ErrNilEngine) {
+		t.Fatalf("RunAgentLoop() error = %v, want ErrNilEngine", err)
+	}
+	if !result.CapabilityBlocked || result.StopReason == "" || result.Metadata["error"] == "" {
+		t.Fatalf("RunAgentLoop() result = %#v, want blocked nil-engine result", result)
+	}
+}
+
 func TestMutateSessionDispatchesAttachedMutator(t *testing.T) {
 	e, _ := newTestEngine()
 	ctx := context.WithValue(context.Background(), struct{}{}, "ctx-value")

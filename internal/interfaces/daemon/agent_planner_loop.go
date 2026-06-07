@@ -314,7 +314,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			}
 		}
 
-		cycle := m.runAgentPlannerActionReplanCycle(ctx, agentPlannerActionReplanCycleRequest{
+		cycle := m.runRuntimeAgentPlannerActionReplanCycle(ctx, runtime.AgentLoopModeLLMToolLoop, agentPlannerActionReplanCycleRequest{
 			Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
 			Language:      language,
 			Operator:      operator,
@@ -364,7 +364,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 			break
 		}
 
-		cycle := m.runAgentPlannerActionReplanCycle(ctx, agentPlannerActionReplanCycleRequest{
+		cycle := m.runRuntimeAgentPlannerActionReplanCycle(ctx, runtime.AgentLoopModeReplanContinuation, agentPlannerActionReplanCycleRequest{
 			Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
 			Language:      language,
 			Operator:      operator,
@@ -1386,6 +1386,18 @@ func agentPlannerActionReplanCycleTurnContext(sessionID string, turnRef agentRun
 		Origin:         origin,
 		OperationLevel: operationLevel,
 	}
+}
+
+func (m *agentManager) runRuntimeAgentPlannerActionReplanCycle(ctx context.Context, mode runtime.AgentLoopMode, req agentPlannerActionReplanCycleRequest) agentPlannerActionReplanCycleResult {
+	eng := m.runtimeEngine()
+	if eng == nil {
+		return m.runAgentPlannerActionReplanCycle(ctx, req)
+	}
+	loopResult, err := eng.RunAgentLoop(ctx, req.agentLoopRequest(mode))
+	if err != nil {
+		return m.runAgentPlannerActionReplanCycle(ctx, req)
+	}
+	return agentPlannerActionReplanCycleResultFromAgentLoopResult(loopResult)
 }
 
 func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req agentPlannerActionReplanCycleRequest) agentPlannerActionReplanCycleResult {

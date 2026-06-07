@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -265,4 +266,88 @@ func TestAgentPlannerActionReplanCycleResultAgentLoopAdapterRoundTripClones(t *t
 	require.Equal(t, "result response", roundTrip.State.legacyResponseMessages()[0].Content)
 	require.Equal(t, "top-level", roundTrip.State.legacyToolCalls()[0].Metadata["scope"])
 	require.Equal(t, "README.md", roundTrip.Plan.actions()[0].Arguments["path"])
+}
+
+func TestAgentManagerRunRuntimeAgentPlannerActionReplanCycleDispatchesEngineRunner(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	jobs := newJobManager(jobManagerConfig{RunsDir: t.TempDir()})
+	called := false
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, loopReq runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+		called = true
+		require.Equal(t, runtime.AgentLoopModeLLMToolLoop, loopReq.Mode)
+		require.Equal(t, "session-runtime-cycle", loopReq.Turn.SessionID)
+		require.Equal(t, "task-runtime-cycle", loopReq.Turn.TaskID)
+		require.Equal(t, "run-runtime-cycle", loopReq.Turn.RunID)
+		require.Equal(t, "turn-runtime-cycle", loopReq.Turn.TurnID)
+		require.Equal(t, "planner_loop", loopReq.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
+		require.Equal(t, true, loopReq.Metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage])
+		require.Equal(t, []string{"history-runtime-cycle"}, agentLoopMessageIDs(loopReq.History))
+		require.Equal(t, "source", loopReq.InitialPlan.Actions[0].Arguments["probe"])
+		services, ok := routerServicesFromAgentLoopToolServiceBinding(loopReq.ToolServices)
+		require.True(t, ok)
+		require.Same(t, jobs, services.jobs)
+
+		state := loopReq.State.Clone()
+		message := runtime.AgentLoopMessage{
+			ID:      "msg-runtime-cycle-runner",
+			Role:    "tool",
+			Content: "runner handled cycle",
+		}
+		tool := runtime.AgentLoopToolCall{
+			ID:       "tool-runtime-cycle-runner",
+			Name:     "daemon.health",
+			Metadata: map[string]any{"phase": "runner"},
+		}
+		state.ResponseMessages = append(state.ResponseMessages, message)
+		state.LoopHistory = append(state.LoopHistory, message)
+		state.ToolCalls = append(state.ToolCalls, tool)
+		return runtime.AgentLoopResult{
+			State:      state,
+			Messages:   runtime.CloneAgentLoopMessages(state.ResponseMessages),
+			ToolCalls:  runtime.CloneAgentLoopToolCalls(state.ToolCalls),
+			FinalPlan:  &runtime.AgentLoopPlan{Phase: "step_replan", NextAction: &runtime.AgentLoopNextAction{Type: "continue", AutoContinue: true}, Actions: []runtime.AgentLoopAction{{Name: "daemon.health", Arguments: map[string]any{"probe": "next"}}}},
+			StopReason: "runner_cycle_complete",
+			Metadata: map[string]any{
+				agentPlannerActionReplanCycleMetadataContinue: true,
+			},
+		}, nil
+	}))
+
+	result := mgr.runRuntimeAgentPlannerActionReplanCycle(context.Background(), runtime.AgentLoopModeLLMToolLoop, agentPlannerActionReplanCycleRequest{
+		Turn:          agentPlannerActionReplanCycleTurnContext("session-runtime-cycle", agentRuntimeTurnRef{TaskID: "task-runtime-cycle", RunID: "run-runtime-cycle", TurnID: "turn-runtime-cycle"}, "daemon health", "user", "read_only"),
+		Language:      "en",
+		Operator:      "tester",
+		LLMRequest:    runtime.AgentLoopLLMRequest{Model: "gpt-runtime-cycle"},
+		Authorization: runtime.AgentLoopAuthorization{},
+		ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(routerServices{jobs: jobs}),
+		Plan: agentPlannerActionReplanCyclePlanFromPlannerResponse(&agentPlannerResponse{
+			Phase: "plan",
+			Actions: []agentPlannerAction{{
+				Name:      "daemon.health",
+				Arguments: map[string]any{"probe": "source"},
+			}},
+		}),
+		State: agentPlannerActionReplanCycleStateFromLegacy(
+			[]agentMessage{{ID: "msg-runtime-cycle-plan", Role: "agent", Content: "plan"}},
+			nil,
+			[]agentMessage{{ID: "history-runtime-cycle", Role: "user", Content: "daemon health"}},
+		),
+		Options: agentPlannerActionReplanCycleOptions{
+			ActionAppendOrigin:                      "planner_loop",
+			AppendActionToolCallsBeforeEmptyMessage: true,
+		},
+	})
+
+	require.True(t, called)
+	require.True(t, result.Continue)
+	require.True(t, result.Plan.shouldAutoContinue())
+	require.Equal(t, "next", result.Plan.actions()[0].Arguments["probe"])
+	responses := result.State.legacyResponseMessages()
+	require.Len(t, responses, 2)
+	require.Equal(t, "msg-runtime-cycle-runner", responses[1].ID)
+	require.Equal(t, "runner", result.State.legacyToolCalls()[0].Metadata["phase"])
+	require.Equal(t, []string{"history-runtime-cycle", "msg-runtime-cycle-runner"}, agentMessageIDs(result.State.legacyLoopHistory()))
 }
