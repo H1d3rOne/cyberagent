@@ -73,6 +73,8 @@ func TestAgentManagerSendMessageResponseMergeControlLLMBranches(t *testing.T) {
 				require.Equal(t, sessionID, payload.Loop.Turn.SessionID)
 				require.Equal(t, tc.prompt, payload.Loop.Turn.Prompt)
 				require.Equal(t, "operator-1", payload.Loop.Operator)
+				require.Equal(t, runtime.AgentLoopModeLLMToolLoop, payload.Loop.Mode)
+				require.Equal(t, "planner_loop", payload.Loop.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
 				require.GreaterOrEqual(t, len(payload.Loop.History), 2)
 				require.Equal(t, "user", payload.Loop.History[len(payload.Loop.History)-2].Role)
 				require.Equal(t, tc.prompt, payload.Loop.History[len(payload.Loop.History)-2].Content)

@@ -432,8 +432,9 @@ ownership 边界：
 63. ✅ P0.5-N69 已将 `daemonReplanActionContinuationTurnPayload` 的 `Req` / `History` / `MemorySummary` / `Plan` 输入收敛为 runtime `AgentLoopRequest` / `AgentLoopLLMRequest` / `AgentLoopMemorySummary` / `AgentLoopPlan`，legacy 转换推迟到 continuation turn executor adapter 边界。
 64. ✅ P0.5-N70 已抽出 runtime-native replan continuation request runner，`runAgentReplanActionContinuation` 成为 legacy wrapper，continuation turn executor adapter 不再把 `runtime.AgentLoopRequest` 转回散列 legacy 参数后再进入 loop。
 65. ✅ P0.5-N71 已抽出 runtime-native LLM tool loop request runner，`runAgentLLMToolLoop` 成为 legacy wrapper，LLMTurn runner adapter 不再把 runtime turn payload 转回散列 legacy 参数后再进入 loop。
-66. 下一步 P0.5-N72 将 `daemonLLMTurnPayload` 的 Loop/Services 进一步收敛为 `runtime.AgentLoopRequest`，复用 LLM tool loop request runner，减少 LLMTurn adapter 私有 payload wrapper。
-67. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+66. ✅ P0.5-N72 已将 `daemonLLMTurnPayload` 的 Loop/Services 进一步收敛为 `runtime.AgentLoopRequest`，复用 LLM tool loop request runner，减少 LLMTurn adapter 私有 payload wrapper。
+67. 下一步 P0.5-N73 将 LLM turn runner payload 进一步改为直接携带 `runtime.AgentLoopRequest`，移除 `daemonLLMTurnPayload` 单字段 compatibility wrapper。
+68. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1377,6 +1378,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v103 | 完成 P0.5-N69 replan continuation turn payload 输入 runtime request 收敛：`daemonReplanActionContinuationTurnPayload` 改为只携带 `runtime.AgentLoopRequest`，legacy request/history/memory/plan/services 转换集中到 runtime request ingress 与 continuation executor compatibility adapter；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v104 | 完成 P0.5-N70 replan continuation runtime-native request runner：新增 `runAgentReplanActionContinuationAgentLoop` 直接消费 `runtime.AgentLoopRequest` 并串联 continuation cycle，legacy wrapper 只负责 ingress 转换，turn executor adapter 直接调用 runtime request runner；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v105 | 完成 P0.5-N71 LLM tool loop runtime-native request runner：新增 `runAgentLLMToolLoopAgentLoop` 直接消费 `runtime.AgentLoopRequest` 并串联 planner chat 与 shared cycle，legacy wrapper 只负责 ingress 转换，LLMTurn runner adapter 直接构造 runtime loop request 调用新 runner；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v106 | 完成 P0.5-N72 LLM turn payload runtime request 收敛：`daemonLLMTurnPayload` 改为只包装 `runtime.AgentLoopRequest`，service binding、authorization、history/state、max loops 与 metadata 随 request 传递，LLMTurn runner adapter 直接复用 LLM tool loop request runner；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 
