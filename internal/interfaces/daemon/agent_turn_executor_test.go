@@ -1240,7 +1240,7 @@ func TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner(
 		sendAgentMessageRequest{Model: "gpt-synthesis"},
 		[]agentMessage{{ID: "history-1", Role: "user", Content: "hello"}},
 		&agentMemorySummary{Summary: "memory"},
-		[]agentMessage{{ID: "tool-message-1", Role: "tool", Content: "observation"}},
+		[]runtime.AgentLoopMessage{{ID: "tool-message-1", Role: "tool", Content: "observation"}},
 	)
 
 	require.NoError(t, err)

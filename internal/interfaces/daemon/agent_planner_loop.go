@@ -1724,7 +1724,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycleSynthesisAgentLoop(ctx co
 		sendMessageRequestFromAgentLoopLLMRequest(req.LLMRequest),
 		agentMessagesFromAgentLoopMessages(state.LoopHistory),
 		agentMemorySummaryPtrFromAgentLoopMemorySummary(req.MemorySummary),
-		agentMessagesFromAgentLoopMessages(actionMessages),
+		actionMessages,
 	)
 	if synthesisErr != nil {
 		return runtime.AgentLoopResult{}, synthesisErr

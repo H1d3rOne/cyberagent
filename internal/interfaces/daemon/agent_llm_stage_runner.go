@@ -154,10 +154,11 @@ func (m *agentManager) runRuntimeAgentLLMPlannerChat(ctx context.Context, sessio
 	return nil, nil, nil, errors.New("daemon: llm planner chat runner returned invalid payload")
 }
 
-func (m *agentManager) runRuntimeAgentLLMToolSynthesis(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, toolMessages []agentMessage) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
+func (m *agentManager) runRuntimeAgentLLMToolSynthesis(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, toolMessages []runtime.AgentLoopMessage) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
+	toolMessages = runtime.CloneAgentLoopMessages(toolMessages)
 	eng := m.runtimeEngine()
 	if eng == nil || eng.LLMStageRunner() == nil {
-		return m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, toolMessages)
+		return m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, agentMessagesFromAgentLoopMessages(toolMessages))
 	}
 
 	turn := runtime.TurnContext{
@@ -182,7 +183,7 @@ func (m *agentManager) runRuntimeAgentLLMToolSynthesis(ctx context.Context, sess
 			LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
 			History:       agentLoopMessagesFromAgentMessages(history),
 			MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
-			ToolMessages:  agentLoopMessagesFromAgentMessages(toolMessages),
+			ToolMessages:  runtime.CloneAgentLoopMessages(toolMessages),
 		},
 		Metadata: map[string]any{
 			"runner": "llm_stage",
@@ -190,7 +191,7 @@ func (m *agentManager) runRuntimeAgentLLMToolSynthesis(ctx context.Context, sess
 		},
 	})
 	if errors.Is(err, runtime.ErrLLMStageRunnerNotAttached) {
-		return m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, toolMessages)
+		return m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, agentMessagesFromAgentLoopMessages(toolMessages))
 	}
 
 	payload, ok := agentLoopLLMStageResultPayloadFromLLMStageResult(result.Payload)

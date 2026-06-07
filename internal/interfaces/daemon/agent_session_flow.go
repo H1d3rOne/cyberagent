@@ -145,7 +145,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		if getErr == nil {
 			history := cloneAgentMessages(sessionState.Messages)
 			memorySummary := cloneAgentMemorySummary(sessionState.MemorySummary)
-			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operationLevel, llmReq, history, memorySummary, actionMessages)
+			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operationLevel, llmReq, history, memorySummary, runtimeActionMessages)
 			if synthesisErr != nil {
 				warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 				warningTool = agentToolCallWithPhase(warningTool, "step_replan")
@@ -355,7 +355,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 		responseMessages := append([]agentMessage{userMessage}, messages...)
 		if len(toolCalls) > 0 {
 			synthesisHistory := append(cloneAgentMessages(history), messages...)
-			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, turnRef, prompt, language, operationLevel, req, synthesisHistory, memorySummary, messages)
+			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, turnRef, prompt, language, operationLevel, req, synthesisHistory, memorySummary, agentLoopMessagesFromAgentMessages(messages))
 			if synthesisErr != nil {
 				warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 				warningTool = withAgentToolMetadata(warningTool, map[string]interface{}{"phase": "tool_synthesis"})
@@ -455,7 +455,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 	responseMessages := append([]agentMessage{userMessage}, messages...)
 	if agentLLMConfigured(req) && len(toolCalls) > 0 {
 		synthesisHistory := append(cloneAgentMessages(history), messages...)
-		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, turnRef, prompt, language, operationLevel, req, synthesisHistory, memorySummary, messages)
+		synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, turnRef, prompt, language, operationLevel, req, synthesisHistory, memorySummary, agentLoopMessagesFromAgentMessages(messages))
 		if synthesisErr != nil {
 			warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
 			warningTool = withAgentToolMetadata(warningTool, map[string]interface{}{"phase": "tool_synthesis"})
