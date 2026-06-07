@@ -945,64 +945,10 @@ func (toolCtx agentPlannerActionReplanCycleToolContext) legacyRouterServices() r
 
 type agentPlannerActionReplanCyclePlan struct {
 	present             bool
-	item                agentPlannerActionReplanCyclePlanItem
-	actionsSnapshot     []agentPlannerActionReplanCyclePlanAction
+	item                runtime.AgentLoopPlan
+	actionsSnapshot     []runtime.AgentLoopAction
 	actionCountSnapshot int
 	autoContinue        bool
-}
-
-type agentPlannerActionReplanCyclePlanItem struct {
-	Phase                 string
-	Answer                string
-	SuggestedPrompt       string
-	SuggestPrompt         string
-	SuggestedPrompts      []string
-	RecommendationOptions []agentPlannerActionReplanCycleRecommendationOption
-	Task                  *agentPlannerActionReplanCyclePlanTask
-	Todos                 []agentPlannerActionReplanCyclePlanTodo
-	ContextRefs           []agentPlannerActionReplanCyclePlanContextRef
-	NextAction            *agentPlannerActionReplanCyclePlanNextAction
-	Reasoning             string
-	Actions               []agentPlannerActionReplanCyclePlanAction
-	ToolCalls             []agentPlannerActionReplanCyclePlanAction
-}
-
-type agentPlannerActionReplanCyclePlanTask struct {
-	Goal        string
-	Kind        string
-	Status      string
-	ActiveRunID string
-	Summary     string
-}
-
-type agentPlannerActionReplanCyclePlanTodo struct {
-	Title         string
-	Detail        string
-	Status        string
-	Priority      int
-	ContextRefIDs []string
-	BlockedReason string
-}
-
-type agentPlannerActionReplanCyclePlanContextRef struct {
-	ID      string
-	Kind    string
-	RefID   string
-	Label   string
-	To      string
-	Summary string
-}
-
-type agentPlannerActionReplanCyclePlanNextAction struct {
-	Type            string
-	Reason          string
-	SuggestedPrompt string
-	AutoContinue    bool
-}
-
-type agentPlannerActionReplanCyclePlanAction struct {
-	Name      string
-	Arguments map[string]any
 }
 
 func agentPlannerActionReplanCyclePlanFromPlannerResponse(plan *agentPlannerResponse) agentPlannerActionReplanCyclePlan {
@@ -1023,7 +969,7 @@ func (plan agentPlannerActionReplanCyclePlan) legacyPlannerResponse() *agentPlan
 	if !plan.present {
 		return nil
 	}
-	return plan.item.agentPlannerResponse()
+	return agentPlannerResponseFromAgentLoopPlan(plan.item)
 }
 
 func (plan agentPlannerActionReplanCyclePlan) actions() []agentPlannerAction {
@@ -1042,14 +988,14 @@ func (plan agentPlannerActionReplanCyclePlan) shouldAutoContinue() bool {
 	return plan.hasActions() && plan.autoContinue
 }
 
-func agentPlannerActionReplanCyclePlanItemFromAgentPlannerResponse(plan agentPlannerResponse) agentPlannerActionReplanCyclePlanItem {
-	return agentPlannerActionReplanCyclePlanItem{
+func agentPlannerActionReplanCyclePlanItemFromAgentPlannerResponse(plan agentPlannerResponse) runtime.AgentLoopPlan {
+	return runtime.AgentLoopPlan{
 		Phase:                 plan.Phase,
 		Answer:                plan.Answer,
 		SuggestedPrompt:       plan.SuggestedPrompt,
 		SuggestPrompt:         plan.SuggestPrompt,
 		SuggestedPrompts:      append([]string(nil), plan.SuggestedPrompts...),
-		RecommendationOptions: agentPlannerActionReplanCycleRecommendationOptionsFromAgentRecommendationOptions(plan.RecommendationOptions),
+		RecommendationOptions: agentPlannerActionReplanCyclePlanRecommendationOptionsFromAgentRecommendationOptions(plan.RecommendationOptions),
 		Task:                  agentPlannerActionReplanCyclePlanTaskFromAgentPlannerTask(plan.Task),
 		Todos:                 agentPlannerActionReplanCyclePlanTodosFromAgentPlannerTodos(plan.Todos),
 		ContextRefs:           agentPlannerActionReplanCyclePlanContextRefsFromAgentContextRefs(plan.ContextRefs),
@@ -1060,14 +1006,14 @@ func agentPlannerActionReplanCyclePlanItemFromAgentPlannerResponse(plan agentPla
 	}
 }
 
-func (plan agentPlannerActionReplanCyclePlanItem) agentPlannerResponse() *agentPlannerResponse {
+func agentPlannerResponseFromAgentLoopPlan(plan runtime.AgentLoopPlan) *agentPlannerResponse {
 	return &agentPlannerResponse{
 		Phase:                 plan.Phase,
 		Answer:                plan.Answer,
 		SuggestedPrompt:       plan.SuggestedPrompt,
 		SuggestPrompt:         plan.SuggestPrompt,
 		SuggestedPrompts:      append([]string(nil), plan.SuggestedPrompts...),
-		RecommendationOptions: agentPlannerActionReplanCycleRecommendationOptionsToAgentRecommendationOptions(plan.RecommendationOptions),
+		RecommendationOptions: agentPlannerActionReplanCyclePlanRecommendationOptionsToAgentRecommendationOptions(plan.RecommendationOptions),
 		Task:                  agentPlannerActionReplanCyclePlanTaskToAgentPlannerTask(plan.Task),
 		Todos:                 agentPlannerActionReplanCyclePlanTodosToAgentPlannerTodos(plan.Todos),
 		ContextRefs:           agentPlannerActionReplanCyclePlanContextRefsToAgentContextRefs(plan.ContextRefs),
@@ -1078,11 +1024,45 @@ func (plan agentPlannerActionReplanCyclePlanItem) agentPlannerResponse() *agentP
 	}
 }
 
-func agentPlannerActionReplanCyclePlanTaskFromAgentPlannerTask(task *agentPlannerTask) *agentPlannerActionReplanCyclePlanTask {
+func agentPlannerActionReplanCyclePlanRecommendationOptionsFromAgentRecommendationOptions(options []agentRecommendationOpt) []runtime.AgentLoopRecommendationOption {
+	if options == nil {
+		return nil
+	}
+	out := make([]runtime.AgentLoopRecommendationOption, len(options))
+	for i, option := range options {
+		out[i] = runtime.AgentLoopRecommendationOption{
+			ID:      option.ID,
+			Title:   option.Title,
+			Detail:  option.Detail,
+			Prompt:  option.Prompt,
+			Command: option.Command,
+		}
+	}
+	return out
+}
+
+func agentPlannerActionReplanCyclePlanRecommendationOptionsToAgentRecommendationOptions(options []runtime.AgentLoopRecommendationOption) []agentRecommendationOpt {
+	if options == nil {
+		return nil
+	}
+	out := make([]agentRecommendationOpt, len(options))
+	for i, option := range options {
+		out[i] = agentRecommendationOpt{
+			ID:      option.ID,
+			Title:   option.Title,
+			Detail:  option.Detail,
+			Prompt:  option.Prompt,
+			Command: option.Command,
+		}
+	}
+	return out
+}
+
+func agentPlannerActionReplanCyclePlanTaskFromAgentPlannerTask(task *agentPlannerTask) *runtime.AgentLoopPlanTask {
 	if task == nil {
 		return nil
 	}
-	return &agentPlannerActionReplanCyclePlanTask{
+	return &runtime.AgentLoopPlanTask{
 		Goal:        task.Goal,
 		Kind:        task.Kind,
 		Status:      task.Status,
@@ -1091,7 +1071,7 @@ func agentPlannerActionReplanCyclePlanTaskFromAgentPlannerTask(task *agentPlanne
 	}
 }
 
-func agentPlannerActionReplanCyclePlanTaskToAgentPlannerTask(task *agentPlannerActionReplanCyclePlanTask) *agentPlannerTask {
+func agentPlannerActionReplanCyclePlanTaskToAgentPlannerTask(task *runtime.AgentLoopPlanTask) *agentPlannerTask {
 	if task == nil {
 		return nil
 	}
@@ -1104,13 +1084,13 @@ func agentPlannerActionReplanCyclePlanTaskToAgentPlannerTask(task *agentPlannerA
 	}
 }
 
-func agentPlannerActionReplanCyclePlanTodosFromAgentPlannerTodos(todos []agentPlannerTodo) []agentPlannerActionReplanCyclePlanTodo {
+func agentPlannerActionReplanCyclePlanTodosFromAgentPlannerTodos(todos []agentPlannerTodo) []runtime.AgentLoopPlanTodo {
 	if todos == nil {
 		return nil
 	}
-	out := make([]agentPlannerActionReplanCyclePlanTodo, len(todos))
+	out := make([]runtime.AgentLoopPlanTodo, len(todos))
 	for i, todo := range todos {
-		out[i] = agentPlannerActionReplanCyclePlanTodo{
+		out[i] = runtime.AgentLoopPlanTodo{
 			Title:         todo.Title,
 			Detail:        todo.Detail,
 			Status:        todo.Status,
@@ -1122,7 +1102,7 @@ func agentPlannerActionReplanCyclePlanTodosFromAgentPlannerTodos(todos []agentPl
 	return out
 }
 
-func agentPlannerActionReplanCyclePlanTodosToAgentPlannerTodos(todos []agentPlannerActionReplanCyclePlanTodo) []agentPlannerTodo {
+func agentPlannerActionReplanCyclePlanTodosToAgentPlannerTodos(todos []runtime.AgentLoopPlanTodo) []agentPlannerTodo {
 	if todos == nil {
 		return nil
 	}
@@ -1140,13 +1120,13 @@ func agentPlannerActionReplanCyclePlanTodosToAgentPlannerTodos(todos []agentPlan
 	return out
 }
 
-func agentPlannerActionReplanCyclePlanContextRefsFromAgentContextRefs(refs []agentContextRef) []agentPlannerActionReplanCyclePlanContextRef {
+func agentPlannerActionReplanCyclePlanContextRefsFromAgentContextRefs(refs []agentContextRef) []runtime.AgentLoopContextRef {
 	if refs == nil {
 		return nil
 	}
-	out := make([]agentPlannerActionReplanCyclePlanContextRef, len(refs))
+	out := make([]runtime.AgentLoopContextRef, len(refs))
 	for i, ref := range refs {
-		out[i] = agentPlannerActionReplanCyclePlanContextRef{
+		out[i] = runtime.AgentLoopContextRef{
 			ID:      ref.ID,
 			Kind:    ref.Kind,
 			RefID:   ref.RefID,
@@ -1158,7 +1138,7 @@ func agentPlannerActionReplanCyclePlanContextRefsFromAgentContextRefs(refs []age
 	return out
 }
 
-func agentPlannerActionReplanCyclePlanContextRefsToAgentContextRefs(refs []agentPlannerActionReplanCyclePlanContextRef) []agentContextRef {
+func agentPlannerActionReplanCyclePlanContextRefsToAgentContextRefs(refs []runtime.AgentLoopContextRef) []agentContextRef {
 	if refs == nil {
 		return nil
 	}
@@ -1176,11 +1156,11 @@ func agentPlannerActionReplanCyclePlanContextRefsToAgentContextRefs(refs []agent
 	return out
 }
 
-func agentPlannerActionReplanCyclePlanNextActionFromAgentNextAction(nextAction *agentNextAction) *agentPlannerActionReplanCyclePlanNextAction {
+func agentPlannerActionReplanCyclePlanNextActionFromAgentNextAction(nextAction *agentNextAction) *runtime.AgentLoopNextAction {
 	if nextAction == nil {
 		return nil
 	}
-	return &agentPlannerActionReplanCyclePlanNextAction{
+	return &runtime.AgentLoopNextAction{
 		Type:            nextAction.Type,
 		Reason:          nextAction.Reason,
 		SuggestedPrompt: nextAction.SuggestedPrompt,
@@ -1188,7 +1168,7 @@ func agentPlannerActionReplanCyclePlanNextActionFromAgentNextAction(nextAction *
 	}
 }
 
-func agentPlannerActionReplanCyclePlanNextActionToAgentNextAction(nextAction *agentPlannerActionReplanCyclePlanNextAction) *agentNextAction {
+func agentPlannerActionReplanCyclePlanNextActionToAgentNextAction(nextAction *runtime.AgentLoopNextAction) *agentNextAction {
 	if nextAction == nil {
 		return nil
 	}
@@ -1200,38 +1180,38 @@ func agentPlannerActionReplanCyclePlanNextActionToAgentNextAction(nextAction *ag
 	}
 }
 
-func agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action agentPlannerAction) agentPlannerActionReplanCyclePlanAction {
-	return agentPlannerActionReplanCyclePlanAction{
+func agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action agentPlannerAction) runtime.AgentLoopAction {
+	return runtime.AgentLoopAction{
 		Name:      action.Name,
-		Arguments: cloneMapStringAny(action.Arguments),
+		Arguments: runtime.CloneAgentLoopActionArguments(action.Arguments),
 	}
 }
 
-func (action agentPlannerActionReplanCyclePlanAction) agentPlannerAction() agentPlannerAction {
+func agentPlannerActionFromAgentLoopAction(action runtime.AgentLoopAction) agentPlannerAction {
 	return agentPlannerAction{
 		Name:      action.Name,
-		Arguments: cloneMapStringAny(action.Arguments),
+		Arguments: runtime.CloneAgentLoopActionArguments(action.Arguments),
 	}
 }
 
-func agentPlannerActionReplanCyclePlanActionsFromAgentPlannerActions(actions []agentPlannerAction) []agentPlannerActionReplanCyclePlanAction {
+func agentPlannerActionReplanCyclePlanActionsFromAgentPlannerActions(actions []agentPlannerAction) []runtime.AgentLoopAction {
 	if actions == nil {
 		return nil
 	}
-	out := make([]agentPlannerActionReplanCyclePlanAction, len(actions))
+	out := make([]runtime.AgentLoopAction, len(actions))
 	for i, action := range actions {
 		out[i] = agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action)
 	}
 	return out
 }
 
-func agentPlannerActionReplanCyclePlanActionsToAgentPlannerActions(actions []agentPlannerActionReplanCyclePlanAction) []agentPlannerAction {
+func agentPlannerActionReplanCyclePlanActionsToAgentPlannerActions(actions []runtime.AgentLoopAction) []agentPlannerAction {
 	if actions == nil {
 		return nil
 	}
 	out := make([]agentPlannerAction, len(actions))
 	for i, action := range actions {
-		out[i] = action.agentPlannerAction()
+		out[i] = agentPlannerActionFromAgentLoopAction(action)
 	}
 	return out
 }
@@ -1240,7 +1220,7 @@ func cloneAgentPlannerResponse(plan *agentPlannerResponse) *agentPlannerResponse
 	if plan == nil {
 		return nil
 	}
-	return agentPlannerActionReplanCyclePlanItemFromAgentPlannerResponse(*plan).agentPlannerResponse()
+	return agentPlannerResponseFromAgentLoopPlan(agentPlannerActionReplanCyclePlanItemFromAgentPlannerResponse(*plan))
 }
 
 func cloneAgentPlannerActions(actions []agentPlannerAction) []agentPlannerAction {

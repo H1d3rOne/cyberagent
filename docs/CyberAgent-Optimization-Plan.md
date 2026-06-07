@@ -392,8 +392,9 @@ ownership 边界：
 22. ✅ P0.5-N28 已把 cycle message/tool wrappers 内部存储替换为 cycle-private message/tool DTO；wrappers 不再直接持有 legacy `agentMessage` / `agentToolCall` slice，legacy 转换集中在 ingress/egress adapter。
 23. ✅ P0.5-N29 已把 cycle memory summary wrapper 内部存储替换为 cycle-private memory DTO；wrapper 不再直接持有 legacy `*agentMemorySummary`，legacy 转换集中在 ingress/egress adapter。
 24. ✅ P0.5-N30 已把 cycle plan handle 内部存储替换为 cycle-private plan/action DTO；handle 不再直接持有 legacy `*agentPlannerResponse`，legacy 转换集中在 ingress/egress adapter。
-25. 下一步把 daemon-private cycle DTO/handles 与 LLM/tool adapter compatibility 迁到 runtime-neutral package 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-26. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+25. ✅ P0.5-N31 已把 cycle plan/action DTO 迁到 runtime-neutral `runtime.AgentLoopPlan` / `runtime.AgentLoopAction`；daemon 只保留 legacy planner response/action 转换 adapter。
+26. 下一步继续把 daemon-private message/tool/memory/auth/request/state cycle DTO 与 LLM/tool adapter compatibility 迁到 runtime-neutral package 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+27. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1296,6 +1297,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v62 | 完成 P0.5-N28 planner cycle message/tool private DTO：cycle message/tool wrappers 内部存储改为 cycle-private message/tool DTO，不再直接持有 legacy `agentMessage` / `agentToolCall` slice；legacy 转换集中在 wrapper ingress/egress adapter，并补字段保真与深拷贝隔离覆盖，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v63 | 完成 P0.5-N29 planner cycle memory private DTO：cycle memory summary wrapper 内部存储改为 cycle-private memory DTO，不再直接持有 legacy `*agentMemorySummary`；legacy 转换集中在 wrapper ingress/egress adapter，并补字段保真与 LastMessageAt 深拷贝隔离覆盖，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v64 | 完成 P0.5-N30 planner cycle plan private DTO：cycle plan handle 内部存储改为 cycle-private plan/action DTO，不再直接持有 legacy `*agentPlannerResponse`；legacy 转换集中在 plan handle ingress/egress adapter，并补 plan/action 字段保真与深拷贝隔离覆盖，focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
+| v65 | 完成 P0.5-N31 planner cycle plan runtime-neutral DTO：新增 `runtime.AgentLoopPlan` / `runtime.AgentLoopAction` 与 clone helpers，daemon cycle plan handle 改为持有 runtime DTO，legacy 转换集中在 daemon adapter；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 
 ---
 
