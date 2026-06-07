@@ -37,11 +37,6 @@ type daemonPlannerActionExecutionTurnPayload struct {
 	Authorization  runtime.AgentLoopAuthorization
 }
 
-type daemonPlannerActionExecutionTurnResultPayload struct {
-	Messages  []runtime.AgentLoopMessage
-	ToolCalls []runtime.AgentLoopToolCall
-}
-
 type daemonAgentTurnExecutor struct {
 	manager *agentManager
 }
@@ -185,7 +180,7 @@ func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn(ctx context.C
 		Status: status,
 		Reason: reason,
 		Error:  err,
-		Payload: daemonPlannerActionExecutionTurnResultPayload{
+		Payload: runtime.AgentLoopTurnResultPayload{
 			Messages:  agentLoopMessagesFromAgentMessages(messages),
 			ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(toolCalls),
 		},
@@ -388,7 +383,7 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 		messages, toolCalls, execErr := m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, legacyServices, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
 		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), execErr
 	}
-	payload, ok := result.Payload.(daemonPlannerActionExecutionTurnResultPayload)
+	payload, ok := result.Payload.(runtime.AgentLoopTurnResultPayload)
 	if ok {
 		return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), err
 	}

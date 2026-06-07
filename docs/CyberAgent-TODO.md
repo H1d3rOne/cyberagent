@@ -224,7 +224,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N76：将 `runRuntimeReplanActionContinuation` 外层调用入口收敛为 `runtime.AgentLoopRequest`，让 follow-up continuation branch 先构造 runtime loop request 后再进入 turn executor dispatch。
 - [x] P0.5-N77：将 replan continuation turn executor payload 进一步改为直接携带 `runtime.AgentLoopRequest`，移除 `daemonReplanActionContinuationTurnPayload` 单字段 compatibility wrapper。
 - [x] P0.5-N78：将 replan continuation turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonReplanActionContinuationTurnResultPayload` daemon-private wrapper。
-- [ ] P0.5-N79：将 planner action execution turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonPlannerActionExecutionTurnResultPayload` daemon-private wrapper。
+- [x] P0.5-N79：将 planner action execution turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonPlannerActionExecutionTurnResultPayload` daemon-private wrapper。
+- [ ] P0.5-N80：将 planner action execution turn executor payload 的 turn/language/operator/operation/services/authorization 输入收敛为 `runtime.AgentLoopRequest`，仅额外携带 `runtime.AgentLoopAction`。
 
 当前盘点（2026-06-08）：
 
@@ -258,6 +259,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - `SendMessage` control/error/authorization gate 简单响应已收敛到 runtime response egress helper：control error、普通 control response 与 pending authorization gate 分支都先构造 runtime `AgentLoopMessage` / `AgentLoopToolCall`，`runAgentSendMessageTurn` 内除 `buildAgentSendResponseFromAgentLoop` helper 外不再直接调用 legacy `buildAgentSendResponse`。
 - replan continuation 返回边界已收敛为 runtime DTO：`runAgentReplanActionContinuation` / `runRuntimeReplanActionContinuation` 现在返回 runtime `AgentLoopMessage` / `AgentLoopToolCall`，continuation turn executor result payload 已统一使用 `runtime.AgentLoopTurnResultPayload`；legacy 转换推迟到 follow-up response merge 与 turn executor adapter 边界。
 - replan continuation turn executor payload 已去除 daemon-private wrapper：`runtime.TurnContext.Payload` 现在直接携带 `runtime.AgentLoopRequest`，daemon continuation executor 直接 clone request 并调用 `runAgentReplanActionContinuationAgentLoop`；legacy `sendAgentMessageRequest` / history / memory / plan / services 输入转换集中到 runtime request ingress。
+- planner action execution turn executor result payload 已统一使用 `runtime.AgentLoopTurnResultPayload`，`runRuntimePlannerActionExecution` egress 直接 clone runtime messages/tool calls。
 - replan continuation 外层 runner 已抽为 runtime-native request 主入口：`runAgentReplanActionContinuationAgentLoop` 直接消费 `runtime.AgentLoopRequest` 并串联 cycle state/plan，`runAgentReplanActionContinuation` 降为 legacy wrapper，continuation turn executor adapter 不再把 runtime request 转回散列 legacy 参数后再进入 loop。
 - LLM tool loop 外层 runner 已抽为 runtime-native request 主入口：`runAgentLLMToolLoopAgentLoop` 直接消费 `runtime.AgentLoopRequest`，统一默认 mode/max loops/append metadata，并用 runtime history/state/memory/auth/service binding 串联 planner chat 与 shared cycle；`runAgentLLMToolLoop` 降为 legacy wrapper，LLMTurn runner adapter 不再把 runtime turn payload 展开回散列 legacy 参数后再进入 loop。
 - LLM turn runner 私有 payload 已进一步收敛：`daemonLLMTurnPayload` 现在只包装一个 `runtime.AgentLoopRequest`，Loop/history/state/memory/auth/service binding/max_loops/metadata 都在 request 内 clone 传递，`daemonAgentLLMTurnRunner` 直接复用 LLM tool loop request runner。
@@ -995,6 +997,18 @@ git diff --check
 ```
 
 结果：移除 `daemonReplanActionContinuationTurnResultPayload`，continuation turn executor result payload 统一为 `runtime.AgentLoopTurnResultPayload` 并通过 clone 隔离 messages/tool calls；focused daemon tests、runtime/daemon 包测试与 diff check 通过。
+
+
+本轮增量（P0.5-N79：planner action execution result payload runtime DTO 收敛）：
+
+```bash
+gofmt -w internal/interfaces/daemon/agent_turn_executor.go internal/interfaces/daemon/agent_turn_executor_test.go internal/interfaces/daemon/agent_loop_runner_adapter_test.go
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor|TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleRequest|TestDaemonAgentLoopRunnerExecutesSharedCycleFromRuntimeRequest|TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefThroughRuntimeRunners'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：移除 `daemonPlannerActionExecutionTurnResultPayload`，planner action execution turn executor result payload 统一为 `runtime.AgentLoopTurnResultPayload`，action execution dispatch/fallback 与 shared cycle adapter focused tests、runtime/daemon 包测试与 diff check 通过。
 
 P1-F1 前端路由/bundle 盘点：
 

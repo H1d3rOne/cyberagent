@@ -612,7 +612,7 @@ func TestDaemonAgentLoopRunnerExecutesSharedCycleFromRuntimeRequest(t *testing.T
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "runtime request action handled",
-			Payload: daemonPlannerActionExecutionTurnResultPayload{
+			Payload: runtime.AgentLoopTurnResultPayload{
 				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{actionMessage}),
 				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(actionMessage.ToolCalls),
 			},

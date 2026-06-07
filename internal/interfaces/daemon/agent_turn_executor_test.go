@@ -370,7 +370,7 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 			return runtime.TurnResult{
 				Status: runtime.TurnResultFinished,
 				Reason: "approved action handled by test executor",
-				Payload: daemonPlannerActionExecutionTurnResultPayload{
+				Payload: runtime.AgentLoopTurnResultPayload{
 					Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{actionMessage}),
 					ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{actionTool}),
 				},
@@ -1513,7 +1513,7 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonPlannerActionExecutionTurnResultPayload{
+			Payload: runtime.AgentLoopTurnResultPayload{
 				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
 				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 			},
@@ -1638,7 +1638,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "cycle action execution handled",
-			Payload: daemonPlannerActionExecutionTurnResultPayload{
+			Payload: runtime.AgentLoopTurnResultPayload{
 				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{actionMessage}),
 				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{actionTool}),
 			},
@@ -1719,7 +1719,7 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonPlannerActionExecutionTurnResultPayload{
+			Payload: runtime.AgentLoopTurnResultPayload{
 				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
 				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 			},
@@ -2432,7 +2432,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *t
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "snapshot action handled",
-			Payload: daemonPlannerActionExecutionTurnResultPayload{
+			Payload: runtime.AgentLoopTurnResultPayload{
 				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{actionMessage}),
 				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(actionMessage.ToolCalls),
 			},
@@ -2562,7 +2562,7 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "action handled by test executor",
-			Payload: daemonPlannerActionExecutionTurnResultPayload{
+			Payload: runtime.AgentLoopTurnResultPayload{
 				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{actionMessage}),
 				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{actionTool}),
 			},
@@ -2738,7 +2738,7 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 			return runtime.TurnResult{
 				Status: runtime.TurnResultFinished,
 				Reason: "first action handled",
-				Payload: daemonPlannerActionExecutionTurnResultPayload{
+				Payload: runtime.AgentLoopTurnResultPayload{
 					Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{firstActionMessage}),
 					ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(firstActionMessage.ToolCalls),
 				},
@@ -2747,7 +2747,7 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 			return runtime.TurnResult{
 				Status: runtime.TurnResultFinished,
 				Reason: "second action handled",
-				Payload: daemonPlannerActionExecutionTurnResultPayload{
+				Payload: runtime.AgentLoopTurnResultPayload{
 					Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{secondActionMessage}),
 					ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(secondActionMessage.ToolCalls),
 				},
@@ -2920,7 +2920,7 @@ func TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoC
 			return runtime.TurnResult{
 				Status: runtime.TurnResultFinished,
 				Reason: "first continuation action handled",
-				Payload: daemonPlannerActionExecutionTurnResultPayload{
+				Payload: runtime.AgentLoopTurnResultPayload{
 					Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{firstActionMessage}),
 					ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(firstActionMessage.ToolCalls),
 				},
@@ -2929,7 +2929,7 @@ func TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoC
 			return runtime.TurnResult{
 				Status: runtime.TurnResultFinished,
 				Reason: "second continuation action handled",
-				Payload: daemonPlannerActionExecutionTurnResultPayload{
+				Payload: runtime.AgentLoopTurnResultPayload{
 					Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{secondActionMessage}),
 					ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(secondActionMessage.ToolCalls),
 				},
