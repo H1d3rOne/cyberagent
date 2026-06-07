@@ -283,26 +283,7 @@ func (m *agentManager) chatAgentLLM(ctx context.Context, sessionID string, turnR
 }
 
 func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
-	loopHistory := agentLoopMessagesFromAgentMessages(history)
-	return m.runAgentLLMToolLoopAgentLoop(ctx, runtime.AgentLoopRequest{
-		Mode:          runtime.AgentLoopModeLLMToolLoop,
-		Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
-		Language:      language,
-		Operator:      operator,
-		LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
-		History:       runtime.CloneAgentLoopMessages(loopHistory),
-		MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
-		State: runtime.AgentLoopState{
-			LoopHistory: runtime.CloneAgentLoopMessages(loopHistory),
-		},
-		Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
-		ToolServices:  agentLoopToolServiceBindingFromRouterServices(svc),
-		MaxLoops:      reqMaxAgentReplans(req),
-		Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
-			ActionAppendOrigin:                      "planner_loop",
-			AppendActionToolCallsBeforeEmptyMessage: true,
-		}),
-	})
+	return m.runAgentLLMToolLoopAgentLoop(ctx, agentLLMToolLoopRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc))
 }
 
 func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {

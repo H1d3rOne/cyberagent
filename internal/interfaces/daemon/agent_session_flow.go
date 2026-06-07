@@ -318,7 +318,8 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 				history = cloneAgentMessages(sessionState.Messages)
 				memorySummary = cloneAgentMemorySummary(sessionState.MemorySummary)
 			}
-			messages, toolCalls, err := m.runRuntimeLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+			loopReq := agentLLMToolLoopRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+			messages, toolCalls, err := m.runRuntimeLLMToolLoopAgentLoop(ctx, loopReq)
 			responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage, controlResp.Message})
 			if err == nil {
 				responseMessages = append(responseMessages, runtime.CloneAgentLoopMessages(messages)...)
@@ -412,7 +413,8 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 	}
 
 	if agentLLMConfigured(req) {
-		llmMessages, llmToolCalls, err := m.runRuntimeLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+		loopReq := agentLLMToolLoopRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+		llmMessages, llmToolCalls, err := m.runRuntimeLLMToolLoopAgentLoop(ctx, loopReq)
 		responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage})
 		if err == nil {
 			responseMessages = append(responseMessages, runtime.CloneAgentLoopMessages(llmMessages)...)
