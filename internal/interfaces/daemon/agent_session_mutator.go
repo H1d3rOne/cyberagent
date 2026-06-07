@@ -12,12 +12,6 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 )
 
-type daemonAppendMessagesMutationPayload struct {
-	SessionID string
-	Plan      *agentPlannerResponse
-	Messages  []agentMessage
-}
-
 type daemonAppendMessagesMutationResultPayload struct {
 	Session    agentSession
 	Compaction *agentMemoryCompaction
@@ -125,6 +119,20 @@ type daemonSessionMutator struct {
 	manager *agentManager
 }
 
+func agentLoopAppendMessagesPayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopAppendMessagesPayload, bool) {
+	switch value := payload.(type) {
+	case runtime.AgentLoopAppendMessagesPayload:
+		return value.Clone(), true
+	case *runtime.AgentLoopAppendMessagesPayload:
+		if value == nil {
+			return runtime.AgentLoopAppendMessagesPayload{}, false
+		}
+		return value.Clone(), true
+	default:
+		return runtime.AgentLoopAppendMessagesPayload{}, false
+	}
+}
+
 func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
 	if r.manager == nil {
 		err := errors.New("daemon: session mutator has no manager")
@@ -133,12 +141,15 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 
 	switch req.Kind {
 	case runtime.SessionMutationAppendMessages:
-		payload, ok := req.Payload.(daemonAppendMessagesMutationPayload)
+		payload, ok := agentLoopAppendMessagesPayloadFromSessionMutationPayload(req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid append messages mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
 		}
-		resultPayload, mutated := r.manager.appendMessagesWithPlannerLegacyForTurn(ctx, payload.SessionID, agentRuntimeTurnRefFromTurn(req.Turn), payload.Plan, payload.Messages...)
+		sessionID := req.Turn.SessionID
+		plan := agentPlannerResponsePtrFromAgentLoopPlan(payload.Plan)
+		messages := agentMessagesFromAgentLoopMessages(payload.Messages)
+		resultPayload, mutated := r.manager.appendMessagesWithPlannerLegacyForTurn(ctx, sessionID, agentRuntimeTurnRefFromTurn(req.Turn), plan, messages...)
 		resultPayload.Mutated = mutated
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
@@ -147,7 +158,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			Data: map[string]any{
 				"mutator":       "daemon_legacy_session",
 				"kind":          string(req.Kind),
-				"session_id":    payload.SessionID,
+				"session_id":    sessionID,
 				"message_count": len(payload.Messages),
 				"planner_apply": payload.Plan != nil,
 				"mutated":       mutated,
@@ -352,10 +363,9 @@ func (m *agentManager) runRuntimeAppendMessagesMutationWithTurn(ctx context.Cont
 	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
 		Turn: turn,
 		Kind: runtime.SessionMutationAppendMessages,
-		Payload: daemonAppendMessagesMutationPayload{
-			SessionID: turn.SessionID,
-			Plan:      plan,
-			Messages:  append([]agentMessage(nil), messages...),
+		Payload: runtime.AgentLoopAppendMessagesPayload{
+			Plan:     agentLoopPlanPtrFromAgentPlannerResponse(plan),
+			Messages: agentLoopMessagesFromAgentMessages(messages),
 		},
 		Metadata: map[string]any{
 			"mutator":       "session_mutation",

@@ -184,7 +184,7 @@ func TestAgentManagerSendMessageResponseMergePendingAuthorizationGate(t *testing
 	require.Equal(t, "authorization_gate", appendReq.Turn.Origin)
 	require.Equal(t, "workspace_write", appendReq.Turn.OperationLevel)
 	require.Equal(t, 1, appendReq.Turn.Metadata["message_count"])
-	payload, ok := appendReq.Payload.(daemonAppendMessagesMutationPayload)
+	payload, ok := appendReq.Payload.(runtime.AgentLoopAppendMessagesPayload)
 	require.True(t, ok, "payload type = %T", appendReq.Payload)
 	require.Len(t, payload.Messages, 1)
 	require.Equal(t, resp.Messages[1].ID, payload.Messages[0].ID)

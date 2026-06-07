@@ -12,9 +12,9 @@ var (
 )
 
 // SessionMutationKind identifies one bounded session state mutation. During
-// migration, daemon-private payloads keep legacy append/user/control/
-// authorization state changes behind this engine seam until those types move
-// runtime-side.
+// migration, runtime-neutral payloads can replace daemon-private
+// user/control/authorization state changes incrementally behind this engine
+// seam.
 type SessionMutationKind string
 
 const (
@@ -28,8 +28,8 @@ const (
 
 // SessionMutationRequest is the engine-owned boundary for one bounded session
 // mutation. Turn carries stable runtime identifiers; Payload remains a
-// migration adapter for daemon-private session/planner/message types until
-// those types move runtime-side.
+// migration adapter for session mutation payloads while each mutation kind
+// moves runtime-side.
 type SessionMutationRequest struct {
 	Turn     TurnContext
 	Kind     SessionMutationKind
