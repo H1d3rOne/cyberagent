@@ -669,16 +669,14 @@ func TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator(t *testing
 		require.Equal(t, "safe_scan", req.Metadata["operation_level"])
 		require.Equal(t, false, req.Metadata["clear_input"])
 
-		payload, ok := req.Payload.(daemonControlSessionMutationPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopControlSessionPayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
 		require.Equal(t, "pause", payload.Action)
-		require.Equal(t, "resume later", payload.Prompt)
 		require.Equal(t, "operator pause", payload.Reason)
 		require.Equal(t, "operator-1", payload.Operator)
 		require.Equal(t, "en", payload.Language)
-		require.Equal(t, "safe_scan", payload.OperationLevel)
 
-		resultPayload, err := mgr.controlSessionLegacy(ctx, payload.SessionID, payload.Action, payload.Prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, payload.OperationLevel)
+		resultPayload, err := mgr.controlSessionLegacy(ctx, req.Turn.SessionID, payload.Action, req.Turn.Prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, req.Turn.OperationLevel)
 		require.NoError(t, err)
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,

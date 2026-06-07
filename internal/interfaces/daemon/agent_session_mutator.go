@@ -63,19 +63,6 @@ type daemonResolveAuthorizationMutationResultPayload struct {
 	Mutated        bool
 }
 
-type daemonControlSessionMutationPayload struct {
-	SessionID      string
-	Action         string
-	Prompt         string
-	Reason         string
-	RunID          string
-	JobID          string
-	ClearInput     bool
-	Operator       string
-	Language       string
-	OperationLevel string
-}
-
 type daemonControlSessionMutationResultPayload struct {
 	Session     agentSession
 	Message     agentMessage
@@ -141,6 +128,20 @@ func agentLoopCapabilityBlockedPayloadFromSessionMutationPayload(payload any) (r
 		return value.Clone(), true
 	default:
 		return runtime.AgentLoopCapabilityBlockedPayload{}, false
+	}
+}
+
+func agentLoopControlSessionPayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopControlSessionPayload, bool) {
+	switch value := payload.(type) {
+	case runtime.AgentLoopControlSessionPayload:
+		return value.Clone(), true
+	case *runtime.AgentLoopControlSessionPayload:
+		if value == nil {
+			return runtime.AgentLoopControlSessionPayload{}, false
+		}
+		return value.Clone(), true
+	default:
+		return runtime.AgentLoopControlSessionPayload{}, false
 	}
 }
 
@@ -255,12 +256,15 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			},
 		}, nil
 	case runtime.SessionMutationControlSession:
-		payload, ok := req.Payload.(daemonControlSessionMutationPayload)
+		payload, ok := agentLoopControlSessionPayloadFromSessionMutationPayload(req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid control session mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
 		}
-		resultPayload, err := r.manager.controlSessionLegacyForTurn(ctx, agentRuntimeTurnRefFromTurn(req.Turn), payload.SessionID, payload.Action, payload.Prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, payload.OperationLevel)
+		sessionID := req.Turn.SessionID
+		prompt := req.Turn.Prompt
+		operationLevel := req.Turn.OperationLevel
+		resultPayload, err := r.manager.controlSessionLegacyForTurn(ctx, agentRuntimeTurnRefFromTurn(req.Turn), sessionID, payload.Action, prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, operationLevel)
 		if err != nil {
 			return daemonSessionMutationErrorResult(req, err), err
 		}
@@ -272,11 +276,11 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			Data: map[string]any{
 				"mutator":         "daemon_legacy_session",
 				"kind":            string(req.Kind),
-				"session_id":      payload.SessionID,
+				"session_id":      sessionID,
 				"action":          payload.Action,
 				"message_id":      resultPayload.Message.ID,
 				"cancel_job_id":   resultPayload.CancelJobID,
-				"operation_level": payload.OperationLevel,
+				"operation_level": operationLevel,
 				"mutated":         true,
 			},
 		}, nil
@@ -596,17 +600,14 @@ func (m *agentManager) runRuntimeControlSessionMutationForTurn(ctx context.Conte
 			},
 		},
 		Kind: runtime.SessionMutationControlSession,
-		Payload: daemonControlSessionMutationPayload{
-			SessionID:      sessionID,
-			Action:         action,
-			Prompt:         req.Prompt,
-			Reason:         req.Reason,
-			RunID:          req.RunID,
-			JobID:          req.JobID,
-			ClearInput:     req.ClearInput,
-			Operator:       operator,
-			Language:       language,
-			OperationLevel: operationLevel,
+		Payload: runtime.AgentLoopControlSessionPayload{
+			Action:     action,
+			Reason:     req.Reason,
+			RunID:      req.RunID,
+			JobID:      req.JobID,
+			ClearInput: req.ClearInput,
+			Operator:   operator,
+			Language:   language,
 		},
 		Metadata: map[string]any{
 			"mutator":         "session_mutation",
