@@ -1531,8 +1531,8 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 
 	require.NoError(t, err)
 	require.True(t, called)
-	require.Equal(t, []agentMessage{expectedMessage}, messages)
-	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
+	require.Equal(t, agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}), messages)
+	require.Equal(t, agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}), toolCalls)
 }
 
 func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleRequest(t *testing.T) {

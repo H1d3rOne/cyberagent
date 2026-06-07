@@ -378,7 +378,7 @@ func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, s
 	return payload.Messages, payload.ToolCalls
 }
 
-func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, action runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, action runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
 	toolServices = toolServices.Clone()
 	action = cloneAgentLoopAction(action)
 	authorization = authorization.Clone()
@@ -387,7 +387,8 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 	legacyServices := legacyRouterServicesFromAgentLoopToolServiceBinding(toolServices)
 	eng := m.runtimeEngine()
 	if eng == nil || eng.TurnExecutor() == nil {
-		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, legacyServices, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
+		messages, toolCalls, execErr := m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, legacyServices, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
+		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), execErr
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -421,11 +422,12 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 		errors.Is(result.Error, runtime.ErrTurnExecutorNotAttached) ||
 		result.Status == runtime.TurnResultBlocked ||
 		(result.Status == runtime.TurnResultRunning && result.Payload == nil) {
-		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, legacyServices, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
+		messages, toolCalls, execErr := m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, legacyServices, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
+		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), execErr
 	}
 	payload, ok := result.Payload.(daemonPlannerActionExecutionTurnResultPayload)
 	if ok {
-		return agentMessagesFromAgentLoopMessages(payload.Messages), agentLoopToolCallItemsToAgentToolCalls(payload.ToolCalls), err
+		return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), err
 	}
 	if err != nil {
 		return nil, nil, err
