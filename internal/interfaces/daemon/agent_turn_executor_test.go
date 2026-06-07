@@ -1245,7 +1245,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 			"safe_scan",
 		),
 		Language: "zh-CN",
-		LLMRequest: agentPlannerActionReplanCycleLLMRequest{
+		LLMRequest: runtime.AgentLoopLLMRequest{
 			Origin:         "user",
 			OperationLevel: "safe_scan",
 			Model:          "gpt-cycle-synthesis",
@@ -1767,7 +1767,7 @@ func TestAgentPlannerActionReplanCycleLLMRequestFromMessageRequestKeepsOnlyLLMFi
 	require.NotNil(t, llmReq.AuthProfiles[0].Enabled)
 	require.True(t, *llmReq.AuthProfiles[0].Enabled)
 
-	converted := llmReq.sendMessageRequest()
+	converted := sendMessageRequestFromAgentLoopLLMRequest(llmReq)
 	require.Empty(t, converted.Message)
 	require.Empty(t, converted.Operator)
 	require.Empty(t, converted.Language)
@@ -2429,7 +2429,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *t
 		Turn:          agentPlannerActionReplanCycleTurnContext("session-cycle-action-snapshot", agentRuntimeTurnRef{TaskID: "task-cycle-action-snapshot", RunID: "run-cycle-action-snapshot", TurnID: "turn-cycle-action-snapshot"}, "daemon health", "user", "read_only"),
 		Language:      "en",
 		Operator:      "tester",
-		LLMRequest:    agentPlannerActionReplanCycleLLMRequest{Model: "gpt-cycle-action-snapshot"},
+		LLMRequest:    runtime.AgentLoopLLMRequest{Model: "gpt-cycle-action-snapshot"},
 		Authorization: runtime.AgentLoopAuthorization{},
 		ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(routerServices{}),
 		Plan:          cyclePlan,

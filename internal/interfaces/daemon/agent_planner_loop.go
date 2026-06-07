@@ -810,18 +810,6 @@ func agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req sendAgentM
 	}
 }
 
-type agentPlannerActionReplanCycleLLMRequest struct {
-	Origin               string
-	OperationLevel       string
-	Provider             string
-	Model                string
-	APIKey               string
-	BaseURL              string
-	Instructions         string
-	AuthProfiles         []runtime.AgentLoopAuthProfile
-	DefaultAuthProfileID string
-}
-
 func agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(profiles []agentHTTPAuthProfile) []runtime.AgentLoopAuthProfile {
 	if len(profiles) == 0 {
 		return nil
@@ -876,8 +864,8 @@ func agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(profiles []runtime.
 	return out
 }
 
-func agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req sendAgentMessageRequest) agentPlannerActionReplanCycleLLMRequest {
-	return agentPlannerActionReplanCycleLLMRequest{
+func agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req sendAgentMessageRequest) runtime.AgentLoopLLMRequest {
+	return runtime.AgentLoopLLMRequest{
 		Origin:               req.Origin,
 		OperationLevel:       req.OperationLevel,
 		Provider:             req.Provider,
@@ -890,7 +878,7 @@ func agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req sendAgentMess
 	}
 }
 
-func (req agentPlannerActionReplanCycleLLMRequest) sendMessageRequest() sendAgentMessageRequest {
+func sendMessageRequestFromAgentLoopLLMRequest(req runtime.AgentLoopLLMRequest) sendAgentMessageRequest {
 	return sendAgentMessageRequest{
 		Origin:               req.Origin,
 		OperationLevel:       req.OperationLevel,
@@ -1256,7 +1244,7 @@ type agentPlannerActionReplanCycleRequest struct {
 	Turn          runtime.TurnContext
 	Language      string
 	Operator      string
-	LLMRequest    agentPlannerActionReplanCycleLLMRequest
+	LLMRequest    runtime.AgentLoopLLMRequest
 	Authorization runtime.AgentLoopAuthorization
 	MemorySummary agentPlannerActionReplanCycleMemorySummary
 	ToolContext   agentPlannerActionReplanCycleToolContext
@@ -1392,7 +1380,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycleSynthesis(ctx context.Con
 		req.Turn.Prompt,
 		req.Language,
 		req.Turn.OperationLevel,
-		req.LLMRequest.sendMessageRequest(),
+		sendMessageRequestFromAgentLoopLLMRequest(req.LLMRequest),
 		state.LoopHistory.legacyAgentMessages(),
 		req.MemorySummary.legacyAgentMemorySummary(),
 		actionMessages.legacyAgentMessages(),
