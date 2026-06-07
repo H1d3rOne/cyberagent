@@ -28,19 +28,29 @@ func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LL
 	}
 
 	loop := payload.Loop.Clone()
-	messages, toolCalls, err := r.manager.runAgentLLMToolLoop(
-		ctx,
-		loop.Turn.SessionID,
-		agentRuntimeTurnRefFromTurn(loop.Turn),
-		loop.Turn.Prompt,
-		loop.Language,
-		loop.Operator,
-		loop.Turn.OperationLevel,
-		sendMessageRequestFromAgentLoopLLMRequest(loop.LLMRequest),
-		agentMessagesFromAgentLoopMessages(loop.History),
-		agentMemorySummaryPtrFromAgentLoopMemorySummary(loop.MemorySummary),
-		legacyRouterServicesFromAgentLoopToolServiceBinding(payload.Services),
-	)
+	loopHistory := runtime.CloneAgentLoopMessages(loop.History)
+	messages, toolCalls, err := r.manager.runAgentLLMToolLoopAgentLoop(ctx, runtime.AgentLoopRequest{
+		Mode:          runtime.AgentLoopModeLLMToolLoop,
+		Turn:          runtime.CloneAgentLoopTurnContext(loop.Turn),
+		Language:      loop.Language,
+		Operator:      loop.Operator,
+		LLMRequest:    loop.LLMRequest.Clone(),
+		History:       runtime.CloneAgentLoopMessages(loopHistory),
+		MemorySummary: runtime.CloneAgentLoopMemorySummary(loop.MemorySummary),
+		State: runtime.AgentLoopState{
+			LoopHistory: runtime.CloneAgentLoopMessages(loopHistory),
+		},
+		Authorization: runtime.AgentLoopAuthorization{
+			AuthProfiles:         runtime.CloneAgentLoopAuthProfiles(loop.LLMRequest.AuthProfiles),
+			DefaultAuthProfileID: loop.LLMRequest.DefaultAuthProfileID,
+		},
+		ToolServices: payload.Services.Clone(),
+		MaxLoops:     reqMaxAgentReplans(sendMessageRequestFromAgentLoopLLMRequest(loop.LLMRequest)),
+		Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
+			ActionAppendOrigin:                      "planner_loop",
+			AppendActionToolCallsBeforeEmptyMessage: true,
+		}),
+	})
 
 	status := runtime.TurnResultFinished
 	reason := "legacy daemon LLM tool loop executed"

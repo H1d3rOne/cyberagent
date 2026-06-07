@@ -283,15 +283,61 @@ func (m *agentManager) chatAgentLLM(ctx context.Context, sessionID string, turnR
 }
 
 func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
-	planMessages, planToolCalls, plan, err := m.runRuntimeAgentLLMPlannerChat(ctx, sessionID, turnRef, prompt, language, operationLevel, req, history, memorySummary)
+	loopHistory := agentLoopMessagesFromAgentMessages(history)
+	return m.runAgentLLMToolLoopAgentLoop(ctx, runtime.AgentLoopRequest{
+		Mode:          runtime.AgentLoopModeLLMToolLoop,
+		Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
+		Language:      language,
+		Operator:      operator,
+		LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
+		History:       runtime.CloneAgentLoopMessages(loopHistory),
+		MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
+		State: runtime.AgentLoopState{
+			LoopHistory: runtime.CloneAgentLoopMessages(loopHistory),
+		},
+		Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
+		ToolServices:  agentLoopToolServiceBindingFromRouterServices(svc),
+		MaxLoops:      reqMaxAgentReplans(req),
+		Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
+			ActionAppendOrigin:                      "planner_loop",
+			AppendActionToolCallsBeforeEmptyMessage: true,
+		}),
+	})
+}
+
+func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
+	loopReq = loopReq.Clone()
+	loopReq.Mode = runtime.AgentLoopModeLLMToolLoop
+	if loopReq.MaxLoops <= 0 {
+		loopReq.MaxLoops = reqMaxAgentReplans(sendMessageRequestFromAgentLoopLLMRequest(loopReq.LLMRequest))
+	}
+	metadata := runtime.CloneAgentLoopMapStringAny(loopReq.Metadata)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if stringFromAny(metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin]) == "" {
+		metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin] = "planner_loop"
+	}
+	if _, ok := metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage]; !ok {
+		metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage] = true
+	}
+	loopReq.Metadata = metadata
+
+	initialHistory := runtime.CloneAgentLoopMessages(loopReq.History)
+	if len(initialHistory) == 0 && len(loopReq.State.LoopHistory) > 0 {
+		initialHistory = runtime.CloneAgentLoopMessages(loopReq.State.LoopHistory)
+	}
+	turnRef := agentRuntimeTurnRefFromTurn(loopReq.Turn)
+	llmReq := sendMessageRequestFromAgentLoopLLMRequest(loopReq.LLMRequest)
+	planMessages, planToolCalls, plan, err := m.runRuntimeAgentLLMPlannerChat(ctx, loopReq.Turn.SessionID, turnRef, loopReq.Turn.Prompt, loopReq.Language, loopReq.Turn.OperationLevel, llmReq, agentMessagesFromAgentLoopMessages(initialHistory), agentMemorySummaryPtrFromAgentLoopMemorySummary(loopReq.MemorySummary))
 	planLegacyMessages := agentMessagesFromAgentLoopMessages(planMessages)
 	planLegacy := agentPlannerResponsePtrFromAgentLoopPlan(plan)
 	if err != nil {
 		return planMessages, planToolCalls, err
 	}
 
-	m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStagePlannerChat), operationLevel, planLegacy, planLegacyMessages...)
-	loopHistory := agentLoopMessagesFromAgentMessages(history)
+	m.appendMessagesWithPlannerForTurn(ctx, loopReq.Turn.SessionID, turnRef, loopReq.Turn.Prompt, string(runtime.LLMStagePlannerChat), loopReq.Turn.OperationLevel, planLegacy, planLegacyMessages...)
+	loopHistory := runtime.CloneAgentLoopMessages(initialHistory)
 	loopHistory = append(loopHistory, runtime.CloneAgentLoopMessages(planMessages)...)
 	cycleState := runtime.AgentLoopState{
 		ResponseMessages: runtime.CloneAgentLoopMessages(planMessages),
@@ -299,16 +345,15 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		LoopHistory:      loopHistory,
 	}
 
-	maxLoops := reqMaxAgentReplans(req)
 	cyclePlan := runtime.CloneAgentLoopPlan(plan)
-	for step := 0; step < maxLoops; step++ {
+	for step := 0; step < loopReq.MaxLoops; step++ {
 		if !agentLoopPlanHasActions(cyclePlan) {
 			// Respect a structured model plan that intentionally stops at Plan and
 			// asks the operator/runtime to continue. Fallback actions are only
 			// created when the latest operator prompt clearly asks to execute now
 			// but the provider forgot to emit actions.
-			if step == 0 && agentPromptRequestsImmediateExecution(prompt) {
-				fallback := agentFallbackPlannerFromPrompt(prompt, "", language)
+			if step == 0 && agentPromptRequestsImmediateExecution(loopReq.Turn.Prompt) {
+				fallback := agentFallbackPlannerFromPrompt(loopReq.Turn.Prompt, "", loopReq.Language)
 				cyclePlan = agentLoopPlanFromPlannerResponse(fallback)
 				if !agentLoopPlanHasActions(cyclePlan) {
 					break
@@ -318,24 +363,12 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 			}
 		}
 
-		cycle := m.runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx, runtime.AgentLoopRequest{
-			Mode:          runtime.AgentLoopModeLLMToolLoop,
-			Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
-			Language:      language,
-			Operator:      operator,
-			LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
-			History:       runtime.CloneAgentLoopMessages(cycleState.LoopHistory),
-			MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
-			InitialPlan:   runtime.CloneAgentLoopPlan(cyclePlan),
-			State:         cycleState.Clone(),
-			Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
-			ToolServices:  agentLoopToolServiceBindingFromRouterServices(svc),
-			MaxLoops:      maxLoops,
-			Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
-				ActionAppendOrigin:                      "planner_loop",
-				AppendActionToolCallsBeforeEmptyMessage: true,
-			}),
-		})
+		cycleReq := loopReq.Clone()
+		cycleReq.History = runtime.CloneAgentLoopMessages(cycleState.LoopHistory)
+		cycleReq.InitialPlan = runtime.CloneAgentLoopPlan(cyclePlan)
+		cycleReq.State = cycleState.Clone()
+		cycleReq.MaxLoops = loopReq.MaxLoops
+		cycle := m.runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx, cycleReq)
 		cycleState = cycle.State.Clone()
 		if !agentPlannerActionReplanCycleContinueFromAgentLoopResult(cycle) {
 			break
