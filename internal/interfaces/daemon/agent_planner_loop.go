@@ -876,15 +876,15 @@ func sendMessageRequestFromAgentLoopLLMRequest(req runtime.AgentLoopLLMRequest) 
 }
 
 type agentPlannerActionReplanCycleToolContext struct {
-	services routerServices
+	services runtime.AgentLoopToolServiceBinding
 }
 
 func agentPlannerActionReplanCycleToolContextFromRouterServices(svc routerServices) agentPlannerActionReplanCycleToolContext {
-	return agentPlannerActionReplanCycleToolContext{services: svc}
+	return agentPlannerActionReplanCycleToolContext{services: agentLoopToolServiceBindingFromRouterServices(svc)}
 }
 
 func (toolCtx agentPlannerActionReplanCycleToolContext) legacyRouterServices() routerServices {
-	return toolCtx.services
+	return legacyRouterServicesFromAgentLoopToolServiceBinding(toolCtx.services)
 }
 
 type agentPlannerActionReplanCyclePlan struct {

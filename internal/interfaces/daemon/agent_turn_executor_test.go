@@ -1051,6 +1051,7 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 	}}
 	history := []agentMessage{{ID: "history-1", Role: "user", Content: "hello"}}
 	memorySummary := &agentMemorySummary{Summary: "memory", LastMessageAt: &lastMessageAt}
+	jobs := newJobManager(jobManagerConfig{RunsDir: t.TempDir()})
 	called := false
 	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, req runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
 		called = true
@@ -1081,6 +1082,9 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 		require.Equal(t, "memory", payload.Loop.MemorySummary.Summary)
 		require.NotNil(t, payload.Loop.MemorySummary.LastMessageAt)
 		require.Equal(t, lastMessageAt, *payload.Loop.MemorySummary.LastMessageAt)
+		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Services)
+		require.True(t, ok)
+		require.Same(t, jobs, payloadServices.jobs)
 
 		payload.Loop.History[0].Content = "mutated payload history"
 		payload.Loop.Turn.Metadata["runner"] = "mutated payload runner"
@@ -1111,7 +1115,7 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 		sendAgentMessageRequest{Model: "gpt-test", AuthProfiles: authProfiles},
 		history,
 		memorySummary,
-		routerServices{},
+		routerServices{jobs: jobs},
 	)
 
 	require.NoError(t, err)
@@ -1610,7 +1614,9 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 		require.Equal(t, "token-cycle-action-exec", payload.AuthProfiles[0].Token)
 		require.NotNil(t, payload.AuthProfiles[0].Enabled)
 		require.True(t, *payload.AuthProfiles[0].Enabled)
-		require.Same(t, jobs, payload.Services.jobs)
+		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Services)
+		require.True(t, ok)
+		require.Same(t, jobs, payloadServices.jobs)
 
 		payload.Action.Arguments["probe"] = "mutated-payload-action"
 		payload.AuthProfiles[0].Token = "mutated-payload-token"
@@ -2534,7 +2540,9 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		require.Equal(t, "planner-cycle", stringFromAny(payload.Action.Arguments["probe"]))
 		require.Equal(t, authProfiles, payload.AuthProfiles)
 		require.Equal(t, "auth-planner-cycle", payload.DefaultAuthProfileID)
-		require.Same(t, jobs, payload.Services.jobs)
+		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Services)
+		require.True(t, ok)
+		require.Same(t, jobs, payloadServices.jobs)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,

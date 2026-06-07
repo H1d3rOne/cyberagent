@@ -9,7 +9,7 @@ import (
 
 type daemonLLMTurnPayload struct {
 	Loop     runtime.AgentLoopTurnPayload
-	Services routerServices
+	Services runtime.AgentLoopToolServiceBinding
 }
 
 type daemonAgentLLMTurnRunner struct {
@@ -39,7 +39,7 @@ func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LL
 		sendMessageRequestFromAgentLoopLLMRequest(loop.LLMRequest),
 		agentMessagesFromAgentLoopMessages(loop.History),
 		agentMemorySummaryPtrFromAgentLoopMemorySummary(loop.MemorySummary),
-		payload.Services,
+		legacyRouterServicesFromAgentLoopToolServiceBinding(payload.Services),
 	)
 
 	status := runtime.TurnResultFinished
@@ -116,7 +116,7 @@ func (m *agentManager) runRuntimeLLMToolLoop(ctx context.Context, sessionID stri
 				History:       agentLoopMessagesFromAgentMessages(history),
 				MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
 			},
-			Services: svc,
+			Services: agentLoopToolServiceBindingFromRouterServices(svc),
 		},
 		Metadata: map[string]any{
 			"runner":   "llm_tool_loop",

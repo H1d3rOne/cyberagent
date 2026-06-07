@@ -19,7 +19,7 @@ type daemonDeterministicRouteTurnPayload struct {
 	Language       string
 	Operator       string
 	OperationLevel string
-	Services       routerServices
+	Services       runtime.AgentLoopToolServiceBinding
 }
 
 type daemonDeterministicRouteTurnResultPayload struct {
@@ -37,7 +37,7 @@ type daemonReplanActionContinuationTurnPayload struct {
 	Req            sendAgentMessageRequest
 	History        []agentMessage
 	MemorySummary  *agentMemorySummary
-	Services       routerServices
+	Services       runtime.AgentLoopToolServiceBinding
 	Plan           *agentPlannerResponse
 	MaxLoops       int
 }
@@ -52,7 +52,7 @@ type daemonPlannerActionExecutionTurnPayload struct {
 	Language             string
 	Operator             string
 	OperationLevel       string
-	Services             routerServices
+	Services             runtime.AgentLoopToolServiceBinding
 	Action               agentPlannerAction
 	AuthProfiles         []agentHTTPAuthProfile
 	DefaultAuthProfileID string
@@ -104,7 +104,7 @@ func (e daemonAgentTurnExecutor) executeDeterministicRouteTurn(ctx context.Conte
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	messages, toolCalls, err := e.manager.routePromptForTurn(ctx, payload.SessionID, agentRuntimeTurnRefFromTurn(turn), payload.Prompt, payload.Language, payload.Operator, payload.OperationLevel, payload.Services)
+	messages, toolCalls, err := e.manager.routePromptForTurn(ctx, payload.SessionID, agentRuntimeTurnRefFromTurn(turn), payload.Prompt, payload.Language, payload.Operator, payload.OperationLevel, legacyRouterServicesFromAgentLoopToolServiceBinding(payload.Services))
 	if err != nil {
 		return daemonTurnExecutionErrorResult(turn, err), err
 	}
@@ -155,7 +155,7 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 		payload.Req,
 		payload.History,
 		payload.MemorySummary,
-		payload.Services,
+		legacyRouterServicesFromAgentLoopToolServiceBinding(payload.Services),
 		payload.Plan,
 		payload.MaxLoops,
 	)
@@ -202,7 +202,7 @@ func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn(ctx context.C
 		payload.Language,
 		payload.Operator,
 		payload.OperationLevel,
-		payload.Services,
+		legacyRouterServicesFromAgentLoopToolServiceBinding(payload.Services),
 		payload.Action,
 		payload.AuthProfiles,
 		payload.DefaultAuthProfileID,
@@ -286,7 +286,7 @@ func (m *agentManager) runRuntimeDeterministicRoute(ctx context.Context, session
 			Language:       language,
 			Operator:       operator,
 			OperationLevel: operationLevel,
-			Services:       svc,
+			Services:       agentLoopToolServiceBindingFromRouterServices(svc),
 		},
 		Metadata: map[string]any{
 			"executor":        "turn_execution",
@@ -350,7 +350,7 @@ func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, s
 			Req:            req,
 			History:        history,
 			MemorySummary:  memorySummary,
-			Services:       svc,
+			Services:       agentLoopToolServiceBindingFromRouterServices(svc),
 			Plan:           plan,
 			MaxLoops:       maxLoops,
 		},
@@ -399,7 +399,7 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 			Language:             language,
 			Operator:             operator,
 			OperationLevel:       operationLevel,
-			Services:             svc,
+			Services:             agentLoopToolServiceBindingFromRouterServices(svc),
 			Action:               action,
 			AuthProfiles:         authProfiles,
 			DefaultAuthProfileID: defaultAuthProfileID,
