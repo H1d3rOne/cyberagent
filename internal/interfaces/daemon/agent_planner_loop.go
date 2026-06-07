@@ -600,6 +600,18 @@ func agentLoopMessageWithPhase(message runtime.AgentLoopMessage, phase string) r
 	return out
 }
 
+func agentLoopMessagesWithPhase(messages []runtime.AgentLoopMessage, phase string) []runtime.AgentLoopMessage {
+	normalized := agentNormalizePhase(phase)
+	if normalized == "" {
+		return runtime.CloneAgentLoopMessages(messages)
+	}
+	out := runtime.CloneAgentLoopMessages(messages)
+	for i := range out {
+		out[i] = agentLoopMessageWithPhase(out[i], normalized)
+	}
+	return out
+}
+
 func agentLoopToolCallFromAgentToolCall(call agentToolCall) runtime.AgentLoopToolCall {
 	return runtime.AgentLoopToolCall{
 		ID:         call.ID,
@@ -661,6 +673,18 @@ func agentLoopToolCallWithPhase(call runtime.AgentLoopToolCall, phase string) ru
 		out.Metadata["agent_phase"] = normalized
 	} else {
 		out.Metadata["phase"] = normalized
+	}
+	return out
+}
+
+func agentLoopToolCallsWithPhase(calls []runtime.AgentLoopToolCall, phase string) []runtime.AgentLoopToolCall {
+	normalized := agentNormalizePhase(phase)
+	if normalized == "" {
+		return runtime.CloneAgentLoopToolCalls(calls)
+	}
+	out := runtime.CloneAgentLoopToolCalls(calls)
+	for i := range out {
+		out[i] = agentLoopToolCallWithPhase(out[i], normalized)
 	}
 	return out
 }

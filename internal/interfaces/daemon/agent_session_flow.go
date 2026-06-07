@@ -99,29 +99,29 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 		AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(req.AuthProfiles),
 		DefaultAuthProfileID: req.DefaultAuthProfileID,
 	})
-	actionMessages := agentMessagesFromAgentLoopMessages(runtimeActionMessages)
-	actionToolCalls := agentLoopToolCallItemsToAgentToolCalls(runtimeActionToolCalls)
 	if execErr != nil {
 		tool := failedAgentToolCall(pending.ActionName, execErr)
 		tool.Result = map[string]any{"action": pending.ActionName, "authorization_id": pending.ID}
-		actionMessages = []agentMessage{m.message(language, "tool", execErr.Error(), []agentToolCall{tool}, nil)}
-		actionToolCalls = []agentToolCall{tool}
+		runtimeActionMessages = agentLoopMessagesFromAgentMessages([]agentMessage{m.message(language, "tool", execErr.Error(), []agentToolCall{tool}, nil)})
+		runtimeActionToolCalls = agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{tool})
 	}
-	actionMessages = agentMessagesWithPhase(actionMessages, "step")
-	actionToolCalls = agentToolCallsWithPhase(actionToolCalls, "step")
+	runtimeActionMessages = agentLoopMessagesWithPhase(runtimeActionMessages, "step")
+	runtimeActionToolCalls = agentLoopToolCallsWithPhase(runtimeActionToolCalls, "step")
 	authorizationMetadata := map[string]interface{}{
 		"authorization_id":     pending.ID,
 		"authorization_status": "approved",
 		"action_name":          pending.ActionName,
 	}
-	for i := range actionToolCalls {
-		actionToolCalls[i] = withAgentToolMetadata(actionToolCalls[i], authorizationMetadata)
+	for i := range runtimeActionToolCalls {
+		runtimeActionToolCalls[i] = withAgentLoopToolMetadata(runtimeActionToolCalls[i], authorizationMetadata)
 	}
-	for i := range actionMessages {
-		for j := range actionMessages[i].ToolCalls {
-			actionMessages[i].ToolCalls[j] = withAgentToolMetadata(actionMessages[i].ToolCalls[j], authorizationMetadata)
+	for i := range runtimeActionMessages {
+		for j := range runtimeActionMessages[i].ToolCalls {
+			runtimeActionMessages[i].ToolCalls[j] = withAgentLoopToolMetadata(runtimeActionMessages[i].ToolCalls[j], authorizationMetadata)
 		}
 	}
+	actionMessages := agentMessagesFromAgentLoopMessages(runtimeActionMessages)
+	actionToolCalls := agentLoopToolCallItemsToAgentToolCalls(runtimeActionToolCalls)
 	if len(actionMessages) > 0 {
 		m.appendMessagesForTurn(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, daemonTurnExecutionPlannerActionExecution, operationLevel, actionMessages...)
 	}

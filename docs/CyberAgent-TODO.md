@@ -204,7 +204,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N56：将 `executeAgentPlannerActionList` / `runRuntimePlannerActionExecution` 的 services 参数继续收敛为 runtime `AgentLoopToolServiceBinding`，让 action execution helper 内部不再传递 legacy `routerServices`。
 - [x] P0.5-N57：将 planner action execution turn result payload 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，让 action execution turn result 不再直接持有 legacy `agentMessage` / `agentToolCall`。
 - [x] P0.5-N58：将 `runRuntimePlannerActionExecution` / `executeAgentPlannerActionList` 的返回与 accumulator 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，让 action execution helper 内部不再累积 legacy message/tool-call slice。
-- [ ] P0.5-N59：将 `DecideAgentAuthorization` 批准后 action execution result 的 phase/metadata merge 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 append/response 边界。
+- [x] P0.5-N59：将 `DecideAgentAuthorization` 批准后 action execution result 的 phase/metadata merge 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 append/response 边界。
+- [ ] P0.5-N60：将 `DecideAgentAuthorization` approved-flow 的 response message/tool-call accumulator 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换集中到 synthesis/follow-up adapter 与 final response 边界。
 
 当前盘点（2026-06-07）：
 

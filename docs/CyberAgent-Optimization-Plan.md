@@ -419,8 +419,9 @@ ownership 边界：
 50. ✅ P0.5-N56 已将 `executeAgentPlannerActionList` / `runRuntimePlannerActionExecution` 的 services 参数收敛为 runtime `AgentLoopToolServiceBinding`，action execution helper 内部不再传递 legacy `routerServices`。
 51. ✅ P0.5-N57 已将 planner action execution turn result payload 收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，action execution turn result 不再直接持有 legacy `agentMessage` / `agentToolCall`。
 52. ✅ P0.5-N58 已将 `runRuntimePlannerActionExecution` / `executeAgentPlannerActionList` 的返回与 accumulator 收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，action execution helper 内部不再累积 legacy message/tool-call slice。
-53. 下一步 P0.5-N59 将 `DecideAgentAuthorization` 批准后 action execution result 的 phase/metadata merge 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 append/response 边界。
-54. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+53. ✅ P0.5-N59 已将 `DecideAgentAuthorization` 批准后 action execution result 的 phase/metadata merge 收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 append/response 边界。
+54. 下一步 P0.5-N60 将 `DecideAgentAuthorization` approved-flow 的 response message/tool-call accumulator 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换集中到 synthesis/follow-up adapter 与 final response 边界。
+55. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1351,6 +1352,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v90 | 完成 P0.5-N56 action execution helper runtime service binding 收敛：`executeAgentPlannerActionList` / `runRuntimePlannerActionExecution` 改为接收 `runtime.AgentLoopToolServiceBinding`，legacy `routerServices` 仅在 legacy tool executor adapter 边界转换，service binding handle 引用保真；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v91 | 完成 P0.5-N57 planner action execution result payload runtime message/tool-call 收敛：`daemonPlannerActionExecutionTurnResultPayload` 改为持有 `runtime.AgentLoopMessage` / `AgentLoopToolCall`，legacy executor 输出仅在 turn executor payload 构造处转换，`runRuntimePlannerActionExecution` egress 再转回兼容调用方；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v92 | 完成 P0.5-N58 action execution helper runtime message/tool-call 返回与累积收敛：`runRuntimePlannerActionExecution` 返回 `runtime.AgentLoopMessage` / `AgentLoopToolCall`，`executeAgentPlannerActionList` 内部 accumulator 改为 runtime DTO，legacy 转换保留在 `executeAgentPlannerActions` / approved authorization append 等兼容边界；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v93 | 完成 P0.5-N59 approved authorization action result runtime phase/metadata merge：`DecideAgentAuthorization` 批准后先以 `runtime.AgentLoopMessage` / `AgentLoopToolCall` 处理 phase 与 authorization metadata，legacy 转换推迟到 append/synthesis response 兼容边界；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 
