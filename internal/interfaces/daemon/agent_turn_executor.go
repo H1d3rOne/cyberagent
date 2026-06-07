@@ -27,11 +27,6 @@ type daemonDeterministicRouteTurnResultPayload struct {
 	ToolCalls []agentToolCall
 }
 
-type daemonReplanActionContinuationTurnResultPayload struct {
-	Messages  []runtime.AgentLoopMessage
-	ToolCalls []runtime.AgentLoopToolCall
-}
-
 type daemonPlannerActionExecutionTurnPayload struct {
 	SessionID      string
 	Language       string
@@ -130,7 +125,7 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 	}
 	loopReq := payload.Clone()
 	messages, toolCalls := e.manager.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
-	resultPayload := daemonReplanActionContinuationTurnResultPayload{
+	resultPayload := runtime.AgentLoopTurnResultPayload{
 		Messages:  runtime.CloneAgentLoopMessages(messages),
 		ToolCalls: runtime.CloneAgentLoopToolCalls(toolCalls),
 	}
@@ -319,11 +314,12 @@ func (m *agentManager) runRuntimeReplanActionContinuationAgentLoop(ctx context.C
 	if err != nil {
 		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
 	}
-	payload, ok := result.Payload.(daemonReplanActionContinuationTurnResultPayload)
+	payload, ok := result.Payload.(runtime.AgentLoopTurnResultPayload)
 	if !ok {
 		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
 	}
-	return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls)
+	payload = payload.Clone()
+	return payload.Messages, payload.ToolCalls
 }
 
 func agentReplanActionContinuationTurnContextFromRequest(loopReq runtime.AgentLoopRequest) runtime.TurnContext {

@@ -438,8 +438,9 @@ ownership 边界：
 69. ✅ P0.5-N75 已将 `runRuntimeLLMToolLoop` 入口收敛为 `runtime.AgentLoopRequest`，让 SendMessage LLM branch 先构造 runtime loop request 后再进入 engine LLMTurn dispatch。
 70. ✅ P0.5-N76 已将 `runRuntimeReplanActionContinuation` 外层调用入口收敛为 `runtime.AgentLoopRequest`，让 follow-up continuation branch 先构造 runtime loop request 后再进入 turn executor dispatch。
 71. ✅ P0.5-N77 已将 replan continuation turn executor payload 进一步改为直接携带 `runtime.AgentLoopRequest`，移除 `daemonReplanActionContinuationTurnPayload` 单字段 compatibility wrapper。
-72. 下一步 P0.5-N78 将 replan continuation turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonReplanActionContinuationTurnResultPayload` daemon-private wrapper。
-73. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+72. ✅ P0.5-N78 已将 replan continuation turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonReplanActionContinuationTurnResultPayload` daemon-private wrapper。
+73. 下一步 P0.5-N79 将 planner action execution turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonPlannerActionExecutionTurnResultPayload` daemon-private wrapper。
+74. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1389,6 +1390,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v109 | 完成 P0.5-N75 runRuntimeLLMToolLoop runtime request 入口：新增 `runRuntimeLLMToolLoopAgentLoop` 与 legacy request 构造 helper，SendMessage control+LLM/main LLM branch 先构造 `runtime.AgentLoopRequest` 再进入 engine LLMTurn dispatch，legacy wrapper 只保留 ingress 转换；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v110 | 完成 P0.5-N76 runRuntimeReplanActionContinuation runtime request 入口：新增 `runRuntimeReplanActionContinuationAgentLoop` 与 continuation legacy request 构造/helper，authorization approve follow-up 与 route-before-LLM synthesis follow-up branch 先构造 `runtime.AgentLoopRequest` 再进入 engine `ExecuteTurn` dispatch，legacy wrapper 只保留 ingress 转换；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v111 | 完成 P0.5-N77 replan continuation turn payload 直接携带 runtime request：移除 `daemonReplanActionContinuationTurnPayload` 单字段 wrapper，`runtime.TurnContext.Payload` 直接传递 `runtime.AgentLoopRequest`，daemon continuation executor clone 后进入 runtime request runner；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v112 | 完成 P0.5-N78 replan continuation result payload runtime DTO 收敛：移除 `daemonReplanActionContinuationTurnResultPayload`，continuation turn executor result payload 统一使用 `runtime.AgentLoopTurnResultPayload` 并 clone messages/tool calls；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

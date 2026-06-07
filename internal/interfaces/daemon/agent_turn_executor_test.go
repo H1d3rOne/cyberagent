@@ -383,7 +383,7 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 			return runtime.TurnResult{
 				Status:  runtime.TurnResultFinished,
 				Reason:  "follow-up handled by test executor",
-				Payload: daemonReplanActionContinuationTurnResultPayload{},
+				Payload: runtime.AgentLoopTurnResultPayload{},
 			}, nil
 		default:
 			return runtime.TurnResult{Status: runtime.TurnResultRunning}, nil
@@ -1439,7 +1439,7 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonReplanActionContinuationTurnResultPayload{
+			Payload: runtime.AgentLoopTurnResultPayload{
 				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
 				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 			},
