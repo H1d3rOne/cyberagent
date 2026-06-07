@@ -27,18 +27,6 @@ type daemonRecordUserMessageMutationResultPayload struct {
 	Mutated       bool
 }
 
-type daemonRequestAuthorizationMutationPayload struct {
-	SessionID      string
-	Language       string
-	OperatorPrompt string
-	OperationLevel string
-	Action         runtime.AgentLoopAction
-	ActionName     string
-	RequiredLevel  string
-	Policy         string
-	Reason         string
-}
-
 type daemonRequestAuthorizationMutationResultPayload struct {
 	Session       agentSession
 	Authorization agentAuthorizationRequest
@@ -139,6 +127,20 @@ func agentLoopRecordUserMessagePayloadFromSessionMutationPayload(payload any) (r
 	}
 }
 
+func agentLoopAuthorizationRequestPayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopAuthorizationRequestPayload, bool) {
+	switch value := payload.(type) {
+	case runtime.AgentLoopAuthorizationRequestPayload:
+		return value.Clone(), true
+	case *runtime.AgentLoopAuthorizationRequestPayload:
+		if value == nil {
+			return runtime.AgentLoopAuthorizationRequestPayload{}, false
+		}
+		return value.Clone(), true
+	default:
+		return runtime.AgentLoopAuthorizationRequestPayload{}, false
+	}
+}
+
 func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
 	if r.manager == nil {
 		err := errors.New("daemon: session mutator has no manager")
@@ -198,13 +200,16 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			},
 		}, nil
 	case runtime.SessionMutationRequestAuthorization:
-		payload, ok := req.Payload.(daemonRequestAuthorizationMutationPayload)
+		payload, ok := agentLoopAuthorizationRequestPayloadFromSessionMutationPayload(req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid request authorization mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
 		}
+		sessionID := req.Turn.SessionID
+		operatorPrompt := req.Turn.Prompt
+		operationLevel := req.Turn.OperationLevel
 		action := agentPlannerActionFromAgentLoopAction(payload.Action)
-		resultPayload := r.manager.requestAgentAuthorizationLegacy(payload.SessionID, payload.Language, payload.OperatorPrompt, action, payload.ActionName, payload.RequiredLevel, payload.Policy, payload.Reason)
+		resultPayload := r.manager.requestAgentAuthorizationLegacy(sessionID, payload.Language, operatorPrompt, action, payload.ActionName, payload.RequiredLevel, payload.Policy, payload.Reason)
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
 			Reason:  "legacy daemon authorization request mutation executed",
@@ -212,13 +217,13 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			Data: map[string]any{
 				"mutator":          "daemon_legacy_session",
 				"kind":             string(req.Kind),
-				"session_id":       payload.SessionID,
+				"session_id":       sessionID,
 				"authorization_id": resultPayload.Authorization.ID,
 				"action_name":      resultPayload.Authorization.ActionName,
 				"required_level":   resultPayload.Authorization.RequiredLevel,
 				"policy":           resultPayload.Authorization.Policy,
 				"message_id":       resultPayload.Message.ID,
-				"operation_level":  payload.OperationLevel,
+				"operation_level":  operationLevel,
 				"mutated":          resultPayload.Mutated,
 			},
 		}, nil
@@ -464,16 +469,13 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 			},
 		},
 		Kind: runtime.SessionMutationRequestAuthorization,
-		Payload: daemonRequestAuthorizationMutationPayload{
-			SessionID:      sessionID,
-			Language:       language,
-			OperatorPrompt: operatorPrompt,
-			OperationLevel: operationLevel,
-			Action:         action,
-			ActionName:     actionName,
-			RequiredLevel:  requiredLevel,
-			Policy:         policy,
-			Reason:         reason,
+		Payload: runtime.AgentLoopAuthorizationRequestPayload{
+			Language:      language,
+			Action:        action,
+			ActionName:    actionName,
+			RequiredLevel: requiredLevel,
+			Policy:        policy,
+			Reason:        reason,
 		},
 		Metadata: map[string]any{
 			"mutator":         "session_mutation",

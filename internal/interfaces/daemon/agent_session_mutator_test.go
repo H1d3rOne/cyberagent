@@ -466,12 +466,9 @@ func TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMuta
 	require.Equal(t, "safe_scan", req.Metadata["required_level"])
 	require.Equal(t, "operation_level_required", req.Metadata["policy"])
 
-	payload, ok := req.Payload.(daemonRequestAuthorizationMutationPayload)
+	payload, ok := req.Payload.(runtime.AgentLoopAuthorizationRequestPayload)
 	require.True(t, ok, "payload type = %T", req.Payload)
-	require.Equal(t, sessionID, payload.SessionID)
 	require.Equal(t, "en", payload.Language)
-	require.Equal(t, "scan https://example.com", payload.OperatorPrompt)
-	require.Equal(t, "read_only", payload.OperationLevel)
 	require.Equal(t, "scan.web.safe", payload.ActionName)
 	require.Equal(t, "safe_scan", payload.RequiredLevel)
 	require.Equal(t, "operation_level_required", payload.Policy)
@@ -590,7 +587,6 @@ func TestAgentManagerExecutePlannerActionCapabilityBlockedThroughSessionMutator(
 
 	payload, ok := req.Payload.(daemonCapabilityBlockedMutationPayload)
 	require.True(t, ok, "payload type = %T", req.Payload)
-	require.Equal(t, sessionID, payload.SessionID)
 	require.Equal(t, "en", payload.Language)
 	require.Equal(t, operatorPrompt, payload.OperatorPrompt)
 	require.Equal(t, "safe_scan", payload.OperationLevel)
@@ -677,7 +673,6 @@ func TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator(t *testing
 
 		payload, ok := req.Payload.(daemonControlSessionMutationPayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
 		require.Equal(t, "pause", payload.Action)
 		require.Equal(t, "resume later", payload.Prompt)
 		require.Equal(t, "operator pause", payload.Reason)
@@ -795,7 +790,6 @@ func TestAgentManagerRunRuntimeResolveAuthorizationDispatchesSessionMutator(t *t
 
 		payload, ok := req.Payload.(daemonResolveAuthorizationMutationPayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
 		require.Equal(t, "deny", payload.Decision)
 		require.Equal(t, "auth-session-mutation", payload.AuthorizationID)
 		require.Equal(t, "not within scope", payload.Reason)

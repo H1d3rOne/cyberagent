@@ -446,8 +446,9 @@ ownership 边界：
 77. ✅ P0.5-N83 已为 planner action execution 的 `runtime.AgentLoopRequest + runtime.AgentLoopAction` 组合新增 runtime-neutral payload DTO，移除最后一个 turn executor daemon-private payload wrapper。
 78. ✅ P0.5-N84 已将 `append_messages` session mutation payload 收敛为 `runtime.AgentLoopAppendMessagesPayload`，SessionID 改由 `SessionMutationRequest.Turn.SessionID` 承载，Messages/Plan 使用 `runtime.AgentLoopMessage` / `runtime.AgentLoopPlan`，legacy 转换留在 daemon mutator adapter 边界。
 79. ✅ P0.5-N85 已将 `record_user_message` session mutation payload 收敛为 `runtime.AgentLoopRecordUserMessagePayload`，SessionID/Prompt/OperationLevel 改由 `SessionMutationRequest.Turn` 承载，payload 仅保留 Operator/Language，legacy 转换留在 daemon mutator adapter 边界。
-80. 下一步 P0.5-N86 将 `request_authorization` session mutation payload 的 SessionID/OperatorPrompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Language/Action/Policy/Reason 等授权字段，legacy 转换留在 mutator adapter 边界。
-81. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+80. ✅ P0.5-N86 已将 `request_authorization` session mutation payload 收敛为 `runtime.AgentLoopAuthorizationRequestPayload`，SessionID/OperatorPrompt/OperationLevel 改由 `SessionMutationRequest.Turn` 承载，payload 保留 Language/Action/Policy/Reason 等授权字段，legacy 转换留在 daemon mutator adapter 边界。
+81. 下一步 P0.5-N87 将 `capability_blocked` session mutation payload 的 SessionID/OperatorPrompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Language/ActionName/IntentID/Reason/SuggestedPrompt，legacy 转换留在 mutator adapter 边界。
+82. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1405,6 +1406,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v117 | 完成 P0.5-N83 planner action execution runtime payload DTO：新增 `runtime.AgentLoopActionExecutionPayload` 与 action clone helper，planner action execution turn payload 不再使用 daemon-private wrapper，保持 request/action clone 隔离与 dispatch/fallback 行为；focused runtime/daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v118 | 完成 P0.5-N84 append_messages session mutation payload runtime DTO 收敛：新增 `runtime.AgentLoopAppendMessagesPayload` 与 clone helper，append payload 不再携带 SessionID/daemon-private message/plan，daemon mutator adapter 在边界转回 legacy 并沿用 turnRef compaction/events 语义；runtime/daemon 包测试与 diff check 通过。 |
 | v119 | 完成 P0.5-N85 record_user_message session mutation payload runtime DTO 收敛：新增 `runtime.AgentLoopRecordUserMessagePayload` 与 clone helper，record_user_message payload 不再携带 SessionID/Prompt/OperationLevel，daemon mutator adapter 从 TurnContext 读取这些输入并保留 legacy record/persist/compaction 语义；runtime/daemon 包测试与 diff check 通过。 |
+| v120 | 完成 P0.5-N86 request_authorization session mutation payload runtime DTO 收敛：新增 `runtime.AgentLoopAuthorizationRequestPayload` 与 clone helper，request_authorization payload 不再携带 SessionID/OperatorPrompt/OperationLevel，daemon mutator adapter 从 TurnContext 读取这些输入并保留 legacy pending authorization/message/session state 语义；runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

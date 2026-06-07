@@ -896,12 +896,9 @@ func TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations(t *
 	require.Equal(t, "workspace_write", authReq.Metadata["required_level"])
 	require.Equal(t, "manual_tool_authorization_required", authReq.Metadata["policy"])
 
-	authPayload, ok := authReq.Payload.(daemonRequestAuthorizationMutationPayload)
+	authPayload, ok := authReq.Payload.(runtime.AgentLoopAuthorizationRequestPayload)
 	require.True(t, ok, "payload type = %T", authReq.Payload)
-	require.Equal(t, sessionID, authPayload.SessionID)
 	require.Equal(t, "en", authPayload.Language)
-	require.Equal(t, prompt, authPayload.OperatorPrompt)
-	require.Equal(t, "workspace_write", authPayload.OperationLevel)
 	require.Equal(t, "workspace.files.write", authPayload.ActionName)
 	require.Equal(t, "workspace_write", authPayload.RequiredLevel)
 	require.Equal(t, "manual_tool_authorization_required", authPayload.Policy)
