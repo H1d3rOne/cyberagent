@@ -477,13 +477,13 @@ func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testi
 		require.Equal(t, "turn_execution", turn.Metadata["executor"])
 		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Metadata["kind"])
 
-		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, "session-route-executor", payload.SessionID)
-		require.Equal(t, "daemon health", payload.Prompt)
+		require.Equal(t, "session-route-executor", payload.Turn.SessionID)
+		require.Equal(t, "daemon health", payload.Turn.Prompt)
 		require.Equal(t, "en", payload.Language)
 		require.Equal(t, "operator-1", payload.Operator)
-		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, "read_only", payload.Turn.OperationLevel)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -541,10 +541,10 @@ func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
 		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
 		require.Equal(t, "read_only", turn.OperationLevel)
 
-		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
-		require.Equal(t, "daemon health", payload.Prompt)
+		require.Equal(t, sessionID, payload.Turn.SessionID)
+		require.Equal(t, "daemon health", payload.Turn.Prompt)
 		require.Equal(t, "operator-1", payload.Operator)
 
 		return runtime.TurnResult{
@@ -659,13 +659,13 @@ func TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor(t *testing.T) 
 		require.Equal(t, "turn_execution", turn.Metadata["executor"])
 		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Metadata["kind"])
 
-		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
-		require.Equal(t, turn.Prompt, payload.Prompt)
+		require.Equal(t, sessionID, payload.Turn.SessionID)
+		require.Equal(t, turn.Prompt, payload.Turn.Prompt)
 		require.Equal(t, "en", payload.Language)
 		require.Equal(t, "operator-1", payload.Operator)
-		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, "read_only", payload.Turn.OperationLevel)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -755,10 +755,10 @@ func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
 		require.Equal(t, "read_only", turn.OperationLevel)
 
-		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
-		require.Equal(t, "hello fallback route", payload.Prompt)
+		require.Equal(t, sessionID, payload.Turn.SessionID)
+		require.Equal(t, "hello fallback route", payload.Turn.Prompt)
 		require.Equal(t, "operator-1", payload.Operator)
 
 		return runtime.TurnResult{
@@ -978,10 +978,10 @@ func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
 		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
 		require.Equal(t, "read_only", turn.OperationLevel)
 
-		payload, ok := turn.Payload.(daemonDeterministicRouteTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
-		require.Equal(t, prompt, payload.Prompt)
+		require.Equal(t, sessionID, payload.Turn.SessionID)
+		require.Equal(t, prompt, payload.Turn.Prompt)
 		require.Equal(t, "operator-1", payload.Operator)
 
 		return runtime.TurnResult{
