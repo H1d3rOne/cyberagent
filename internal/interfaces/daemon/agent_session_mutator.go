@@ -18,14 +18,6 @@ type daemonAppendMessagesMutationResultPayload struct {
 	Mutated    bool
 }
 
-type daemonRecordUserMessageMutationPayload struct {
-	SessionID      string
-	Prompt         string
-	Operator       string
-	Language       string
-	OperationLevel string
-}
-
 type daemonRecordUserMessageMutationResultPayload struct {
 	Session       agentSession
 	UserMessage   agentMessage
@@ -133,6 +125,20 @@ func agentLoopAppendMessagesPayloadFromSessionMutationPayload(payload any) (runt
 	}
 }
 
+func agentLoopRecordUserMessagePayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopRecordUserMessagePayload, bool) {
+	switch value := payload.(type) {
+	case runtime.AgentLoopRecordUserMessagePayload:
+		return value.Clone(), true
+	case *runtime.AgentLoopRecordUserMessagePayload:
+		if value == nil {
+			return runtime.AgentLoopRecordUserMessagePayload{}, false
+		}
+		return value.Clone(), true
+	default:
+		return runtime.AgentLoopRecordUserMessagePayload{}, false
+	}
+}
+
 func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
 	if r.manager == nil {
 		err := errors.New("daemon: session mutator has no manager")
@@ -165,12 +171,15 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			},
 		}, nil
 	case runtime.SessionMutationRecordUserMessage:
-		payload, ok := req.Payload.(daemonRecordUserMessageMutationPayload)
+		payload, ok := agentLoopRecordUserMessagePayloadFromSessionMutationPayload(req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid record user message mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
 		}
-		resultPayload, err := r.manager.recordUserMessageLegacy(payload.SessionID, payload.Prompt, payload.Operator, payload.Language, payload.OperationLevel)
+		sessionID := req.Turn.SessionID
+		prompt := req.Turn.Prompt
+		operationLevel := req.Turn.OperationLevel
+		resultPayload, err := r.manager.recordUserMessageLegacy(sessionID, prompt, payload.Operator, payload.Language, operationLevel)
 		if err != nil {
 			return daemonSessionMutationErrorResult(req, err), err
 		}
@@ -182,9 +191,9 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			Data: map[string]any{
 				"mutator":         "daemon_legacy_session",
 				"kind":            string(req.Kind),
-				"session_id":      payload.SessionID,
+				"session_id":      sessionID,
 				"message_id":      resultPayload.UserMessage.ID,
-				"operation_level": payload.OperationLevel,
+				"operation_level": operationLevel,
 				"mutated":         true,
 			},
 		}, nil
@@ -404,12 +413,9 @@ func (m *agentManager) runRuntimeRecordUserMessageMutation(ctx context.Context, 
 			},
 		},
 		Kind: runtime.SessionMutationRecordUserMessage,
-		Payload: daemonRecordUserMessageMutationPayload{
-			SessionID:      sessionID,
-			Prompt:         prompt,
-			Operator:       operator,
-			Language:       language,
-			OperationLevel: operationLevel,
+		Payload: runtime.AgentLoopRecordUserMessagePayload{
+			Operator: operator,
+			Language: language,
 		},
 		Metadata: map[string]any{
 			"mutator":         "session_mutation",

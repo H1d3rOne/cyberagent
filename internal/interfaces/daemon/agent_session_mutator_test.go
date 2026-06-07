@@ -366,15 +366,12 @@ func TestAgentManagerRunRuntimeRecordUserMessageDispatchesSessionMutator(t *test
 		require.Equal(t, "safe_scan", req.Turn.OperationLevel)
 		require.Equal(t, string(runtime.SessionMutationRecordUserMessage), req.Metadata["kind"])
 
-		payload, ok := req.Payload.(daemonRecordUserMessageMutationPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopRecordUserMessagePayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
-		require.Equal(t, "scan safely", payload.Prompt)
 		require.Equal(t, "operator-1", payload.Operator)
 		require.Equal(t, "en", payload.Language)
-		require.Equal(t, "safe_scan", payload.OperationLevel)
 
-		resultPayload, err := mgr.recordUserMessageLegacy(payload.SessionID, payload.Prompt, payload.Operator, payload.Language, payload.OperationLevel)
+		resultPayload, err := mgr.recordUserMessageLegacy(req.Turn.SessionID, req.Turn.Prompt, payload.Operator, payload.Language, req.Turn.OperationLevel)
 		require.NoError(t, err)
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
