@@ -403,8 +403,9 @@ ownership 边界：
 34. ✅ P0.5-N40 已把 tool service binding/adapter compatibility 迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`；LLM turn、deterministic route、replan continuation、planner action execution payload 与 shared cycle tool context 不再直接持有 `routerServices`，daemon 只在 adapter 边界解包。
 35. ✅ P0.5-N41 已把 registry handler runtime 的 service 输入也迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`；builtin handlers 只通过 daemon compatibility helper 临时解包 legacy services。
 36. ✅ P0.5-N42 已把 engine-native loop runner 顶层请求/结果契约下沉到 runtime-neutral `runtime.AgentLoopMode` / `runtime.AgentLoopRequest` / `runtime.AgentLoopResult`，并补 clone 隔离测试；daemon 执行行为暂不接入。
-37. 下一步先给 daemon shared cycle request/result 增加 `AgentLoopRequest` / `AgentLoopResult` adapter 映射，再继续移动到 engine-native loop runner ownership；daemon 最终只保留类型转换与 service binding adapter。
-38. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+37. ✅ P0.5-N43 已给 daemon shared cycle request/result 增加 `AgentLoopRequest` / `AgentLoopResult` adapter 映射，验证 request/result roundtrip 与 clone 隔离；现有 `runAgentPlannerActionReplanCycle` 执行路径不变。
+38. 下一步新增 runtime `Engine.RunAgentLoop` / `AgentLoopRunner` seam，先挂接 daemon legacy runner adapter，再继续移动到 engine-native loop runner ownership；daemon 最终只保留类型转换与 service binding adapter。
+39. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1319,6 +1320,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v74 | 完成 P0.5-N40 tool service binding runtime-neutral DTO：新增 `runtime.AgentLoopToolServiceBinding` 与 daemon binding adapter，LLM turn、deterministic route、replan continuation、planner action execution payload 与 shared cycle tool context 不再直接持有 `routerServices`；daemon/runtime 包测试与 diff check 通过。 |
 | v75 | 完成 P0.5-N41 registry handler runtime service binding 收敛：`agentRegistryHandlerRuntime.Services` 改为 `runtime.AgentLoopToolServiceBinding`，builtin handlers 通过 compatibility helper 解包 legacy services；focused daemon tests、daemon/runtime 包测试与 diff check 通过。 |
 | v76 | 完成 P0.5-N42 agent loop runner request/result runtime-neutral DTO：新增 `runtime.AgentLoopMode` / `runtime.AgentLoopRequest` / `runtime.AgentLoopResult` 与 clone helpers，固化 loop runner ownership 顶层请求/结果契约；runtime/daemon 包测试与 diff check 通过。 |
+| v77 | 完成 P0.5-N43 daemon shared cycle ↔ agent loop DTO adapter：`agentPlannerActionReplanCycleRequest/Result` 新增 `runtime.AgentLoopRequest/Result` 映射与 metadata options/continue helper，覆盖 roundtrip、clone 隔离与 service binding handle 保真；runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

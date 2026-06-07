@@ -916,6 +916,22 @@ func (plan agentPlannerActionReplanCyclePlan) legacyPlannerResponse() *agentPlan
 	return agentPlannerResponseFromAgentLoopPlan(plan.item)
 }
 
+func (plan agentPlannerActionReplanCyclePlan) agentLoopPlan() *runtime.AgentLoopPlan {
+	if !plan.present {
+		return nil
+	}
+	cloned := plan.item.Clone()
+	return &cloned
+}
+
+func agentPlannerActionReplanCyclePlanFromAgentLoopPlan(plan *runtime.AgentLoopPlan) agentPlannerActionReplanCyclePlan {
+	if plan == nil {
+		return agentPlannerActionReplanCyclePlan{}
+	}
+	cloned := plan.Clone()
+	return agentPlannerActionReplanCyclePlanFromPlannerResponse(agentPlannerResponseFromAgentLoopPlan(cloned))
+}
+
 func (plan agentPlannerActionReplanCyclePlan) actions() []agentPlannerAction {
 	return agentPlannerActionReplanCyclePlanActionsToAgentPlannerActions(plan.actionsSnapshot)
 }
@@ -1193,6 +1209,24 @@ func (summary agentPlannerActionReplanCycleMemorySummary) legacyAgentMemorySumma
 	return agentMemorySummaryFromAgentLoopMemorySummary(summary.item)
 }
 
+func (summary agentPlannerActionReplanCycleMemorySummary) agentLoopMemorySummary() *runtime.AgentLoopMemorySummary {
+	if !summary.present {
+		return nil
+	}
+	cloned := summary.item.Clone()
+	return &cloned
+}
+
+func agentPlannerActionReplanCycleMemorySummaryFromAgentLoopMemorySummary(summary *runtime.AgentLoopMemorySummary) agentPlannerActionReplanCycleMemorySummary {
+	if summary == nil {
+		return agentPlannerActionReplanCycleMemorySummary{}
+	}
+	return agentPlannerActionReplanCycleMemorySummary{
+		present: true,
+		item:    summary.Clone(),
+	}
+}
+
 func agentLoopMemorySummaryFromAgentMemorySummary(summary agentMemorySummary) runtime.AgentLoopMemorySummary {
 	var lastMessageAt *time.Time
 	if summary.LastMessageAt != nil {
@@ -1240,6 +1274,93 @@ type agentPlannerActionReplanCycleResult struct {
 	State    agentPlannerActionReplanCycleState
 	Plan     agentPlannerActionReplanCyclePlan
 	Continue bool
+}
+
+const (
+	agentPlannerActionReplanCycleMetadataActionAppendOrigin                      = "action_append_origin"
+	agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage = "append_action_tool_calls_before_empty_message"
+	agentPlannerActionReplanCycleMetadataContinue                                = "continue"
+)
+
+func (req agentPlannerActionReplanCycleRequest) agentLoopRequest(mode runtime.AgentLoopMode) runtime.AgentLoopRequest {
+	state := req.State.state.Clone()
+	return runtime.AgentLoopRequest{
+		Turn:          runtime.CloneAgentLoopTurnContext(req.Turn),
+		Mode:          mode,
+		Language:      req.Language,
+		Operator:      req.Operator,
+		LLMRequest:    req.LLMRequest.Clone(),
+		History:       runtime.CloneAgentLoopMessages(state.LoopHistory),
+		MemorySummary: req.MemorySummary.agentLoopMemorySummary(),
+		InitialPlan:   req.Plan.agentLoopPlan(),
+		State:         state,
+		Authorization: req.Authorization.Clone(),
+		ToolServices:  req.ToolContext.services.Clone(),
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataActionAppendOrigin:                      req.Options.ActionAppendOrigin,
+			agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage: req.Options.AppendActionToolCallsBeforeEmptyMessage,
+		},
+	}
+}
+
+func agentPlannerActionReplanCycleRequestFromAgentLoopRequest(loopReq runtime.AgentLoopRequest, options agentPlannerActionReplanCycleOptions) agentPlannerActionReplanCycleRequest {
+	cloned := loopReq.Clone()
+	if options == (agentPlannerActionReplanCycleOptions{}) {
+		options = agentPlannerActionReplanCycleOptionsFromAgentLoopMetadata(cloned.Metadata)
+	}
+	state := cloned.State.Clone()
+	if len(state.LoopHistory) == 0 && len(cloned.History) > 0 {
+		state.LoopHistory = runtime.CloneAgentLoopMessages(cloned.History)
+	}
+	return agentPlannerActionReplanCycleRequest{
+		Turn:          runtime.CloneAgentLoopTurnContext(cloned.Turn),
+		Language:      cloned.Language,
+		Operator:      cloned.Operator,
+		LLMRequest:    cloned.LLMRequest.Clone(),
+		Authorization: cloned.Authorization.Clone(),
+		MemorySummary: agentPlannerActionReplanCycleMemorySummaryFromAgentLoopMemorySummary(cloned.MemorySummary),
+		ToolContext:   agentPlannerActionReplanCycleToolContext{services: cloned.ToolServices.Clone()},
+		Plan:          agentPlannerActionReplanCyclePlanFromAgentLoopPlan(cloned.InitialPlan),
+		State:         agentPlannerActionReplanCycleState{state: state},
+		Options:       options,
+	}
+}
+
+func agentPlannerActionReplanCycleOptionsFromAgentLoopMetadata(metadata map[string]any) agentPlannerActionReplanCycleOptions {
+	return agentPlannerActionReplanCycleOptions{
+		ActionAppendOrigin:                      stringFromAny(metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin]),
+		AppendActionToolCallsBeforeEmptyMessage: boolFromAny(metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage]),
+	}
+}
+
+func (result agentPlannerActionReplanCycleResult) agentLoopResult(stopReason string) runtime.AgentLoopResult {
+	state := result.State.state.Clone()
+	return runtime.AgentLoopResult{
+		State:      state,
+		Messages:   runtime.CloneAgentLoopMessages(state.ResponseMessages),
+		ToolCalls:  runtime.CloneAgentLoopToolCalls(state.ToolCalls),
+		FinalPlan:  result.Plan.agentLoopPlan(),
+		StopReason: stopReason,
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataContinue: result.Continue,
+		},
+	}
+}
+
+func agentPlannerActionReplanCycleResultFromAgentLoopResult(loopResult runtime.AgentLoopResult) agentPlannerActionReplanCycleResult {
+	cloned := loopResult.Clone()
+	state := cloned.State.Clone()
+	if len(state.ResponseMessages) == 0 && len(cloned.Messages) > 0 {
+		state.ResponseMessages = runtime.CloneAgentLoopMessages(cloned.Messages)
+	}
+	if len(state.ToolCalls) == 0 && len(cloned.ToolCalls) > 0 {
+		state.ToolCalls = runtime.CloneAgentLoopToolCalls(cloned.ToolCalls)
+	}
+	return agentPlannerActionReplanCycleResult{
+		State:    agentPlannerActionReplanCycleState{state: state},
+		Plan:     agentPlannerActionReplanCyclePlanFromAgentLoopPlan(cloned.FinalPlan),
+		Continue: boolFromAny(cloned.Metadata[agentPlannerActionReplanCycleMetadataContinue]),
+	}
 }
 
 type agentPlannerActionReplanCycleActionExecutionResult struct {
