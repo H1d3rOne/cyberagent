@@ -10,6 +10,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCloneAgentLoopSessionMutationPayload(t *testing.T) {
+	valuePayload := runtime.AgentLoopRecordUserMessagePayload{
+		Operator: "operator-1",
+		Language: "zh",
+	}
+	clonedValue, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopRecordUserMessagePayload](valuePayload)
+	require.True(t, ok)
+	valuePayload.Operator = "mutated"
+	require.Equal(t, "operator-1", clonedValue.Operator)
+	require.Equal(t, "zh", clonedValue.Language)
+
+	pointerPayload := &runtime.AgentLoopAppendMessagesPayload{
+		Messages: []runtime.AgentLoopMessage{{ID: "msg-1", Content: "original"}},
+	}
+	clonedPointer, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopAppendMessagesPayload](pointerPayload)
+	require.True(t, ok)
+	pointerPayload.Messages[0].Content = "mutated"
+	require.Equal(t, "original", clonedPointer.Messages[0].Content)
+
+	var nilPayload *runtime.AgentLoopControlSessionPayload
+	_, ok = cloneAgentLoopSessionMutationPayload[runtime.AgentLoopControlSessionPayload](nilPayload)
+	require.False(t, ok)
+
+	_, ok = cloneAgentLoopSessionMutationPayload[runtime.AgentLoopControlSessionPayload]("invalid")
+	require.False(t, ok)
+}
+
 func TestAgentManagerAppendMessagesWithPlannerDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

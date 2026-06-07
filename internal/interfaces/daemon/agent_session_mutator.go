@@ -64,88 +64,22 @@ type daemonSessionMutator struct {
 	manager *agentManager
 }
 
-func agentLoopAppendMessagesPayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopAppendMessagesPayload, bool) {
-	switch value := payload.(type) {
-	case runtime.AgentLoopAppendMessagesPayload:
-		return value.Clone(), true
-	case *runtime.AgentLoopAppendMessagesPayload:
-		if value == nil {
-			return runtime.AgentLoopAppendMessagesPayload{}, false
-		}
-		return value.Clone(), true
-	default:
-		return runtime.AgentLoopAppendMessagesPayload{}, false
-	}
+type agentLoopSessionMutationPayloadCloner[T any] interface {
+	Clone() T
 }
 
-func agentLoopRecordUserMessagePayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopRecordUserMessagePayload, bool) {
-	switch value := payload.(type) {
-	case runtime.AgentLoopRecordUserMessagePayload:
+func cloneAgentLoopSessionMutationPayload[T agentLoopSessionMutationPayloadCloner[T]](payload any) (T, bool) {
+	var zero T
+	if value, ok := payload.(T); ok {
 		return value.Clone(), true
-	case *runtime.AgentLoopRecordUserMessagePayload:
-		if value == nil {
-			return runtime.AgentLoopRecordUserMessagePayload{}, false
-		}
-		return value.Clone(), true
-	default:
-		return runtime.AgentLoopRecordUserMessagePayload{}, false
 	}
-}
-
-func agentLoopAuthorizationRequestPayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopAuthorizationRequestPayload, bool) {
-	switch value := payload.(type) {
-	case runtime.AgentLoopAuthorizationRequestPayload:
-		return value.Clone(), true
-	case *runtime.AgentLoopAuthorizationRequestPayload:
+	if value, ok := payload.(*T); ok {
 		if value == nil {
-			return runtime.AgentLoopAuthorizationRequestPayload{}, false
+			return zero, false
 		}
-		return value.Clone(), true
-	default:
-		return runtime.AgentLoopAuthorizationRequestPayload{}, false
+		return (*value).Clone(), true
 	}
-}
-
-func agentLoopCapabilityBlockedPayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopCapabilityBlockedPayload, bool) {
-	switch value := payload.(type) {
-	case runtime.AgentLoopCapabilityBlockedPayload:
-		return value.Clone(), true
-	case *runtime.AgentLoopCapabilityBlockedPayload:
-		if value == nil {
-			return runtime.AgentLoopCapabilityBlockedPayload{}, false
-		}
-		return value.Clone(), true
-	default:
-		return runtime.AgentLoopCapabilityBlockedPayload{}, false
-	}
-}
-
-func agentLoopControlSessionPayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopControlSessionPayload, bool) {
-	switch value := payload.(type) {
-	case runtime.AgentLoopControlSessionPayload:
-		return value.Clone(), true
-	case *runtime.AgentLoopControlSessionPayload:
-		if value == nil {
-			return runtime.AgentLoopControlSessionPayload{}, false
-		}
-		return value.Clone(), true
-	default:
-		return runtime.AgentLoopControlSessionPayload{}, false
-	}
-}
-
-func agentLoopResolveAuthorizationPayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopResolveAuthorizationPayload, bool) {
-	switch value := payload.(type) {
-	case runtime.AgentLoopResolveAuthorizationPayload:
-		return value.Clone(), true
-	case *runtime.AgentLoopResolveAuthorizationPayload:
-		if value == nil {
-			return runtime.AgentLoopResolveAuthorizationPayload{}, false
-		}
-		return value.Clone(), true
-	default:
-		return runtime.AgentLoopResolveAuthorizationPayload{}, false
-	}
+	return zero, false
 }
 
 func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
@@ -156,7 +90,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 
 	switch req.Kind {
 	case runtime.SessionMutationAppendMessages:
-		payload, ok := agentLoopAppendMessagesPayloadFromSessionMutationPayload(req.Payload)
+		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopAppendMessagesPayload](req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid append messages mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
@@ -180,7 +114,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			},
 		}, nil
 	case runtime.SessionMutationRecordUserMessage:
-		payload, ok := agentLoopRecordUserMessagePayloadFromSessionMutationPayload(req.Payload)
+		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopRecordUserMessagePayload](req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid record user message mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
@@ -207,7 +141,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			},
 		}, nil
 	case runtime.SessionMutationRequestAuthorization:
-		payload, ok := agentLoopAuthorizationRequestPayloadFromSessionMutationPayload(req.Payload)
+		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopAuthorizationRequestPayload](req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid request authorization mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
@@ -235,7 +169,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			},
 		}, nil
 	case runtime.SessionMutationCapabilityBlocked:
-		payload, ok := agentLoopCapabilityBlockedPayloadFromSessionMutationPayload(req.Payload)
+		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopCapabilityBlockedPayload](req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid capability blocked mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
@@ -259,7 +193,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			},
 		}, nil
 	case runtime.SessionMutationControlSession:
-		payload, ok := agentLoopControlSessionPayloadFromSessionMutationPayload(req.Payload)
+		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopControlSessionPayload](req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid control session mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
@@ -288,7 +222,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			},
 		}, nil
 	case runtime.SessionMutationResolveAuthorization:
-		payload, ok := agentLoopResolveAuthorizationPayloadFromSessionMutationPayload(req.Payload)
+		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopResolveAuthorizationPayload](req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid resolve authorization mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
