@@ -9,7 +9,6 @@ import (
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
-	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 )
@@ -399,28 +398,11 @@ type agentPlannerActionReplanCycleMessage struct {
 	Content               string
 	Timestamp             time.Time
 	Phase                 string
-	ToolCalls             []agentPlannerActionReplanCycleToolCall
+	ToolCalls             []runtime.AgentLoopToolCall
 	Links                 []agentPlannerActionReplanCycleLink
 	Reasoning             string
 	SuggestedPrompts      []string
 	RecommendationOptions []agentPlannerActionReplanCycleRecommendationOption
-}
-
-type agentPlannerActionReplanCycleToolCall struct {
-	ID         string
-	Name       string
-	Status     contracts.Status
-	Detail     string
-	StartedAt  time.Time
-	FinishedAt *time.Time
-	Result     map[string]any
-	Error      *agentPlannerActionReplanCycleToolCallError
-	Metadata   map[string]any
-}
-
-type agentPlannerActionReplanCycleToolCallError struct {
-	Code    services.ErrorCode
-	Message string
 }
 
 type agentPlannerActionReplanCycleLink struct {
@@ -505,16 +487,16 @@ func (messages agentPlannerActionReplanCycleMessages) clone() agentPlannerAction
 }
 
 type agentPlannerActionReplanCycleToolCalls struct {
-	items []agentPlannerActionReplanCycleToolCall
+	items []runtime.AgentLoopToolCall
 }
 
 func agentPlannerActionReplanCycleToolCallsFromAgentToolCalls(calls []agentToolCall) agentPlannerActionReplanCycleToolCalls {
 	if calls == nil {
 		return agentPlannerActionReplanCycleToolCalls{}
 	}
-	items := make([]agentPlannerActionReplanCycleToolCall, len(calls))
+	items := make([]runtime.AgentLoopToolCall, len(calls))
 	for i, call := range calls {
-		items[i] = agentPlannerActionReplanCycleToolCallFromAgentToolCall(call)
+		items[i] = agentLoopToolCallFromAgentToolCall(call)
 	}
 	return agentPlannerActionReplanCycleToolCalls{items: items}
 }
@@ -525,7 +507,7 @@ func (calls agentPlannerActionReplanCycleToolCalls) legacyAgentToolCalls() []age
 	}
 	out := make([]agentToolCall, len(calls.items))
 	for i, call := range calls.items {
-		out[i] = call.agentToolCall()
+		out[i] = agentToolCallFromAgentLoopToolCall(call)
 	}
 	return out
 }
@@ -541,7 +523,7 @@ func (calls agentPlannerActionReplanCycleToolCalls) withPhase(phase string) agen
 		return out
 	}
 	for i := range out.items {
-		out.items[i] = out.items[i].withPhase(normalized)
+		out.items[i] = agentLoopToolCallWithPhase(out.items[i], normalized)
 	}
 	return out
 }
@@ -564,11 +546,7 @@ func (calls agentPlannerActionReplanCycleToolCalls) clone() agentPlannerActionRe
 	if calls.items == nil {
 		return agentPlannerActionReplanCycleToolCalls{}
 	}
-	items := make([]agentPlannerActionReplanCycleToolCall, len(calls.items))
-	for i, call := range calls.items {
-		items[i] = call.clone()
-	}
-	return agentPlannerActionReplanCycleToolCalls{items: items}
+	return agentPlannerActionReplanCycleToolCalls{items: runtime.CloneAgentLoopToolCalls(calls.items)}
 }
 
 func agentPlannerActionReplanCycleMessageFromAgentMessage(message agentMessage) agentPlannerActionReplanCycleMessage {
@@ -578,7 +556,7 @@ func agentPlannerActionReplanCycleMessageFromAgentMessage(message agentMessage) 
 		Content:               message.Content,
 		Timestamp:             message.Timestamp,
 		Phase:                 message.Phase,
-		ToolCalls:             agentPlannerActionReplanCycleToolCallItemsFromAgentToolCalls(message.ToolCalls),
+		ToolCalls:             agentLoopToolCallItemsFromAgentToolCalls(message.ToolCalls),
 		Links:                 agentPlannerActionReplanCycleLinksFromAgentLinks(message.Links),
 		Reasoning:             message.Reasoning,
 		SuggestedPrompts:      append([]string(nil), message.SuggestedPrompts...),
@@ -593,7 +571,7 @@ func (message agentPlannerActionReplanCycleMessage) agentMessage() agentMessage 
 		Content:               message.Content,
 		Timestamp:             message.Timestamp,
 		Phase:                 message.Phase,
-		ToolCalls:             agentPlannerActionReplanCycleToolCallItemsToAgentToolCalls(message.ToolCalls),
+		ToolCalls:             agentLoopToolCallItemsToAgentToolCalls(message.ToolCalls),
 		Links:                 agentPlannerActionReplanCycleLinksToAgentLinks(message.Links),
 		Reasoning:             message.Reasoning,
 		SuggestedPrompts:      append([]string(nil), message.SuggestedPrompts...),
@@ -613,73 +591,65 @@ func (message agentPlannerActionReplanCycleMessage) withPhase(phase string) agen
 	out := message.clone()
 	out.Phase = normalized
 	for i := range out.ToolCalls {
-		out.ToolCalls[i] = out.ToolCalls[i].withPhase(normalized)
+		out.ToolCalls[i] = agentLoopToolCallWithPhase(out.ToolCalls[i], normalized)
 	}
 	return out
 }
 
-func agentPlannerActionReplanCycleToolCallFromAgentToolCall(call agentToolCall) agentPlannerActionReplanCycleToolCall {
-	var finishedAt *time.Time
-	if call.FinishedAt != nil {
-		finished := *call.FinishedAt
-		finishedAt = &finished
-	}
-	var callErr *agentPlannerActionReplanCycleToolCallError
-	if call.Error != nil {
-		callErr = &agentPlannerActionReplanCycleToolCallError{
-			Code:    call.Error.Code,
-			Message: call.Error.Message,
-		}
-	}
-	return agentPlannerActionReplanCycleToolCall{
+func agentLoopToolCallFromAgentToolCall(call agentToolCall) runtime.AgentLoopToolCall {
+	return runtime.AgentLoopToolCall{
 		ID:         call.ID,
 		Name:       call.Name,
 		Status:     call.Status,
 		Detail:     call.Detail,
 		StartedAt:  call.StartedAt,
-		FinishedAt: finishedAt,
+		FinishedAt: runtime.CloneAgentLoopTimePtr(call.FinishedAt),
 		Result:     cloneMapStringAny(call.Result),
-		Error:      callErr,
+		Error:      agentLoopToolCallErrorFromDaemonJobError(call.Error),
 		Metadata:   cloneMapStringAny(call.Metadata),
 	}
 }
 
-func (call agentPlannerActionReplanCycleToolCall) agentToolCall() agentToolCall {
-	var finishedAt *time.Time
-	if call.FinishedAt != nil {
-		finished := *call.FinishedAt
-		finishedAt = &finished
+func agentLoopToolCallErrorFromDaemonJobError(err *daemonJobError) *runtime.AgentLoopToolCallError {
+	if err == nil {
+		return nil
 	}
-	var callErr *daemonJobError
-	if call.Error != nil {
-		callErr = &daemonJobError{
-			Code:    call.Error.Code,
-			Message: call.Error.Message,
-		}
+	return &runtime.AgentLoopToolCallError{
+		Code:    err.Code,
+		Message: err.Message,
 	}
+}
+
+func agentToolCallFromAgentLoopToolCall(call runtime.AgentLoopToolCall) agentToolCall {
 	return agentToolCall{
 		ID:         call.ID,
 		Name:       call.Name,
 		Status:     call.Status,
 		Detail:     call.Detail,
 		StartedAt:  call.StartedAt,
-		FinishedAt: finishedAt,
+		FinishedAt: runtime.CloneAgentLoopTimePtr(call.FinishedAt),
 		Result:     cloneMapStringAny(call.Result),
-		Error:      callErr,
+		Error:      daemonJobErrorFromAgentLoopToolCallError(call.Error),
 		Metadata:   cloneMapStringAny(call.Metadata),
 	}
 }
 
-func (call agentPlannerActionReplanCycleToolCall) clone() agentPlannerActionReplanCycleToolCall {
-	return agentPlannerActionReplanCycleToolCallFromAgentToolCall(call.agentToolCall())
+func daemonJobErrorFromAgentLoopToolCallError(err *runtime.AgentLoopToolCallError) *daemonJobError {
+	if err == nil {
+		return nil
+	}
+	return &daemonJobError{
+		Code:    err.Code,
+		Message: err.Message,
+	}
 }
 
-func (call agentPlannerActionReplanCycleToolCall) withPhase(phase string) agentPlannerActionReplanCycleToolCall {
+func agentLoopToolCallWithPhase(call runtime.AgentLoopToolCall, phase string) runtime.AgentLoopToolCall {
 	normalized := agentNormalizePhase(phase)
 	if normalized == "" {
-		return call.clone()
+		return call.Clone()
 	}
-	out := call.clone()
+	out := call.Clone()
 	if out.Metadata == nil {
 		out.Metadata = map[string]any{}
 	}
@@ -691,24 +661,24 @@ func (call agentPlannerActionReplanCycleToolCall) withPhase(phase string) agentP
 	return out
 }
 
-func agentPlannerActionReplanCycleToolCallItemsFromAgentToolCalls(calls []agentToolCall) []agentPlannerActionReplanCycleToolCall {
+func agentLoopToolCallItemsFromAgentToolCalls(calls []agentToolCall) []runtime.AgentLoopToolCall {
 	if calls == nil {
 		return nil
 	}
-	out := make([]agentPlannerActionReplanCycleToolCall, len(calls))
+	out := make([]runtime.AgentLoopToolCall, len(calls))
 	for i, call := range calls {
-		out[i] = agentPlannerActionReplanCycleToolCallFromAgentToolCall(call)
+		out[i] = agentLoopToolCallFromAgentToolCall(call)
 	}
 	return out
 }
 
-func agentPlannerActionReplanCycleToolCallItemsToAgentToolCalls(calls []agentPlannerActionReplanCycleToolCall) []agentToolCall {
+func agentLoopToolCallItemsToAgentToolCalls(calls []runtime.AgentLoopToolCall) []agentToolCall {
 	if calls == nil {
 		return nil
 	}
 	out := make([]agentToolCall, len(calls))
 	for i, call := range calls {
-		out[i] = call.agentToolCall()
+		out[i] = agentToolCallFromAgentLoopToolCall(call)
 	}
 	return out
 }

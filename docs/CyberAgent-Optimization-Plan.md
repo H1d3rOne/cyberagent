@@ -396,8 +396,9 @@ ownership 边界：
 26. ✅ P0.5-N32 已把 cycle memory summary DTO 迁到 runtime-neutral `runtime.AgentLoopMemorySummary`；daemon 只保留 legacy memory summary 转换 adapter。
 27. ✅ P0.5-N33 已把 cycle authorization/auth profile DTO 迁到 runtime-neutral `runtime.AgentLoopAuthorization` / `runtime.AgentLoopAuthProfile`；daemon 只保留 legacy HTTP auth profile 转换 adapter。
 28. ✅ P0.5-N34 已把 cycle LLM request DTO 迁到 runtime-neutral `runtime.AgentLoopLLMRequest`；daemon 只保留 legacy `sendAgentMessageRequest` 兼容转换 adapter。
-29. 下一步继续把 daemon-private message/tool/state cycle DTO 与 LLM/tool adapter compatibility 迁到 runtime-neutral package 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-30. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+29. ✅ P0.5-N35 已把 cycle tool call DTO 迁到 runtime-neutral `runtime.AgentLoopToolCall` / `runtime.AgentLoopToolCallError`；daemon 只保留 legacy `agentToolCall` 兼容转换 adapter。
+30. 下一步继续把 daemon-private message/state cycle DTO 与 LLM/tool adapter compatibility 迁到 runtime-neutral package 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+31. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1304,6 +1305,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v66 | 完成 P0.5-N32 planner cycle memory runtime-neutral DTO：新增 `runtime.AgentLoopMemorySummary` 与 clone helper，daemon cycle memory wrapper 改为持有 runtime DTO，legacy 转换集中在 daemon adapter；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v67 | 完成 P0.5-N33 planner cycle authorization runtime-neutral DTO：新增 `runtime.AgentLoopAuthorization` / `runtime.AgentLoopAuthProfile` 与 clone helpers，shared cycle request 与 LLM request auth profiles 改为持有 runtime DTO，legacy HTTP auth profile 转换集中在 daemon adapter；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v68 | 完成 P0.5-N34 planner cycle LLM request runtime-neutral DTO：新增 `runtime.AgentLoopLLMRequest` 与 clone helper，shared cycle LLM request 改为持有 runtime DTO，legacy `sendAgentMessageRequest` 兼容转换集中在 daemon adapter；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
+| v69 | 完成 P0.5-N35 planner cycle tool call runtime-neutral DTO：新增 `runtime.AgentLoopToolCall` / `runtime.AgentLoopToolCallError` 与 clone helpers，cycle message/tool wrappers 改为持有 runtime DTO，legacy `agentToolCall` 兼容转换集中在 daemon adapter；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 
 ---
 
