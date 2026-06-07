@@ -291,49 +291,49 @@ engine-native turn lifecycle 下沉入口建议：
 - `llm_tool_loop`：从 planner chat 开始，负责 Plan → Action → StepReplan 循环。
 - `replan_action_continuation`：从已有 `agentPlannerResponse` 开始，只在 `NextAction.AutoContinue=true` 时继续 Action → StepReplan 循环。
 
-候选请求 payload（迁移期可继续放在 daemon-private adapter 内；类型 runtime-neutral 后再下沉到 `internal/agent/runtime`）：
+已落地 runtime-neutral 请求/结果 DTO（P0.5-N42 已下沉到 `internal/agent/runtime`；迁移期 daemon adapter 仍保持现有执行路径）：
 
 ```go
 type AgentLoopMode string
 
 const (
-    AgentLoopLLMToolLoop           AgentLoopMode = "llm_tool_loop"
-    AgentLoopReplanContinuation    AgentLoopMode = "replan_action_continuation"
+    AgentLoopModeLLMToolLoop        AgentLoopMode = "llm_tool_loop"
+    AgentLoopModeReplanContinuation AgentLoopMode = "replan_action_continuation"
 )
 
 type AgentLoopRequest struct {
-    Turn           runtime.TurnContext
-    Mode           AgentLoopMode
-    Prompt         string
-    Language       string
-    Operator       string
-    OperationLevel string
+    Turn     TurnContext
+    Mode     AgentLoopMode
+    Language string
+    Operator string
 
-    LLMRequest     runtime.AgentLoopLLMRequest
-    History        []runtime.AgentLoopMessage
-    MemorySummary  *runtime.AgentLoopMemorySummary
-    InitialPlan    *runtime.AgentLoopPlan
-    MaxLoops       int
+    LLMRequest    AgentLoopLLMRequest
+    History       []AgentLoopMessage
+    MemorySummary *AgentLoopMemorySummary
+    InitialPlan   *AgentLoopPlan
+    State         AgentLoopState
 
-    Authorization  runtime.AgentLoopAuthorization
-    ToolServices   runtime.AgentLoopToolServiceBinding // daemon 仅在 adapter 边界解包 legacy service handles。
+    Authorization AgentLoopAuthorization
+    ToolServices  AgentLoopToolServiceBinding // daemon 仅在 adapter 边界解包 legacy service handles。
+    MaxLoops      int
+    Metadata      map[string]any
 }
-```
 
-候选结果 payload：
-
-```go
 type AgentLoopResult struct {
-    Messages              []agentMessage
-    ToolCalls             []agentToolCall
-    FinalPlan             *agentPlannerResponse
+    State                 AgentLoopState
+    Messages              []AgentLoopMessage
+    ToolCalls             []AgentLoopToolCall
+    FinalPlan             *AgentLoopPlan
     StopReason            string // planner_error | no_actions | authorization_required | capability_blocked | max_loops | synthesis_error | completed
     AuthorizationRequired bool
     CapabilityBlocked     bool
     LoopCount             int
     ActionQueueIDs        []string
+    Metadata              map[string]any
 }
 ```
+
+Clone 语义：`Turn.Metadata`、LLM/Auth profiles、history/messages/tool calls、memory `LastMessageAt`、plan/action args、state slices、service binding metadata、action queue IDs 与 metadata 均隔离；`Turn.Payload` 与 `ToolServices.Handle` 按 migration boundary 语义保留原引用。
 
 执行状态机：
 
@@ -402,8 +402,9 @@ ownership 边界：
 33. ✅ P0.5-N39 已把 LLM stage runner planner_chat/tool_synthesis payload/result 迁到 runtime-neutral `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload`；daemon stage runner 仅保留 legacy provider/plan/message 转换 adapter。
 34. ✅ P0.5-N40 已把 tool service binding/adapter compatibility 迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`；LLM turn、deterministic route、replan continuation、planner action execution payload 与 shared cycle tool context 不再直接持有 `routerServices`，daemon 只在 adapter 边界解包。
 35. ✅ P0.5-N41 已把 registry handler runtime 的 service 输入也迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`；builtin handlers 只通过 daemon compatibility helper 临时解包 legacy services。
-36. 下一步继续移动到 engine-native loop runner ownership；daemon 只保留类型转换与 service binding adapter。
-37. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+36. ✅ P0.5-N42 已把 engine-native loop runner 顶层请求/结果契约下沉到 runtime-neutral `runtime.AgentLoopMode` / `runtime.AgentLoopRequest` / `runtime.AgentLoopResult`，并补 clone 隔离测试；daemon 执行行为暂不接入。
+37. 下一步先给 daemon shared cycle request/result 增加 `AgentLoopRequest` / `AgentLoopResult` adapter 映射，再继续移动到 engine-native loop runner ownership；daemon 最终只保留类型转换与 service binding adapter。
+38. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1317,6 +1318,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v73 | 完成 P0.5-N39 LLM stage payload/result runtime-neutral DTO：新增 `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload` 与 plan pointer clone helper，planner_chat/tool_synthesis stage payload/result 改为 runtime DTO，legacy request/history/memory/tool messages/plan 转换集中在 daemon stage adapter；daemon/runtime 包测试与 diff check 通过。 |
 | v74 | 完成 P0.5-N40 tool service binding runtime-neutral DTO：新增 `runtime.AgentLoopToolServiceBinding` 与 daemon binding adapter，LLM turn、deterministic route、replan continuation、planner action execution payload 与 shared cycle tool context 不再直接持有 `routerServices`；daemon/runtime 包测试与 diff check 通过。 |
 | v75 | 完成 P0.5-N41 registry handler runtime service binding 收敛：`agentRegistryHandlerRuntime.Services` 改为 `runtime.AgentLoopToolServiceBinding`，builtin handlers 通过 compatibility helper 解包 legacy services；focused daemon tests、daemon/runtime 包测试与 diff check 通过。 |
+| v76 | 完成 P0.5-N42 agent loop runner request/result runtime-neutral DTO：新增 `runtime.AgentLoopMode` / `runtime.AgentLoopRequest` / `runtime.AgentLoopResult` 与 clone helpers，固化 loop runner ownership 顶层请求/结果契约；runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

@@ -99,6 +99,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 将 shared cycle StepReplan synthesis legacy adapter 调用收敛到 cycle-private `runAgentPlannerActionReplanCycleSynthesis` helper，主 cycle 不再直接展开 LLM request/history/memory/action message 的 legacy 转换。
 - [x] 将 shared cycle action execution legacy adapter 调用收敛到 cycle-private `runAgentPlannerActionReplanCycleActionExecution` helper，主 cycle 不再直接展开 tool context / auth profile / plan action legacy 转换。
 - [x] 将 shared cycle action/synthesis result 的 phase tagging 与 state append 收敛为 cycle wrapper/state helper，主 cycle 仅在 append/synthesis adapter 边界临时展开 legacy messages/tool calls。
+- [x] 新增 runtime-neutral `runtime.AgentLoopMode` / `runtime.AgentLoopRequest` / `runtime.AgentLoopResult`，先固化 engine-native loop runner 请求/结果 DTO 与 clone 隔离语义；暂不改变 daemon 执行行为。
 - [ ] 继续把剩余 session mutation 分批迁成 engine-native runner。
 - [x] 最后将 `SendMessage` Begin/Finish lifecycle 收敛为 `runtime.Engine.RunTurnLifecycle` bounded runner；response merge branch body 仍保留 daemon helper 作为迁移 adapter。
 
@@ -182,6 +183,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N39：将 LLM stage runner planner_chat/tool_synthesis payload 与 result 迁到 runtime-neutral `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload`，daemon stage runner 仅在 ingress/egress adapter 转换 legacy request/history/memory/tool messages/plan，并补 clone/adapter 隔离测试。
 - [x] P0.5-N40：新增 runtime-neutral `runtime.AgentLoopToolServiceBinding`，将 LLM turn payload、deterministic route / replan continuation / planner action execution payload 与 shared cycle tool context 的 service binding 从直接 `routerServices` 持有迁到 runtime binding；daemon 仅在 compatibility adapter 边界解包，并补 binding clone / jobs 引用保真测试。
 - [x] P0.5-N41：将 registry handler runtime 的 service 输入也迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`；builtin handlers 只通过 daemon compatibility helper 临时解包 legacy services，并补 registry binding jobs 引用保真与 auth profile clone 回归。
+- [x] P0.5-N42：新增 runtime-neutral `runtime.AgentLoopMode` / `runtime.AgentLoopRequest` / `runtime.AgentLoopResult`，把 loop runner ownership 的请求/结果契约从文档草案落到 runtime DTO，并补请求/结果 clone 隔离测试；本切片不接入 daemon 行为。
+- [ ] P0.5-N43：将 daemon shared cycle request/result 先增加 `runtime.AgentLoopRequest` / `runtime.AgentLoopResult` adapter 映射，保持现有 `runAgentPlannerActionReplanCycle` 执行路径不变，为后续 `AgentLoopRunner` seam 做准备。
 
 当前盘点（2026-06-07）：
 
@@ -197,6 +200,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - 已将 LLM stage runner payload/result 迁到 runtime-neutral `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload`：planner_chat 与 tool_synthesis 不再通过 daemon-private stage payload 携带 legacy request/history/memory/tool messages/plan，daemon stage runner 仅在 ingress/egress adapter 转换 legacy 类型，并通过 runtime DTO clone 隔离 mutable fields。
 - 已将 tool service binding adapter compatibility 迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`：`daemonLLMTurnPayload`、deterministic route / replan continuation / planner action execution payload 与 `agentPlannerActionReplanCycleToolContext` 不再直接持有 `routerServices`；daemon adapter 通过 `agentLoopToolServiceBindingFromRouterServices` / `legacyRouterServicesFromAgentLoopToolServiceBinding` 解包，并保持 `jobs` 等服务引用不丢失。
 - registry handler runtime 也已改为持有 runtime-neutral `runtime.AgentLoopToolServiceBinding`：`agentRegistryHandlerRuntime.Services` 不再暴露 daemon `routerServices`，builtin handler 只在调用 legacy handler adapter 时通过 `legacyRouterServices()` 解包，并保持 auth profiles slice clone 语义。
+- engine-native loop runner 的顶层 DTO 已落到 runtime package：`runtime.AgentLoopMode` 覆盖 `llm_tool_loop` / `replan_action_continuation` 两种 mode，`runtime.AgentLoopRequest` 汇总 Turn/LLM/history/memory/plan/state/authorization/tool services/metadata，`runtime.AgentLoopResult` 汇总 state/messages/tool calls/final plan/stop reason/queue IDs/metadata；当前仅固化 clone 隔离契约，daemon 执行路径尚未接入。
 - shared cycle request 已使用 runtime-native turn boundary：`agentPlannerActionReplanCycleRequest.Turn` 现在是 `runtime.TurnContext`，session/task/run/turn/prompt/origin/operation_level 不再作为散列 daemon 参数传入；仅在落回 append/action/synthesis legacy adapter 时转换为 `agentRuntimeTurnRef`。
 - shared cycle request 已拆分 authorization 与 LLM synthesis request：action execution 只读取 runtime-neutral `runtime.AgentLoopAuthorization`，并通过 `runAgentPlannerActionReplanCycleActionExecution` 在 helper 内临时转换 tool context / auth profiles / action snapshot；StepReplan synthesis 兼容路径已集中到 `runAgentPlannerActionReplanCycleSynthesis`，由 cycle-private DTO 临时转换到 legacy request。
 - shared cycle request 的 LLM synthesis 输入已迁到 runtime-neutral `runtime.AgentLoopLLMRequest`：只保留 provider/model/API key/base URL/instructions/origin/operation_level/auth hints，并在调用 legacy synthesis adapter 时临时转换回 `sendAgentMessageRequest`。
@@ -207,7 +211,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - shared cycle request 的 memory summary 已封装为 `agentPlannerActionReplanCycleMemorySummary`：cycle DTO 不再直接暴露 `*agentMemorySummary` 字段，wrapper 内部已迁到 runtime-neutral `runtime.AgentLoopMemorySummary`，不再持有 legacy memory 指针；LLM synthesis legacy adapter 边界显式转换，并补 LastMessageAt 字段保真与深拷贝隔离测试。
 - `SendMessage` response merge regression matrix 已覆盖 control continue/revise、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback route/authorization、active-run continue parity focused tests。
 - `SendMessage` Begin/Finish 已由 `runtime.Engine.RunTurnLifecycle` 包住 bounded turn body；turn_started → branch append/model/tool events → turn_finished/task terminal event 顺序已补回归。
-- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition 与 `SendMessage` response merge branch body；action execution、StepReplan synthesis、plan handle ingress/egress、state/memory/auth/LLM request/message/tool/LLM turn payload/result/LLM stage payload/result/tool service binding ingress/egress 以及 action/synthesis result phase/append 的 legacy 转换已集中到 cycle-private helpers/wrappers 或 daemon adapter，plan/action/state/memory/auth/LLM request/message/tool/LLM turn/LLM stage/tool service binding DTO 已迁到 runtime-neutral package，后续目标是继续迁移 engine-native runner ownership。
+- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition 与 `SendMessage` response merge branch body；action execution、StepReplan synthesis、plan handle ingress/egress、state/memory/auth/LLM request/message/tool/LLM turn payload/result/LLM stage payload/result/tool service binding ingress/egress 以及 action/synthesis result phase/append 的 legacy 转换已集中到 cycle-private helpers/wrappers 或 daemon adapter，plan/action/state/memory/auth/LLM request/message/tool/LLM turn/LLM stage/tool service binding 以及 loop request/result DTO 已迁到 runtime-neutral package，后续目标是把 daemon shared cycle request/result 映射到 `runtime.AgentLoopRequest` / `runtime.AgentLoopResult`，再迁移 engine-native runner ownership。
 
 ### 7.2 P1 Frontend / QA
 
@@ -692,6 +696,17 @@ git diff --check
 ```
 
 结果：`agentRegistryHandlerRuntime.Services` 已从 daemon `routerServices` 改为 runtime-neutral `runtime.AgentLoopToolServiceBinding`，`executeAgentRegistryHandler` 在入口绑定 legacy services，builtin registry handlers 通过 `legacyRouterServices()` helper 在 adapter 边界解包。新增 registry handler runtime binding 覆盖，验证 binding kind/metadata、`jobs` 引用保真、legacy helper 解包与 auth profile slice clone 语义，并复跑 focused 与 daemon/runtime 包测试。
+
+本轮增量（P0.5-N42：agent loop runner request/result runtime-neutral DTO）
+
+```bash
+gofmt -w internal/agent/runtime/agent_loop_runner_payload.go internal/agent/runtime/agent_loop_runner_payload_test.go
+go test -count=1 ./internal/agent/runtime
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：新增 `runtime.AgentLoopMode` / `runtime.AgentLoopRequest` / `runtime.AgentLoopResult` 与 clone helpers，把 engine-native `llm_tool_loop` / `replan_action_continuation` loop runner 的顶层请求/结果契约落到 runtime package。新增 request/result clone 隔离覆盖，验证 Turn.Metadata、LLM/Auth profile secret+Enabled、history/message/tool metadata、memory LastMessageAt、plan action arguments、state slices、service binding metadata clone + Handle 保真、ActionQueueIDs 与 Metadata clone；daemon 行为未接入、不改变现有执行路径。
 
 P1-F1 前端路由/bundle 盘点：
 
