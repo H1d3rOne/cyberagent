@@ -403,6 +403,13 @@ func agentPlannerActionReplanCycleMessagesFromAgentMessages(messages []agentMess
 	return agentPlannerActionReplanCycleMessages{items: agentLoopMessagesFromAgentMessages(messages)}
 }
 
+func agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(messages []runtime.AgentLoopMessage) agentPlannerActionReplanCycleMessages {
+	if messages == nil {
+		return agentPlannerActionReplanCycleMessages{}
+	}
+	return agentPlannerActionReplanCycleMessages{items: runtime.CloneAgentLoopMessages(messages)}
+}
+
 func (messages agentPlannerActionReplanCycleMessages) legacyAgentMessages() []agentMessage {
 	return agentMessagesFromAgentLoopMessages(messages.items)
 }
@@ -461,6 +468,13 @@ func agentPlannerActionReplanCycleToolCallsFromAgentToolCalls(calls []agentToolC
 		items[i] = agentLoopToolCallFromAgentToolCall(call)
 	}
 	return agentPlannerActionReplanCycleToolCalls{items: items}
+}
+
+func agentPlannerActionReplanCycleToolCallsFromAgentLoopToolCalls(calls []runtime.AgentLoopToolCall) agentPlannerActionReplanCycleToolCalls {
+	if calls == nil {
+		return agentPlannerActionReplanCycleToolCalls{}
+	}
+	return agentPlannerActionReplanCycleToolCalls{items: runtime.CloneAgentLoopToolCalls(calls)}
 }
 
 func (calls agentPlannerActionReplanCycleToolCalls) legacyAgentToolCalls() []agentToolCall {
@@ -1438,9 +1452,9 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 		}
 	}
 
-	actionExecution := m.runAgentPlannerActionReplanCycleActionExecution(ctx, req)
-	actionMessages := actionExecution.Messages.withPhase("step")
-	actionToolCalls := actionExecution.ToolCalls.withPhase("step")
+	actionExecution := m.runAgentPlannerActionReplanCycleActionExecutionAgentLoop(ctx, loopReq)
+	actionMessages := agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(actionExecution.Messages).withPhase("step")
+	actionToolCalls := agentPlannerActionReplanCycleToolCallsFromAgentLoopToolCalls(actionExecution.ToolCalls).withPhase("step")
 	if actionMessages.len() > 0 {
 		m.appendMessagesForTurn(ctx, req.Turn.SessionID, turnRef, req.Turn.Prompt, req.Options.ActionAppendOrigin, req.Turn.OperationLevel, actionMessages.legacyAgentMessages()...)
 		state.ResponseMessages = append(state.ResponseMessages, actionMessages.agentLoopMessages()...)
@@ -1459,11 +1473,11 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 		return finish(false)
 	}
 
-	synthesis, synthesisErr := m.runAgentPlannerActionReplanCycleSynthesis(
+	synthesis, synthesisErr := m.runAgentPlannerActionReplanCycleSynthesisAgentLoop(
 		ctx,
-		req,
-		agentPlannerActionReplanCycleState{state: state.Clone()},
-		actionMessages,
+		loopReq,
+		state.Clone(),
+		actionMessages.agentLoopMessages(),
 	)
 	if synthesisErr != nil {
 		warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
@@ -1482,18 +1496,32 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 		state.ToolCalls = append(state.ToolCalls, warningToolCalls.agentLoopToolCalls()...)
 		return finish(false)
 	}
-	if synthesis.Messages.len() > 0 {
-		m.appendMessagesWithPlannerForTurn(ctx, req.Turn.SessionID, turnRef, req.Turn.Prompt, string(runtime.LLMStageToolSynthesis), req.Turn.OperationLevel, synthesis.legacyPlan, synthesis.Messages.legacyAgentMessages()...)
-		state.ResponseMessages = append(state.ResponseMessages, synthesis.Messages.agentLoopMessages()...)
-		state.LoopHistory = append(state.LoopHistory, synthesis.Messages.agentLoopMessages()...)
-		state.ToolCalls = append(state.ToolCalls, synthesis.ToolCalls.agentLoopToolCalls()...)
+	synthesisMessages := agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(synthesis.Messages)
+	synthesisToolCalls := agentPlannerActionReplanCycleToolCallsFromAgentLoopToolCalls(synthesis.ToolCalls)
+	synthesisPlan := agentPlannerActionReplanCyclePlanFromAgentLoopPlan(synthesis.FinalPlan)
+	if synthesisMessages.len() > 0 {
+		m.appendMessagesWithPlannerForTurn(ctx, req.Turn.SessionID, turnRef, req.Turn.Prompt, string(runtime.LLMStageToolSynthesis), req.Turn.OperationLevel, synthesisPlan.legacyPlannerResponse(), synthesisMessages.legacyAgentMessages()...)
+		state.ResponseMessages = append(state.ResponseMessages, synthesisMessages.agentLoopMessages()...)
+		state.LoopHistory = append(state.LoopHistory, synthesisMessages.agentLoopMessages()...)
+		state.ToolCalls = append(state.ToolCalls, synthesisToolCalls.agentLoopToolCalls()...)
 	}
-	plan = synthesis.Plan
+	plan = synthesisPlan
 	return finish(true)
 }
 
 func (m *agentManager) runAgentPlannerActionReplanCycleActionExecution(ctx context.Context, req agentPlannerActionReplanCycleRequest) agentPlannerActionReplanCycleActionExecutionResult {
+	result := m.runAgentPlannerActionReplanCycleActionExecutionAgentLoop(ctx, req.agentLoopRequest(""))
+	return agentPlannerActionReplanCycleActionExecutionResult{
+		Messages:              agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(result.Messages),
+		ToolCalls:             agentPlannerActionReplanCycleToolCallsFromAgentLoopToolCalls(result.ToolCalls),
+		AuthorizationRequired: result.AuthorizationRequired,
+	}
+}
+
+func (m *agentManager) runAgentPlannerActionReplanCycleActionExecutionAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) runtime.AgentLoopResult {
+	req := loopReq.Clone()
 	turnRef := agentRuntimeTurnRefFromTurn(req.Turn)
+	plan := agentPlannerActionReplanCyclePlanFromAgentLoopPlan(req.InitialPlan)
 	actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActionList(
 		ctx,
 		req.Turn.SessionID,
@@ -1502,19 +1530,36 @@ func (m *agentManager) runAgentPlannerActionReplanCycleActionExecution(ctx conte
 		req.Language,
 		req.Operator,
 		req.Turn.OperationLevel,
-		req.ToolContext.legacyRouterServices(),
-		req.Plan.actions(),
+		legacyRouterServicesFromAgentLoopToolServiceBinding(req.ToolServices),
+		plan.actions(),
 		agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(req.Authorization.AuthProfiles),
 		req.Authorization.DefaultAuthProfileID,
 	)
-	return agentPlannerActionReplanCycleActionExecutionResult{
-		Messages:              agentPlannerActionReplanCycleMessagesFromAgentMessages(actionMessages),
-		ToolCalls:             agentPlannerActionReplanCycleToolCallsFromAgentToolCalls(actionToolCalls),
+	return runtime.AgentLoopResult{
+		Messages:              agentLoopMessagesFromAgentMessages(actionMessages),
+		ToolCalls:             agentLoopToolCallItemsFromAgentToolCalls(actionToolCalls),
 		AuthorizationRequired: authorizationRequired,
 	}
 }
 
 func (m *agentManager) runAgentPlannerActionReplanCycleSynthesis(ctx context.Context, req agentPlannerActionReplanCycleRequest, state agentPlannerActionReplanCycleState, actionMessages agentPlannerActionReplanCycleMessages) (agentPlannerActionReplanCycleSynthesisResult, error) {
+	result, synthesisErr := m.runAgentPlannerActionReplanCycleSynthesisAgentLoop(ctx, req.agentLoopRequest(""), state.state, actionMessages.agentLoopMessages())
+	if synthesisErr != nil {
+		return agentPlannerActionReplanCycleSynthesisResult{}, synthesisErr
+	}
+	plan := agentPlannerActionReplanCyclePlanFromAgentLoopPlan(result.FinalPlan)
+	return agentPlannerActionReplanCycleSynthesisResult{
+		Messages:   agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(result.Messages),
+		ToolCalls:  agentPlannerActionReplanCycleToolCallsFromAgentLoopToolCalls(result.ToolCalls),
+		Plan:       plan,
+		legacyPlan: plan.legacyPlannerResponse(),
+	}, nil
+}
+
+func (m *agentManager) runAgentPlannerActionReplanCycleSynthesisAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest, state runtime.AgentLoopState, actionMessages []runtime.AgentLoopMessage) (runtime.AgentLoopResult, error) {
+	req := loopReq.Clone()
+	state = state.Clone()
+	actionMessages = runtime.CloneAgentLoopMessages(actionMessages)
 	turnRef := agentRuntimeTurnRefFromTurn(req.Turn)
 	synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(
 		ctx,
@@ -1524,18 +1569,17 @@ func (m *agentManager) runAgentPlannerActionReplanCycleSynthesis(ctx context.Con
 		req.Language,
 		req.Turn.OperationLevel,
 		sendMessageRequestFromAgentLoopLLMRequest(req.LLMRequest),
-		state.legacyLoopHistory(),
-		req.MemorySummary.legacyAgentMemorySummary(),
-		actionMessages.legacyAgentMessages(),
+		agentMessagesFromAgentLoopMessages(state.LoopHistory),
+		agentMemorySummaryPtrFromAgentLoopMemorySummary(req.MemorySummary),
+		agentMessagesFromAgentLoopMessages(actionMessages),
 	)
 	if synthesisErr != nil {
-		return agentPlannerActionReplanCycleSynthesisResult{}, synthesisErr
+		return runtime.AgentLoopResult{}, synthesisErr
 	}
-	return agentPlannerActionReplanCycleSynthesisResult{
-		Messages:   agentPlannerActionReplanCycleMessagesFromAgentMessages(synthesisMessages),
-		ToolCalls:  agentPlannerActionReplanCycleToolCallsFromAgentToolCalls(synthesisToolCalls),
-		Plan:       agentPlannerActionReplanCyclePlanFromPlannerResponse(synthesisPlan),
-		legacyPlan: synthesisPlan,
+	return runtime.AgentLoopResult{
+		Messages:  agentLoopMessagesFromAgentMessages(synthesisMessages),
+		ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(synthesisToolCalls),
+		FinalPlan: agentPlannerActionReplanCyclePlanFromPlannerResponse(synthesisPlan).agentLoopPlan(),
 	}, nil
 }
 

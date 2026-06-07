@@ -1348,7 +1348,8 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 		}, nil
 	}))
 
-	result, err := mgr.runAgentPlannerActionReplanCycleSynthesis(context.Background(), req, state, actionMessages)
+	loopReq := req.agentLoopRequest(runtime.AgentLoopModeReplanContinuation)
+	result, err := mgr.runAgentPlannerActionReplanCycleSynthesisAgentLoop(context.Background(), loopReq, state.state, actionMessages.agentLoopMessages())
 
 	require.NoError(t, err)
 	require.True(t, called)
@@ -1356,15 +1357,15 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 	require.Equal(t, "action observation", actionMessages.legacyAgentMessages()[0].Content)
 	require.Equal(t, "cycle memory", req.MemorySummary.legacyAgentMemorySummary().Summary)
 	require.Equal(t, lastMessageAt, *req.MemorySummary.legacyAgentMemorySummary().LastMessageAt)
-	require.Equal(t, synthesisPlan, result.legacyPlan)
 
-	gotMessages := result.Messages.legacyAgentMessages()
-	gotToolCalls := result.ToolCalls.legacyAgentToolCalls()
+	gotMessages := agentMessagesFromAgentLoopMessages(result.Messages)
+	gotToolCalls := agentLoopToolCallItemsToAgentToolCalls(result.ToolCalls)
 	require.Equal(t, []agentMessage{synthesisMessage}, gotMessages)
 	require.Equal(t, []agentToolCall{synthesisTool}, gotToolCalls)
-	require.True(t, result.Plan.hasActions())
-	require.True(t, result.Plan.shouldAutoContinue())
-	require.Equal(t, "next", result.Plan.actions()[0].Arguments["probe"])
+	resultPlan := agentPlannerActionReplanCyclePlanFromAgentLoopPlan(result.FinalPlan)
+	require.True(t, resultPlan.hasActions())
+	require.True(t, resultPlan.shouldAutoContinue())
+	require.Equal(t, "next", resultPlan.actions()[0].Arguments["probe"])
 
 	synthesisMessage.Content = "mutated returned message source"
 	synthesisTool.Result["ok"] = false
@@ -1373,10 +1374,11 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 	gotMessages[0].Content = "mutated got message"
 	gotToolCalls[0].Result["ok"] = "mutated"
 
-	require.Equal(t, "cycle summarized", result.Messages.legacyAgentMessages()[0].Content)
-	require.Equal(t, true, result.ToolCalls.legacyAgentToolCalls()[0].Result["ok"])
-	require.True(t, result.Plan.shouldAutoContinue())
-	require.Equal(t, "next", result.Plan.actions()[0].Arguments["probe"])
+	require.Equal(t, "cycle summarized", agentMessagesFromAgentLoopMessages(result.Messages)[0].Content)
+	require.Equal(t, true, agentLoopToolCallItemsToAgentToolCalls(result.ToolCalls)[0].Result["ok"])
+	resultPlan = agentPlannerActionReplanCyclePlanFromAgentLoopPlan(result.FinalPlan)
+	require.True(t, resultPlan.shouldAutoContinue())
+	require.Equal(t, "next", resultPlan.actions()[0].Arguments["probe"])
 }
 
 func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t *testing.T) {
@@ -1633,16 +1635,18 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 		}, nil
 	}))
 
-	result := mgr.runAgentPlannerActionReplanCycleActionExecution(context.Background(), req)
+	loopReq := req.agentLoopRequest(runtime.AgentLoopModeReplanContinuation)
+	result := mgr.runAgentPlannerActionReplanCycleActionExecutionAgentLoop(context.Background(), loopReq)
 
 	require.True(t, called)
 	require.False(t, result.AuthorizationRequired)
 	require.Equal(t, "cycle-action-exec", stringFromAny(req.Plan.actions()[0].Arguments["probe"]))
+	require.Equal(t, "cycle-action-exec", stringFromAny(loopReq.InitialPlan.Actions[0].Arguments["probe"]))
 	require.Equal(t, "token-cycle-action-exec", req.Authorization.AuthProfiles[0].Token)
 	require.True(t, *req.Authorization.AuthProfiles[0].Enabled)
 
-	gotMessages := result.Messages.legacyAgentMessages()
-	gotToolCalls := result.ToolCalls.legacyAgentToolCalls()
+	gotMessages := agentMessagesFromAgentLoopMessages(result.Messages)
+	gotToolCalls := agentLoopToolCallItemsToAgentToolCalls(result.ToolCalls)
 	require.Len(t, gotMessages, 1)
 	require.Len(t, gotToolCalls, 1)
 	require.Equal(t, "cycle action executed", gotMessages[0].Content)
@@ -1660,9 +1664,9 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 	gotMessages[0].ToolCalls[0].Result["ok"] = "mutated"
 	gotToolCalls[0].Result["ok"] = "mutated"
 
-	require.Equal(t, "cycle action executed", result.Messages.legacyAgentMessages()[0].Content)
-	require.Equal(t, true, result.Messages.legacyAgentMessages()[0].ToolCalls[0].Result["ok"])
-	require.Equal(t, true, result.ToolCalls.legacyAgentToolCalls()[0].Result["ok"])
+	require.Equal(t, "cycle action executed", agentMessagesFromAgentLoopMessages(result.Messages)[0].Content)
+	require.Equal(t, true, agentMessagesFromAgentLoopMessages(result.Messages)[0].ToolCalls[0].Result["ok"])
+	require.Equal(t, true, agentLoopToolCallItemsToAgentToolCalls(result.ToolCalls)[0].Result["ok"])
 }
 
 func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTurnExecutor(t *testing.T) {
