@@ -585,11 +585,9 @@ func TestAgentManagerExecutePlannerActionCapabilityBlockedThroughSessionMutator(
 	require.Equal(t, expectedSuggestedPrompt, req.Metadata["suggested_prompt"])
 	require.Equal(t, "safe_scan", req.Metadata["operation_level"])
 
-	payload, ok := req.Payload.(daemonCapabilityBlockedMutationPayload)
+	payload, ok := req.Payload.(runtime.AgentLoopCapabilityBlockedPayload)
 	require.True(t, ok, "payload type = %T", req.Payload)
 	require.Equal(t, "en", payload.Language)
-	require.Equal(t, operatorPrompt, payload.OperatorPrompt)
-	require.Equal(t, "safe_scan", payload.OperationLevel)
 	require.Equal(t, "scan.web.safe", payload.ActionName)
 	require.Equal(t, intentID, payload.IntentID)
 	require.Equal(t, expectedReason, payload.Reason)

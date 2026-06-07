@@ -34,17 +34,6 @@ type daemonRequestAuthorizationMutationResultPayload struct {
 	Mutated       bool
 }
 
-type daemonCapabilityBlockedMutationPayload struct {
-	SessionID       string
-	Language        string
-	OperatorPrompt  string
-	OperationLevel  string
-	ActionName      string
-	IntentID        string
-	Reason          string
-	SuggestedPrompt string
-}
-
 type daemonCapabilityBlockedMutationResultPayload struct {
 	Session         agentSession
 	ActionName      string
@@ -141,6 +130,20 @@ func agentLoopAuthorizationRequestPayloadFromSessionMutationPayload(payload any)
 	}
 }
 
+func agentLoopCapabilityBlockedPayloadFromSessionMutationPayload(payload any) (runtime.AgentLoopCapabilityBlockedPayload, bool) {
+	switch value := payload.(type) {
+	case runtime.AgentLoopCapabilityBlockedPayload:
+		return value.Clone(), true
+	case *runtime.AgentLoopCapabilityBlockedPayload:
+		if value == nil {
+			return runtime.AgentLoopCapabilityBlockedPayload{}, false
+		}
+		return value.Clone(), true
+	default:
+		return runtime.AgentLoopCapabilityBlockedPayload{}, false
+	}
+}
+
 func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
 	if r.manager == nil {
 		err := errors.New("daemon: session mutator has no manager")
@@ -228,12 +231,14 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			},
 		}, nil
 	case runtime.SessionMutationCapabilityBlocked:
-		payload, ok := req.Payload.(daemonCapabilityBlockedMutationPayload)
+		payload, ok := agentLoopCapabilityBlockedPayloadFromSessionMutationPayload(req.Payload)
 		if !ok {
 			err := errors.New("daemon: invalid capability blocked mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
 		}
-		resultPayload := r.manager.markAgentCapabilityBlockedLegacy(payload.SessionID, payload.Language, payload.ActionName, payload.IntentID, payload.Reason, payload.SuggestedPrompt)
+		sessionID := req.Turn.SessionID
+		operationLevel := req.Turn.OperationLevel
+		resultPayload := r.manager.markAgentCapabilityBlockedLegacy(sessionID, payload.Language, payload.ActionName, payload.IntentID, payload.Reason, payload.SuggestedPrompt)
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
 			Reason:  "legacy daemon capability blocked mutation executed",
@@ -241,11 +246,11 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			Data: map[string]any{
 				"mutator":          "daemon_legacy_session",
 				"kind":             string(req.Kind),
-				"session_id":       payload.SessionID,
+				"session_id":       sessionID,
 				"action_name":      resultPayload.ActionName,
 				"intent_id":        resultPayload.IntentID,
 				"suggested_prompt": resultPayload.SuggestedPrompt,
-				"operation_level":  payload.OperationLevel,
+				"operation_level":  operationLevel,
 				"mutated":          resultPayload.Mutated,
 			},
 		}, nil
@@ -529,11 +534,8 @@ func (m *agentManager) runRuntimeCapabilityBlockedMutationForTurn(ctx context.Co
 			},
 		},
 		Kind: runtime.SessionMutationCapabilityBlocked,
-		Payload: daemonCapabilityBlockedMutationPayload{
-			SessionID:       sessionID,
+		Payload: runtime.AgentLoopCapabilityBlockedPayload{
 			Language:        language,
-			OperatorPrompt:  operatorPrompt,
-			OperationLevel:  operationLevel,
 			ActionName:      actionName,
 			IntentID:        intentID,
 			Reason:          reason,

@@ -232,7 +232,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N84：将 `append_messages` session mutation payload 的 SessionID/Messages/Plan 输入收敛到 runtime turn/context + `runtime.AgentLoopMessage` / `runtime.AgentLoopPlan`，legacy 转换留在 mutator adapter 边界。
 - [x] P0.5-N85：将 `record_user_message` session mutation payload 的 SessionID/Prompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Operator/Language，legacy 转换留在 mutator adapter 边界。
 - [x] P0.5-N86：将 `request_authorization` session mutation payload 的 SessionID/OperatorPrompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Language/Action/Policy/Reason 等授权字段，legacy 转换留在 mutator adapter 边界。
-- [ ] P0.5-N87：将 `capability_blocked` session mutation payload 的 SessionID/OperatorPrompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Language/ActionName/IntentID/Reason/SuggestedPrompt，legacy 转换留在 mutator adapter 边界。
+- [x] P0.5-N87：将 `capability_blocked` session mutation payload 的 SessionID/OperatorPrompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Language/ActionName/IntentID/Reason/SuggestedPrompt，legacy 转换留在 mutator adapter 边界。
+- [ ] P0.5-N88：将 `control_session` session mutation payload 的 SessionID/Prompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Action/Reason/RunID/JobID/ClearInput/Operator/Language，legacy 转换留在 mutator adapter 边界。
 
 当前盘点（2026-06-08）：
 
