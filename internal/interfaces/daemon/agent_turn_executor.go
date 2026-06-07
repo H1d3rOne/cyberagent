@@ -133,25 +133,7 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 		ctx = context.Background()
 	}
 	loopReq := payload.Request.Clone()
-	history := runtime.CloneAgentLoopMessages(loopReq.History)
-	if len(history) == 0 && len(loopReq.State.LoopHistory) > 0 {
-		history = runtime.CloneAgentLoopMessages(loopReq.State.LoopHistory)
-	}
-	messages, toolCalls := e.manager.runAgentReplanActionContinuation(
-		ctx,
-		loopReq.Turn.SessionID,
-		agentRuntimeTurnRefFromTurn(loopReq.Turn),
-		loopReq.Turn.Prompt,
-		loopReq.Language,
-		loopReq.Operator,
-		loopReq.Turn.OperationLevel,
-		sendMessageRequestFromAgentLoopLLMRequest(loopReq.LLMRequest),
-		agentMessagesFromAgentLoopMessages(history),
-		agentMemorySummaryPtrFromAgentLoopMemorySummary(loopReq.MemorySummary),
-		legacyRouterServicesFromAgentLoopToolServiceBinding(loopReq.ToolServices),
-		agentPlannerResponsePtrFromAgentLoopPlan(loopReq.InitialPlan),
-		loopReq.MaxLoops,
-	)
+	messages, toolCalls := e.manager.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
 	resultPayload := daemonReplanActionContinuationTurnResultPayload{
 		Messages:  runtime.CloneAgentLoopMessages(messages),
 		ToolCalls: runtime.CloneAgentLoopToolCalls(toolCalls),

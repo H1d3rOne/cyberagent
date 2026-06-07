@@ -430,8 +430,9 @@ ownership 边界：
 61. ✅ P0.5-N67 已将 `SendMessage` control/error/authorization gate 简单响应分支收敛到 runtime response egress helper，消除 `runAgentSendMessageTurn` 内除 helper 外直接 `buildAgentSendResponse` 调用。
 62. ✅ P0.5-N68 已将 `runAgentReplanActionContinuation` / `runRuntimeReplanActionContinuation` 返回收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 follow-up response merge 与 turn executor adapter 边界。
 63. ✅ P0.5-N69 已将 `daemonReplanActionContinuationTurnPayload` 的 `Req` / `History` / `MemorySummary` / `Plan` 输入收敛为 runtime `AgentLoopRequest` / `AgentLoopLLMRequest` / `AgentLoopMemorySummary` / `AgentLoopPlan`，legacy 转换推迟到 continuation turn executor adapter 边界。
-64. 下一步 P0.5-N70 抽出 runtime-native replan continuation request runner，让 `runAgentReplanActionContinuation` 成为 legacy wrapper，continuation turn executor adapter 不再把 `runtime.AgentLoopRequest` 转回散列 legacy 参数后再进入 loop。
-65. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+64. ✅ P0.5-N70 已抽出 runtime-native replan continuation request runner，`runAgentReplanActionContinuation` 成为 legacy wrapper，continuation turn executor adapter 不再把 `runtime.AgentLoopRequest` 转回散列 legacy 参数后再进入 loop。
+65. 下一步 P0.5-N71 抽出 runtime-native LLM tool loop request runner，让 `runAgentLLMToolLoop` 成为 legacy wrapper，LLMTurn runner adapter 不再把 runtime turn payload 转回散列 legacy 参数后再进入 loop。
+66. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1373,6 +1374,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v101 | 完成 P0.5-N67 SendMessage control/error/auth gate response egress runtime helper 收敛：control error、普通 control response 与 pending authorization gate 分支改为经 `buildAgentSendResponseFromAgentLoop` 返回，`runAgentSendMessageTurn` 内除 helper 实现外不再直接调用 legacy `buildAgentSendResponse`；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v102 | 完成 P0.5-N68 replan continuation 返回 runtime DTO 收敛：`runAgentReplanActionContinuation` / `runRuntimeReplanActionContinuation` 改为返回 runtime `AgentLoopMessage` / `AgentLoopToolCall`，turn result payload 与 fallback egress 直接 clone runtime DTO，legacy 转换推迟到 follow-up response merge 与 adapter 边界；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v103 | 完成 P0.5-N69 replan continuation turn payload 输入 runtime request 收敛：`daemonReplanActionContinuationTurnPayload` 改为只携带 `runtime.AgentLoopRequest`，legacy request/history/memory/plan/services 转换集中到 runtime request ingress 与 continuation executor compatibility adapter；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v104 | 完成 P0.5-N70 replan continuation runtime-native request runner：新增 `runAgentReplanActionContinuationAgentLoop` 直接消费 `runtime.AgentLoopRequest` 并串联 continuation cycle，legacy wrapper 只负责 ingress 转换，turn executor adapter 直接调用 runtime request runner；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 
