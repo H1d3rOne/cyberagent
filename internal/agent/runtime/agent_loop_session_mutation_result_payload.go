@@ -87,6 +87,32 @@ func CloneAgentLoopResolveAuthorizationResultPayload(payload AgentLoopResolveAut
 	return payload.Clone()
 }
 
+// AgentLoopRequestAuthorizationResultPayload is the runtime-neutral result for
+// a request_authorization mutation. It carries the updated session snapshot,
+// pending authorization snapshot, and operator-facing authorization prompt
+// message without depending on daemon-private structs.
+type AgentLoopRequestAuthorizationResultPayload struct {
+	Session       AgentLoopSessionSnapshot
+	Authorization AgentLoopAuthorizationRequestSnapshot
+	Message       AgentLoopMessage
+	Mutated       bool
+}
+
+// Clone returns a copy with all mutable fields isolated.
+func (payload AgentLoopRequestAuthorizationResultPayload) Clone() AgentLoopRequestAuthorizationResultPayload {
+	cloned := payload
+	cloned.Session = payload.Session.Clone()
+	cloned.Authorization = payload.Authorization.Clone()
+	cloned.Message = payload.Message.Clone()
+	return cloned
+}
+
+// CloneAgentLoopRequestAuthorizationResultPayload clones a request-
+// authorization mutation result payload.
+func CloneAgentLoopRequestAuthorizationResultPayload(payload AgentLoopRequestAuthorizationResultPayload) AgentLoopRequestAuthorizationResultPayload {
+	return payload.Clone()
+}
+
 // AgentLoopSessionSnapshot is the runtime-neutral session state carried by
 // session mutation result DTOs. It mirrors the operator-visible session
 // boundary without depending on daemon-private structs.

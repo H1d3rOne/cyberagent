@@ -428,3 +428,71 @@ func TestAgentLoopResolveAuthorizationResultPayloadCloneIsolatesMutableFields(t 
 		t.Fatalf("clone changed scalar fields: %#v", cloned)
 	}
 }
+
+func TestAgentLoopRequestAuthorizationResultPayloadCloneIsolatesMutableFields(t *testing.T) {
+	payload := AgentLoopRequestAuthorizationResultPayload{
+		Session: AgentLoopSessionSnapshot{
+			SessionID: "session-request-auth-result",
+			Status:    "waiting_authorization",
+			PendingAuthorization: &AgentLoopAuthorizationRequestSnapshot{
+				ID:         "auth-request-result",
+				ActionName: "workspace.files.write",
+				Arguments:  map[string]any{"path": "README.md"},
+				Status:     "pending",
+			},
+			NextAction: &AgentLoopNextAction{
+				Type:            "authorization_required",
+				Reason:          "workspace write requires approval",
+				SuggestedPrompt: "approve or deny",
+			},
+		},
+		Authorization: AgentLoopAuthorizationRequestSnapshot{
+			ID:            "auth-request-result",
+			ActionName:    "workspace.files.write",
+			Arguments:     map[string]any{"path": "README.md"},
+			RequiredLevel: "workspace_write",
+			Policy:        "manual",
+			Status:        "pending",
+		},
+		Message: AgentLoopMessage{
+			ID:      "msg-request-auth",
+			Role:    "agent",
+			Content: "Authorization required",
+			ToolCalls: []AgentLoopToolCall{{
+				ID:     "tool-request-auth",
+				Name:   "approval.requested",
+				Result: map[string]any{"authorization_id": "auth-request-result"},
+			}},
+			SuggestedPrompts: []string{"approve"},
+		},
+		Mutated: true,
+	}
+
+	cloned := payload.Clone()
+
+	payload.Session.PendingAuthorization.Arguments["path"] = "mutated"
+	payload.Session.NextAction.SuggestedPrompt = "mutated"
+	payload.Authorization.Arguments["path"] = "mutated"
+	payload.Message.Content = "mutated"
+	payload.Message.ToolCalls[0].Result["authorization_id"] = "mutated"
+	payload.Message.SuggestedPrompts[0] = "mutated"
+
+	if cloned.Session.PendingAuthorization == payload.Session.PendingAuthorization ||
+		cloned.Session.PendingAuthorization.Arguments["path"] != "README.md" {
+		t.Fatalf("clone shares session pending authorization: %#v", cloned.Session.PendingAuthorization)
+	}
+	if cloned.Session.NextAction == payload.Session.NextAction || cloned.Session.NextAction.SuggestedPrompt != "approve or deny" {
+		t.Fatalf("clone shares next action: %#v", cloned.Session.NextAction)
+	}
+	if cloned.Authorization.Arguments["path"] != "README.md" {
+		t.Fatalf("clone shares authorization arguments: %#v", cloned.Authorization.Arguments)
+	}
+	if cloned.Message.Content != "Authorization required" ||
+		cloned.Message.ToolCalls[0].Result["authorization_id"] != "auth-request-result" ||
+		cloned.Message.SuggestedPrompts[0] != "approve" {
+		t.Fatalf("clone shares authorization message: %#v", cloned.Message)
+	}
+	if !cloned.Mutated || cloned.Session.SessionID != "session-request-auth-result" {
+		t.Fatalf("clone changed scalar fields: %#v", cloned)
+	}
+}

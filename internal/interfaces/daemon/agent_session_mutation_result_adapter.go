@@ -131,6 +131,50 @@ func daemonResolveAuthorizationMutationResultPayloadFromAgentLoop(payload runtim
 	return result
 }
 
+func daemonRequestAuthorizationMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonRequestAuthorizationMutationResultPayload, bool) {
+	if payload, ok := daemonSessionMutationResultPayload[daemonRequestAuthorizationMutationResultPayload](result); ok {
+		return payload, true
+	}
+	switch payload := result.Payload.(type) {
+	case runtime.AgentLoopRequestAuthorizationResultPayload:
+		return daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(payload), true
+	case *runtime.AgentLoopRequestAuthorizationResultPayload:
+		if payload == nil {
+			return daemonRequestAuthorizationMutationResultPayload{}, false
+		}
+		return daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(payload.Clone()), true
+	default:
+		return daemonRequestAuthorizationMutationResultPayload{}, false
+	}
+}
+
+func agentLoopRequestAuthorizationResultPayloadFromDaemon(payload daemonRequestAuthorizationMutationResultPayload) runtime.AgentLoopRequestAuthorizationResultPayload {
+	authorization := agentLoopAuthorizationRequestSnapshotFromAgentAuthorizationRequest(&payload.Authorization)
+	result := runtime.AgentLoopRequestAuthorizationResultPayload{
+		Session: agentLoopSessionSnapshotFromAgentSession(payload.Session),
+		Message: agentLoopMessageFromAgentMessage(payload.Message),
+		Mutated: payload.Mutated,
+	}
+	if authorization != nil {
+		result.Authorization = *authorization
+	}
+	return result
+}
+
+func daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(payload runtime.AgentLoopRequestAuthorizationResultPayload) daemonRequestAuthorizationMutationResultPayload {
+	payload = payload.Clone()
+	authorization := agentAuthorizationRequestFromAgentLoopAuthorizationRequestSnapshot(&payload.Authorization)
+	result := daemonRequestAuthorizationMutationResultPayload{
+		Session: agentSessionFromAgentLoopSessionSnapshot(payload.Session),
+		Message: agentMessageFromAgentLoopMessage(payload.Message),
+		Mutated: payload.Mutated,
+	}
+	if authorization != nil {
+		result.Authorization = *authorization
+	}
+	return result
+}
+
 func agentLoopSessionSnapshotFromAgentSession(session agentSession) runtime.AgentLoopSessionSnapshot {
 	return runtime.AgentLoopSessionSnapshot{
 		SessionID:            session.SessionID,

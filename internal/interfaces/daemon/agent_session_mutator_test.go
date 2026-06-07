@@ -418,6 +418,84 @@ func TestAgentLoopResolveAuthorizationResultPayloadAdapterRoundTrip(t *testing.T
 	require.Equal(t, roundTrip, convertedPointer)
 }
 
+func TestAgentLoopRequestAuthorizationResultPayloadAdapterRoundTrip(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	resultPayload := daemonRequestAuthorizationMutationResultPayload{
+		Session: agentSession{
+			SessionID:      "session-request-auth-result",
+			CreatedAt:      now.Add(-2 * time.Hour),
+			UpdatedAt:      now,
+			Operator:       "operator-1",
+			Language:       "en",
+			OperationLevel: "read_only",
+			Status:         "waiting_authorization",
+			PendingAuthorization: &agentAuthorizationRequest{
+				ID:            "auth-request-result",
+				ActionName:    "workspace.files.write",
+				Arguments:     map[string]any{"path": "README.md"},
+				RequiredLevel: "workspace_write",
+				Policy:        "manual",
+				Status:        "pending",
+				CreatedAt:     now.Add(-time.Minute),
+				UpdatedAt:     now,
+			},
+			NextAction: &agentNextAction{
+				Type:            "authorization_required",
+				Reason:          "workspace write requires approval",
+				SuggestedPrompt: "approve or deny",
+			},
+		},
+		Authorization: agentAuthorizationRequest{
+			ID:             "auth-request-result",
+			ActionName:     "workspace.files.write",
+			Arguments:      map[string]any{"path": "README.md"},
+			RequiredLevel:  "workspace_write",
+			Policy:         "manual",
+			Reason:         "workspace write requires approval",
+			OriginalPrompt: "write README.md",
+			Status:         "pending",
+			CreatedAt:      now.Add(-time.Minute),
+			UpdatedAt:      now,
+		},
+		Message: agentMessage{
+			ID:      "msg-request-auth-result",
+			Role:    "agent",
+			Phase:   "step",
+			Content: "Authorization required",
+			ToolCalls: []agentToolCall{{
+				ID:     "tool-request-auth-result",
+				Name:   "approval.requested",
+				Status: "pending",
+				Result: map[string]any{"authorization_id": "auth-request-result"},
+			}},
+			SuggestedPrompts: []string{"approve"},
+		},
+		Mutated: true,
+	}
+
+	runtimePayload := agentLoopRequestAuthorizationResultPayloadFromDaemon(resultPayload)
+	expectedPayload := daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(runtimePayload)
+	resultPayload.Session.PendingAuthorization.Arguments["path"] = "mutated"
+	resultPayload.Authorization.Arguments["path"] = "mutated"
+	resultPayload.Message.ToolCalls[0].Result["authorization_id"] = "mutated"
+	roundTrip := daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(runtimePayload)
+
+	require.Equal(t, expectedPayload, roundTrip)
+	require.Equal(t, "README.md", roundTrip.Session.PendingAuthorization.Arguments["path"])
+	require.Equal(t, "README.md", roundTrip.Authorization.Arguments["path"])
+	require.Equal(t, "auth-request-result", roundTrip.Message.ToolCalls[0].Result["authorization_id"])
+	require.Equal(t, "authorization_required", roundTrip.Session.NextAction.Type)
+	require.True(t, roundTrip.Mutated)
+
+	converted, ok := daemonRequestAuthorizationMutationResultPayloadFromSessionMutationResult(runtime.SessionMutationResult{Payload: runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, roundTrip, converted)
+
+	convertedPointer, ok := daemonRequestAuthorizationMutationResultPayloadFromSessionMutationResult(runtime.SessionMutationResult{Payload: &runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, roundTrip, convertedPointer)
+}
+
 func TestAgentManagerAppendMessagesWithPlannerDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
