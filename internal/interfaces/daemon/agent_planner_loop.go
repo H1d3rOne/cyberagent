@@ -1647,7 +1647,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycleActionExecutionAgentLoop(
 		req.Language,
 		req.Operator,
 		req.Turn.OperationLevel,
-		legacyRouterServicesFromAgentLoopToolServiceBinding(req.ToolServices),
+		req.ToolServices,
 		actions,
 		req.Authorization,
 	)
@@ -1801,13 +1801,14 @@ func agentPlannerActionQueueMetadata(queueID string, index, count int, actionNam
 }
 
 func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
-	return m.executeAgentPlannerActionList(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, agentPlannerActionReplanCyclePlanActionsFromAgentPlannerActions(agentPlannerActions(plan)), runtime.AgentLoopAuthorization{
+	return m.executeAgentPlannerActionList(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, agentLoopToolServiceBindingFromRouterServices(svc), agentPlannerActionReplanCyclePlanActionsFromAgentPlannerActions(agentPlannerActions(plan)), runtime.AgentLoopAuthorization{
 		AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles),
 		DefaultAuthProfileID: defaultAuthProfileID,
 	})
 }
 
-func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, actions []runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]agentMessage, []agentToolCall, bool) {
+func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, actions []runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]agentMessage, []agentToolCall, bool) {
+	toolServices = toolServices.Clone()
 	actions = runtime.CloneAgentLoopActions(actions)
 	authorization = authorization.Clone()
 	if len(actions) == 0 {
@@ -1898,7 +1899,7 @@ func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessio
 			messages = append(messages, authMessage)
 			return messages, toolCalls, true
 		} else {
-			actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, action, authorization)
+			actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, toolServices, action, authorization)
 		}
 		if err != nil {
 			if actionName == "" {

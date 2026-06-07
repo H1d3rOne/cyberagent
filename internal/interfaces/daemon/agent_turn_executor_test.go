@@ -1521,7 +1521,7 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 		"en",
 		"tester",
 		"safe_scan",
-		routerServices{},
+		agentLoopToolServiceBindingFromRouterServices(routerServices{}),
 		runtimeAction,
 		runtime.AgentLoopAuthorization{
 			AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles),

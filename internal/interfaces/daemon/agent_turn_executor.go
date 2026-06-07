@@ -378,14 +378,16 @@ func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, s
 	return payload.Messages, payload.ToolCalls
 }
 
-func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, svc routerServices, action runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, action runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]agentMessage, []agentToolCall, error) {
+	toolServices = toolServices.Clone()
 	action = cloneAgentLoopAction(action)
 	authorization = authorization.Clone()
 	legacyAction := agentPlannerActionFromAgentLoopAction(action)
 	legacyAuthProfiles := agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(authorization.AuthProfiles)
+	legacyServices := legacyRouterServicesFromAgentLoopToolServiceBinding(toolServices)
 	eng := m.runtimeEngine()
 	if eng == nil || eng.TurnExecutor() == nil {
-		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
+		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, legacyServices, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -404,7 +406,7 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 			Language:       language,
 			Operator:       operator,
 			OperationLevel: operationLevel,
-			Services:       agentLoopToolServiceBindingFromRouterServices(svc),
+			Services:       toolServices,
 			Action:         action,
 			Authorization:  authorization,
 		},
@@ -419,7 +421,7 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 		errors.Is(result.Error, runtime.ErrTurnExecutorNotAttached) ||
 		result.Status == runtime.TurnResultBlocked ||
 		(result.Status == runtime.TurnResultRunning && result.Payload == nil) {
-		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
+		return m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, legacyServices, legacyAction, legacyAuthProfiles, authorization.DefaultAuthProfileID)
 	}
 	payload, ok := result.Payload.(daemonPlannerActionExecutionTurnResultPayload)
 	if ok {

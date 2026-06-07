@@ -201,7 +201,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N53：将 authorization request mutation payload 的 `Action` 继续收敛为 runtime `AgentLoopAction`，让 `daemonRequestAuthorizationMutationPayload` 不再直接持有 legacy `agentPlannerAction`，只在 legacy `requestAgentAuthorizationLegacy` adapter 边界转换。
 - [x] P0.5-N54：将 planner action execution turn payload 的 auth profile 输入继续收敛为 runtime `AgentLoopAuthorization`，让 executor payload 不再直接持有 legacy `[]agentHTTPAuthProfile`，只在 legacy tool execution adapter 边界转换。
 - [x] P0.5-N55：将 `runRuntimePlannerActionExecution` / `executeAgentPlannerActionList` 的 auth profile 参数继续收敛为 runtime `AgentLoopAuthorization`，让 action execution helper 内部不再传递 legacy auth profile slice。
-- [ ] P0.5-N56：将 `executeAgentPlannerActionList` / `runRuntimePlannerActionExecution` 的 services 参数继续收敛为 runtime `AgentLoopToolServiceBinding`，让 action execution helper 内部不再传递 legacy `routerServices`。
+- [x] P0.5-N56：将 `executeAgentPlannerActionList` / `runRuntimePlannerActionExecution` 的 services 参数继续收敛为 runtime `AgentLoopToolServiceBinding`，让 action execution helper 内部不再传递 legacy `routerServices`。
+- [ ] P0.5-N57：将 planner action execution turn result payload 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，让 action execution turn result 不再直接持有 legacy `agentMessage` / `agentToolCall`。
 
 当前盘点（2026-06-07）：
 
