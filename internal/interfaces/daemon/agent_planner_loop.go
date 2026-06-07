@@ -352,7 +352,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 	return runtime.CloneAgentLoopMessages(cycleState.ResponseMessages), runtime.CloneAgentLoopToolCalls(cycleState.ToolCalls), nil
 }
 
-func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]agentMessage, []agentToolCall) {
+func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
 	if maxLoops <= 0 {
 		return nil, nil
 	}
@@ -394,7 +394,7 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 		}
 		cyclePlan = runtime.CloneAgentLoopPlan(cycle.FinalPlan)
 	}
-	return agentMessagesFromAgentLoopMessages(cycleState.ResponseMessages), agentLoopToolCallItemsToAgentToolCalls(cycleState.ToolCalls)
+	return runtime.CloneAgentLoopMessages(cycleState.ResponseMessages), runtime.CloneAgentLoopToolCalls(cycleState.ToolCalls)
 }
 
 type agentPlannerActionReplanCycleOptions struct {

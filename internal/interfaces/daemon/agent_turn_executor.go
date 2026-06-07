@@ -43,8 +43,8 @@ type daemonReplanActionContinuationTurnPayload struct {
 }
 
 type daemonReplanActionContinuationTurnResultPayload struct {
-	Messages  []agentMessage
-	ToolCalls []agentToolCall
+	Messages  []runtime.AgentLoopMessage
+	ToolCalls []runtime.AgentLoopToolCall
 }
 
 type daemonPlannerActionExecutionTurnPayload struct {
@@ -159,8 +159,8 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 		payload.MaxLoops,
 	)
 	resultPayload := daemonReplanActionContinuationTurnResultPayload{
-		Messages:  messages,
-		ToolCalls: toolCalls,
+		Messages:  runtime.CloneAgentLoopMessages(messages),
+		ToolCalls: runtime.CloneAgentLoopToolCalls(toolCalls),
 	}
 	return runtime.TurnResult{
 		Status:  runtime.TurnResultFinished,
@@ -324,7 +324,7 @@ func (m *agentManager) routePromptWithRuntimeDeterministicRoute(ctx context.Cont
 	return m.routePromptForTurn(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 }
 
-func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]agentMessage, []agentToolCall) {
+func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.TurnExecutor() == nil {
 		return m.runAgentReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops)
@@ -375,7 +375,7 @@ func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, s
 	if !ok {
 		return m.runAgentReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops)
 	}
-	return payload.Messages, payload.ToolCalls
+	return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls)
 }
 
 func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, action runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {

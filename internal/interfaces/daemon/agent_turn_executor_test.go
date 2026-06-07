@@ -1433,8 +1433,8 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t 
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
 			Payload: daemonReplanActionContinuationTurnResultPayload{
-				Messages:  []agentMessage{expectedMessage},
-				ToolCalls: []agentToolCall{expectedToolCall},
+				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 			},
 		}, nil
 	}))
@@ -1456,8 +1456,8 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t 
 	)
 
 	require.True(t, called)
-	require.Equal(t, []agentMessage{expectedMessage}, messages)
-	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
+	require.Equal(t, agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}), messages)
+	require.Equal(t, agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}), toolCalls)
 }
 
 func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *testing.T) {
@@ -3148,8 +3148,8 @@ func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStag
 	require.Equal(t, []string{daemonTurnExecutionReplanActionContinuation, string(runtime.LLMStageToolSynthesis)}, appendOrigins)
 	require.Len(t, messages, 2)
 	require.Contains(t, messages[0].Content, "health ok")
-	require.Equal(t, expectedMessage, messages[1])
+	require.Equal(t, agentLoopMessageFromAgentMessage(expectedMessage), messages[1])
 	require.Len(t, toolCalls, 2)
 	require.Equal(t, "daemon.health", toolCalls[0].Name)
-	require.Equal(t, expectedToolCall, toolCalls[1])
+	require.Equal(t, agentLoopToolCallFromAgentToolCall(expectedToolCall), toolCalls[1])
 }

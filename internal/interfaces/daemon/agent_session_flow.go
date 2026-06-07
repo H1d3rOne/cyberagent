@@ -169,8 +169,8 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 					nextState, _ := m.GetSession(ctx, sessionID)
 					loopHistory := cloneAgentMessages(nextState.Messages)
 					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuation(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisLegacyPlan, reqMaxAgentReplans(llmReq)-1)
-					runtimeResponseMessages = append(runtimeResponseMessages, agentLoopMessagesFromAgentMessages(followupMessages)...)
-					runtimeResponseToolCalls = append(runtimeResponseToolCalls, agentLoopToolCallItemsFromAgentToolCalls(followupToolCalls)...)
+					runtimeResponseMessages = append(runtimeResponseMessages, runtime.CloneAgentLoopMessages(followupMessages)...)
+					runtimeResponseToolCalls = append(runtimeResponseToolCalls, runtime.CloneAgentLoopToolCalls(followupToolCalls)...)
 				}
 			}
 		}
@@ -402,8 +402,8 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					loopHistory := append(synthesisHistory, synthesisLegacyMessages...)
 					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisLegacyPlan, reqMaxAgentReplans(req)-1)
-					responseMessages = append(responseMessages, agentLoopMessagesFromAgentMessages(followupMessages)...)
-					responseToolCalls = append(responseToolCalls, agentLoopToolCallItemsFromAgentToolCalls(followupToolCalls)...)
+					responseMessages = append(responseMessages, runtime.CloneAgentLoopMessages(followupMessages)...)
+					responseToolCalls = append(responseToolCalls, runtime.CloneAgentLoopToolCalls(followupToolCalls)...)
 				}
 			}
 		}
