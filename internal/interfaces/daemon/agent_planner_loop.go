@@ -367,8 +367,12 @@ func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq
 }
 
 func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
+	return m.runAgentReplanActionContinuationAgentLoop(ctx, agentReplanActionContinuationRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops))
+}
+
+func agentReplanActionContinuationRequestFromLegacy(sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) runtime.AgentLoopRequest {
 	loopHistory := agentLoopMessagesFromAgentMessages(history)
-	return m.runAgentReplanActionContinuationAgentLoop(ctx, runtime.AgentLoopRequest{
+	return runtime.AgentLoopRequest{
 		Mode:          runtime.AgentLoopModeReplanContinuation,
 		Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
 		Language:      language,
@@ -386,14 +390,11 @@ func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, ses
 		Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
 			ActionAppendOrigin: daemonTurnExecutionReplanActionContinuation,
 		}),
-	})
+	}
 }
 
-func (m *agentManager) runAgentReplanActionContinuationAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
+func normalizeAgentReplanActionContinuationRequest(loopReq runtime.AgentLoopRequest) runtime.AgentLoopRequest {
 	loopReq = loopReq.Clone()
-	if loopReq.MaxLoops <= 0 {
-		return nil, nil
-	}
 	if loopReq.Mode == "" {
 		loopReq.Mode = runtime.AgentLoopModeReplanContinuation
 	}
@@ -407,6 +408,14 @@ func (m *agentManager) runAgentReplanActionContinuationAgentLoop(ctx context.Con
 		}
 		metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin] = daemonTurnExecutionReplanActionContinuation
 		loopReq.Metadata = metadata
+	}
+	return loopReq
+}
+
+func (m *agentManager) runAgentReplanActionContinuationAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
+	loopReq = normalizeAgentReplanActionContinuationRequest(loopReq)
+	if loopReq.MaxLoops <= 0 {
+		return nil, nil
 	}
 
 	cycleState := agentPlannerActionReplanCycleStateFromAgentLoopRequest(loopReq)

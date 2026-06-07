@@ -301,65 +301,54 @@ func (m *agentManager) routePromptWithRuntimeDeterministicRoute(ctx context.Cont
 }
 
 func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
+	return m.runRuntimeReplanActionContinuationAgentLoop(ctx, agentReplanActionContinuationRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops))
+}
+
+func (m *agentManager) runRuntimeReplanActionContinuationAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
+	loopReq = normalizeAgentReplanActionContinuationRequest(loopReq)
 	eng := m.runtimeEngine()
 	if eng == nil || eng.TurnExecutor() == nil {
-		return m.runAgentReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops)
+		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	loopReq := runtime.AgentLoopRequest{
-		Mode:          runtime.AgentLoopModeReplanContinuation,
-		Turn:          agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel),
-		Language:      language,
-		Operator:      operator,
-		LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
-		History:       agentLoopMessagesFromAgentMessages(history),
-		MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
-		InitialPlan:   agentLoopPlanFromPlannerResponse(plan),
-		State: runtime.AgentLoopState{
-			LoopHistory: agentLoopMessagesFromAgentMessages(history),
-		},
-		Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
-		ToolServices:  agentLoopToolServiceBindingFromRouterServices(svc),
-		MaxLoops:      maxLoops,
-		Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
-			ActionAppendOrigin: daemonTurnExecutionReplanActionContinuation,
-		}),
-	}
-	result, err := eng.ExecuteTurn(ctx, runtime.TurnContext{
-		SessionID:      sessionID,
-		TaskID:         turnRef.TaskID,
-		RunID:          turnRef.RunID,
-		TurnID:         turnRef.TurnID,
-		Prompt:         prompt,
-		Origin:         daemonTurnExecutionReplanActionContinuation,
-		OperationLevel: operationLevel,
-		TurnIndex:      1,
-		Payload: daemonReplanActionContinuationTurnPayload{
-			Request: loopReq.Clone(),
-		},
-		Metadata: map[string]any{
-			"executor":        "turn_execution",
-			"kind":            daemonTurnExecutionReplanActionContinuation,
-			"operation_level": operationLevel,
-			"max_loops":       maxLoops,
-		},
-	})
+	result, err := eng.ExecuteTurn(ctx, agentReplanActionContinuationTurnContextFromRequest(loopReq))
 	if errors.Is(err, runtime.ErrTurnExecutorNotAttached) ||
 		errors.Is(result.Error, runtime.ErrTurnExecutorNotAttached) ||
 		result.Status == runtime.TurnResultBlocked ||
 		(result.Status == runtime.TurnResultRunning && result.Payload == nil) {
-		return m.runAgentReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops)
+		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
 	}
 	if err != nil {
-		return m.runAgentReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops)
+		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
 	}
 	payload, ok := result.Payload.(daemonReplanActionContinuationTurnResultPayload)
 	if !ok {
-		return m.runAgentReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops)
+		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
 	}
 	return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls)
+}
+
+func agentReplanActionContinuationTurnContextFromRequest(loopReq runtime.AgentLoopRequest) runtime.TurnContext {
+	turn := runtime.CloneAgentLoopTurnContext(loopReq.Turn)
+	turn.Origin = daemonTurnExecutionReplanActionContinuation
+	if turn.TurnIndex == 0 {
+		turn.TurnIndex = 1
+	}
+	turn.Payload = daemonReplanActionContinuationTurnPayload{
+		Request: loopReq.Clone(),
+	}
+	metadata := runtime.CloneAgentLoopMapStringAny(turn.Metadata)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["executor"] = "turn_execution"
+	metadata["kind"] = daemonTurnExecutionReplanActionContinuation
+	metadata["operation_level"] = turn.OperationLevel
+	metadata["max_loops"] = loopReq.MaxLoops
+	turn.Metadata = metadata
+	return turn
 }
 
 func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, action runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {

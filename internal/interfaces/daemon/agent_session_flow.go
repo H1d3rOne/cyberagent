@@ -168,7 +168,8 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					nextState, _ := m.GetSession(ctx, sessionID)
 					loopHistory := cloneAgentMessages(nextState.Messages)
-					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuation(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisLegacyPlan, reqMaxAgentReplans(llmReq)-1)
+					loopReq := agentReplanActionContinuationRequestFromLegacy(sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisLegacyPlan, reqMaxAgentReplans(llmReq)-1)
+					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuationAgentLoop(ctx, loopReq)
 					runtimeResponseMessages = append(runtimeResponseMessages, runtime.CloneAgentLoopMessages(followupMessages)...)
 					runtimeResponseToolCalls = append(runtimeResponseToolCalls, runtime.CloneAgentLoopToolCalls(followupToolCalls)...)
 				}
@@ -402,7 +403,8 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 				responseToolCalls = append(responseToolCalls, runtime.CloneAgentLoopToolCalls(synthesisToolCalls)...)
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					loopHistory := append(synthesisHistory, synthesisLegacyMessages...)
-					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisLegacyPlan, reqMaxAgentReplans(req)-1)
+					loopReq := agentReplanActionContinuationRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisLegacyPlan, reqMaxAgentReplans(req)-1)
+					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuationAgentLoop(ctx, loopReq)
 					responseMessages = append(responseMessages, runtime.CloneAgentLoopMessages(followupMessages)...)
 					responseToolCalls = append(responseToolCalls, runtime.CloneAgentLoopToolCalls(followupToolCalls)...)
 				}
