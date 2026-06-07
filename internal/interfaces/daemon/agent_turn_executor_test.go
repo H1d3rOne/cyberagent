@@ -1546,7 +1546,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 		),
 		Language: "en",
 		Operator: "tester",
-		Authorization: agentPlannerActionReplanCycleAuthorization{
+		Authorization: runtime.AgentLoopAuthorization{
 			AuthProfiles:         cycleAuthProfiles,
 			DefaultAuthProfileID: "auth-cycle-action-exec",
 		},
@@ -2430,7 +2430,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *t
 		Language:      "en",
 		Operator:      "tester",
 		LLMRequest:    agentPlannerActionReplanCycleLLMRequest{Model: "gpt-cycle-action-snapshot"},
-		Authorization: agentPlannerActionReplanCycleAuthorization{},
+		Authorization: runtime.AgentLoopAuthorization{},
 		ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(routerServices{}),
 		Plan:          cyclePlan,
 		State: agentPlannerActionReplanCycleStateFromLegacy(

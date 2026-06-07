@@ -803,13 +803,8 @@ func (state *agentPlannerActionReplanCycleState) appendToolCalls(calls agentPlan
 	state.ToolCalls.appendToolCalls(calls)
 }
 
-type agentPlannerActionReplanCycleAuthorization struct {
-	AuthProfiles         []agentPlannerActionReplanCycleAuthProfile
-	DefaultAuthProfileID string
-}
-
-func agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req sendAgentMessageRequest) agentPlannerActionReplanCycleAuthorization {
-	return agentPlannerActionReplanCycleAuthorization{
+func agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req sendAgentMessageRequest) runtime.AgentLoopAuthorization {
+	return runtime.AgentLoopAuthorization{
 		AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(req.AuthProfiles),
 		DefaultAuthProfileID: req.DefaultAuthProfileID,
 	}
@@ -823,37 +818,23 @@ type agentPlannerActionReplanCycleLLMRequest struct {
 	APIKey               string
 	BaseURL              string
 	Instructions         string
-	AuthProfiles         []agentPlannerActionReplanCycleAuthProfile
+	AuthProfiles         []runtime.AgentLoopAuthProfile
 	DefaultAuthProfileID string
 }
 
-type agentPlannerActionReplanCycleAuthProfile struct {
-	ID          string
-	Name        string
-	Type        string
-	BaseURL     string
-	Token       string
-	Username    string
-	Password    string
-	HeaderName  string
-	HeaderValue string
-	Cookie      string
-	Enabled     *bool
-}
-
-func agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(profiles []agentHTTPAuthProfile) []agentPlannerActionReplanCycleAuthProfile {
+func agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(profiles []agentHTTPAuthProfile) []runtime.AgentLoopAuthProfile {
 	if len(profiles) == 0 {
 		return nil
 	}
-	out := make([]agentPlannerActionReplanCycleAuthProfile, 0, len(profiles))
+	out := make([]runtime.AgentLoopAuthProfile, 0, len(profiles))
 	for _, profile := range profiles {
 		out = append(out, agentPlannerActionReplanCycleAuthProfileFromHTTPProfile(profile))
 	}
 	return out
 }
 
-func agentPlannerActionReplanCycleAuthProfileFromHTTPProfile(profile agentHTTPAuthProfile) agentPlannerActionReplanCycleAuthProfile {
-	return agentPlannerActionReplanCycleAuthProfile{
+func agentPlannerActionReplanCycleAuthProfileFromHTTPProfile(profile agentHTTPAuthProfile) runtime.AgentLoopAuthProfile {
+	return runtime.AgentLoopAuthProfile{
 		ID:          profile.ID,
 		Name:        profile.Name,
 		Type:        profile.Type,
@@ -864,11 +845,11 @@ func agentPlannerActionReplanCycleAuthProfileFromHTTPProfile(profile agentHTTPAu
 		HeaderName:  profile.HeaderName,
 		HeaderValue: profile.HeaderValue,
 		Cookie:      profile.Cookie,
-		Enabled:     cloneAgentPlannerActionReplanCycleBoolPtr(profile.Enabled),
+		Enabled:     runtime.CloneAgentLoopBoolPtr(profile.Enabled),
 	}
 }
 
-func (profile agentPlannerActionReplanCycleAuthProfile) agentHTTPAuthProfile() agentHTTPAuthProfile {
+func agentHTTPAuthProfileFromAgentLoopAuthProfile(profile runtime.AgentLoopAuthProfile) agentHTTPAuthProfile {
 	return agentHTTPAuthProfile{
 		ID:          profile.ID,
 		Name:        profile.Name,
@@ -880,27 +861,19 @@ func (profile agentPlannerActionReplanCycleAuthProfile) agentHTTPAuthProfile() a
 		HeaderName:  profile.HeaderName,
 		HeaderValue: profile.HeaderValue,
 		Cookie:      profile.Cookie,
-		Enabled:     cloneAgentPlannerActionReplanCycleBoolPtr(profile.Enabled),
+		Enabled:     runtime.CloneAgentLoopBoolPtr(profile.Enabled),
 	}
 }
 
-func agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(profiles []agentPlannerActionReplanCycleAuthProfile) []agentHTTPAuthProfile {
+func agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(profiles []runtime.AgentLoopAuthProfile) []agentHTTPAuthProfile {
 	if len(profiles) == 0 {
 		return nil
 	}
 	out := make([]agentHTTPAuthProfile, 0, len(profiles))
 	for _, profile := range profiles {
-		out = append(out, profile.agentHTTPAuthProfile())
+		out = append(out, agentHTTPAuthProfileFromAgentLoopAuthProfile(profile))
 	}
 	return out
-}
-
-func cloneAgentPlannerActionReplanCycleBoolPtr(value *bool) *bool {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }
 
 func agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req sendAgentMessageRequest) agentPlannerActionReplanCycleLLMRequest {
@@ -1284,7 +1257,7 @@ type agentPlannerActionReplanCycleRequest struct {
 	Language      string
 	Operator      string
 	LLMRequest    agentPlannerActionReplanCycleLLMRequest
-	Authorization agentPlannerActionReplanCycleAuthorization
+	Authorization runtime.AgentLoopAuthorization
 	MemorySummary agentPlannerActionReplanCycleMemorySummary
 	ToolContext   agentPlannerActionReplanCycleToolContext
 	Plan          agentPlannerActionReplanCyclePlan
