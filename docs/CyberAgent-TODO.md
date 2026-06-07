@@ -212,7 +212,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N64：将 `runAgentLLMToolLoop` / `runRuntimeLLMToolLoop` 的返回继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 `SendMessage` / LLMTurn adapter 边界。
 - [x] P0.5-N65：将 `SendMessage` LLM success/error response merge 内部 accumulator 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 `buildAgentSendResponseFromAgentLoop` 与 warning/fallback adapter 边界。
 - [x] P0.5-N66：将 `SendMessage` deterministic route / no-LLM route response merge accumulator 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，减少底部 route/synthesis 分支 legacy slice 累积。
-- [ ] P0.5-N67：将 `SendMessage` control/error/authorization gate 简单响应分支继续收敛到 runtime response egress helper，消除 `runAgentSendMessageTurn` 内除 helper 外直接 `buildAgentSendResponse` 调用。
+- [x] P0.5-N67：将 `SendMessage` control/error/authorization gate 简单响应分支继续收敛到 runtime response egress helper，消除 `runAgentSendMessageTurn` 内除 helper 外直接 `buildAgentSendResponse` 调用。
+- [ ] P0.5-N68：将 `runAgentReplanActionContinuation` / `runRuntimeReplanActionContinuation` 返回继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 follow-up response merge 与 turn executor adapter 边界。
 
 当前盘点（2026-06-08）：
 
@@ -243,7 +244,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - LLM tool loop 返回边界已收敛为 runtime DTO：`runAgentLLMToolLoop` / `runRuntimeLLMToolLoop` 现在返回 runtime `AgentLoopMessage` / `AgentLoopToolCall`，`daemonAgentLLMTurnRunner` result payload 直接 clone runtime DTO，legacy 转换推迟到 `SendMessage` response merge 与 LLMTurn adapter egress。
 - `SendMessage` LLM merge accumulator 已收敛为 runtime DTO：control continue/revise + LLM、route-before-LLM synthesis、main LLM success 与 LLM failure fallback route/authorization 分支内部以 runtime `AgentLoopMessage` / `AgentLoopToolCall` 聚合 response；legacy 转换集中到 `buildAgentSendResponseFromAgentLoop`、append mutation 与 warning/fallback adapter 边界。
 - `SendMessage` deterministic/no-LLM route merge accumulator 已收敛为 runtime DTO：active-run continue、auto-continue deterministic route、route-before-LLM route error、底部 no-LLM route success/error 与 optional synthesis branch 内部以 runtime `AgentLoopMessage` / `AgentLoopToolCall` 聚合 response；legacy 转换集中到 `buildAgentSendResponseFromAgentLoop`、append mutation 与 synthesis adapter 边界。
-- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition 与 `SendMessage` control/error/authorization gate 简单响应 branch body；action execution、StepReplan synthesis、plan handle ingress/egress、state/memory/auth/LLM request/message/tool/LLM loop 返回/LLM turn payload/result/LLM stage payload/result/tool service binding ingress/egress 以及 action/synthesis/result/route response phase/append 的 legacy 转换已集中到 cycle-private helpers/wrappers 或 daemon adapter，plan/action/state/memory/auth/LLM request/message/tool/LLM turn/LLM stage/tool service binding 以及 loop request/result DTO 已迁到 runtime-neutral package，`Engine.RunAgentLoop` / `AgentLoopRunner` seam 已挂接 legacy shared cycle adapter，外层 cycle dispatch 已使用 runtime request/result；后续目标是逐步迁移 engine-native runner ownership。
+- `SendMessage` control/error/authorization gate 简单响应已收敛到 runtime response egress helper：control error、普通 control response 与 pending authorization gate 分支都先构造 runtime `AgentLoopMessage` / `AgentLoopToolCall`，`runAgentSendMessageTurn` 内除 `buildAgentSendResponseFromAgentLoop` helper 外不再直接调用 legacy `buildAgentSendResponse`。
+- 仍是 daemon-owned legacy adapter：`runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 的 planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 loop/mode precondition 与 follow-up continuation egress；action execution、StepReplan synthesis、plan handle ingress/egress、state/memory/auth/LLM request/message/tool/LLM loop 返回/LLM turn payload/result/LLM stage payload/result/tool service binding ingress/egress 以及 action/synthesis/result/route/control response phase/append 的 legacy 转换已集中到 cycle-private helpers/wrappers 或 daemon adapter，plan/action/state/memory/auth/LLM request/message/tool/LLM turn/LLM stage/tool service binding 以及 loop request/result DTO 已迁到 runtime-neutral package，`Engine.RunAgentLoop` / `AgentLoopRunner` seam 已挂接 legacy shared cycle adapter，外层 cycle dispatch 已使用 runtime request/result；后续目标是逐步迁移 engine-native runner ownership。
 
 ### 7.2 P1 Frontend / QA
 
@@ -831,6 +833,17 @@ git diff --check
 ```
 
 结果：active-run continue、control auto-continue deterministic route、route-before-LLM route error 与底部 no-LLM route success/error/synthesis branch 的 response accumulator 改为 runtime `AgentLoopMessage` / `AgentLoopToolCall`；legacy 转换保留在 append mutation、synthesis/follow-up adapter 与 `buildAgentSendResponseFromAgentLoop` egress；focused daemon tests、runtime/daemon 包测试与 diff check 通过。
+
+本轮增量（P0.5-N67：SendMessage control/error/auth gate response egress runtime helper）：
+
+```bash
+gofmt -w internal/interfaces/daemon/agent_session_flow.go
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerSendMessageResponseMerge(ControlLLMBranches|PendingAuthorizationGate|RouteBeforeLLMSynthesis)|TestAgentManagerSendMessage(NoLLMRouteUsesTurnExecutor|ActiveRunContinueUsesTurnExecutor|RouteBeforeLLMUsesTurnExecutor|LLMFallbackRouteUsesTurnExecutor)|TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator|TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：control error、普通 control response 与 pending authorization gate 分支的 final response egress 改为 `buildAgentSendResponseFromAgentLoop`；`runAgentSendMessageTurn` 内除 helper 实现外不再直接调用 legacy `buildAgentSendResponse`；focused daemon tests、runtime/daemon 包测试与 diff check 通过。
 
 P1-F1 前端路由/bundle 盘点：
 

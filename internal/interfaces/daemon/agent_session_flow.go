@@ -271,7 +271,9 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 			errMessage := m.message(language, "agent", controlErr.Error(), []agentToolCall{failedAgentToolCall("agent.control", controlErr)}, nil)
 			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, string(runtime.SessionMutationControlSession), operationLevel, errMessage)
 			sessionState, _ := m.GetSession(ctx, sessionID)
-			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, errMessage}, errMessage.ToolCalls, sessionState), nil
+			responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage, errMessage})
+			responseToolCalls := agentLoopToolCallItemsFromAgentToolCalls(errMessage.ToolCalls)
+			return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 		}
 		if controlReq.Action == "continue" && !agentLLMConfigured(req) {
 			if contextMessages, contextToolCalls, ok := m.handleAgentActiveRunContinueForTurn(ctx, sessionID, turnRef, language, operator, operationLevel, svc); ok {
@@ -344,7 +346,8 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 		if getErr != nil {
 			sessionState = controlResp.Session
 		}
-		return buildAgentSendResponse(sessionID, []agentMessage{userMessage, controlResp.Message}, nil, sessionState), nil
+		responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage, controlResp.Message})
+		return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, nil, sessionState), nil
 	}
 
 	if sessionState, getErr := m.GetSession(ctx, sessionID); getErr == nil &&
@@ -353,7 +356,8 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 		blockMessage := agentMessageWithPhase(m.message(language, "agent", agentText(language, "当前任务已暂停在工具授权门。请先在授权卡片中点击“允许并继续”或“拒绝”；我不会在授权前执行新的步骤。", "The current task is paused at a tool authorization gate. Approve or deny the authorization card first; I will not execute new steps before authorization."), nil, nil), "step")
 		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "authorization_gate", operationLevel, blockMessage)
 		latestState, _ := m.GetSession(ctx, sessionID)
-		return buildAgentSendResponse(sessionID, []agentMessage{userMessage, blockMessage}, nil, latestState), nil
+		responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage, blockMessage})
+		return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, nil, latestState), nil
 	}
 
 	if agentLLMConfigured(req) && agentShouldRouteBeforeLLMSynthesis(prompt) {
