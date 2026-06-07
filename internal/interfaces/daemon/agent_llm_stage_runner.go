@@ -106,10 +106,11 @@ func daemonLLMStageResultData(stage runtime.LLMStage, turn runtime.TurnContext) 
 	}
 }
 
-func (m *agentManager) runRuntimeAgentLLMPlannerChat(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
+func (m *agentManager) runRuntimeAgentLLMPlannerChat(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, *runtime.AgentLoopPlan, error) {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.LLMStageRunner() == nil {
-		return m.handleAgentLLMChat(ctx, sessionID, turnRef, language, req, history, memorySummary)
+		messages, toolCalls, plan, err := m.handleAgentLLMChat(ctx, sessionID, turnRef, language, req, history, memorySummary)
+		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), agentLoopPlanPtrFromAgentPlannerResponse(plan), err
 	}
 
 	turn := runtime.TurnContext{
@@ -141,12 +142,13 @@ func (m *agentManager) runRuntimeAgentLLMPlannerChat(ctx context.Context, sessio
 		},
 	})
 	if errors.Is(err, runtime.ErrLLMStageRunnerNotAttached) {
-		return m.handleAgentLLMChat(ctx, sessionID, turnRef, language, req, history, memorySummary)
+		messages, toolCalls, plan, fallbackErr := m.handleAgentLLMChat(ctx, sessionID, turnRef, language, req, history, memorySummary)
+		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), agentLoopPlanPtrFromAgentPlannerResponse(plan), fallbackErr
 	}
 
 	payload, ok := agentLoopLLMStageResultPayloadFromLLMStageResult(result.Payload)
 	if ok {
-		return agentMessagesFromAgentLoopMessages(payload.Messages), agentLoopToolCallItemsToAgentToolCalls(payload.ToolCalls), agentPlannerResponsePtrFromAgentLoopPlan(payload.Plan), err
+		return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), runtime.CloneAgentLoopPlan(payload.Plan), err
 	}
 	if err != nil {
 		return nil, nil, nil, err

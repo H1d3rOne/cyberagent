@@ -284,19 +284,24 @@ func (m *agentManager) chatAgentLLM(ctx context.Context, sessionID string, turnR
 
 func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]agentMessage, []agentToolCall, error) {
 	planMessages, planToolCalls, plan, err := m.runRuntimeAgentLLMPlannerChat(ctx, sessionID, turnRef, prompt, language, operationLevel, req, history, memorySummary)
+	planLegacyMessages := agentMessagesFromAgentLoopMessages(planMessages)
+	planLegacyToolCalls := agentLoopToolCallItemsToAgentToolCalls(planToolCalls)
+	planLegacy := agentPlannerResponsePtrFromAgentLoopPlan(plan)
 	if err != nil {
-		return planMessages, planToolCalls, err
+		return planLegacyMessages, planLegacyToolCalls, err
 	}
 
-	m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStagePlannerChat), operationLevel, plan, planMessages...)
-	cycleState := agentLoopStateFromLegacy(
-		planMessages,
-		planToolCalls,
-		append(cloneAgentMessages(history), planMessages...),
-	)
+	m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStagePlannerChat), operationLevel, planLegacy, planLegacyMessages...)
+	loopHistory := agentLoopMessagesFromAgentMessages(history)
+	loopHistory = append(loopHistory, runtime.CloneAgentLoopMessages(planMessages)...)
+	cycleState := runtime.AgentLoopState{
+		ResponseMessages: runtime.CloneAgentLoopMessages(planMessages),
+		ToolCalls:        runtime.CloneAgentLoopToolCalls(planToolCalls),
+		LoopHistory:      loopHistory,
+	}
 
 	maxLoops := reqMaxAgentReplans(req)
-	cyclePlan := agentLoopPlanFromPlannerResponse(plan)
+	cyclePlan := runtime.CloneAgentLoopPlan(plan)
 	for step := 0; step < maxLoops; step++ {
 		if !agentLoopPlanHasActions(cyclePlan) {
 			// Respect a structured model plan that intentionally stops at Plan and

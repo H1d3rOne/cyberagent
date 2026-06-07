@@ -1184,9 +1184,9 @@ func TestAgentManagerRunRuntimeAgentLLMPlannerChatDispatchesEngineStageRunner(t 
 
 	require.NoError(t, err)
 	require.True(t, called)
-	require.Equal(t, []agentMessage{expectedMessage}, messages)
-	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
-	require.Equal(t, expectedPlan, plan)
+	require.Equal(t, agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}), messages)
+	require.Equal(t, agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}), toolCalls)
+	require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(expectedPlan), plan)
 }
 
 func TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner(t *testing.T) {
