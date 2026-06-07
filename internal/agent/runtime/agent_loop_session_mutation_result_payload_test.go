@@ -496,3 +496,46 @@ func TestAgentLoopRequestAuthorizationResultPayloadCloneIsolatesMutableFields(t 
 		t.Fatalf("clone changed scalar fields: %#v", cloned)
 	}
 }
+
+func TestAgentLoopCapabilityBlockedResultPayloadCloneIsolatesMutableFields(t *testing.T) {
+	payload := AgentLoopCapabilityBlockedResultPayload{
+		Session: AgentLoopSessionSnapshot{
+			SessionID: "session-capability-result",
+			Status:    "blocked",
+			Todos: []AgentLoopSessionTodo{{
+				ID:            "todo-capability",
+				Status:        "blocked",
+				ContextRefIDs: []string{"ctx-capability"},
+			}},
+			NextAction: &AgentLoopNextAction{
+				Type:            "blocked",
+				Reason:          "capability mismatch",
+				SuggestedPrompt: "use safe scan",
+			},
+		},
+		ActionName:      "scan.web.safe",
+		IntentID:        "content_discovery",
+		Reason:          "capability mismatch",
+		SuggestedPrompt: "use safe scan",
+		Mutated:         true,
+	}
+
+	cloned := payload.Clone()
+
+	payload.Session.Todos[0].ContextRefIDs[0] = "mutated"
+	payload.Session.NextAction.SuggestedPrompt = "mutated"
+
+	if cloned.Session.Todos[0].ContextRefIDs[0] != "ctx-capability" {
+		t.Fatalf("clone shares todo context refs: %#v", cloned.Session.Todos[0])
+	}
+	if cloned.Session.NextAction == payload.Session.NextAction || cloned.Session.NextAction.SuggestedPrompt != "use safe scan" {
+		t.Fatalf("clone shares next action: %#v", cloned.Session.NextAction)
+	}
+	if cloned.ActionName != "scan.web.safe" ||
+		cloned.IntentID != "content_discovery" ||
+		cloned.Reason != "capability mismatch" ||
+		cloned.SuggestedPrompt != "use safe scan" ||
+		!cloned.Mutated {
+		t.Fatalf("clone changed scalar fields: %#v", cloned)
+	}
+}

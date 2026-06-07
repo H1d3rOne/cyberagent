@@ -113,6 +113,31 @@ func CloneAgentLoopRequestAuthorizationResultPayload(payload AgentLoopRequestAut
 	return payload.Clone()
 }
 
+// AgentLoopCapabilityBlockedResultPayload is the runtime-neutral result for a
+// capability_blocked mutation. It carries the updated session snapshot and
+// blocked-action metadata used by planner response construction.
+type AgentLoopCapabilityBlockedResultPayload struct {
+	Session         AgentLoopSessionSnapshot
+	ActionName      string
+	IntentID        string
+	Reason          string
+	SuggestedPrompt string
+	Mutated         bool
+}
+
+// Clone returns a copy with all mutable fields isolated.
+func (payload AgentLoopCapabilityBlockedResultPayload) Clone() AgentLoopCapabilityBlockedResultPayload {
+	cloned := payload
+	cloned.Session = payload.Session.Clone()
+	return cloned
+}
+
+// CloneAgentLoopCapabilityBlockedResultPayload clones a capability-blocked
+// mutation result payload.
+func CloneAgentLoopCapabilityBlockedResultPayload(payload AgentLoopCapabilityBlockedResultPayload) AgentLoopCapabilityBlockedResultPayload {
+	return payload.Clone()
+}
+
 // AgentLoopSessionSnapshot is the runtime-neutral session state carried by
 // session mutation result DTOs. It mirrors the operator-visible session
 // boundary without depending on daemon-private structs.

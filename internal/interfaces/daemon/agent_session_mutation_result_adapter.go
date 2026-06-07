@@ -175,6 +175,46 @@ func daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(payload runtim
 	return result
 }
 
+func daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonCapabilityBlockedMutationResultPayload, bool) {
+	if payload, ok := daemonSessionMutationResultPayload[daemonCapabilityBlockedMutationResultPayload](result); ok {
+		return payload, true
+	}
+	switch payload := result.Payload.(type) {
+	case runtime.AgentLoopCapabilityBlockedResultPayload:
+		return daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(payload), true
+	case *runtime.AgentLoopCapabilityBlockedResultPayload:
+		if payload == nil {
+			return daemonCapabilityBlockedMutationResultPayload{}, false
+		}
+		return daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(payload.Clone()), true
+	default:
+		return daemonCapabilityBlockedMutationResultPayload{}, false
+	}
+}
+
+func agentLoopCapabilityBlockedResultPayloadFromDaemon(payload daemonCapabilityBlockedMutationResultPayload) runtime.AgentLoopCapabilityBlockedResultPayload {
+	return runtime.AgentLoopCapabilityBlockedResultPayload{
+		Session:         agentLoopSessionSnapshotFromAgentSession(payload.Session),
+		ActionName:      payload.ActionName,
+		IntentID:        payload.IntentID,
+		Reason:          payload.Reason,
+		SuggestedPrompt: payload.SuggestedPrompt,
+		Mutated:         payload.Mutated,
+	}
+}
+
+func daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(payload runtime.AgentLoopCapabilityBlockedResultPayload) daemonCapabilityBlockedMutationResultPayload {
+	payload = payload.Clone()
+	return daemonCapabilityBlockedMutationResultPayload{
+		Session:         agentSessionFromAgentLoopSessionSnapshot(payload.Session),
+		ActionName:      payload.ActionName,
+		IntentID:        payload.IntentID,
+		Reason:          payload.Reason,
+		SuggestedPrompt: payload.SuggestedPrompt,
+		Mutated:         payload.Mutated,
+	}
+}
+
 func agentLoopSessionSnapshotFromAgentSession(session agentSession) runtime.AgentLoopSessionSnapshot {
 	return runtime.AgentLoopSessionSnapshot{
 		SessionID:            session.SessionID,

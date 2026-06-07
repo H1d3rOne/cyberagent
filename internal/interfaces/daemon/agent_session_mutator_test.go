@@ -496,6 +496,61 @@ func TestAgentLoopRequestAuthorizationResultPayloadAdapterRoundTrip(t *testing.T
 	require.Equal(t, roundTrip, convertedPointer)
 }
 
+func TestAgentLoopCapabilityBlockedResultPayloadAdapterRoundTrip(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 30, 0, 0, time.UTC)
+	resultPayload := daemonCapabilityBlockedMutationResultPayload{
+		Session: agentSession{
+			SessionID:      "session-capability-result",
+			CreatedAt:      now.Add(-2 * time.Hour),
+			UpdatedAt:      now,
+			Operator:       "operator-1",
+			Language:       "en",
+			OperationLevel: "safe_scan",
+			Status:         "blocked",
+			Todos: []agentTodo{{
+				ID:            "todo-capability-result",
+				Title:         "select safe capability",
+				Status:        "blocked",
+				ContextRefIDs: []string{"ctx-capability-result"},
+				UpdatedAt:     now,
+			}},
+			NextAction: &agentNextAction{
+				Type:            "blocked",
+				Reason:          "capability mismatch",
+				SuggestedPrompt: "use scan.web.safe",
+			},
+		},
+		ActionName:      "scan.web.safe",
+		IntentID:        "content_discovery",
+		Reason:          "capability mismatch",
+		SuggestedPrompt: "use scan.web.safe",
+		Mutated:         true,
+	}
+
+	runtimePayload := agentLoopCapabilityBlockedResultPayloadFromDaemon(resultPayload)
+	expectedPayload := daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(runtimePayload)
+	resultPayload.Session.Todos[0].ContextRefIDs[0] = "mutated"
+	resultPayload.Session.NextAction.SuggestedPrompt = "mutated"
+	roundTrip := daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(runtimePayload)
+
+	require.Equal(t, expectedPayload, roundTrip)
+	require.Equal(t, "ctx-capability-result", roundTrip.Session.Todos[0].ContextRefIDs[0])
+	require.Equal(t, "use scan.web.safe", roundTrip.Session.NextAction.SuggestedPrompt)
+	require.Equal(t, "scan.web.safe", roundTrip.ActionName)
+	require.Equal(t, "content_discovery", roundTrip.IntentID)
+	require.Equal(t, "capability mismatch", roundTrip.Reason)
+	require.Equal(t, "use scan.web.safe", roundTrip.SuggestedPrompt)
+	require.True(t, roundTrip.Mutated)
+
+	converted, ok := daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult(runtime.SessionMutationResult{Payload: runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, roundTrip, converted)
+
+	convertedPointer, ok := daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult(runtime.SessionMutationResult{Payload: &runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, roundTrip, convertedPointer)
+}
+
 func TestAgentManagerAppendMessagesWithPlannerDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
