@@ -86,6 +86,15 @@ func (plan AgentLoopPlan) Clone() AgentLoopPlan {
 	return cloned
 }
 
+// CloneAgentLoopPlan clones an optional runtime-neutral planner envelope.
+func CloneAgentLoopPlan(plan *AgentLoopPlan) *AgentLoopPlan {
+	if plan == nil {
+		return nil
+	}
+	cloned := plan.Clone()
+	return &cloned
+}
+
 // CloneAgentLoopRecommendationOptions clones recommendation option slices.
 func CloneAgentLoopRecommendationOptions(options []AgentLoopRecommendationOption) []AgentLoopRecommendationOption {
 	if options == nil {

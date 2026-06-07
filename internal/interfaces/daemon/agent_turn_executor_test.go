@@ -60,6 +60,14 @@ func agentMessageIDs(messages []agentMessage) []string {
 	return ids
 }
 
+func agentLoopMessageIDs(messages []runtime.AgentLoopMessage) []string {
+	ids := make([]string, 0, len(messages))
+	for _, message := range messages {
+		ids = append(ids, message.ID)
+	}
+	return ids
+}
+
 func TestAgentManagerDeterministicRoutePlanOnlyAppendUsesTurnRef(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
@@ -370,7 +378,7 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 			turnExecutions = append(turnExecutions, turn)
 			payload, ok := turn.Payload.(daemonReplanActionContinuationTurnPayload)
 			require.True(t, ok, "payload type = %T", turn.Payload)
-			require.Same(t, synthesisPlan, payload.Plan)
+			require.Equal(t, synthesisPlan, payload.Plan)
 			return runtime.TurnResult{
 				Status:  runtime.TurnResultFinished,
 				Reason:  "follow-up handled by test executor",
@@ -385,18 +393,14 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
 		require.Equal(t, runtime.LLMStageToolSynthesis, req.Stage)
 		llmStages = append(llmStages, req)
-		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
 		require.Len(t, payload.ToolMessages, 1)
 		require.Equal(t, actionMessage.ID, payload.ToolMessages[0].ID)
 		return runtime.LLMStageResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "synthesis handled by test runner",
-			Payload: daemonLLMToolSynthesisResultPayload{
-				Messages:  []agentMessage{synthesisMessage},
-				ToolCalls: []agentToolCall{synthesisTool},
-				Plan:      synthesisPlan,
-			},
+			Status:  runtime.TurnResultFinished,
+			Reason:  "synthesis handled by test runner",
+			Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{synthesisMessage}, []agentToolCall{synthesisTool}, synthesisPlan),
 		}, nil
 	}))
 
@@ -1142,26 +1146,22 @@ func TestAgentManagerRunRuntimeAgentLLMPlannerChatDispatchesEngineStageRunner(t 
 		require.Equal(t, "llm_stage", req.Metadata["runner"])
 		require.Equal(t, string(runtime.LLMStagePlannerChat), req.Metadata["stage"])
 
-		payload, ok := req.Payload.(daemonLLMPlannerChatPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
-		require.Equal(t, "session-planner-stage", payload.SessionID)
-		require.Equal(t, "task-planner-stage", payload.TurnRef.TaskID)
-		require.Equal(t, "run-planner-stage", payload.TurnRef.RunID)
-		require.Equal(t, "turn-planner-stage", payload.TurnRef.TurnID)
-		require.Equal(t, "make a plan", payload.Prompt)
+		require.Equal(t, "session-planner-stage", payload.Turn.SessionID)
+		require.Equal(t, "task-planner-stage", payload.Turn.TaskID)
+		require.Equal(t, "run-planner-stage", payload.Turn.RunID)
+		require.Equal(t, "turn-planner-stage", payload.Turn.TurnID)
+		require.Equal(t, "make a plan", payload.Turn.Prompt)
 		require.Equal(t, "zh-CN", payload.Language)
-		require.Equal(t, "safe_scan", payload.OperationLevel)
-		require.Equal(t, "gpt-planner", payload.Req.Model)
+		require.Equal(t, "safe_scan", payload.Turn.OperationLevel)
+		require.Equal(t, "gpt-planner", payload.LLMRequest.Model)
 		require.Len(t, payload.History, 1)
 
 		return runtime.LLMStageResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: daemonLLMPlannerChatResultPayload{
-				Messages:  []agentMessage{expectedMessage},
-				ToolCalls: []agentToolCall{expectedToolCall},
-				Plan:      expectedPlan,
-			},
+			Status:  runtime.TurnResultFinished,
+			Reason:  "done",
+			Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{expectedMessage}, []agentToolCall{expectedToolCall}, expectedPlan),
 		}, nil
 	}))
 
@@ -1181,7 +1181,7 @@ func TestAgentManagerRunRuntimeAgentLLMPlannerChatDispatchesEngineStageRunner(t 
 	require.True(t, called)
 	require.Equal(t, []agentMessage{expectedMessage}, messages)
 	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
-	require.Same(t, expectedPlan, plan)
+	require.Equal(t, expectedPlan, plan)
 }
 
 func TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner(t *testing.T) {
@@ -1205,27 +1205,23 @@ func TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner(
 		require.Equal(t, "llm_stage", req.Metadata["runner"])
 		require.Equal(t, string(runtime.LLMStageToolSynthesis), req.Metadata["stage"])
 
-		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
-		require.Equal(t, "session-synthesis-stage", payload.SessionID)
-		require.Equal(t, "task-synthesis-stage", payload.TurnRef.TaskID)
-		require.Equal(t, "run-synthesis-stage", payload.TurnRef.RunID)
-		require.Equal(t, "turn-synthesis-stage", payload.TurnRef.TurnID)
-		require.Equal(t, "summarize tools", payload.Prompt)
+		require.Equal(t, "session-synthesis-stage", payload.Turn.SessionID)
+		require.Equal(t, "task-synthesis-stage", payload.Turn.TaskID)
+		require.Equal(t, "run-synthesis-stage", payload.Turn.RunID)
+		require.Equal(t, "turn-synthesis-stage", payload.Turn.TurnID)
+		require.Equal(t, "summarize tools", payload.Turn.Prompt)
 		require.Equal(t, "zh-CN", payload.Language)
-		require.Equal(t, "safe_scan", payload.OperationLevel)
-		require.Equal(t, "gpt-synthesis", payload.Req.Model)
+		require.Equal(t, "safe_scan", payload.Turn.OperationLevel)
+		require.Equal(t, "gpt-synthesis", payload.LLMRequest.Model)
 		require.Len(t, payload.History, 1)
 		require.Len(t, payload.ToolMessages, 1)
 
 		return runtime.LLMStageResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: daemonLLMToolSynthesisResultPayload{
-				Messages:  []agentMessage{expectedMessage},
-				ToolCalls: []agentToolCall{expectedToolCall},
-				Plan:      expectedPlan,
-			},
+			Status:  runtime.TurnResultFinished,
+			Reason:  "done",
+			Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{expectedMessage}, []agentToolCall{expectedToolCall}, expectedPlan),
 		}, nil
 	}))
 
@@ -1246,7 +1242,7 @@ func TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner(
 	require.True(t, called)
 	require.Equal(t, []agentMessage{expectedMessage}, messages)
 	require.Equal(t, []agentToolCall{expectedToolCall}, toolCalls)
-	require.Same(t, expectedPlan, plan)
+	require.Equal(t, expectedPlan, plan)
 }
 
 func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *testing.T) {
@@ -1324,16 +1320,16 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 		require.Equal(t, "summarize cycle tools", stageReq.Turn.Prompt)
 		require.Equal(t, "safe_scan", stageReq.Turn.OperationLevel)
 
-		payload, ok := stageReq.Payload.(daemonLLMToolSynthesisPayload)
+		payload, ok := stageReq.Payload.(runtime.AgentLoopLLMStagePayload)
 		require.True(t, ok, "payload type = %T", stageReq.Payload)
 		require.Equal(t, "zh-CN", payload.Language)
-		require.Equal(t, "safe_scan", payload.OperationLevel)
-		require.Equal(t, "gpt-cycle-synthesis", payload.Req.Model)
+		require.Equal(t, "safe_scan", payload.Turn.OperationLevel)
+		require.Equal(t, "gpt-cycle-synthesis", payload.LLMRequest.Model)
 		require.Equal(t, "cycle memory", payload.MemorySummary.Summary)
 		require.NotNil(t, payload.MemorySummary.LastMessageAt)
 		require.Equal(t, lastMessageAt, *payload.MemorySummary.LastMessageAt)
-		require.Equal(t, []string{"history-cycle-synthesis-user", "msg-cycle-synthesis-action"}, agentMessageIDs(payload.History))
-		require.Equal(t, []string{"msg-cycle-synthesis-action"}, agentMessageIDs(payload.ToolMessages))
+		require.Equal(t, []string{"history-cycle-synthesis-user", "msg-cycle-synthesis-action"}, agentLoopMessageIDs(payload.History))
+		require.Equal(t, []string{"msg-cycle-synthesis-action"}, agentLoopMessageIDs(payload.ToolMessages))
 
 		payload.History[0].Content = "mutated payload history"
 		payload.ToolMessages[0].Content = "mutated payload tool message"
@@ -1341,13 +1337,9 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 		*payload.MemorySummary.LastMessageAt = lastMessageAt.Add(time.Hour)
 
 		return runtime.LLMStageResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "cycle synthesis handled",
-			Payload: daemonLLMToolSynthesisResultPayload{
-				Messages:  []agentMessage{synthesisMessage},
-				ToolCalls: []agentToolCall{synthesisTool},
-				Plan:      synthesisPlan,
-			},
+			Status:  runtime.TurnResultFinished,
+			Reason:  "cycle synthesis handled",
+			Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{synthesisMessage}, []agentToolCall{synthesisTool}, synthesisPlan),
 		}, nil
 	}))
 
@@ -1359,7 +1351,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 	require.Equal(t, "action observation", actionMessages.legacyAgentMessages()[0].Content)
 	require.Equal(t, "cycle memory", req.MemorySummary.legacyAgentMemorySummary().Summary)
 	require.Equal(t, lastMessageAt, *req.MemorySummary.legacyAgentMemorySummary().LastMessageAt)
-	require.Same(t, synthesisPlan, result.legacyPlan)
+	require.Equal(t, synthesisPlan, result.legacyPlan)
 
 	gotMessages := result.Messages.legacyAgentMessages()
 	gotToolCalls := result.ToolCalls.legacyAgentToolCalls()
@@ -2430,18 +2422,15 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *t
 	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
 		synthesisCalled = true
 		require.Equal(t, runtime.LLMStageToolSynthesis, req.Stage)
-		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
 		require.Len(t, payload.ToolMessages, 1)
 		require.Equal(t, actionMessage.ID, payload.ToolMessages[0].ID)
 
 		return runtime.LLMStageResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "snapshot synthesis handled",
-			Payload: daemonLLMToolSynthesisResultPayload{
-				Messages: []agentMessage{synthesisMessage},
-				Plan:     synthesisPlan,
-			},
+			Status:  runtime.TurnResultFinished,
+			Reason:  "snapshot synthesis handled",
+			Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{synthesisMessage}, nil, synthesisPlan),
 		}, nil
 	}))
 
@@ -2569,36 +2558,28 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 
 		switch req.Stage {
 		case runtime.LLMStagePlannerChat:
-			payload, ok := req.Payload.(daemonLLMPlannerChatPayload)
+			payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 			require.True(t, ok, "payload type = %T", req.Payload)
-			require.Equal(t, "gpt-planner-cycle", payload.Req.Model)
+			require.Equal(t, "gpt-planner-cycle", payload.LLMRequest.Model)
 			require.Len(t, payload.History, 1)
 			return runtime.LLMStageResult{
-				Status: runtime.TurnResultFinished,
-				Reason: "planner handled by test runner",
-				Payload: daemonLLMPlannerChatResultPayload{
-					Messages:  []agentMessage{planMessage},
-					ToolCalls: []agentToolCall{planTool},
-					Plan:      actionPlan,
-				},
+				Status:  runtime.TurnResultFinished,
+				Reason:  "planner handled by test runner",
+				Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{planMessage}, []agentToolCall{planTool}, actionPlan),
 			}, nil
 		case runtime.LLMStageToolSynthesis:
-			payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+			payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 			require.True(t, ok, "payload type = %T", req.Payload)
-			require.Equal(t, "gpt-planner-cycle", payload.Req.Model)
-			require.Equal(t, authProfiles, payload.Req.AuthProfiles)
-			require.Equal(t, "auth-planner-cycle", payload.Req.DefaultAuthProfileID)
+			require.Equal(t, "gpt-planner-cycle", payload.LLMRequest.Model)
+			require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), payload.LLMRequest.AuthProfiles)
+			require.Equal(t, "auth-planner-cycle", payload.LLMRequest.DefaultAuthProfileID)
 			require.Len(t, payload.History, 3)
 			require.Len(t, payload.ToolMessages, 1)
 			require.Equal(t, actionMessage.ID, payload.ToolMessages[0].ID)
 			return runtime.LLMStageResult{
-				Status: runtime.TurnResultFinished,
-				Reason: "synthesis handled by test runner",
-				Payload: daemonLLMToolSynthesisResultPayload{
-					Messages:  []agentMessage{synthesisMessage},
-					ToolCalls: []agentToolCall{synthesisTool},
-					Plan:      finalPlan,
-				},
+				Status:  runtime.TurnResultFinished,
+				Reason:  "synthesis handled by test runner",
+				Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{synthesisMessage}, []agentToolCall{synthesisTool}, finalPlan),
 			}, nil
 		default:
 			t.Fatalf("unexpected llm stage %s", req.Stage)
@@ -2766,39 +2747,30 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 		switch req.Stage {
 		case runtime.LLMStagePlannerChat:
 			return runtime.LLMStageResult{
-				Status: runtime.TurnResultFinished,
-				Reason: "planner handled",
-				Payload: daemonLLMPlannerChatResultPayload{
-					Messages: []agentMessage{planMessage},
-					Plan:     firstPlan,
-				},
+				Status:  runtime.TurnResultFinished,
+				Reason:  "planner handled",
+				Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{planMessage}, nil, firstPlan),
 			}, nil
 		case runtime.LLMStageToolSynthesis:
 			synthesisCount++
-			payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+			payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 			require.True(t, ok, "payload type = %T", req.Payload)
 			require.Len(t, payload.ToolMessages, 1)
-			synthesisHistorySnapshots = append(synthesisHistorySnapshots, agentMessageIDs(payload.History))
+			synthesisHistorySnapshots = append(synthesisHistorySnapshots, agentLoopMessageIDs(payload.History))
 			switch synthesisCount {
 			case 1:
 				require.Equal(t, firstActionMessage.ID, payload.ToolMessages[0].ID)
 				return runtime.LLMStageResult{
-					Status: runtime.TurnResultFinished,
-					Reason: "first synthesis handled",
-					Payload: daemonLLMToolSynthesisResultPayload{
-						Messages: []agentMessage{firstSynthesisMessage},
-						Plan:     secondPlan,
-					},
+					Status:  runtime.TurnResultFinished,
+					Reason:  "first synthesis handled",
+					Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{firstSynthesisMessage}, nil, secondPlan),
 				}, nil
 			case 2:
 				require.Equal(t, secondActionMessage.ID, payload.ToolMessages[0].ID)
 				return runtime.LLMStageResult{
-					Status: runtime.TurnResultFinished,
-					Reason: "final synthesis handled",
-					Payload: daemonLLMToolSynthesisResultPayload{
-						Messages: []agentMessage{finalSynthesisMessage},
-						Plan:     finalPlan,
-					},
+					Status:  runtime.TurnResultFinished,
+					Reason:  "final synthesis handled",
+					Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{finalSynthesisMessage}, nil, finalPlan),
 				}, nil
 			default:
 				t.Fatalf("unexpected synthesis count %d", synthesisCount)
@@ -2957,30 +2929,24 @@ func TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoC
 		require.Equal(t, "read_only", req.Turn.OperationLevel)
 
 		synthesisCount++
-		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
 		require.Len(t, payload.ToolMessages, 1)
-		synthesisHistorySnapshots = append(synthesisHistorySnapshots, agentMessageIDs(payload.History))
+		synthesisHistorySnapshots = append(synthesisHistorySnapshots, agentLoopMessageIDs(payload.History))
 		switch synthesisCount {
 		case 1:
 			require.Equal(t, firstActionMessage.ID, payload.ToolMessages[0].ID)
 			return runtime.LLMStageResult{
-				Status: runtime.TurnResultFinished,
-				Reason: "first continuation synthesis handled",
-				Payload: daemonLLMToolSynthesisResultPayload{
-					Messages: []agentMessage{firstSynthesisMessage},
-					Plan:     secondPlan,
-				},
+				Status:  runtime.TurnResultFinished,
+				Reason:  "first continuation synthesis handled",
+				Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{firstSynthesisMessage}, nil, secondPlan),
 			}, nil
 		case 2:
 			require.Equal(t, secondActionMessage.ID, payload.ToolMessages[0].ID)
 			return runtime.LLMStageResult{
-				Status: runtime.TurnResultFinished,
-				Reason: "final continuation synthesis handled",
-				Payload: daemonLLMToolSynthesisResultPayload{
-					Messages: []agentMessage{finalSynthesisMessage},
-					Plan:     finalPlan,
-				},
+				Status:  runtime.TurnResultFinished,
+				Reason:  "final continuation synthesis handled",
+				Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{finalSynthesisMessage}, nil, finalPlan),
 			}, nil
 		default:
 			t.Fatalf("unexpected synthesis count %d", synthesisCount)
@@ -3096,7 +3062,7 @@ func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStag
 		case 2:
 			require.Equal(t, string(runtime.LLMStageToolSynthesis), req.Turn.Origin)
 			require.Equal(t, true, req.Turn.Metadata["planner_apply"])
-			require.Same(t, expectedPlan, payload.Plan)
+			require.Equal(t, expectedPlan, payload.Plan)
 			require.Equal(t, expectedMessage.ID, payload.Messages[0].ID)
 		default:
 			t.Fatalf("unexpected append mutation call %d", len(appendOrigins))
@@ -3118,24 +3084,20 @@ func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStag
 		require.Equal(t, "continue daemon health", req.Turn.Prompt)
 		require.Equal(t, "read_only", req.Turn.OperationLevel)
 
-		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
-		require.Equal(t, "continue daemon health", payload.Prompt)
+		require.Equal(t, sessionID, payload.Turn.SessionID)
+		require.Equal(t, "continue daemon health", payload.Turn.Prompt)
 		require.Equal(t, "en", payload.Language)
-		require.Equal(t, "read_only", payload.OperationLevel)
+		require.Equal(t, "read_only", payload.Turn.OperationLevel)
 		require.Len(t, payload.History, 2)
 		require.Len(t, payload.ToolMessages, 1)
 		require.Contains(t, payload.ToolMessages[0].Content, "health ok")
 
 		return runtime.LLMStageResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: daemonLLMToolSynthesisResultPayload{
-				Messages:  []agentMessage{expectedMessage},
-				ToolCalls: []agentToolCall{expectedToolCall},
-				Plan:      expectedPlan,
-			},
+			Status:  runtime.TurnResultFinished,
+			Reason:  "done",
+			Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{expectedMessage}, []agentToolCall{expectedToolCall}, expectedPlan),
 		}, nil
 	}))
 

@@ -400,8 +400,9 @@ ownership 边界：
 30. ✅ P0.5-N36 已把 cycle message/link DTO 迁到 runtime-neutral `runtime.AgentLoopMessage` / `runtime.AgentLoopLink`；daemon 只保留 legacy `agentMessage` 兼容转换 adapter。
 31. ✅ P0.5-N37 已把 cycle state DTO 迁到 runtime-neutral `runtime.AgentLoopState`；daemon state wrapper 仅持有 runtime state 并保留 legacy response/tool/history adapter。
 32. ✅ P0.5-N38 已把 daemon LLM turn runner payload/result 迁到 runtime-neutral `runtime.AgentLoopTurnPayload` / `runtime.AgentLoopTurnResultPayload`；daemon `daemonLLMTurnPayload` 仅保留 runtime loop payload 与 service binding compatibility adapter。
-33. 下一步继续把 tool service binding/adapter compatibility 与 LLM stage payload compatibility 迁到 runtime-neutral package 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
-34. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+33. ✅ P0.5-N39 已把 LLM stage runner planner_chat/tool_synthesis payload/result 迁到 runtime-neutral `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload`；daemon stage runner 仅保留 legacy provider/plan/message 转换 adapter。
+34. 下一步继续把 tool service binding/adapter compatibility 迁到 runtime-neutral package 后，再移动到 engine-native runner；daemon 只保留类型转换与 service binding adapter。
+35. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1312,6 +1313,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v70 | 完成 P0.5-N36 planner cycle message runtime-neutral DTO：新增 `runtime.AgentLoopMessage` / `runtime.AgentLoopLink` 与 clone helpers，cycle message wrapper 改为持有 runtime DTO，legacy `agentMessage` 兼容转换集中在 daemon adapter；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v71 | 完成 P0.5-N37 planner cycle state runtime-neutral DTO：新增 `runtime.AgentLoopState` 与 clone helper，daemon cycle state wrapper 改为持有 runtime state DTO，legacy response/message/tool/history 转换集中在 daemon adapter；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
 | v72 | 完成 P0.5-N38 daemon LLM turn runner payload runtime-neutral DTO：新增 `runtime.AgentLoopTurnPayload` / `runtime.AgentLoopTurnResultPayload` 与 clone helpers，LLM turn runner payload 改为持有 runtime DTO，legacy request/history/memory/message/tool 转换集中在 daemon adapter；focused daemon/runtime tests、daemon 包测试与 diff check 通过。 |
+| v73 | 完成 P0.5-N39 LLM stage payload/result runtime-neutral DTO：新增 `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload` 与 plan pointer clone helper，planner_chat/tool_synthesis stage payload/result 改为 runtime DTO，legacy request/history/memory/tool messages/plan 转换集中在 daemon stage adapter；daemon/runtime 包测试与 diff check 通过。 |
 
 ---
 

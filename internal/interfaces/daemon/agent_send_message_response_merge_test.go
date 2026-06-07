@@ -252,21 +252,18 @@ func TestAgentManagerSendMessageResponseMergeRouteBeforeLLMSynthesis(t *testing.
 		require.Equal(t, prompt, req.Turn.Prompt)
 		require.Equal(t, "read_only", req.Turn.OperationLevel)
 
-		payload, ok := req.Payload.(daemonLLMToolSynthesisPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopLLMStagePayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
-		require.Equal(t, sessionID, payload.SessionID)
-		require.Equal(t, prompt, payload.Prompt)
+		require.Equal(t, sessionID, payload.Turn.SessionID)
+		require.Equal(t, prompt, payload.Turn.Prompt)
 		require.Len(t, payload.ToolMessages, 1)
 		require.Equal(t, routeMessage.ID, payload.ToolMessages[0].ID)
 		require.Equal(t, "step", payload.ToolMessages[0].Phase)
 
 		return runtime.LLMStageResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: daemonLLMToolSynthesisResultPayload{
-				Messages:  []agentMessage{synthesisMessage},
-				ToolCalls: []agentToolCall{synthesisTool},
-			},
+			Status:  runtime.TurnResultFinished,
+			Reason:  "done",
+			Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{synthesisMessage}, []agentToolCall{synthesisTool}, nil),
 		}, nil
 	}))
 
