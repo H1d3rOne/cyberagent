@@ -196,6 +196,10 @@ type agentSendMessageTurnState struct {
 	MemorySummary  *agentMemorySummary
 }
 
+func buildAgentSendResponseFromAgentLoop(sessionID string, messages []runtime.AgentLoopMessage, toolCalls []runtime.AgentLoopToolCall, session agentSession) sendAgentMessageResponse {
+	return buildAgentSendResponse(sessionID, agentMessagesFromAgentLoopMessages(messages), agentLoopToolCallItemsToAgentToolCalls(toolCalls), session)
+}
+
 func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (sendAgentMessageResponse, error) {
 	if err := contextError(ctx); err != nil {
 		return sendAgentMessageResponse{}, err
@@ -307,16 +311,15 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 				memorySummary = cloneAgentMemorySummary(sessionState.MemorySummary)
 			}
 			messages, toolCalls, err := m.runRuntimeLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
-			legacyMessages := agentMessagesFromAgentLoopMessages(messages)
-			legacyToolCalls := agentLoopToolCallItemsToAgentToolCalls(toolCalls)
+			responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage, controlResp.Message})
 			if err == nil {
-				responseMessages := append([]agentMessage{userMessage, controlResp.Message}, legacyMessages...)
+				responseMessages = append(responseMessages, runtime.CloneAgentLoopMessages(messages)...)
 				sessionState, _ = m.GetSession(ctx, sessionID)
-				return buildAgentSendResponse(sessionID, responseMessages, legacyToolCalls, sessionState), nil
+				return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, toolCalls, sessionState), nil
 			}
 			warningTool := failedAgentToolCall("LLM chat", err)
-			if len(legacyToolCalls) > 0 {
-				warningTool = legacyToolCalls[0]
+			if len(toolCalls) > 0 {
+				warningTool = agentToolCallFromAgentLoopToolCall(toolCalls[0])
 			}
 			warningMessage := m.message(
 				language,
@@ -327,7 +330,9 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 			)
 			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "llm_tool_loop", operationLevel, warningMessage)
 			sessionState, _ = m.GetSession(ctx, sessionID)
-			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, controlResp.Message, warningMessage}, []agentToolCall{warningTool}, sessionState), nil
+			responseMessages = append(responseMessages, agentLoopMessageFromAgentMessage(warningMessage))
+			responseToolCalls := []runtime.AgentLoopToolCall{agentLoopToolCallFromAgentToolCall(warningTool)}
+			return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 		}
 		sessionState, getErr := m.GetSession(ctx, sessionID)
 		if getErr != nil {
@@ -356,7 +361,9 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 		messages = agentMessagesWithPhase(messages, "step")
 		toolCalls = agentToolCallsWithPhase(toolCalls, "step")
 		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionDeterministicRoute, operationLevel, messages...)
-		responseMessages := append([]agentMessage{userMessage}, messages...)
+		responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage})
+		responseMessages = append(responseMessages, agentLoopMessagesFromAgentMessages(messages)...)
+		responseToolCalls := agentLoopToolCallItemsFromAgentToolCalls(toolCalls)
 		if len(toolCalls) > 0 {
 			synthesisHistory := append(cloneAgentMessages(history), messages...)
 			synthesisMessages, synthesisToolCalls, synthesisPlan, synthesisErr := m.runRuntimeAgentLLMToolSynthesis(ctx, sessionID, turnRef, prompt, language, operationLevel, req, synthesisHistory, memorySummary, agentLoopMessagesFromAgentMessages(messages))
@@ -372,39 +379,37 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 					nil,
 				), "step_replan")
 				m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, warningMessage)
-				responseMessages = append(responseMessages, warningMessage)
-				toolCalls = append(toolCalls, warningTool)
+				responseMessages = append(responseMessages, agentLoopMessageFromAgentMessage(warningMessage))
+				responseToolCalls = append(responseToolCalls, agentLoopToolCallFromAgentToolCall(warningTool))
 			} else if len(synthesisMessages) > 0 {
 				synthesisLegacyMessages := agentMessagesFromAgentLoopMessages(synthesisMessages)
-				synthesisLegacyToolCalls := agentLoopToolCallItemsToAgentToolCalls(synthesisToolCalls)
 				synthesisLegacyPlan := agentPlannerResponsePtrFromAgentLoopPlan(synthesisPlan)
 				m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStageToolSynthesis), operationLevel, synthesisLegacyPlan, synthesisLegacyMessages...)
-				responseMessages = append(responseMessages, synthesisLegacyMessages...)
-				toolCalls = append(toolCalls, synthesisLegacyToolCalls...)
+				responseMessages = append(responseMessages, runtime.CloneAgentLoopMessages(synthesisMessages)...)
+				responseToolCalls = append(responseToolCalls, runtime.CloneAgentLoopToolCalls(synthesisToolCalls)...)
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					loopHistory := append(synthesisHistory, synthesisLegacyMessages...)
 					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuation(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisLegacyPlan, reqMaxAgentReplans(req)-1)
-					responseMessages = append(responseMessages, followupMessages...)
-					toolCalls = append(toolCalls, followupToolCalls...)
+					responseMessages = append(responseMessages, agentLoopMessagesFromAgentMessages(followupMessages)...)
+					responseToolCalls = append(responseToolCalls, agentLoopToolCallItemsFromAgentToolCalls(followupToolCalls)...)
 				}
 			}
 		}
 		sessionState, _ := m.GetSession(ctx, sessionID)
-		return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
+		return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 	}
 
 	if agentLLMConfigured(req) {
 		llmMessages, llmToolCalls, err := m.runRuntimeLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
-		llmLegacyMessages := agentMessagesFromAgentLoopMessages(llmMessages)
-		llmLegacyToolCalls := agentLoopToolCallItemsToAgentToolCalls(llmToolCalls)
+		responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage})
 		if err == nil {
-			responseMessages := append([]agentMessage{userMessage}, llmLegacyMessages...)
+			responseMessages = append(responseMessages, runtime.CloneAgentLoopMessages(llmMessages)...)
 			sessionState, _ := m.GetSession(ctx, sessionID)
-			return buildAgentSendResponse(sessionID, responseMessages, llmLegacyToolCalls, sessionState), nil
+			return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, llmToolCalls, sessionState), nil
 		}
 		warningTool := failedAgentToolCall("LLM chat", err)
-		if len(llmLegacyToolCalls) > 0 {
-			warningTool = llmLegacyToolCalls[0]
+		if len(llmToolCalls) > 0 {
+			warningTool = agentToolCallFromAgentLoopToolCall(llmToolCalls[0])
 		}
 		warningMessage := m.message(
 			language,
@@ -435,21 +440,26 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 			)
 			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "llm_fallback_authorization", operationLevel, warningMessage, authMessage)
 			sessionState, _ := m.GetSession(ctx, sessionID)
-			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, warningMessage, authMessage}, []agentToolCall{warningTool}, sessionState), nil
+			responseMessages = append(responseMessages, agentLoopMessageFromAgentMessage(warningMessage), agentLoopMessageFromAgentMessage(authMessage))
+			responseToolCalls := []runtime.AgentLoopToolCall{agentLoopToolCallFromAgentToolCall(warningTool)}
+			return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 		}
 		messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 		if routeErr != nil {
 			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
 			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "llm_fallback_route", operationLevel, warningMessage, errMessage)
 			sessionState, _ := m.GetSession(ctx, sessionID)
-			return buildAgentSendResponse(sessionID, []agentMessage{userMessage, warningMessage, errMessage}, append([]agentToolCall{warningTool}, errMessage.ToolCalls...), sessionState), nil
+			responseMessages = append(responseMessages, agentLoopMessageFromAgentMessage(warningMessage), agentLoopMessageFromAgentMessage(errMessage))
+			responseToolCalls := agentLoopToolCallItemsFromAgentToolCalls(append([]agentToolCall{warningTool}, errMessage.ToolCalls...))
+			return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 		}
 		messages = append([]agentMessage{warningMessage}, messages...)
 		toolCalls = append([]agentToolCall{warningTool}, toolCalls...)
 		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "llm_fallback_route", operationLevel, messages...)
-		responseMessages := append([]agentMessage{userMessage}, messages...)
+		responseMessages = append(responseMessages, agentLoopMessagesFromAgentMessages(messages)...)
+		responseToolCalls := agentLoopToolCallItemsFromAgentToolCalls(toolCalls)
 		sessionState, _ := m.GetSession(ctx, sessionID)
-		return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
+		return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 	}
 
 	messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
