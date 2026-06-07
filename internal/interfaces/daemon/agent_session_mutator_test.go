@@ -481,7 +481,7 @@ func TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMuta
 	require.Equal(t, "scan.web.safe", payload.ActionName)
 	require.Equal(t, "safe_scan", payload.RequiredLevel)
 	require.Equal(t, "operation_level_required", payload.Policy)
-	require.Equal(t, action, payload.Action)
+	require.Equal(t, agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action), payload.Action)
 
 	got, err := mgr.GetSession(context.Background(), sessionID)
 	require.NoError(t, err)

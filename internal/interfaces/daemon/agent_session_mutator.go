@@ -46,7 +46,7 @@ type daemonRequestAuthorizationMutationPayload struct {
 	Language       string
 	OperatorPrompt string
 	OperationLevel string
-	Action         agentPlannerAction
+	Action         runtime.AgentLoopAction
 	ActionName     string
 	RequiredLevel  string
 	Policy         string
@@ -183,7 +183,8 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 			err := errors.New("daemon: invalid request authorization mutation payload")
 			return daemonSessionMutationErrorResult(req, err), err
 		}
-		resultPayload := r.manager.requestAgentAuthorizationLegacy(payload.SessionID, payload.Language, payload.OperatorPrompt, payload.Action, payload.ActionName, payload.RequiredLevel, payload.Policy, payload.Reason)
+		action := agentPlannerActionFromAgentLoopAction(payload.Action)
+		resultPayload := r.manager.requestAgentAuthorizationLegacy(payload.SessionID, payload.Language, payload.OperatorPrompt, action, payload.ActionName, payload.RequiredLevel, payload.Policy, payload.Reason)
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
 			Reason:  "legacy daemon authorization request mutation executed",
@@ -432,7 +433,6 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 		ctx = context.Background()
 	}
 	action = cloneAgentLoopAction(action)
-	legacyAction := agentPlannerActionFromAgentLoopAction(action)
 	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
 		Turn: runtime.TurnContext{
 			SessionID:      sessionID,
@@ -453,7 +453,7 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 			Language:       language,
 			OperatorPrompt: operatorPrompt,
 			OperationLevel: operationLevel,
-			Action:         legacyAction,
+			Action:         action,
 			ActionName:     actionName,
 			RequiredLevel:  requiredLevel,
 			Policy:         policy,
