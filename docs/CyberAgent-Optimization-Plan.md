@@ -426,8 +426,9 @@ ownership 边界：
 57. ✅ P0.5-N63 已将 `runRuntimeAgentLLMPlannerChat` 的返回收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall` / `AgentLoopPlan`，legacy 转换推迟到 LLM loop adapter 边界。
 58. ✅ P0.5-N64 已将 `runAgentLLMToolLoop` / `runRuntimeLLMToolLoop` 的返回收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 `SendMessage` / LLMTurn adapter 边界。
 59. ✅ P0.5-N65 已将 `SendMessage` LLM success/error response merge 内部 accumulator 收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 `buildAgentSendResponseFromAgentLoop`、append mutation 与 warning/fallback adapter 边界。
-60. 下一步 P0.5-N66 将 `SendMessage` deterministic route / no-LLM route response merge accumulator 继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，减少底部 route/synthesis 分支 legacy slice 累积。
-61. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+60. ✅ P0.5-N66 已将 `SendMessage` deterministic route / no-LLM route response merge accumulator 收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，减少底部 route/synthesis 分支 legacy slice 累积。
+61. 下一步 P0.5-N67 将 `SendMessage` control/error/authorization gate 简单响应分支继续收敛到 runtime response egress helper，消除 `runAgentSendMessageTurn` 内除 helper 外直接 `buildAgentSendResponse` 调用。
+62. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1365,6 +1366,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v97 | 完成 P0.5-N63 planner chat 返回 runtime DTO 收敛：`runRuntimeAgentLLMPlannerChat` 改为返回 runtime `AgentLoopMessage` / `AgentLoopToolCall` / `AgentLoopPlan`，fallback legacy planner 输出立即转成 runtime DTO，`runAgentLLMToolLoop` 仅在 planner append、错误返回与最终 SendMessage/LLMTurn 边界转回 legacy；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v98 | 完成 P0.5-N64 LLM tool loop 返回 runtime DTO 收敛：`runAgentLLMToolLoop` / `runRuntimeLLMToolLoop` 改为返回 runtime `AgentLoopMessage` / `AgentLoopToolCall`，LLMTurn result payload 与 fallback egress 直接 clone runtime DTO，legacy 转换推迟到 `SendMessage` response merge 与 LLMTurn adapter 边界；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v99 | 完成 P0.5-N65 SendMessage LLM response merge runtime accumulator 收敛：新增 `buildAgentSendResponseFromAgentLoop`，control continue/revise + LLM、route-before-LLM synthesis、main LLM success 与 LLM failure fallback route/authorization 分支内部以 runtime `AgentLoopMessage` / `AgentLoopToolCall` 聚合，legacy 转换集中到 final response、append mutation 与 warning/fallback adapter 边界；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v100 | 完成 P0.5-N66 SendMessage deterministic/no-LLM response merge runtime accumulator 收敛：active-run continue、control auto-continue deterministic route、route-before-LLM route error 与底部 no-LLM route success/error/synthesis branch 内部以 runtime `AgentLoopMessage` / `AgentLoopToolCall` 聚合，legacy 转换集中到 final response、append mutation 与 synthesis/follow-up adapter 边界；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 
