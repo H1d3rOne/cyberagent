@@ -54,6 +54,158 @@ func TestDaemonSessionMutationResultPayload(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestAgentLoopRecordUserMessageResultPayloadAdapterRoundTrip(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	lastMessageAt := now.Add(-time.Hour)
+	lastCompactedAt := now.Add(-30 * time.Minute)
+	appliedAt := now.Add(-15 * time.Minute)
+	session := agentSession{
+		SessionID:      "session-record-result",
+		CreatedAt:      now.Add(-2 * time.Hour),
+		UpdatedAt:      now,
+		Operator:       "operator-1",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+		Status:         "running",
+		Messages: []agentMessage{{
+			ID:      "msg-record-result-user",
+			Role:    "user",
+			Content: "scan safely",
+			ToolCalls: []agentToolCall{{
+				ID:       "tool-record-result-message",
+				Name:     "daemon.health",
+				Status:   "succeeded",
+				Result:   map[string]any{"source": "message"},
+				Metadata: map[string]interface{}{"phase": "history"},
+			}},
+			SuggestedPrompts: []string{"continue"},
+		}},
+		ActiveTask: &agentTask{
+			ID:        "task-record-result",
+			Goal:      "inspect target",
+			Kind:      "chat",
+			Status:    "running",
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now,
+		},
+		Todos: []agentTodo{{
+			ID:            "todo-record-result",
+			Title:         "collect evidence",
+			Status:        "running",
+			Priority:      1,
+			ContextRefIDs: []string{"ctx-record-result"},
+			UpdatedAt:     now,
+		}},
+		ToolCalls: []agentToolCall{{
+			ID:     "tool-record-result-top",
+			Name:   "workspace.files.list",
+			Status: "succeeded",
+			Result: map[string]any{"path": "."},
+		}},
+		ContextRefs: []agentContextRef{{
+			ID:      "ctx-record-result",
+			Kind:    "file",
+			RefID:   "notes.md",
+			Label:   "notes",
+			Summary: "operator notes",
+		}},
+		PendingChanges: []agentWorkspaceChange{{
+			ID:          "change-record-result",
+			Path:        "notes.md",
+			DiffPreview: "+hello",
+			Status:      "pending",
+			CreatedAt:   now.Add(-20 * time.Minute),
+			UpdatedAt:   now.Add(-10 * time.Minute),
+			AppliedAt:   &appliedAt,
+		}},
+		PendingAuthorization: &agentAuthorizationRequest{
+			ID:             "auth-record-result",
+			ActionName:     "workspace.files.write",
+			Arguments:      map[string]any{"path": "notes.md"},
+			RequiredLevel:  "workspace_write",
+			Reason:         "write requires approval",
+			OriginalPrompt: "scan safely",
+			Status:         "pending",
+			CreatedAt:      now.Add(-5 * time.Minute),
+			UpdatedAt:      now,
+		},
+		ApprovalState: &approvalCanonicalState{
+			ApprovalKind:  approvalKindAgentAuthorization,
+			State:         approvalCanonicalStatePending,
+			ApprovalID:    "auth-record-result",
+			ActionName:    "workspace.files.write",
+			RequiredLevel: "workspace_write",
+			Reason:        "write requires approval",
+		},
+		MemorySummary: &agentMemorySummary{
+			Summary:       "session memory",
+			MessageCount:  4,
+			LastMessageID: "msg-old",
+			LastMessageAt: &lastMessageAt,
+			UpdatedAt:     now,
+		},
+		NextAction: &agentNextAction{
+			Type:            "continue",
+			Reason:          "continue safely",
+			SuggestedPrompt: "continue",
+			AutoContinue:    true,
+		},
+		RunSummary: &agentSessionRunSummary{
+			RunID:    "run-record-result",
+			Status:   "succeeded",
+			Findings: 1,
+			Summary:  "run summary",
+		},
+		UIState: &agentUIState{
+			State:  "approval",
+			Phase:  "approval",
+			Tone:   "warning",
+			Source: "pending_authorization",
+		},
+	}
+	resultPayload := daemonRecordUserMessageMutationResultPayload{
+		Session:       session,
+		UserMessage:   session.Messages[0],
+		History:       cloneAgentMessages(session.Messages),
+		MemorySummary: cloneAgentMemorySummary(session.MemorySummary),
+		Compaction: &agentMemoryCompaction{
+			Summary: &agentMemorySummary{
+				Summary:       "compacted memory",
+				MessageCount:  2,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+				UpdatedAt:     now,
+			},
+			CompactedCount:   2,
+			RetainedCount:    80,
+			PreviousCount:    1,
+			LastCompactedID:  "msg-old",
+			LastCompactedAt:  &lastCompactedAt,
+			Trigger:          "turn_count",
+			TriggerThreshold: 40,
+			OccurredAt:       now,
+		},
+		Mutated: true,
+	}
+
+	runtimePayload := agentLoopRecordUserMessageResultPayloadFromDaemon(resultPayload)
+	expectedPayload := daemonRecordUserMessageMutationResultPayloadFromAgentLoop(runtimePayload)
+	resultPayload.Session.Messages[0].Content = "mutated"
+	resultPayload.Session.PendingAuthorization.Arguments["path"] = "mutated"
+	roundTrip := daemonRecordUserMessageMutationResultPayloadFromAgentLoop(runtimePayload)
+
+	require.Equal(t, expectedPayload, roundTrip)
+	require.Equal(t, "scan safely", roundTrip.Session.Messages[0].Content)
+	require.Equal(t, "notes.md", roundTrip.Session.PendingAuthorization.Arguments["path"])
+	require.Equal(t, "compacted memory", roundTrip.Compaction.Summary.Summary)
+	require.Equal(t, lastCompactedAt, *roundTrip.Compaction.LastCompactedAt)
+	require.True(t, roundTrip.Mutated)
+
+	converted, ok := daemonRecordUserMessageMutationResultPayloadFromSessionMutationResult(runtime.SessionMutationResult{Payload: runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, roundTrip, converted)
+}
+
 func TestAgentManagerAppendMessagesWithPlannerDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
@@ -420,7 +572,7 @@ func TestAgentManagerRunRuntimeRecordUserMessageDispatchesSessionMutator(t *test
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
 			Reason:  "handled by test mutator",
-			Payload: resultPayload,
+			Payload: agentLoopRecordUserMessageResultPayloadFromDaemon(resultPayload),
 			Data:    map[string]any{"mutator": "test"},
 		}, nil
 	}))

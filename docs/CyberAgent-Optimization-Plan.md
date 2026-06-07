@@ -452,8 +452,9 @@ ownership 边界：
 83. ✅ P0.5-N89 已将 `resolve_authorization` session mutation payload 收敛为 `runtime.AgentLoopResolveAuthorizationPayload`，SessionID/OperationLevel 改由 `SessionMutationRequest.Turn` 承载，payload 保留 Decision/AuthorizationID/Reason/Operator/Language/OperationLevelProvided，legacy 转换留在 daemon mutator adapter 边界。
 84. ✅ P0.5-N90 已清理 session mutator runtime payload helper 重复 switch，统一为 typed clone helper，并审计确认 session mutation 输入侧已无 daemon-private payload wrapper。
 85. ✅ P0.5-N91 已盘点 session mutation result payload 边界：当前结果仍需携带 daemon legacy session/authorization/message/compaction snapshot，明确作为 daemon adapter-only DTO 保留，并统一通过 typed egress helper 读取。
-86. 下一步 P0.5-N92 定义 runtime-neutral session mutation result DTO 的最小骨架（session snapshot / authorization / compaction 边界），优先从 record_user_message result 做 adapter roundtrip。
-87. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+86. ✅ P0.5-N92 已定义 runtime-neutral session mutation result DTO 最小骨架：新增 `AgentLoopSessionSnapshot` / `AgentLoopAuthorizationRequestSnapshot` / `AgentLoopMemoryCompaction` 与 `AgentLoopRecordUserMessageResultPayload`，record_user_message result 已完成 daemon legacy → runtime DTO → daemon caller DTO roundtrip。
+87. 下一步 P0.5-N93 将 control_session result 迁移到 runtime-neutral session mutation result DTO，复用 session snapshot/message/compaction adapter，并保持 legacy control response 语义。
+88. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1417,6 +1418,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v123 | 完成 P0.5-N89 resolve_authorization session mutation payload runtime DTO 收敛：新增 `runtime.AgentLoopResolveAuthorizationPayload` 与 clone helper，resolve_authorization payload 不再携带 SessionID/OperationLevel，daemon mutator adapter 从 TurnContext 读取这些输入并保留 legacy pending authorization/message/session state 语义；runtime/daemon 包测试与 diff check 通过。 |
 | v124 | 完成 P0.5-N90 session mutator payload helper 去重：六个 session mutation 输入 payload adapter 统一使用 `cloneAgentLoopSessionMutationPayload` typed clone helper，补 value/pointer/nil/invalid 覆盖，并审计确认 daemon-private mutation input payload wrapper 已清零；runtime/daemon 包测试与 diff check 通过。 |
 | v125 | 完成 P0.5-N91 session mutation result payload 边界盘点与 egress 收敛：明确 daemon-private result payload 因 full legacy session/authorization/message/compaction snapshot 暂留 adapter-only，新增 `daemonSessionMutationResultPayload` typed helper 统一 result.Payload 读取，并补 helper 覆盖；runtime/daemon 包测试与 diff check 通过。 |
+| v126 | 完成 P0.5-N92 runtime-neutral session mutation result DTO 骨架：新增 `AgentLoopSessionSnapshot` / `AgentLoopAuthorizationRequestSnapshot` / `AgentLoopMemoryCompaction` 与 `AgentLoopRecordUserMessageResultPayload`，daemon record_user_message mutator result 改为 runtime DTO 输出并在 egress adapter roundtrip 回 legacy caller DTO；补 runtime clone 隔离与 daemon adapter roundtrip 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

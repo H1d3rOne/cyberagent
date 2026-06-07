@@ -12,11 +12,12 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 )
 
-// Session mutation result payloads are intentionally daemon adapter DTOs for now:
-// callers still consume full legacy session snapshots, authorization records, and
-// compaction artifacts. Runtime-neutral mutation input payloads live under the
-// runtime package; these result payloads stay at the daemon boundary until a
-// runtime AgentLoop session snapshot/result DTO is introduced.
+// Session mutation result payloads below are daemon adapter DTOs consumed by
+// legacy callers. Runtime-neutral mutation input payloads live under the
+// runtime package; record_user_message results now roundtrip through runtime
+// AgentLoop session snapshot/result DTOs before converting back at this
+// boundary, while the remaining result payloads stay daemon-private until their
+// adapters are migrated one by one.
 type daemonAppendMessagesMutationResultPayload struct {
 	Session    agentSession
 	Compaction *agentMemoryCompaction
@@ -143,7 +144,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
 			Reason:  "legacy daemon user message mutation executed",
-			Payload: resultPayload,
+			Payload: agentLoopRecordUserMessageResultPayloadFromDaemon(resultPayload),
 			Data: map[string]any{
 				"mutator":         "daemon_legacy_session",
 				"kind":            string(req.Kind),
@@ -399,7 +400,7 @@ func (m *agentManager) runRuntimeRecordUserMessageMutation(ctx context.Context, 
 	if result.Status == runtime.TurnResultBlocked {
 		return daemonRecordUserMessageMutationResultPayload{}, false, nil
 	}
-	payload, ok := daemonSessionMutationResultPayload[daemonRecordUserMessageMutationResultPayload](result)
+	payload, ok := daemonRecordUserMessageMutationResultPayloadFromSessionMutationResult(result)
 	if !ok {
 		return daemonRecordUserMessageMutationResultPayload{}, true, errors.New("daemon: record user message mutator returned invalid payload")
 	}
