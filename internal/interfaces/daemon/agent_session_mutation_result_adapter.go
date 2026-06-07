@@ -83,6 +83,54 @@ func daemonControlSessionMutationResultPayloadFromAgentLoop(payload runtime.Agen
 	}
 }
 
+func daemonResolveAuthorizationMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonResolveAuthorizationMutationResultPayload, bool) {
+	if payload, ok := daemonSessionMutationResultPayload[daemonResolveAuthorizationMutationResultPayload](result); ok {
+		return payload, true
+	}
+	switch payload := result.Payload.(type) {
+	case runtime.AgentLoopResolveAuthorizationResultPayload:
+		return daemonResolveAuthorizationMutationResultPayloadFromAgentLoop(payload), true
+	case *runtime.AgentLoopResolveAuthorizationResultPayload:
+		if payload == nil {
+			return daemonResolveAuthorizationMutationResultPayload{}, false
+		}
+		return daemonResolveAuthorizationMutationResultPayloadFromAgentLoop(payload.Clone()), true
+	default:
+		return daemonResolveAuthorizationMutationResultPayload{}, false
+	}
+}
+
+func agentLoopResolveAuthorizationResultPayloadFromDaemon(payload daemonResolveAuthorizationMutationResultPayload) runtime.AgentLoopResolveAuthorizationResultPayload {
+	pending := agentLoopAuthorizationRequestSnapshotFromAgentAuthorizationRequest(&payload.Pending)
+	result := runtime.AgentLoopResolveAuthorizationResultPayload{
+		Session:        agentLoopSessionSnapshotFromAgentSession(payload.Session),
+		Message:        agentLoopMessageFromAgentMessage(payload.Message),
+		OperationLevel: payload.OperationLevel,
+		Compaction:     agentLoopMemoryCompactionFromAgentMemoryCompaction(payload.Compaction),
+		Mutated:        payload.Mutated,
+	}
+	if pending != nil {
+		result.Pending = *pending
+	}
+	return result
+}
+
+func daemonResolveAuthorizationMutationResultPayloadFromAgentLoop(payload runtime.AgentLoopResolveAuthorizationResultPayload) daemonResolveAuthorizationMutationResultPayload {
+	payload = payload.Clone()
+	pending := agentAuthorizationRequestFromAgentLoopAuthorizationRequestSnapshot(&payload.Pending)
+	result := daemonResolveAuthorizationMutationResultPayload{
+		Session:        agentSessionFromAgentLoopSessionSnapshot(payload.Session),
+		Message:        agentMessageFromAgentLoopMessage(payload.Message),
+		OperationLevel: payload.OperationLevel,
+		Compaction:     agentMemoryCompactionFromAgentLoopMemoryCompaction(payload.Compaction),
+		Mutated:        payload.Mutated,
+	}
+	if pending != nil {
+		result.Pending = *pending
+	}
+	return result
+}
+
 func agentLoopSessionSnapshotFromAgentSession(session agentSession) runtime.AgentLoopSessionSnapshot {
 	return runtime.AgentLoopSessionSnapshot{
 		SessionID:            session.SessionID,

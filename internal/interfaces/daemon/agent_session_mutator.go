@@ -14,10 +14,11 @@ import (
 
 // Session mutation result payloads below are daemon adapter DTOs consumed by
 // legacy callers. Runtime-neutral mutation input payloads live under the
-// runtime package; record_user_message and control_session results now
-// roundtrip through runtime AgentLoop session snapshot/result DTOs before
-// converting back at this boundary, while the remaining result payloads stay
-// daemon-private until their adapters are migrated one by one.
+// runtime package; record_user_message, control_session, and
+// resolve_authorization results now roundtrip through runtime AgentLoop session
+// snapshot/result DTOs before converting back at this boundary, while the
+// remaining result payloads stay daemon-private until their adapters are
+// migrated one by one.
 type daemonAppendMessagesMutationResultPayload struct {
 	Session    agentSession
 	Compaction *agentMemoryCompaction
@@ -251,7 +252,7 @@ func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.Ses
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
 			Reason:  "legacy daemon authorization mutation executed",
-			Payload: resultPayload,
+			Payload: agentLoopResolveAuthorizationResultPayloadFromDaemon(resultPayload),
 			Data: map[string]any{
 				"mutator":          "daemon_legacy_session",
 				"kind":             string(req.Kind),
@@ -648,7 +649,7 @@ func (m *agentManager) runRuntimeResolveAuthorizationMutationForTurn(ctx context
 	if result.Status == runtime.TurnResultBlocked {
 		return daemonResolveAuthorizationMutationResultPayload{}, false, nil
 	}
-	payload, ok := daemonSessionMutationResultPayload[daemonResolveAuthorizationMutationResultPayload](result)
+	payload, ok := daemonResolveAuthorizationMutationResultPayloadFromSessionMutationResult(result)
 	if !ok {
 		return daemonResolveAuthorizationMutationResultPayload{}, true, errors.New("daemon: resolve authorization mutator returned invalid payload")
 	}

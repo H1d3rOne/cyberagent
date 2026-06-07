@@ -324,3 +324,107 @@ func TestAgentLoopControlSessionResultPayloadCloneIsolatesMutableFields(t *testi
 		t.Fatalf("clone changed scalar fields: %#v", cloned)
 	}
 }
+
+func TestAgentLoopResolveAuthorizationResultPayloadCloneIsolatesMutableFields(t *testing.T) {
+	lastMessageAt := time.Date(2026, 6, 8, 11, 0, 0, 0, time.UTC)
+	originalLastMessageAt := lastMessageAt
+	lastCompactedAt := time.Date(2026, 6, 8, 11, 1, 0, 0, time.UTC)
+	originalLastCompactedAt := lastCompactedAt
+
+	payload := AgentLoopResolveAuthorizationResultPayload{
+		Session: AgentLoopSessionSnapshot{
+			SessionID: "session-auth-result",
+			Status:    "blocked",
+			Messages: []AgentLoopMessage{{
+				ID:      "msg-session-auth",
+				Role:    "agent",
+				Content: "authorization denied",
+				ToolCalls: []AgentLoopToolCall{{
+					ID:       "tool-session-auth",
+					Name:     "approval.resolved",
+					Result:   map[string]any{"decision": "deny"},
+					Metadata: map[string]any{"phase": "approval"},
+				}},
+			}},
+			NextAction: &AgentLoopNextAction{
+				Type:   "blocked",
+				Reason: "not within scope",
+			},
+		},
+		Pending: AgentLoopAuthorizationRequestSnapshot{
+			ID:            "auth-result",
+			ActionName:    "workspace.files.write",
+			Arguments:     map[string]any{"path": "README.md"},
+			RequiredLevel: "workspace_write",
+			Status:        "denied",
+		},
+		Message: AgentLoopMessage{
+			ID:      "msg-auth",
+			Role:    "agent",
+			Content: "Authorization denied",
+			ToolCalls: []AgentLoopToolCall{{
+				ID:     "tool-auth",
+				Name:   "approval.resolved",
+				Result: map[string]any{"authorization_id": "auth-result"},
+			}},
+			SuggestedPrompts: []string{"revise scope"},
+		},
+		OperationLevel: "safe_scan",
+		Compaction: &AgentLoopMemoryCompaction{
+			Summary: &AgentLoopMemorySummary{
+				Summary:       "compacted memory",
+				MessageCount:  2,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+			},
+			LastCompactedID: "msg-old",
+			LastCompactedAt: &lastCompactedAt,
+			Trigger:         "turn_count",
+		},
+		Mutated: true,
+	}
+
+	cloned := payload.Clone()
+
+	payload.Session.Messages[0].Content = "mutated session"
+	payload.Session.Messages[0].ToolCalls[0].Result["decision"] = "mutated"
+	payload.Session.Messages[0].ToolCalls[0].Metadata["phase"] = "mutated"
+	payload.Session.NextAction.Reason = "mutated"
+	payload.Pending.Arguments["path"] = "mutated"
+	payload.Message.Content = "mutated message"
+	payload.Message.ToolCalls[0].Result["authorization_id"] = "mutated"
+	payload.Message.SuggestedPrompts[0] = "mutated"
+	payload.Compaction.Summary.Summary = "mutated"
+	*payload.Compaction.Summary.LastMessageAt = lastMessageAt.Add(time.Hour)
+	*payload.Compaction.LastCompactedAt = lastCompactedAt.Add(time.Hour)
+
+	if cloned.Session.Messages[0].Content != "authorization denied" ||
+		cloned.Session.Messages[0].ToolCalls[0].Result["decision"] != "deny" ||
+		cloned.Session.Messages[0].ToolCalls[0].Metadata["phase"] != "approval" {
+		t.Fatalf("clone shares session messages: %#v", cloned.Session.Messages[0])
+	}
+	if cloned.Session.NextAction == payload.Session.NextAction || cloned.Session.NextAction.Reason != "not within scope" {
+		t.Fatalf("clone shares next action: %#v", cloned.Session.NextAction)
+	}
+	if cloned.Pending.Arguments["path"] != "README.md" {
+		t.Fatalf("clone shares authorization arguments: %#v", cloned.Pending.Arguments)
+	}
+	if cloned.Message.Content != "Authorization denied" ||
+		cloned.Message.ToolCalls[0].Result["authorization_id"] != "auth-result" ||
+		cloned.Message.SuggestedPrompts[0] != "revise scope" {
+		t.Fatalf("clone shares authorization message: %#v", cloned.Message)
+	}
+	if cloned.Compaction == payload.Compaction ||
+		cloned.Compaction.Summary == payload.Compaction.Summary ||
+		cloned.Compaction.Summary.LastMessageAt == payload.Compaction.Summary.LastMessageAt ||
+		cloned.Compaction.Summary.LastMessageAt == nil ||
+		!cloned.Compaction.Summary.LastMessageAt.Equal(originalLastMessageAt) ||
+		cloned.Compaction.LastCompactedAt == payload.Compaction.LastCompactedAt ||
+		cloned.Compaction.LastCompactedAt == nil ||
+		!cloned.Compaction.LastCompactedAt.Equal(originalLastCompactedAt) {
+		t.Fatalf("clone shares compaction: %#v", cloned.Compaction)
+	}
+	if cloned.OperationLevel != "safe_scan" || !cloned.Mutated || cloned.Session.SessionID != "session-auth-result" {
+		t.Fatalf("clone changed scalar fields: %#v", cloned)
+	}
+}
