@@ -31,6 +31,33 @@ func CloneAgentLoopRecordUserMessageResultPayload(payload AgentLoopRecordUserMes
 	return payload.Clone()
 }
 
+// AgentLoopControlSessionResultPayload is the runtime-neutral result for a
+// control_session mutation. It carries the updated session snapshot, the
+// operator-facing control message, optional job cancellation hint, and optional
+// memory compaction artifact without depending on daemon-private structs.
+type AgentLoopControlSessionResultPayload struct {
+	Session     AgentLoopSessionSnapshot
+	Message     AgentLoopMessage
+	CancelJobID string
+	Compaction  *AgentLoopMemoryCompaction
+	Mutated     bool
+}
+
+// Clone returns a copy with all mutable fields isolated.
+func (payload AgentLoopControlSessionResultPayload) Clone() AgentLoopControlSessionResultPayload {
+	cloned := payload
+	cloned.Session = payload.Session.Clone()
+	cloned.Message = payload.Message.Clone()
+	cloned.Compaction = CloneAgentLoopMemoryCompaction(payload.Compaction)
+	return cloned
+}
+
+// CloneAgentLoopControlSessionResultPayload clones a control-session mutation
+// result payload.
+func CloneAgentLoopControlSessionResultPayload(payload AgentLoopControlSessionResultPayload) AgentLoopControlSessionResultPayload {
+	return payload.Clone()
+}
+
 // AgentLoopSessionSnapshot is the runtime-neutral session state carried by
 // session mutation result DTOs. It mirrors the operator-visible session
 // boundary without depending on daemon-private structs.

@@ -45,6 +45,44 @@ func daemonRecordUserMessageMutationResultPayloadFromAgentLoop(payload runtime.A
 	}
 }
 
+func daemonControlSessionMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonControlSessionMutationResultPayload, bool) {
+	if payload, ok := daemonSessionMutationResultPayload[daemonControlSessionMutationResultPayload](result); ok {
+		return payload, true
+	}
+	switch payload := result.Payload.(type) {
+	case runtime.AgentLoopControlSessionResultPayload:
+		return daemonControlSessionMutationResultPayloadFromAgentLoop(payload), true
+	case *runtime.AgentLoopControlSessionResultPayload:
+		if payload == nil {
+			return daemonControlSessionMutationResultPayload{}, false
+		}
+		return daemonControlSessionMutationResultPayloadFromAgentLoop(payload.Clone()), true
+	default:
+		return daemonControlSessionMutationResultPayload{}, false
+	}
+}
+
+func agentLoopControlSessionResultPayloadFromDaemon(payload daemonControlSessionMutationResultPayload) runtime.AgentLoopControlSessionResultPayload {
+	return runtime.AgentLoopControlSessionResultPayload{
+		Session:     agentLoopSessionSnapshotFromAgentSession(payload.Session),
+		Message:     agentLoopMessageFromAgentMessage(payload.Message),
+		CancelJobID: payload.CancelJobID,
+		Compaction:  agentLoopMemoryCompactionFromAgentMemoryCompaction(payload.Compaction),
+		Mutated:     payload.Mutated,
+	}
+}
+
+func daemonControlSessionMutationResultPayloadFromAgentLoop(payload runtime.AgentLoopControlSessionResultPayload) daemonControlSessionMutationResultPayload {
+	payload = payload.Clone()
+	return daemonControlSessionMutationResultPayload{
+		Session:     agentSessionFromAgentLoopSessionSnapshot(payload.Session),
+		Message:     agentMessageFromAgentLoopMessage(payload.Message),
+		CancelJobID: payload.CancelJobID,
+		Compaction:  agentMemoryCompactionFromAgentLoopMemoryCompaction(payload.Compaction),
+		Mutated:     payload.Mutated,
+	}
+}
+
 func agentLoopSessionSnapshotFromAgentSession(session agentSession) runtime.AgentLoopSessionSnapshot {
 	return runtime.AgentLoopSessionSnapshot{
 		SessionID:            session.SessionID,

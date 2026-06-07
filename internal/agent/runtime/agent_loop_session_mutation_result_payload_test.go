@@ -214,3 +214,113 @@ func TestAgentLoopRecordUserMessageResultPayloadCloneIsolatesMutableFields(t *te
 		t.Fatalf("clone changed scalar fields: %#v", cloned)
 	}
 }
+
+func TestAgentLoopControlSessionResultPayloadCloneIsolatesMutableFields(t *testing.T) {
+	lastMessageAt := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	originalLastMessageAt := lastMessageAt
+	lastCompactedAt := time.Date(2026, 6, 8, 10, 1, 0, 0, time.UTC)
+	originalLastCompactedAt := lastCompactedAt
+
+	payload := AgentLoopControlSessionResultPayload{
+		Session: AgentLoopSessionSnapshot{
+			SessionID: "session-control-result",
+			Status:    "paused",
+			Messages: []AgentLoopMessage{{
+				ID:      "msg-session-control",
+				Role:    "agent",
+				Content: "paused",
+				ToolCalls: []AgentLoopToolCall{{
+					ID:       "tool-session-control",
+					Name:     "daemon.control",
+					Result:   map[string]any{"status": "paused"},
+					Metadata: map[string]any{"phase": "control"},
+				}},
+				SuggestedPrompts: []string{"continue"},
+			}},
+			NextAction: &AgentLoopNextAction{
+				Type:            "continue",
+				Reason:          "operator pause",
+				SuggestedPrompt: "resume later",
+			},
+			MemorySummary: &AgentLoopMemorySummary{
+				Summary:       "session memory",
+				MessageCount:  3,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+			},
+		},
+		Message: AgentLoopMessage{
+			ID:      "msg-control",
+			Role:    "agent",
+			Content: "control message",
+			ToolCalls: []AgentLoopToolCall{{
+				ID:     "tool-control",
+				Name:   "daemon.pause",
+				Result: map[string]any{"action": "pause"},
+			}},
+			SuggestedPrompts: []string{"resume"},
+		},
+		CancelJobID: "job-cancel",
+		Compaction: &AgentLoopMemoryCompaction{
+			Summary: &AgentLoopMemorySummary{
+				Summary:       "compacted memory",
+				MessageCount:  2,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+			},
+			LastCompactedID: "msg-old",
+			LastCompactedAt: &lastCompactedAt,
+			Trigger:         "turn_count",
+		},
+		Mutated: true,
+	}
+
+	cloned := payload.Clone()
+
+	payload.Session.Messages[0].Content = "mutated session"
+	payload.Session.Messages[0].ToolCalls[0].Result["status"] = "mutated"
+	payload.Session.Messages[0].ToolCalls[0].Metadata["phase"] = "mutated"
+	payload.Session.Messages[0].SuggestedPrompts[0] = "mutated"
+	payload.Session.NextAction.SuggestedPrompt = "mutated"
+	*payload.Session.MemorySummary.LastMessageAt = lastMessageAt.Add(time.Hour)
+	payload.Message.Content = "mutated message"
+	payload.Message.ToolCalls[0].Result["action"] = "mutated"
+	payload.Message.SuggestedPrompts[0] = "mutated"
+	payload.Compaction.Summary.Summary = "mutated"
+	*payload.Compaction.Summary.LastMessageAt = lastMessageAt.Add(2 * time.Hour)
+	*payload.Compaction.LastCompactedAt = lastCompactedAt.Add(time.Hour)
+
+	if cloned.Session.Messages[0].Content != "paused" ||
+		cloned.Session.Messages[0].ToolCalls[0].Result["status"] != "paused" ||
+		cloned.Session.Messages[0].ToolCalls[0].Metadata["phase"] != "control" ||
+		cloned.Session.Messages[0].SuggestedPrompts[0] != "continue" {
+		t.Fatalf("clone shares session messages: %#v", cloned.Session.Messages[0])
+	}
+	if cloned.Session.NextAction == payload.Session.NextAction || cloned.Session.NextAction.SuggestedPrompt != "resume later" {
+		t.Fatalf("clone shares next action: %#v", cloned.Session.NextAction)
+	}
+	if cloned.Session.MemorySummary == payload.Session.MemorySummary ||
+		cloned.Session.MemorySummary.LastMessageAt == payload.Session.MemorySummary.LastMessageAt ||
+		cloned.Session.MemorySummary.LastMessageAt == nil ||
+		!cloned.Session.MemorySummary.LastMessageAt.Equal(originalLastMessageAt) {
+		t.Fatalf("clone shares session memory summary: %#v", cloned.Session.MemorySummary)
+	}
+	if cloned.Message.Content != "control message" ||
+		cloned.Message.ToolCalls[0].Result["action"] != "pause" ||
+		cloned.Message.SuggestedPrompts[0] != "resume" {
+		t.Fatalf("clone shares control message: %#v", cloned.Message)
+	}
+	if cloned.Compaction == payload.Compaction ||
+		cloned.Compaction.Summary == payload.Compaction.Summary ||
+		cloned.Compaction.Summary.LastMessageAt == payload.Compaction.Summary.LastMessageAt ||
+		cloned.Compaction.Summary.LastMessageAt == nil ||
+		!cloned.Compaction.Summary.LastMessageAt.Equal(originalLastMessageAt) ||
+		cloned.Compaction.LastCompactedAt == payload.Compaction.LastCompactedAt ||
+		cloned.Compaction.LastCompactedAt == nil ||
+		!cloned.Compaction.LastCompactedAt.Equal(originalLastCompactedAt) {
+		t.Fatalf("clone shares compaction: %#v", cloned.Compaction)
+	}
+	if cloned.CancelJobID != "job-cancel" || !cloned.Mutated || cloned.Session.SessionID != "session-control-result" {
+		t.Fatalf("clone changed scalar fields: %#v", cloned)
+	}
+}

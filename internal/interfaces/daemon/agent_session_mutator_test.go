@@ -206,6 +206,110 @@ func TestAgentLoopRecordUserMessageResultPayloadAdapterRoundTrip(t *testing.T) {
 	require.Equal(t, roundTrip, converted)
 }
 
+func TestAgentLoopControlSessionResultPayloadAdapterRoundTrip(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 30, 0, 0, time.UTC)
+	lastMessageAt := now.Add(-time.Hour)
+	lastCompactedAt := now.Add(-30 * time.Minute)
+	resultPayload := daemonControlSessionMutationResultPayload{
+		Session: agentSession{
+			SessionID:      "session-control-result",
+			CreatedAt:      now.Add(-2 * time.Hour),
+			UpdatedAt:      now,
+			Operator:       "operator-1",
+			Language:       "en",
+			OperationLevel: "safe_scan",
+			Status:         "paused",
+			Messages: []agentMessage{{
+				ID:      "msg-control-result-history",
+				Role:    "agent",
+				Content: "paused",
+				ToolCalls: []agentToolCall{{
+					ID:       "tool-control-result-history",
+					Name:     "daemon.control",
+					Status:   "succeeded",
+					Result:   map[string]any{"status": "paused"},
+					Metadata: map[string]any{"phase": "control"},
+				}},
+				SuggestedPrompts: []string{"continue"},
+			}},
+			ActiveTask: &agentTask{
+				ID:        "task-control-result",
+				Goal:      "pause safely",
+				Kind:      "analysis",
+				Status:    "blocked",
+				CreatedAt: now.Add(-time.Hour),
+				UpdatedAt: now,
+			},
+			MemorySummary: &agentMemorySummary{
+				Summary:       "session memory",
+				MessageCount:  3,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+				UpdatedAt:     now,
+			},
+			NextAction: &agentNextAction{
+				Type:            "continue",
+				Reason:          "operator pause",
+				SuggestedPrompt: "resume later",
+			},
+		},
+		Message: agentMessage{
+			ID:      "msg-control-result",
+			Role:    "agent",
+			Content: "control message",
+			ToolCalls: []agentToolCall{{
+				ID:     "tool-control-result",
+				Name:   "daemon.pause",
+				Status: "succeeded",
+				Result: map[string]any{"action": "pause"},
+			}},
+			SuggestedPrompts: []string{"resume"},
+		},
+		CancelJobID: "job-control-result",
+		Compaction: &agentMemoryCompaction{
+			Summary: &agentMemorySummary{
+				Summary:       "compacted memory",
+				MessageCount:  2,
+				LastMessageID: "msg-old",
+				LastMessageAt: &lastMessageAt,
+				UpdatedAt:     now,
+			},
+			CompactedCount:  2,
+			RetainedCount:   80,
+			PreviousCount:   82,
+			LastCompactedID: "msg-old",
+			LastCompactedAt: &lastCompactedAt,
+			Trigger:         "turn_count",
+			OccurredAt:      now,
+		},
+		Mutated: true,
+	}
+
+	runtimePayload := agentLoopControlSessionResultPayloadFromDaemon(resultPayload)
+	expectedPayload := daemonControlSessionMutationResultPayloadFromAgentLoop(runtimePayload)
+	resultPayload.Session.Messages[0].Content = "mutated"
+	resultPayload.Session.Messages[0].ToolCalls[0].Result["status"] = "mutated"
+	resultPayload.Message.ToolCalls[0].Result["action"] = "mutated"
+	roundTrip := daemonControlSessionMutationResultPayloadFromAgentLoop(runtimePayload)
+
+	require.Equal(t, expectedPayload, roundTrip)
+	require.Equal(t, "paused", roundTrip.Session.Messages[0].Content)
+	require.Equal(t, "paused", roundTrip.Session.Messages[0].ToolCalls[0].Result["status"])
+	require.Equal(t, "pause", roundTrip.Message.ToolCalls[0].Result["action"])
+	require.Equal(t, "job-control-result", roundTrip.CancelJobID)
+	require.Equal(t, "compacted memory", roundTrip.Compaction.Summary.Summary)
+	require.Equal(t, lastCompactedAt, *roundTrip.Compaction.LastCompactedAt)
+	require.True(t, roundTrip.Mutated)
+
+	converted, ok := daemonControlSessionMutationResultPayloadFromSessionMutationResult(runtime.SessionMutationResult{Payload: runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, roundTrip, converted)
+
+	convertedPointer, ok := daemonControlSessionMutationResultPayloadFromSessionMutationResult(runtime.SessionMutationResult{Payload: &runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, roundTrip, convertedPointer)
+}
+
 func TestAgentManagerAppendMessagesWithPlannerDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
@@ -877,7 +981,7 @@ func TestAgentManagerRunRuntimeControlSessionDispatchesSessionMutator(t *testing
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
 			Reason:  "handled by test mutator",
-			Payload: resultPayload,
+			Payload: agentLoopControlSessionResultPayloadFromDaemon(resultPayload),
 			Data:    map[string]any{"mutator": "test"},
 		}, nil
 	}))
