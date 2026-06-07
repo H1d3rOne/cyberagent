@@ -58,8 +58,8 @@ type daemonPlannerActionExecutionTurnPayload struct {
 }
 
 type daemonPlannerActionExecutionTurnResultPayload struct {
-	Messages  []agentMessage
-	ToolCalls []agentToolCall
+	Messages  []runtime.AgentLoopMessage
+	ToolCalls []runtime.AgentLoopToolCall
 }
 
 type daemonAgentTurnExecutor struct {
@@ -219,8 +219,8 @@ func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn(ctx context.C
 		Reason: reason,
 		Error:  err,
 		Payload: daemonPlannerActionExecutionTurnResultPayload{
-			Messages:  messages,
-			ToolCalls: toolCalls,
+			Messages:  agentLoopMessagesFromAgentMessages(messages),
+			ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(toolCalls),
 		},
 		Data: map[string]any{
 			"executor":         "daemon_legacy_adapter",
@@ -425,7 +425,7 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 	}
 	payload, ok := result.Payload.(daemonPlannerActionExecutionTurnResultPayload)
 	if ok {
-		return payload.Messages, payload.ToolCalls, err
+		return agentMessagesFromAgentLoopMessages(payload.Messages), agentLoopToolCallItemsToAgentToolCalls(payload.ToolCalls), err
 	}
 	if err != nil {
 		return nil, nil, err
