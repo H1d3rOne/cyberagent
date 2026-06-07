@@ -229,7 +229,8 @@ func TestAgentPlannerActionReplanCycleRuntimeRequestHelpersCloneAndDefault(t *te
 	turnRef := agentPlannerActionReplanCycleTurnRefFromAgentLoopRequest(loopReq)
 	options := agentPlannerActionReplanCycleOptionsFromAgentLoopRequest(loopReq)
 	state := agentPlannerActionReplanCycleStateFromAgentLoopRequest(loopReq)
-	plan := agentPlannerActionReplanCycleInitialPlanFromAgentLoopRequest(loopReq)
+	plan := agentPlannerActionReplanCycleInitialAgentLoopPlanFromRequest(loopReq)
+	actions := agentLoopPlanActions(plan)
 
 	require.Equal(t, "turn_value", turn.Metadata["turn_key"])
 	require.Equal(t, agentRuntimeTurnRef{TaskID: "task-runtime-helper", RunID: "run-runtime-helper", TurnID: "turn-runtime-helper"}, turnRef)
@@ -237,8 +238,8 @@ func TestAgentPlannerActionReplanCycleRuntimeRequestHelpersCloneAndDefault(t *te
 	require.True(t, options.AppendActionToolCallsBeforeEmptyMessage)
 	require.Equal(t, []string{"history-runtime-helper"}, agentLoopMessageIDs(state.LoopHistory))
 	require.Equal(t, []string{"response-runtime-helper"}, agentLoopMessageIDs(state.ResponseMessages))
-	require.True(t, plan.shouldAutoContinue())
-	require.Equal(t, "runtime-helper", plan.actions()[0].Arguments["probe"])
+	require.True(t, agentLoopPlanShouldAutoContinue(plan))
+	require.Equal(t, "runtime-helper", actions[0].Arguments["probe"])
 
 	loopReq.Turn.Metadata["turn_key"] = "mutated-turn"
 	loopReq.History[0].Content = "mutated history"
@@ -248,7 +249,50 @@ func TestAgentPlannerActionReplanCycleRuntimeRequestHelpersCloneAndDefault(t *te
 	require.Equal(t, "turn_value", turn.Metadata["turn_key"])
 	require.Equal(t, "history from request", state.LoopHistory[0].Content)
 	require.Equal(t, "existing response", state.ResponseMessages[0].Content)
-	require.Equal(t, "runtime-helper", plan.actions()[0].Arguments["probe"])
+	require.Equal(t, "runtime-helper", actions[0].Arguments["probe"])
+	require.Equal(t, "runtime-helper", plan.Actions[0].Arguments["probe"])
+}
+
+func TestAgentLoopPlanActionsNormalizeDedupeAndClone(t *testing.T) {
+	plan := &runtime.AgentLoopPlan{
+		Phase:      "step_replan",
+		NextAction: &runtime.AgentLoopNextAction{Type: "continue", AutoContinue: true},
+		Actions: []runtime.AgentLoopAction{{
+			Arguments: map[string]any{"name": "daemon.health", "target": "same-target"},
+		}},
+		ToolCalls: []runtime.AgentLoopAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"target": "same-target"},
+		}, {
+			Name:      "workspace.read.file",
+			Arguments: map[string]any{"path": "README.md"},
+		}},
+	}
+
+	actions := agentLoopPlanActions(plan)
+	legacyActions := agentLoopPlanLegacyActions(plan)
+
+	require.True(t, agentLoopPlanHasActions(plan))
+	require.True(t, agentLoopPlanShouldAutoContinue(plan))
+	require.Len(t, actions, 2)
+	require.Equal(t, []string{"daemon.health", "workspace.read.file"}, []string{actions[0].Name, actions[1].Name})
+	require.Equal(t, "same-target", actions[0].Arguments["target"])
+	require.Equal(t, "README.md", actions[1].Arguments["path"])
+	require.Equal(t, []agentPlannerAction{{
+		Name:      "daemon.health",
+		Arguments: map[string]any{"name": "daemon.health", "target": "same-target"},
+	}, {
+		Name:      "workspace.read.file",
+		Arguments: map[string]any{"path": "README.md"},
+	}}, legacyActions)
+
+	plan.Actions[0].Arguments["target"] = "mutated-target"
+	plan.ToolCalls[1].Arguments["path"] = "mutated.md"
+
+	require.Equal(t, "same-target", actions[0].Arguments["target"])
+	require.Equal(t, "README.md", actions[1].Arguments["path"])
+	require.Equal(t, "same-target", legacyActions[0].Arguments["target"])
+	require.Equal(t, "README.md", legacyActions[1].Arguments["path"])
 }
 
 func TestAgentPlannerActionReplanCycleResultAgentLoopAdapterRoundTripClones(t *testing.T) {

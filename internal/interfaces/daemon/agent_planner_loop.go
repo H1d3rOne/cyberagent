@@ -971,12 +971,56 @@ func agentLoopPlanFromPlannerResponse(plan *agentPlannerResponse) *runtime.Agent
 	return agentPlannerActionReplanCyclePlanFromPlannerResponse(plan).agentLoopPlan()
 }
 
+func agentLoopPlanActions(plan *runtime.AgentLoopPlan) []runtime.AgentLoopAction {
+	if plan == nil {
+		return nil
+	}
+	rawActions := runtime.CloneAgentLoopActions(plan.Actions)
+	rawActions = append(rawActions, runtime.CloneAgentLoopActions(plan.ToolCalls)...)
+
+	actions := make([]runtime.AgentLoopAction, 0, len(rawActions))
+	seen := map[string]struct{}{}
+	for _, action := range rawActions {
+		name := normalizeAgentPlannerActionName(action.Name)
+		if name == "" {
+			name = normalizeAgentPlannerActionName(stringFromAny(action.Arguments["name"]))
+		}
+		if name == "" {
+			continue
+		}
+		action.Name = name
+		if action.Arguments == nil {
+			action.Arguments = map[string]any{}
+		} else {
+			action.Arguments = runtime.CloneAgentLoopActionArguments(action.Arguments)
+		}
+		key := agentPlannerActionDedupeKey(name, action.Arguments)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		actions = append(actions, action)
+	}
+	return actions
+}
+
+func agentLoopPlanLegacyActions(plan *runtime.AgentLoopPlan) []agentPlannerAction {
+	return agentPlannerActionReplanCyclePlanActionsToAgentPlannerActions(agentLoopPlanActions(plan))
+}
+
 func agentLoopPlanHasActions(plan *runtime.AgentLoopPlan) bool {
-	return agentPlannerActionReplanCyclePlanFromAgentLoopPlan(plan).hasActions()
+	return len(agentLoopPlanActions(plan)) > 0
 }
 
 func agentLoopPlanShouldAutoContinue(plan *runtime.AgentLoopPlan) bool {
-	return agentPlannerActionReplanCyclePlanFromAgentLoopPlan(plan).shouldAutoContinue()
+	return agentLoopPlanHasActions(plan) && plan != nil && plan.NextAction != nil && plan.NextAction.AutoContinue
+}
+
+func legacyPlannerResponseFromAgentLoopPlan(plan *runtime.AgentLoopPlan) *agentPlannerResponse {
+	if plan == nil {
+		return nil
+	}
+	return agentPlannerResponseFromAgentLoopPlan(plan.Clone())
 }
 
 func (plan agentPlannerActionReplanCyclePlan) actions() []agentPlannerAction {
@@ -1386,8 +1430,12 @@ func agentPlannerActionReplanCycleStateFromAgentLoopRequest(loopReq runtime.Agen
 	return state
 }
 
+func agentPlannerActionReplanCycleInitialAgentLoopPlanFromRequest(loopReq runtime.AgentLoopRequest) *runtime.AgentLoopPlan {
+	return runtime.CloneAgentLoopPlan(loopReq.InitialPlan)
+}
+
 func agentPlannerActionReplanCycleInitialPlanFromAgentLoopRequest(loopReq runtime.AgentLoopRequest) agentPlannerActionReplanCyclePlan {
-	return agentPlannerActionReplanCyclePlanFromAgentLoopPlan(loopReq.InitialPlan)
+	return agentPlannerActionReplanCyclePlanFromAgentLoopPlan(agentPlannerActionReplanCycleInitialAgentLoopPlanFromRequest(loopReq))
 }
 
 func agentPlannerActionReplanCycleOptionsFromAgentLoopRequest(loopReq runtime.AgentLoopRequest) agentPlannerActionReplanCycleOptions {
@@ -1503,14 +1551,14 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 	turnRef := agentPlannerActionReplanCycleTurnRefFromAgentLoopRequest(loopReq)
 	options := agentPlannerActionReplanCycleOptionsFromAgentLoopRequest(loopReq)
 	state := agentPlannerActionReplanCycleStateFromAgentLoopRequest(loopReq)
-	plan := agentPlannerActionReplanCycleInitialPlanFromAgentLoopRequest(loopReq)
+	finalPlan := agentPlannerActionReplanCycleInitialAgentLoopPlanFromRequest(loopReq)
 	finish := func(continueLoop bool) runtime.AgentLoopResult {
 		clonedState := state.Clone()
 		return runtime.AgentLoopResult{
 			State:      clonedState,
 			Messages:   runtime.CloneAgentLoopMessages(clonedState.ResponseMessages),
 			ToolCalls:  runtime.CloneAgentLoopToolCalls(clonedState.ToolCalls),
-			FinalPlan:  plan.agentLoopPlan(),
+			FinalPlan:  runtime.CloneAgentLoopPlan(finalPlan),
 			StopReason: agentPlannerActionReplanCycleStopReasonLegacyDaemonLoopExecuted,
 			Metadata: map[string]any{
 				agentPlannerActionReplanCycleMetadataContinue: continueLoop,
@@ -1564,14 +1612,14 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 	}
 	synthesisMessages := agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(synthesis.Messages)
 	synthesisToolCalls := agentPlannerActionReplanCycleToolCallsFromAgentLoopToolCalls(synthesis.ToolCalls)
-	synthesisPlan := agentPlannerActionReplanCyclePlanFromAgentLoopPlan(synthesis.FinalPlan)
+	synthesisPlan := runtime.CloneAgentLoopPlan(synthesis.FinalPlan)
 	if synthesisMessages.len() > 0 {
-		m.appendMessagesWithPlannerForTurn(ctx, turn.SessionID, turnRef, turn.Prompt, string(runtime.LLMStageToolSynthesis), turn.OperationLevel, synthesisPlan.legacyPlannerResponse(), synthesisMessages.legacyAgentMessages()...)
+		m.appendMessagesWithPlannerForTurn(ctx, turn.SessionID, turnRef, turn.Prompt, string(runtime.LLMStageToolSynthesis), turn.OperationLevel, legacyPlannerResponseFromAgentLoopPlan(synthesisPlan), synthesisMessages.legacyAgentMessages()...)
 		state.ResponseMessages = append(state.ResponseMessages, synthesisMessages.agentLoopMessages()...)
 		state.LoopHistory = append(state.LoopHistory, synthesisMessages.agentLoopMessages()...)
 		state.ToolCalls = append(state.ToolCalls, synthesisToolCalls.agentLoopToolCalls()...)
 	}
-	plan = synthesisPlan
+	finalPlan = synthesisPlan
 	return finish(true)
 }
 
@@ -1587,7 +1635,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycleActionExecution(ctx conte
 func (m *agentManager) runAgentPlannerActionReplanCycleActionExecutionAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) runtime.AgentLoopResult {
 	req := loopReq.Clone()
 	turnRef := agentRuntimeTurnRefFromTurn(req.Turn)
-	plan := agentPlannerActionReplanCyclePlanFromAgentLoopPlan(req.InitialPlan)
+	actions := agentLoopPlanLegacyActions(req.InitialPlan)
 	actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActionList(
 		ctx,
 		req.Turn.SessionID,
@@ -1597,7 +1645,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycleActionExecutionAgentLoop(
 		req.Operator,
 		req.Turn.OperationLevel,
 		legacyRouterServicesFromAgentLoopToolServiceBinding(req.ToolServices),
-		plan.actions(),
+		actions,
 		agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(req.Authorization.AuthProfiles),
 		req.Authorization.DefaultAuthProfileID,
 	)

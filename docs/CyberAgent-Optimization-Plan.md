@@ -409,8 +409,9 @@ ownership 边界：
 40. ✅ P0.5-N46 已将 shared cycle action execution / tool synthesis helper 的输入输出继续收敛为 runtime `AgentLoopRequest` / `AgentLoopResult`，减少 `agentPlannerActionReplanCycleRequest` / `State` wrapper 在内部 helper 间传递。
 41. ✅ P0.5-N47 已将 `runRuntimeAgentPlannerActionReplanCycle` 外层 dispatch 入口继续收敛为 runtime `AgentLoopRequest` / `AgentLoopResult`，减少外层 loop 对 cycle request/result wrapper 的依赖。
 42. ✅ P0.5-N48 已将 `runAgentPlannerActionReplanCycleAgentLoop` 主流程的 turn/options/plan/state 读取拆成 runtime-native helper，主流程不再先构造完整 `agentPlannerActionReplanCycleRequest` wrapper。
-43. 下一步 P0.5-N49 将 shared cycle 主流程中的 plan/action 查询继续替换为 runtime-native helper，减少 `agentPlannerActionReplanCyclePlan` handle 参与主流程，仅在 legacy action/synthesis adapter 边界转换。
-44. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+43. ✅ P0.5-N49 已将 shared cycle 主流程中的 plan/action 查询替换为 runtime-native helper，`runAgentPlannerActionReplanCycleAgentLoop` 以 runtime `AgentLoopPlan` 作为 final plan，legacy plan handle 仅留在 request/result adapter 与 append/synthesis 边界。
+44. 下一步 P0.5-N50 将 action execution helper 的 action list 输入继续收敛为 runtime `AgentLoopAction`，只在 `executeAgentPlannerActionList` legacy executor adapter 边界转换。
+45. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1331,6 +1332,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v80 | 完成 P0.5-N46 shared cycle helper runtime DTO 输入输出：action execution / tool synthesis helper 改为接收 `runtime.AgentLoopRequest` / `AgentLoopState` 并返回 `runtime.AgentLoopResult`，legacy helper 仅保留兼容 wrapper；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v81 | 完成 P0.5-N47 外层 cycle dispatch runtime DTO 主入口：新增 `runRuntimeAgentPlannerActionReplanCycleAgentLoop`，`runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 每轮直接构造 runtime loop request 并用 runtime state/plan/result 串联；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v82 | 完成 P0.5-N48 shared cycle 主流程 runtime-native 读取：新增 turn/options/state/initial plan helper，`runAgentPlannerActionReplanCycleAgentLoop` 不再入口处构造完整 cycle request wrapper；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v83 | 完成 P0.5-N49 shared cycle plan/action runtime-native 查询：新增 runtime plan action normalize/dedupe helper，主 cycle 以 `AgentLoopPlan` 维护 final plan，action execution 通过 runtime action helper 查询后仅在 legacy executor 边界转换；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

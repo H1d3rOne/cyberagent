@@ -55,33 +55,7 @@ func agentPlannerActions(plan *agentPlannerResponse) []agentPlannerAction {
 		if action.Arguments == nil {
 			action.Arguments = map[string]any{}
 		}
-		keyParts := []string{
-			name,
-			stringFromAny(action.Arguments["host"]),
-			agentPortSpecFromPlannerArgument(action.Arguments["ports"]),
-			stringFromAny(action.Arguments["url"]),
-			stringFromAny(action.Arguments["target"]),
-			stringFromAny(action.Arguments["method"]),
-			stringFromAny(action.Arguments["query"]),
-			stringFromAny(action.Arguments["pattern"]),
-			stringFromAny(action.Arguments["command"]),
-			stringFromAny(action.Arguments["path"]),
-			stringFromAny(action.Arguments["file"]),
-			stringFromAny(action.Arguments["content"]),
-			stringFromAny(action.Arguments["body"]),
-			stringFromAny(action.Arguments["text"]),
-			stringFromAny(action.Arguments["old"]),
-			stringFromAny(action.Arguments["old_text"]),
-			stringFromAny(action.Arguments["before"]),
-			stringFromAny(action.Arguments["search"]),
-			stringFromAny(action.Arguments["new"]),
-			stringFromAny(action.Arguments["new_text"]),
-			stringFromAny(action.Arguments["after"]),
-			stringFromAny(action.Arguments["replace"]),
-			stringFromAny(action.Arguments["change_id"]),
-			stringFromAny(action.Arguments["id"]),
-		}
-		key := strings.Join(keyParts, "\x00")
+		key := agentPlannerActionDedupeKey(name, action.Arguments)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -89,6 +63,36 @@ func agentPlannerActions(plan *agentPlannerResponse) []agentPlannerAction {
 		actions = append(actions, action)
 	}
 	return actions
+}
+
+func agentPlannerActionDedupeKey(name string, arguments map[string]any) string {
+	keyParts := []string{
+		name,
+		stringFromAny(arguments["host"]),
+		agentPortSpecFromPlannerArgument(arguments["ports"]),
+		stringFromAny(arguments["url"]),
+		stringFromAny(arguments["target"]),
+		stringFromAny(arguments["method"]),
+		stringFromAny(arguments["query"]),
+		stringFromAny(arguments["pattern"]),
+		stringFromAny(arguments["command"]),
+		stringFromAny(arguments["path"]),
+		stringFromAny(arguments["file"]),
+		stringFromAny(arguments["content"]),
+		stringFromAny(arguments["body"]),
+		stringFromAny(arguments["text"]),
+		stringFromAny(arguments["old"]),
+		stringFromAny(arguments["old_text"]),
+		stringFromAny(arguments["before"]),
+		stringFromAny(arguments["search"]),
+		stringFromAny(arguments["new"]),
+		stringFromAny(arguments["new_text"]),
+		stringFromAny(arguments["after"]),
+		stringFromAny(arguments["replace"]),
+		stringFromAny(arguments["change_id"]),
+		stringFromAny(arguments["id"]),
+	}
+	return strings.Join(keyParts, "\x00")
 }
 
 // normalizeAgentPlannerActionName collapses planner-emitted tool names
