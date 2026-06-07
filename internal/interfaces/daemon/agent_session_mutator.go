@@ -12,6 +12,11 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 )
 
+// Session mutation result payloads are intentionally daemon adapter DTOs for now:
+// callers still consume full legacy session snapshots, authorization records, and
+// compaction artifacts. Runtime-neutral mutation input payloads live under the
+// runtime package; these result payloads stay at the daemon boundary until a
+// runtime AgentLoop session snapshot/result DTO is introduced.
 type daemonAppendMessagesMutationResultPayload struct {
 	Session    agentSession
 	Compaction *agentMemoryCompaction
@@ -78,6 +83,14 @@ func cloneAgentLoopSessionMutationPayload[T agentLoopSessionMutationPayloadClone
 			return zero, false
 		}
 		return (*value).Clone(), true
+	}
+	return zero, false
+}
+
+func daemonSessionMutationResultPayload[T any](result runtime.SessionMutationResult) (T, bool) {
+	var zero T
+	if payload, ok := result.Payload.(T); ok {
+		return payload, true
 	}
 	return zero, false
 }
@@ -386,7 +399,7 @@ func (m *agentManager) runRuntimeRecordUserMessageMutation(ctx context.Context, 
 	if result.Status == runtime.TurnResultBlocked {
 		return daemonRecordUserMessageMutationResultPayload{}, false, nil
 	}
-	payload, ok := result.Payload.(daemonRecordUserMessageMutationResultPayload)
+	payload, ok := daemonSessionMutationResultPayload[daemonRecordUserMessageMutationResultPayload](result)
 	if !ok {
 		return daemonRecordUserMessageMutationResultPayload{}, true, errors.New("daemon: record user message mutator returned invalid payload")
 	}
@@ -441,7 +454,7 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 	if err != nil || result.Status == runtime.TurnResultBlocked {
 		return daemonRequestAuthorizationMutationResultPayload{}, false
 	}
-	payload, ok := result.Payload.(daemonRequestAuthorizationMutationResultPayload)
+	payload, ok := daemonSessionMutationResultPayload[daemonRequestAuthorizationMutationResultPayload](result)
 	if !ok {
 		return daemonRequestAuthorizationMutationResultPayload{}, false
 	}
@@ -500,7 +513,7 @@ func (m *agentManager) runRuntimeCapabilityBlockedMutationForTurn(ctx context.Co
 	if err != nil || result.Status == runtime.TurnResultBlocked {
 		return daemonCapabilityBlockedMutationResultPayload{}, false
 	}
-	payload, ok := result.Payload.(daemonCapabilityBlockedMutationResultPayload)
+	payload, ok := daemonSessionMutationResultPayload[daemonCapabilityBlockedMutationResultPayload](result)
 	if !ok {
 		return daemonCapabilityBlockedMutationResultPayload{}, false
 	}
@@ -568,7 +581,7 @@ func (m *agentManager) runRuntimeControlSessionMutationForTurn(ctx context.Conte
 	if result.Status == runtime.TurnResultBlocked {
 		return daemonControlSessionMutationResultPayload{}, false, nil
 	}
-	payload, ok := result.Payload.(daemonControlSessionMutationResultPayload)
+	payload, ok := daemonSessionMutationResultPayload[daemonControlSessionMutationResultPayload](result)
 	if !ok {
 		return daemonControlSessionMutationResultPayload{}, true, errors.New("daemon: control session mutator returned invalid payload")
 	}
@@ -634,7 +647,7 @@ func (m *agentManager) runRuntimeResolveAuthorizationMutationForTurn(ctx context
 	if result.Status == runtime.TurnResultBlocked {
 		return daemonResolveAuthorizationMutationResultPayload{}, false, nil
 	}
-	payload, ok := result.Payload.(daemonResolveAuthorizationMutationResultPayload)
+	payload, ok := daemonSessionMutationResultPayload[daemonResolveAuthorizationMutationResultPayload](result)
 	if !ok {
 		return daemonResolveAuthorizationMutationResultPayload{}, true, errors.New("daemon: resolve authorization mutator returned invalid payload")
 	}

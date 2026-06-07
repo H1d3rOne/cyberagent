@@ -37,6 +37,23 @@ func TestCloneAgentLoopSessionMutationPayload(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestDaemonSessionMutationResultPayload(t *testing.T) {
+	resultPayload := daemonControlSessionMutationResultPayload{
+		Session: agentSession{SessionID: "agent-result"},
+		Message: agentMessage{ID: "msg-result"},
+		Mutated: true,
+	}
+	result := runtime.SessionMutationResult{Payload: resultPayload}
+	cloned, ok := daemonSessionMutationResultPayload[daemonControlSessionMutationResultPayload](result)
+	require.True(t, ok)
+	require.Equal(t, "agent-result", cloned.Session.SessionID)
+	require.Equal(t, "msg-result", cloned.Message.ID)
+	require.True(t, cloned.Mutated)
+
+	_, ok = daemonSessionMutationResultPayload[daemonControlSessionMutationResultPayload](runtime.SessionMutationResult{Payload: "invalid"})
+	require.False(t, ok)
+}
+
 func TestAgentManagerAppendMessagesWithPlannerDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
