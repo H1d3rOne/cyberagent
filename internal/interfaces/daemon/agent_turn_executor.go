@@ -27,10 +27,6 @@ type daemonDeterministicRouteTurnResultPayload struct {
 	ToolCalls []agentToolCall
 }
 
-type daemonReplanActionContinuationTurnPayload struct {
-	Request runtime.AgentLoopRequest
-}
-
 type daemonReplanActionContinuationTurnResultPayload struct {
 	Messages  []runtime.AgentLoopMessage
 	ToolCalls []runtime.AgentLoopToolCall
@@ -124,7 +120,7 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 		err := errors.New("daemon: turn executor has no manager")
 		return daemonTurnExecutionErrorResult(turn, err), err
 	}
-	payload, ok := turn.Payload.(daemonReplanActionContinuationTurnPayload)
+	payload, ok := turn.Payload.(runtime.AgentLoopRequest)
 	if !ok {
 		err := errors.New("daemon: invalid replan action continuation turn payload")
 		return daemonTurnExecutionErrorResult(turn, err), err
@@ -132,7 +128,7 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	loopReq := payload.Request.Clone()
+	loopReq := payload.Clone()
 	messages, toolCalls := e.manager.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
 	resultPayload := daemonReplanActionContinuationTurnResultPayload{
 		Messages:  runtime.CloneAgentLoopMessages(messages),
@@ -336,9 +332,7 @@ func agentReplanActionContinuationTurnContextFromRequest(loopReq runtime.AgentLo
 	if turn.TurnIndex == 0 {
 		turn.TurnIndex = 1
 	}
-	turn.Payload = daemonReplanActionContinuationTurnPayload{
-		Request: loopReq.Clone(),
-	}
+	turn.Payload = loopReq.Clone()
 	metadata := runtime.CloneAgentLoopMapStringAny(turn.Metadata)
 	if metadata == nil {
 		metadata = map[string]any{}

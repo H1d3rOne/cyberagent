@@ -377,9 +377,9 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 			}, nil
 		case daemonTurnExecutionReplanActionContinuation:
 			turnExecutions = append(turnExecutions, turn)
-			payload, ok := turn.Payload.(daemonReplanActionContinuationTurnPayload)
+			payload, ok := turn.Payload.(runtime.AgentLoopRequest)
 			require.True(t, ok, "payload type = %T", turn.Payload)
-			require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(synthesisPlan), payload.Request.InitialPlan)
+			require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(synthesisPlan), payload.InitialPlan)
 			return runtime.TurnResult{
 				Status:  runtime.TurnResultFinished,
 				Reason:  "follow-up handled by test executor",
@@ -1419,22 +1419,22 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t 
 		require.Equal(t, daemonTurnExecutionReplanActionContinuation, turn.Metadata["kind"])
 		require.Equal(t, 2, turn.Metadata["max_loops"])
 
-		payload, ok := turn.Payload.(daemonReplanActionContinuationTurnPayload)
+		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
 		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, runtime.AgentLoopModeReplanContinuation, payload.Request.Mode)
-		require.Equal(t, "session-replan-continuation", payload.Request.Turn.SessionID)
-		require.Equal(t, "task-replan-continuation", payload.Request.Turn.TaskID)
-		require.Equal(t, "run-replan-continuation", payload.Request.Turn.RunID)
-		require.Equal(t, "turn-replan-continuation", payload.Request.Turn.TurnID)
-		require.Equal(t, "continue daemon health", payload.Request.Turn.Prompt)
-		require.Equal(t, "en", payload.Request.Language)
-		require.Equal(t, "tester", payload.Request.Operator)
-		require.Equal(t, "read_only", payload.Request.Turn.OperationLevel)
-		require.Equal(t, "gpt-continuation", payload.Request.LLMRequest.Model)
-		require.Len(t, payload.Request.History, 1)
-		require.Equal(t, "memory", payload.Request.MemorySummary.Summary)
-		require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(expectedPlan), payload.Request.InitialPlan)
-		require.Equal(t, 2, payload.Request.MaxLoops)
+		require.Equal(t, runtime.AgentLoopModeReplanContinuation, payload.Mode)
+		require.Equal(t, "session-replan-continuation", payload.Turn.SessionID)
+		require.Equal(t, "task-replan-continuation", payload.Turn.TaskID)
+		require.Equal(t, "run-replan-continuation", payload.Turn.RunID)
+		require.Equal(t, "turn-replan-continuation", payload.Turn.TurnID)
+		require.Equal(t, "continue daemon health", payload.Turn.Prompt)
+		require.Equal(t, "en", payload.Language)
+		require.Equal(t, "tester", payload.Operator)
+		require.Equal(t, "read_only", payload.Turn.OperationLevel)
+		require.Equal(t, "gpt-continuation", payload.LLMRequest.Model)
+		require.Len(t, payload.History, 1)
+		require.Equal(t, "memory", payload.MemorySummary.Summary)
+		require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(expectedPlan), payload.InitialPlan)
+		require.Equal(t, 2, payload.MaxLoops)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
