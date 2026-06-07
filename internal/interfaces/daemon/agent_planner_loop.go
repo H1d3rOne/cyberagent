@@ -1004,10 +1004,6 @@ func agentLoopPlanActions(plan *runtime.AgentLoopPlan) []runtime.AgentLoopAction
 	return actions
 }
 
-func agentLoopPlanLegacyActions(plan *runtime.AgentLoopPlan) []agentPlannerAction {
-	return agentPlannerActionReplanCyclePlanActionsToAgentPlannerActions(agentLoopPlanActions(plan))
-}
-
 func agentLoopPlanHasActions(plan *runtime.AgentLoopPlan) bool {
 	return len(agentLoopPlanActions(plan)) > 0
 }
@@ -1635,7 +1631,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycleActionExecution(ctx conte
 func (m *agentManager) runAgentPlannerActionReplanCycleActionExecutionAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) runtime.AgentLoopResult {
 	req := loopReq.Clone()
 	turnRef := agentRuntimeTurnRefFromTurn(req.Turn)
-	actions := agentLoopPlanLegacyActions(req.InitialPlan)
+	actions := agentLoopPlanActions(req.InitialPlan)
 	actionMessages, actionToolCalls, authorizationRequired := m.executeAgentPlannerActionList(
 		ctx,
 		req.Turn.SessionID,
@@ -1795,23 +1791,24 @@ func agentPlannerActionQueueMetadata(queueID string, index, count int, actionNam
 }
 
 func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
-	return m.executeAgentPlannerActionList(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, agentPlannerActions(plan), authProfiles, defaultAuthProfileID)
+	return m.executeAgentPlannerActionList(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, agentPlannerActionReplanCyclePlanActionsFromAgentPlannerActions(agentPlannerActions(plan)), authProfiles, defaultAuthProfileID)
 }
 
-func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, actions []agentPlannerAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
-	actions = cloneAgentPlannerActions(actions)
-	if len(actions) == 0 {
+func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, actions []runtime.AgentLoopAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
+	legacyActions := agentPlannerActionReplanCyclePlanActionsToAgentPlannerActions(actions)
+	legacyActions = cloneAgentPlannerActions(legacyActions)
+	if len(legacyActions) == 0 {
 		return nil, nil, false
 	}
-	if len(actions) > 6 {
-		actions = actions[:6]
+	if len(legacyActions) > 6 {
+		legacyActions = legacyActions[:6]
 	}
 
 	var messages []agentMessage
 	var toolCalls []agentToolCall
 	queueID := newAgentPlannerActionQueueID(time.Now().UTC())
-	actionCount := len(actions)
-	for idx, action := range actions {
+	actionCount := len(legacyActions)
+	for idx, action := range legacyActions {
 		actionIndex := idx + 1
 		gateDecision := decideAgentPlannerActionGate(operatorPrompt, language, operationLevel, action)
 		actionName := gateDecision.ActionName

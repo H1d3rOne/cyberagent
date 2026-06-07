@@ -270,7 +270,6 @@ func TestAgentLoopPlanActionsNormalizeDedupeAndClone(t *testing.T) {
 	}
 
 	actions := agentLoopPlanActions(plan)
-	legacyActions := agentLoopPlanLegacyActions(plan)
 
 	require.True(t, agentLoopPlanHasActions(plan))
 	require.True(t, agentLoopPlanShouldAutoContinue(plan))
@@ -278,21 +277,11 @@ func TestAgentLoopPlanActionsNormalizeDedupeAndClone(t *testing.T) {
 	require.Equal(t, []string{"daemon.health", "workspace.read.file"}, []string{actions[0].Name, actions[1].Name})
 	require.Equal(t, "same-target", actions[0].Arguments["target"])
 	require.Equal(t, "README.md", actions[1].Arguments["path"])
-	require.Equal(t, []agentPlannerAction{{
-		Name:      "daemon.health",
-		Arguments: map[string]any{"name": "daemon.health", "target": "same-target"},
-	}, {
-		Name:      "workspace.read.file",
-		Arguments: map[string]any{"path": "README.md"},
-	}}, legacyActions)
-
 	plan.Actions[0].Arguments["target"] = "mutated-target"
 	plan.ToolCalls[1].Arguments["path"] = "mutated.md"
 
 	require.Equal(t, "same-target", actions[0].Arguments["target"])
 	require.Equal(t, "README.md", actions[1].Arguments["path"])
-	require.Equal(t, "same-target", legacyActions[0].Arguments["target"])
-	require.Equal(t, "README.md", legacyActions[1].Arguments["path"])
 }
 
 func TestAgentPlannerActionReplanCycleResultAgentLoopAdapterRoundTripClones(t *testing.T) {
