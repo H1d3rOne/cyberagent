@@ -434,8 +434,9 @@ ownership 边界：
 65. ✅ P0.5-N71 已抽出 runtime-native LLM tool loop request runner，`runAgentLLMToolLoop` 成为 legacy wrapper，LLMTurn runner adapter 不再把 runtime turn payload 转回散列 legacy 参数后再进入 loop。
 66. ✅ P0.5-N72 已将 `daemonLLMTurnPayload` 的 Loop/Services 进一步收敛为 `runtime.AgentLoopRequest`，复用 LLM tool loop request runner，减少 LLMTurn adapter 私有 payload wrapper。
 67. ✅ P0.5-N73 已将 LLM turn runner payload 进一步改为直接携带 `runtime.AgentLoopRequest`，移除 `daemonLLMTurnPayload` 单字段 compatibility wrapper。
-68. 下一步 P0.5-N74 清理已闲置的 `runtime.AgentLoopTurnPayload` DTO 与测试，LLM turn payload 契约统一到 `runtime.AgentLoopRequest` / `AgentLoopTurnResultPayload`。
-69. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+68. ✅ P0.5-N74 已清理已闲置的 `runtime.AgentLoopTurnPayload` DTO 与测试，LLM turn payload 契约统一到 `runtime.AgentLoopRequest` / `AgentLoopTurnResultPayload`。
+69. 下一步 P0.5-N75 将 `runRuntimeLLMToolLoop` 入口收敛为 `runtime.AgentLoopRequest`，让 SendMessage LLM branch 先构造 runtime loop request 后再进入 engine LLMTurn dispatch。
+70. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1381,6 +1382,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v105 | 完成 P0.5-N71 LLM tool loop runtime-native request runner：新增 `runAgentLLMToolLoopAgentLoop` 直接消费 `runtime.AgentLoopRequest` 并串联 planner chat 与 shared cycle，legacy wrapper 只负责 ingress 转换，LLMTurn runner adapter 直接构造 runtime loop request 调用新 runner；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v106 | 完成 P0.5-N72 LLM turn payload runtime request 收敛：`daemonLLMTurnPayload` 改为只包装 `runtime.AgentLoopRequest`，service binding、authorization、history/state、max loops 与 metadata 随 request 传递，LLMTurn runner adapter 直接复用 LLM tool loop request runner；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v107 | 完成 P0.5-N73 LLM turn payload 直接携带 runtime request：`runtime.LLMTurnRequest.Payload` 改为直接传递 `runtime.AgentLoopRequest`，移除 `daemonLLMTurnPayload` 单字段 wrapper，daemon LLM turn runner 直接 clone/dispatch runtime loop request；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v108 | 完成 P0.5-N74 清理闲置 AgentLoopTurnPayload DTO：删除无调用方的 `runtime.AgentLoopTurnPayload` / clone helper / clone 隔离测试，LLM turn 输入契约统一为 `runtime.AgentLoopRequest`，结果侧保留 `runtime.AgentLoopTurnResultPayload`；runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

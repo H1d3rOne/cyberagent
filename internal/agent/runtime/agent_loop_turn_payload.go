@@ -1,34 +1,5 @@
 package runtime
 
-// AgentLoopTurnPayload is the runtime-neutral payload for a full LLM/tool turn.
-// Daemon adapters bind services separately and convert legacy request/history /
-// memory types at ingress and egress boundaries.
-type AgentLoopTurnPayload struct {
-	Turn          TurnContext
-	Language      string
-	Operator      string
-	LLMRequest    AgentLoopLLMRequest
-	History       []AgentLoopMessage
-	MemorySummary *AgentLoopMemorySummary
-}
-
-// Clone returns a copy with runtime loop DTO mutable fields isolated. The
-// TurnContext opaque Payload field is intentionally copied as-is; runtime loop
-// DTOs should carry typed fields outside Turn.Payload.
-func (payload AgentLoopTurnPayload) Clone() AgentLoopTurnPayload {
-	cloned := payload
-	cloned.Turn = CloneAgentLoopTurnContext(payload.Turn)
-	cloned.LLMRequest = payload.LLMRequest.Clone()
-	cloned.History = CloneAgentLoopMessages(payload.History)
-	cloned.MemorySummary = CloneAgentLoopMemorySummary(payload.MemorySummary)
-	return cloned
-}
-
-// CloneAgentLoopTurnPayload clones a full LLM/tool turn payload.
-func CloneAgentLoopTurnPayload(payload AgentLoopTurnPayload) AgentLoopTurnPayload {
-	return payload.Clone()
-}
-
 // AgentLoopTurnResultPayload is the runtime-neutral result payload for a full
 // LLM/tool turn. Daemon adapters convert it back to legacy message/tool-call
 // slices at compatibility boundaries.
