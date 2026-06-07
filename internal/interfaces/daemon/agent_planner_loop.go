@@ -392,44 +392,17 @@ type agentPlannerActionReplanCycleOptions struct {
 	AppendActionToolCallsBeforeEmptyMessage bool
 }
 
-type agentPlannerActionReplanCycleMessage struct {
-	ID                    string
-	Role                  string
-	Content               string
-	Timestamp             time.Time
-	Phase                 string
-	ToolCalls             []runtime.AgentLoopToolCall
-	Links                 []agentPlannerActionReplanCycleLink
-	Reasoning             string
-	SuggestedPrompts      []string
-	RecommendationOptions []agentPlannerActionReplanCycleRecommendationOption
-}
-
-type agentPlannerActionReplanCycleLink struct {
-	To    string
-	Label string
-	Kind  string
-}
-
-type agentPlannerActionReplanCycleRecommendationOption struct {
-	ID      string
-	Title   string
-	Detail  string
-	Prompt  string
-	Command string
-}
-
 type agentPlannerActionReplanCycleMessages struct {
-	items []agentPlannerActionReplanCycleMessage
+	items []runtime.AgentLoopMessage
 }
 
 func agentPlannerActionReplanCycleMessagesFromAgentMessages(messages []agentMessage) agentPlannerActionReplanCycleMessages {
 	if messages == nil {
 		return agentPlannerActionReplanCycleMessages{}
 	}
-	items := make([]agentPlannerActionReplanCycleMessage, len(messages))
+	items := make([]runtime.AgentLoopMessage, len(messages))
 	for i, message := range messages {
-		items[i] = agentPlannerActionReplanCycleMessageFromAgentMessage(message)
+		items[i] = agentLoopMessageFromAgentMessage(message)
 	}
 	return agentPlannerActionReplanCycleMessages{items: items}
 }
@@ -440,7 +413,7 @@ func (messages agentPlannerActionReplanCycleMessages) legacyAgentMessages() []ag
 	}
 	out := make([]agentMessage, len(messages.items))
 	for i, message := range messages.items {
-		out[i] = message.agentMessage()
+		out[i] = agentMessageFromAgentLoopMessage(message)
 	}
 	return out
 }
@@ -456,7 +429,7 @@ func (messages agentPlannerActionReplanCycleMessages) withPhase(phase string) ag
 		return out
 	}
 	for i := range out.items {
-		out.items[i] = out.items[i].withPhase(normalized)
+		out.items[i] = agentLoopMessageWithPhase(out.items[i], normalized)
 	}
 	return out
 }
@@ -479,11 +452,7 @@ func (messages agentPlannerActionReplanCycleMessages) clone() agentPlannerAction
 	if messages.items == nil {
 		return agentPlannerActionReplanCycleMessages{}
 	}
-	items := make([]agentPlannerActionReplanCycleMessage, len(messages.items))
-	for i, message := range messages.items {
-		items[i] = message.clone()
-	}
-	return agentPlannerActionReplanCycleMessages{items: items}
+	return agentPlannerActionReplanCycleMessages{items: runtime.CloneAgentLoopMessages(messages.items)}
 }
 
 type agentPlannerActionReplanCycleToolCalls struct {
@@ -549,22 +518,22 @@ func (calls agentPlannerActionReplanCycleToolCalls) clone() agentPlannerActionRe
 	return agentPlannerActionReplanCycleToolCalls{items: runtime.CloneAgentLoopToolCalls(calls.items)}
 }
 
-func agentPlannerActionReplanCycleMessageFromAgentMessage(message agentMessage) agentPlannerActionReplanCycleMessage {
-	return agentPlannerActionReplanCycleMessage{
+func agentLoopMessageFromAgentMessage(message agentMessage) runtime.AgentLoopMessage {
+	return runtime.AgentLoopMessage{
 		ID:                    message.ID,
 		Role:                  message.Role,
 		Content:               message.Content,
 		Timestamp:             message.Timestamp,
 		Phase:                 message.Phase,
 		ToolCalls:             agentLoopToolCallItemsFromAgentToolCalls(message.ToolCalls),
-		Links:                 agentPlannerActionReplanCycleLinksFromAgentLinks(message.Links),
+		Links:                 agentLoopLinksFromAgentLinks(message.Links),
 		Reasoning:             message.Reasoning,
 		SuggestedPrompts:      append([]string(nil), message.SuggestedPrompts...),
-		RecommendationOptions: agentPlannerActionReplanCycleRecommendationOptionsFromAgentRecommendationOptions(message.RecommendationOptions),
+		RecommendationOptions: agentLoopRecommendationOptionsFromAgentRecommendationOptions(message.RecommendationOptions),
 	}
 }
 
-func (message agentPlannerActionReplanCycleMessage) agentMessage() agentMessage {
+func agentMessageFromAgentLoopMessage(message runtime.AgentLoopMessage) agentMessage {
 	return agentMessage{
 		ID:                    message.ID,
 		Role:                  message.Role,
@@ -572,23 +541,19 @@ func (message agentPlannerActionReplanCycleMessage) agentMessage() agentMessage 
 		Timestamp:             message.Timestamp,
 		Phase:                 message.Phase,
 		ToolCalls:             agentLoopToolCallItemsToAgentToolCalls(message.ToolCalls),
-		Links:                 agentPlannerActionReplanCycleLinksToAgentLinks(message.Links),
+		Links:                 agentLinksFromAgentLoopLinks(message.Links),
 		Reasoning:             message.Reasoning,
 		SuggestedPrompts:      append([]string(nil), message.SuggestedPrompts...),
-		RecommendationOptions: agentPlannerActionReplanCycleRecommendationOptionsToAgentRecommendationOptions(message.RecommendationOptions),
+		RecommendationOptions: agentRecommendationOptionsFromAgentLoopRecommendationOptions(message.RecommendationOptions),
 	}
 }
 
-func (message agentPlannerActionReplanCycleMessage) clone() agentPlannerActionReplanCycleMessage {
-	return agentPlannerActionReplanCycleMessageFromAgentMessage(message.agentMessage())
-}
-
-func (message agentPlannerActionReplanCycleMessage) withPhase(phase string) agentPlannerActionReplanCycleMessage {
+func agentLoopMessageWithPhase(message runtime.AgentLoopMessage, phase string) runtime.AgentLoopMessage {
 	normalized := agentNormalizePhase(phase)
 	if normalized == "" {
-		return message.clone()
+		return message.Clone()
 	}
-	out := message.clone()
+	out := message.Clone()
 	out.Phase = normalized
 	for i := range out.ToolCalls {
 		out.ToolCalls[i] = agentLoopToolCallWithPhase(out.ToolCalls[i], normalized)
@@ -683,13 +648,13 @@ func agentLoopToolCallItemsToAgentToolCalls(calls []runtime.AgentLoopToolCall) [
 	return out
 }
 
-func agentPlannerActionReplanCycleLinksFromAgentLinks(links []agentLink) []agentPlannerActionReplanCycleLink {
+func agentLoopLinksFromAgentLinks(links []agentLink) []runtime.AgentLoopLink {
 	if links == nil {
 		return nil
 	}
-	out := make([]agentPlannerActionReplanCycleLink, len(links))
+	out := make([]runtime.AgentLoopLink, len(links))
 	for i, link := range links {
-		out[i] = agentPlannerActionReplanCycleLink{
+		out[i] = runtime.AgentLoopLink{
 			To:    link.To,
 			Label: link.Label,
 			Kind:  link.Kind,
@@ -698,7 +663,7 @@ func agentPlannerActionReplanCycleLinksFromAgentLinks(links []agentLink) []agent
 	return out
 }
 
-func agentPlannerActionReplanCycleLinksToAgentLinks(links []agentPlannerActionReplanCycleLink) []agentLink {
+func agentLinksFromAgentLoopLinks(links []runtime.AgentLoopLink) []agentLink {
 	if links == nil {
 		return nil
 	}
@@ -713,13 +678,13 @@ func agentPlannerActionReplanCycleLinksToAgentLinks(links []agentPlannerActionRe
 	return out
 }
 
-func agentPlannerActionReplanCycleRecommendationOptionsFromAgentRecommendationOptions(options []agentRecommendationOpt) []agentPlannerActionReplanCycleRecommendationOption {
+func agentLoopRecommendationOptionsFromAgentRecommendationOptions(options []agentRecommendationOpt) []runtime.AgentLoopRecommendationOption {
 	if options == nil {
 		return nil
 	}
-	out := make([]agentPlannerActionReplanCycleRecommendationOption, len(options))
+	out := make([]runtime.AgentLoopRecommendationOption, len(options))
 	for i, option := range options {
-		out[i] = agentPlannerActionReplanCycleRecommendationOption{
+		out[i] = runtime.AgentLoopRecommendationOption{
 			ID:      option.ID,
 			Title:   option.Title,
 			Detail:  option.Detail,
@@ -730,7 +695,7 @@ func agentPlannerActionReplanCycleRecommendationOptionsFromAgentRecommendationOp
 	return out
 }
 
-func agentPlannerActionReplanCycleRecommendationOptionsToAgentRecommendationOptions(options []agentPlannerActionReplanCycleRecommendationOption) []agentRecommendationOpt {
+func agentRecommendationOptionsFromAgentLoopRecommendationOptions(options []runtime.AgentLoopRecommendationOption) []agentRecommendationOpt {
 	if options == nil {
 		return nil
 	}
