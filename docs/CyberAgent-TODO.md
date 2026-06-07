@@ -234,7 +234,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N86：将 `request_authorization` session mutation payload 的 SessionID/OperatorPrompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Language/Action/Policy/Reason 等授权字段，legacy 转换留在 mutator adapter 边界。
 - [x] P0.5-N87：将 `capability_blocked` session mutation payload 的 SessionID/OperatorPrompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Language/ActionName/IntentID/Reason/SuggestedPrompt，legacy 转换留在 mutator adapter 边界。
 - [x] P0.5-N88：将 `control_session` session mutation payload 的 SessionID/Prompt/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Action/Reason/RunID/JobID/ClearInput/Operator/Language，legacy 转换留在 mutator adapter 边界。
-- [ ] P0.5-N89：将 `resolve_authorization` session mutation payload 的 SessionID/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Decision/AuthorizationID/Reason/Operator/Language/OperationLevelProvided，legacy 转换留在 mutator adapter 边界。
+- [x] P0.5-N89：将 `resolve_authorization` session mutation payload 的 SessionID/OperationLevel 输入收敛到 runtime turn/context，并新增 runtime-neutral payload 承载 Decision/AuthorizationID/Reason/Operator/Language/OperationLevelProvided，legacy 转换留在 mutator adapter 边界。
+- [ ] P0.5-N90：清理 session mutator runtime payload helper 重复 switch，抽出 typed clone helper 或合并 adapter 辅助逻辑，并审计 session mutation 是否还存在 daemon-private payload wrapper。
 
 当前盘点（2026-06-08）：
 

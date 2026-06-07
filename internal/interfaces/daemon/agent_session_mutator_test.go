@@ -784,17 +784,16 @@ func TestAgentManagerRunRuntimeResolveAuthorizationDispatchesSessionMutator(t *t
 		require.Equal(t, "safe_scan", req.Metadata["operation_level"])
 		require.Equal(t, true, req.Metadata["operation_level_provided"])
 
-		payload, ok := req.Payload.(daemonResolveAuthorizationMutationPayload)
+		payload, ok := req.Payload.(runtime.AgentLoopResolveAuthorizationPayload)
 		require.True(t, ok, "payload type = %T", req.Payload)
 		require.Equal(t, "deny", payload.Decision)
 		require.Equal(t, "auth-session-mutation", payload.AuthorizationID)
 		require.Equal(t, "not within scope", payload.Reason)
 		require.Equal(t, "operator-1", payload.Operator)
 		require.Equal(t, "en", payload.Language)
-		require.Equal(t, "safe_scan", payload.OperationLevel)
 		require.True(t, payload.OperationLevelProvided)
 
-		resultPayload, err := mgr.resolveAuthorizationLegacy(ctx, payload.SessionID, payload.Decision, payload.AuthorizationID, payload.Reason, payload.Operator, payload.Language, payload.OperationLevel, payload.OperationLevelProvided)
+		resultPayload, err := mgr.resolveAuthorizationLegacy(ctx, req.Turn.SessionID, payload.Decision, payload.AuthorizationID, payload.Reason, payload.Operator, payload.Language, req.Turn.OperationLevel, payload.OperationLevelProvided)
 		require.NoError(t, err)
 		return runtime.SessionMutationResult{
 			Status:  runtime.TurnResultFinished,
