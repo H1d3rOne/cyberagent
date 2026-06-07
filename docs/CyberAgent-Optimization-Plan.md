@@ -414,8 +414,9 @@ ownership 边界：
 45. ✅ P0.5-N51 已将 action gate / authorization request 路径改为 runtime `AgentLoopAction` helper，`executeAgentPlannerActionList` 内部不再维护 legacy action list，仅在 execution / authorization mutation adapter 边界转换。
 46. ✅ P0.5-N52 已将 planner action execution turn payload 收敛为 runtime `AgentLoopAction`，executor payload 不再直接持有 legacy `agentPlannerAction`，legacy action 仅在 `executeAgentPlannerAction` adapter 边界构造。
 47. ✅ P0.5-N53 已将 authorization request mutation payload 的 `Action` 收敛为 runtime `AgentLoopAction`，request-authorization mutation payload 不再直接持有 legacy action，legacy action 仅在 `requestAgentAuthorizationLegacy` adapter 边界构造。
-48. 下一步 P0.5-N54 将 planner action execution turn payload 的 auth profile 输入继续收敛为 runtime `AgentLoopAuthorization`，减少 executor payload 对 legacy `[]agentHTTPAuthProfile` 的依赖。
-49. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+48. ✅ P0.5-N54 已将 planner action execution turn payload 的 auth profile 输入收敛为 runtime `AgentLoopAuthorization`，executor payload 不再直接持有 legacy `[]agentHTTPAuthProfile`。
+49. 下一步 P0.5-N55 将 `runRuntimePlannerActionExecution` / `executeAgentPlannerActionList` 的 auth profile 参数继续收敛为 runtime `AgentLoopAuthorization`，让 action execution helper 内部不再传递 legacy auth profile slice。
+50. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1341,6 +1342,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v85 | 完成 P0.5-N51 action gate / authorization request runtime action 收敛：新增 runtime-native gate helper，`executeAgentPlannerActionList` 内部以 `[]runtime.AgentLoopAction` 克隆/截断/遍历，authorization request 接收 runtime action，并仅在 mutation/execution adapter 边界转换 legacy action；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v86 | 完成 P0.5-N52 planner action execution payload runtime action 收敛：`runRuntimePlannerActionExecution` 与 `daemonPlannerActionExecutionTurnPayload` 改为传递 `runtime.AgentLoopAction`，daemon turn executor 仅在调用 legacy `executeAgentPlannerAction` 前转换为 `agentPlannerAction`；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v87 | 完成 P0.5-N53 authorization request payload runtime action 收敛：`daemonRequestAuthorizationMutationPayload.Action` 改为 `runtime.AgentLoopAction`，session mutator 仅在调用 legacy `requestAgentAuthorizationLegacy` 前转换为 `agentPlannerAction`；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v88 | 完成 P0.5-N54 planner action execution payload runtime authorization 收敛：`daemonPlannerActionExecutionTurnPayload` 改为持有 `runtime.AgentLoopAuthorization`，daemon turn executor 仅在 legacy tool execution adapter 前转换 auth profiles；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

@@ -48,14 +48,13 @@ type daemonReplanActionContinuationTurnResultPayload struct {
 }
 
 type daemonPlannerActionExecutionTurnPayload struct {
-	SessionID            string
-	Language             string
-	Operator             string
-	OperationLevel       string
-	Services             runtime.AgentLoopToolServiceBinding
-	Action               runtime.AgentLoopAction
-	AuthProfiles         []agentHTTPAuthProfile
-	DefaultAuthProfileID string
+	SessionID      string
+	Language       string
+	Operator       string
+	OperationLevel string
+	Services       runtime.AgentLoopToolServiceBinding
+	Action         runtime.AgentLoopAction
+	Authorization  runtime.AgentLoopAuthorization
 }
 
 type daemonPlannerActionExecutionTurnResultPayload struct {
@@ -197,6 +196,7 @@ func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn(ctx context.C
 		ctx = context.Background()
 	}
 	action := agentPlannerActionFromAgentLoopAction(payload.Action)
+	authorization := payload.Authorization.Clone()
 	messages, toolCalls, err := e.manager.executeAgentPlannerAction(
 		ctx,
 		payload.SessionID,
@@ -205,8 +205,8 @@ func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn(ctx context.C
 		payload.OperationLevel,
 		legacyRouterServicesFromAgentLoopToolServiceBinding(payload.Services),
 		action,
-		payload.AuthProfiles,
-		payload.DefaultAuthProfileID,
+		agentPlannerActionReplanCycleAuthProfilesToHTTPProfiles(authorization.AuthProfiles),
+		authorization.DefaultAuthProfileID,
 	)
 	status := runtime.TurnResultFinished
 	reason := "legacy daemon planner action executed"
@@ -398,14 +398,16 @@ func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, ses
 		OperationLevel: operationLevel,
 		TurnIndex:      1,
 		Payload: daemonPlannerActionExecutionTurnPayload{
-			SessionID:            sessionID,
-			Language:             language,
-			Operator:             operator,
-			OperationLevel:       operationLevel,
-			Services:             agentLoopToolServiceBindingFromRouterServices(svc),
-			Action:               action,
-			AuthProfiles:         authProfiles,
-			DefaultAuthProfileID: defaultAuthProfileID,
+			SessionID:      sessionID,
+			Language:       language,
+			Operator:       operator,
+			OperationLevel: operationLevel,
+			Services:       agentLoopToolServiceBindingFromRouterServices(svc),
+			Action:         action,
+			Authorization: runtime.AgentLoopAuthorization{
+				AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles),
+				DefaultAuthProfileID: defaultAuthProfileID,
+			},
 		},
 		Metadata: map[string]any{
 			"executor":        "turn_execution",

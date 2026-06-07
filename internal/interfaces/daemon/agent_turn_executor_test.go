@@ -1500,8 +1500,8 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 		require.Equal(t, "tester", payload.Operator)
 		require.Equal(t, "safe_scan", payload.OperationLevel)
 		require.Equal(t, runtimeAction, payload.Action)
-		require.Equal(t, authProfiles, payload.AuthProfiles)
-		require.Equal(t, "auth-default", payload.DefaultAuthProfileID)
+		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), payload.Authorization.AuthProfiles)
+		require.Equal(t, "auth-default", payload.Authorization.DefaultAuthProfileID)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -1613,18 +1613,18 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 		require.Equal(t, "tester", payload.Operator)
 		require.Equal(t, "read_only", payload.OperationLevel)
 		require.Equal(t, "cycle-action-exec", stringFromAny(payload.Action.Arguments["probe"]))
-		require.Len(t, payload.AuthProfiles, 1)
-		require.Equal(t, "auth-cycle-action-exec", payload.DefaultAuthProfileID)
-		require.Equal(t, "token-cycle-action-exec", payload.AuthProfiles[0].Token)
-		require.NotNil(t, payload.AuthProfiles[0].Enabled)
-		require.True(t, *payload.AuthProfiles[0].Enabled)
+		require.Len(t, payload.Authorization.AuthProfiles, 1)
+		require.Equal(t, "auth-cycle-action-exec", payload.Authorization.DefaultAuthProfileID)
+		require.Equal(t, "token-cycle-action-exec", payload.Authorization.AuthProfiles[0].Token)
+		require.NotNil(t, payload.Authorization.AuthProfiles[0].Enabled)
+		require.True(t, *payload.Authorization.AuthProfiles[0].Enabled)
 		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Services)
 		require.True(t, ok)
 		require.Same(t, jobs, payloadServices.jobs)
 
 		payload.Action.Arguments["probe"] = "mutated-payload-action"
-		payload.AuthProfiles[0].Token = "mutated-payload-token"
-		*payload.AuthProfiles[0].Enabled = false
+		payload.Authorization.AuthProfiles[0].Token = "mutated-payload-token"
+		*payload.Authorization.AuthProfiles[0].Enabled = false
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -2544,8 +2544,8 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		require.Equal(t, "en", payload.Language)
 		require.Equal(t, "read_only", payload.OperationLevel)
 		require.Equal(t, "planner-cycle", stringFromAny(payload.Action.Arguments["probe"]))
-		require.Equal(t, authProfiles, payload.AuthProfiles)
-		require.Equal(t, "auth-planner-cycle", payload.DefaultAuthProfileID)
+		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), payload.Authorization.AuthProfiles)
+		require.Equal(t, "auth-planner-cycle", payload.Authorization.DefaultAuthProfileID)
 		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Services)
 		require.True(t, ok)
 		require.Same(t, jobs, payloadServices.jobs)
