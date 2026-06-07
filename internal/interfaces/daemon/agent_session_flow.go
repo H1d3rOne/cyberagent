@@ -94,7 +94,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 	}
 
 	externalTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, pending.ID)
-	action := agentPlannerAction{Name: pending.ActionName, Arguments: cloneMapStringAny(pending.Arguments)}
+	action := runtime.AgentLoopAction{Name: pending.ActionName, Arguments: runtime.CloneAgentLoopActionArguments(pending.Arguments)}
 	actionMessages, actionToolCalls, execErr := m.runRuntimePlannerActionExecution(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, svc, action, req.AuthProfiles, req.DefaultAuthProfileID)
 	if execErr != nil {
 		tool := failedAgentToolCall(pending.ActionName, execErr)

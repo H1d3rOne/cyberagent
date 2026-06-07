@@ -1477,6 +1477,7 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 		Name:      "daemon.health",
 		Arguments: map[string]any{"probe": "approved-action"},
 	}
+	runtimeAction := agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action)
 	called := false
 	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		called = true
@@ -1498,7 +1499,7 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 		require.Equal(t, "en", payload.Language)
 		require.Equal(t, "tester", payload.Operator)
 		require.Equal(t, "safe_scan", payload.OperationLevel)
-		require.Equal(t, action, payload.Action)
+		require.Equal(t, runtimeAction, payload.Action)
 		require.Equal(t, authProfiles, payload.AuthProfiles)
 		require.Equal(t, "auth-default", payload.DefaultAuthProfileID)
 
@@ -1521,7 +1522,7 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 		"tester",
 		"safe_scan",
 		routerServices{},
-		action,
+		runtimeAction,
 		authProfiles,
 		"auth-default",
 	)
@@ -1704,7 +1705,7 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 		require.Equal(t, "en", payload.Language)
 		require.Equal(t, "tester", payload.Operator)
 		require.Equal(t, "read_only", payload.OperationLevel)
-		require.Equal(t, action, payload.Action)
+		require.Equal(t, agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action), payload.Action)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,

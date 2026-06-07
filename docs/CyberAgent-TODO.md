@@ -197,7 +197,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N49：将 shared cycle 主流程中的 plan/action 查询继续替换为 runtime-native helper，减少 `agentPlannerActionReplanCyclePlan` handle 参与主流程，仅在 legacy action/synthesis adapter 边界转换。
 - [x] P0.5-N50：将 action execution helper 的 action list 输入继续收敛为 runtime `AgentLoopAction`，只在 `executeAgentPlannerActionList` legacy executor adapter 边界转换。
 - [x] P0.5-N51：将 action gate / authorization request 路径继续改为 runtime `AgentLoopAction` helper，减少 `executeAgentPlannerActionList` 内部 legacy `agentPlannerAction` 传递，仅在 `runRuntimePlannerActionExecution` / authorization mutation adapter 边界转换。
-- [ ] P0.5-N52：将 planner action execution turn payload 继续收敛为 runtime `AgentLoopAction`，让 `daemonPlannerActionExecutionTurnPayload` 不再直接持有 legacy `agentPlannerAction`，只在 legacy `executeAgentPlannerAction` adapter 边界转换。
+- [x] P0.5-N52：将 planner action execution turn payload 继续收敛为 runtime `AgentLoopAction`，让 `daemonPlannerActionExecutionTurnPayload` 不再直接持有 legacy `agentPlannerAction`，只在 legacy `executeAgentPlannerAction` adapter 边界转换。
+- [ ] P0.5-N53：将 authorization request mutation payload 的 `Action` 继续收敛为 runtime `AgentLoopAction`，让 `daemonRequestAuthorizationMutationPayload` 不再直接持有 legacy `agentPlannerAction`，只在 legacy `requestAgentAuthorizationLegacy` adapter 边界转换。
 
 当前盘点（2026-06-07）：
 

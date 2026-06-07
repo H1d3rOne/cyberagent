@@ -1895,7 +1895,7 @@ func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessio
 			messages = append(messages, authMessage)
 			return messages, toolCalls, true
 		} else {
-			actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, agentPlannerActionFromAgentLoopAction(action), authProfiles, defaultAuthProfileID)
+			actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, action, authProfiles, defaultAuthProfileID)
 		}
 		if err != nil {
 			if actionName == "" {
