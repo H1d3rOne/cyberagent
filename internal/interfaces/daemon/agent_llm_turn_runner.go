@@ -53,8 +53,8 @@ func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LL
 		Reason: reason,
 		Error:  err,
 		Payload: runtime.AgentLoopTurnResultPayload{
-			Messages:  agentLoopMessagesFromAgentMessages(messages),
-			ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(toolCalls),
+			Messages:  runtime.CloneAgentLoopMessages(messages),
+			ToolCalls: runtime.CloneAgentLoopToolCalls(toolCalls),
 		},
 		Data: map[string]any{
 			"runner":     "daemon_legacy_llm_tool_loop",
@@ -85,7 +85,7 @@ func daemonLLMTurnErrorResult(req runtime.LLMTurnRequest, err error) runtime.LLM
 	}
 }
 
-func (m *agentManager) runRuntimeLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) runRuntimeLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.LLMTurnRunner() == nil {
 		return m.runAgentLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
@@ -130,7 +130,7 @@ func (m *agentManager) runRuntimeLLMToolLoop(ctx context.Context, sessionID stri
 
 	payload, ok := agentLoopTurnResultPayloadFromLLMTurnResult(result.Payload)
 	if ok {
-		return agentMessagesFromAgentLoopMessages(payload.Messages), agentLoopToolCallItemsToAgentToolCalls(payload.ToolCalls), err
+		return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), err
 	}
 	if err != nil {
 		return nil, nil, err

@@ -579,8 +579,8 @@ func TestAgentManagerRunAgentLLMToolLoopCarriesRuntimeLoopDTOBetweenCycles(t *te
 	require.Len(t, loopRequests, 2)
 	require.Len(t, appendMutations, 1)
 	require.Equal(t, string(runtime.LLMStagePlannerChat), appendMutations[0].Turn.Origin)
-	require.Equal(t, []string{planMessage.ID, "msg-runtime-loop-dto-cycle-1", "msg-runtime-loop-dto-cycle-2"}, agentMessageIDs(messages))
-	require.Equal(t, []string{"tool-runtime-loop-dto-cycle-1", "tool-runtime-loop-dto-cycle-2"}, agentToolCallIDs(toolCalls))
+	require.Equal(t, []string{planMessage.ID, "msg-runtime-loop-dto-cycle-1", "msg-runtime-loop-dto-cycle-2"}, agentMessageIDs(agentMessagesFromAgentLoopMessages(messages)))
+	require.Equal(t, []string{"tool-runtime-loop-dto-cycle-1", "tool-runtime-loop-dto-cycle-2"}, agentToolCallIDs(agentLoopToolCallItemsToAgentToolCalls(toolCalls)))
 }
 
 func TestDaemonAgentLoopRunnerExecutesSharedCycleFromRuntimeRequest(t *testing.T) {

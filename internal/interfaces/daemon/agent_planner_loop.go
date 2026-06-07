@@ -282,13 +282,12 @@ func (m *agentManager) chatAgentLLM(ctx context.Context, sessionID string, turnR
 	}, streamed, nil
 }
 
-func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
 	planMessages, planToolCalls, plan, err := m.runRuntimeAgentLLMPlannerChat(ctx, sessionID, turnRef, prompt, language, operationLevel, req, history, memorySummary)
 	planLegacyMessages := agentMessagesFromAgentLoopMessages(planMessages)
-	planLegacyToolCalls := agentLoopToolCallItemsToAgentToolCalls(planToolCalls)
 	planLegacy := agentPlannerResponsePtrFromAgentLoopPlan(plan)
 	if err != nil {
-		return planLegacyMessages, planLegacyToolCalls, err
+		return planMessages, planToolCalls, err
 	}
 
 	m.appendMessagesWithPlannerForTurn(ctx, sessionID, turnRef, prompt, string(runtime.LLMStagePlannerChat), operationLevel, planLegacy, planLegacyMessages...)
@@ -350,7 +349,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 		cyclePlan = runtime.CloneAgentLoopPlan(cycle.FinalPlan)
 	}
 
-	return agentMessagesFromAgentLoopMessages(cycleState.ResponseMessages), agentLoopToolCallItemsToAgentToolCalls(cycleState.ToolCalls), nil
+	return runtime.CloneAgentLoopMessages(cycleState.ResponseMessages), runtime.CloneAgentLoopToolCalls(cycleState.ToolCalls), nil
 }
 
 func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]agentMessage, []agentToolCall) {

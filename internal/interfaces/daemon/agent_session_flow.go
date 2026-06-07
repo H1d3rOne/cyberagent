@@ -307,14 +307,16 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 				memorySummary = cloneAgentMemorySummary(sessionState.MemorySummary)
 			}
 			messages, toolCalls, err := m.runRuntimeLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+			legacyMessages := agentMessagesFromAgentLoopMessages(messages)
+			legacyToolCalls := agentLoopToolCallItemsToAgentToolCalls(toolCalls)
 			if err == nil {
-				responseMessages := append([]agentMessage{userMessage, controlResp.Message}, messages...)
+				responseMessages := append([]agentMessage{userMessage, controlResp.Message}, legacyMessages...)
 				sessionState, _ = m.GetSession(ctx, sessionID)
-				return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
+				return buildAgentSendResponse(sessionID, responseMessages, legacyToolCalls, sessionState), nil
 			}
 			warningTool := failedAgentToolCall("LLM chat", err)
-			if len(toolCalls) > 0 {
-				warningTool = toolCalls[0]
+			if len(legacyToolCalls) > 0 {
+				warningTool = legacyToolCalls[0]
 			}
 			warningMessage := m.message(
 				language,
@@ -392,15 +394,17 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 	}
 
 	if agentLLMConfigured(req) {
-		messages, toolCalls, err := m.runRuntimeLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+		llmMessages, llmToolCalls, err := m.runRuntimeLLMToolLoop(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+		llmLegacyMessages := agentMessagesFromAgentLoopMessages(llmMessages)
+		llmLegacyToolCalls := agentLoopToolCallItemsToAgentToolCalls(llmToolCalls)
 		if err == nil {
-			responseMessages := append([]agentMessage{userMessage}, messages...)
+			responseMessages := append([]agentMessage{userMessage}, llmLegacyMessages...)
 			sessionState, _ := m.GetSession(ctx, sessionID)
-			return buildAgentSendResponse(sessionID, responseMessages, toolCalls, sessionState), nil
+			return buildAgentSendResponse(sessionID, responseMessages, llmLegacyToolCalls, sessionState), nil
 		}
 		warningTool := failedAgentToolCall("LLM chat", err)
-		if len(toolCalls) > 0 {
-			warningTool = toolCalls[0]
+		if len(llmLegacyToolCalls) > 0 {
+			warningTool = llmLegacyToolCalls[0]
 		}
 		warningMessage := m.message(
 			language,
