@@ -422,8 +422,9 @@ ownership 边界：
 53. ✅ P0.5-N59 已将 `DecideAgentAuthorization` 批准后 action execution result 的 phase/metadata merge 收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换推迟到 append/response 边界。
 54. ✅ P0.5-N60 已将 `DecideAgentAuthorization` approved-flow 的 response message/tool-call accumulator 收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换集中到 synthesis/follow-up adapter 与 final response 边界。
 55. ✅ P0.5-N61 已将 `runRuntimeAgentLLMToolSynthesis` 的 tool message 输入收敛为 runtime `AgentLoopMessage`，legacy `[]agentMessage` 只在兼容 wrapper 与 LLM stage adapter 边界转换。
-56. 下一步 P0.5-N62 将 `runRuntimeAgentLLMToolSynthesis` 的返回继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall` / `AgentLoopPlan`，legacy 转换推迟到 synthesis/follow-up adapter 边界。
-57. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+56. ✅ P0.5-N62 已将 `runRuntimeAgentLLMToolSynthesis` 的返回收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall` / `AgentLoopPlan`，legacy 转换推迟到 synthesis/follow-up adapter 边界。
+57. 下一步 P0.5-N63 将 `runRuntimeAgentLLMPlannerChat` 的返回继续收敛为 runtime `AgentLoopMessage` / `AgentLoopToolCall` / `AgentLoopPlan`，legacy 转换推迟到 LLM loop adapter 边界。
+58. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1357,6 +1358,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v93 | 完成 P0.5-N59 approved authorization action result runtime phase/metadata merge：`DecideAgentAuthorization` 批准后先以 `runtime.AgentLoopMessage` / `AgentLoopToolCall` 处理 phase 与 authorization metadata，legacy 转换推迟到 append/synthesis response 兼容边界；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v94 | 完成 P0.5-N60 approved-flow response accumulator runtime DTO 收敛：`DecideAgentAuthorization` approved-flow 内部 response message/tool-call accumulator 改为 `runtime.AgentLoopMessage` / `AgentLoopToolCall`，legacy 转换保留在 append、synthesis 与 follow-up adapter 边界；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v95 | 完成 P0.5-N61 tool synthesis 输入 runtime DTO 收敛：`runRuntimeAgentLLMToolSynthesis` 改为接收 runtime `AgentLoopMessage` tool messages，runtime-native caller 可直接透传，legacy `[]agentMessage` 仅在兼容调用点与 `synthesizeAgentToolResults` fallback adapter 边界转换；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v96 | 完成 P0.5-N62 tool synthesis 返回 runtime DTO 收敛：`runRuntimeAgentLLMToolSynthesis` 改为返回 runtime `AgentLoopMessage` / `AgentLoopToolCall` / `AgentLoopPlan`，fallback legacy synthesis 输出立即转成 runtime DTO，session append、response merge 与 follow-up continuation 边界再按需转回 legacy；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

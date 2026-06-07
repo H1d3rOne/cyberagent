@@ -1730,9 +1730,9 @@ func (m *agentManager) runAgentPlannerActionReplanCycleSynthesisAgentLoop(ctx co
 		return runtime.AgentLoopResult{}, synthesisErr
 	}
 	return runtime.AgentLoopResult{
-		Messages:  agentLoopMessagesFromAgentMessages(synthesisMessages),
-		ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(synthesisToolCalls),
-		FinalPlan: agentPlannerActionReplanCyclePlanFromPlannerResponse(synthesisPlan).agentLoopPlan(),
+		Messages:  runtime.CloneAgentLoopMessages(synthesisMessages),
+		ToolCalls: runtime.CloneAgentLoopToolCalls(synthesisToolCalls),
+		FinalPlan: runtime.CloneAgentLoopPlan(synthesisPlan),
 	}, nil
 }
 

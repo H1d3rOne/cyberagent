@@ -154,11 +154,12 @@ func (m *agentManager) runRuntimeAgentLLMPlannerChat(ctx context.Context, sessio
 	return nil, nil, nil, errors.New("daemon: llm planner chat runner returned invalid payload")
 }
 
-func (m *agentManager) runRuntimeAgentLLMToolSynthesis(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, toolMessages []runtime.AgentLoopMessage) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
+func (m *agentManager) runRuntimeAgentLLMToolSynthesis(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, toolMessages []runtime.AgentLoopMessage) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, *runtime.AgentLoopPlan, error) {
 	toolMessages = runtime.CloneAgentLoopMessages(toolMessages)
 	eng := m.runtimeEngine()
 	if eng == nil || eng.LLMStageRunner() == nil {
-		return m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, agentMessagesFromAgentLoopMessages(toolMessages))
+		messages, toolCalls, plan, err := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, agentMessagesFromAgentLoopMessages(toolMessages))
+		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), agentLoopPlanPtrFromAgentPlannerResponse(plan), err
 	}
 
 	turn := runtime.TurnContext{
@@ -191,12 +192,13 @@ func (m *agentManager) runRuntimeAgentLLMToolSynthesis(ctx context.Context, sess
 		},
 	})
 	if errors.Is(err, runtime.ErrLLMStageRunnerNotAttached) {
-		return m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, agentMessagesFromAgentLoopMessages(toolMessages))
+		messages, toolCalls, plan, fallbackErr := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, agentMessagesFromAgentLoopMessages(toolMessages))
+		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), agentLoopPlanPtrFromAgentPlannerResponse(plan), fallbackErr
 	}
 
 	payload, ok := agentLoopLLMStageResultPayloadFromLLMStageResult(result.Payload)
 	if ok {
-		return agentMessagesFromAgentLoopMessages(payload.Messages), agentLoopToolCallItemsToAgentToolCalls(payload.ToolCalls), agentPlannerResponsePtrFromAgentLoopPlan(payload.Plan), err
+		return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), runtime.CloneAgentLoopPlan(payload.Plan), err
 	}
 	if err != nil {
 		return nil, nil, nil, err
