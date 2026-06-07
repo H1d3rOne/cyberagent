@@ -409,7 +409,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 				language,
 				prompt,
 				operationLevel,
-				action,
+				agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action),
 				actionName,
 				requiredLevel,
 				"manual_tool_authorization_required",

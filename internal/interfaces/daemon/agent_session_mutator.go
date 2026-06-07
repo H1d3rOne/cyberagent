@@ -423,7 +423,7 @@ func (m *agentManager) runRuntimeRecordUserMessageMutation(ctx context.Context, 
 	return payload, true, nil
 }
 
-func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operationLevel string, action agentPlannerAction, actionName, requiredLevel, policy, reason string) (daemonRequestAuthorizationMutationResultPayload, bool) {
+func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operationLevel string, action runtime.AgentLoopAction, actionName, requiredLevel, policy, reason string) (daemonRequestAuthorizationMutationResultPayload, bool) {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.SessionMutator() == nil {
 		return daemonRequestAuthorizationMutationResultPayload{}, false
@@ -431,10 +431,8 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	action = agentPlannerAction{
-		Name:      action.Name,
-		Arguments: cloneMapStringAny(action.Arguments),
-	}
+	action = cloneAgentLoopAction(action)
+	legacyAction := agentPlannerActionFromAgentLoopAction(action)
 	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
 		Turn: runtime.TurnContext{
 			SessionID:      sessionID,
@@ -455,7 +453,7 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 			Language:       language,
 			OperatorPrompt: operatorPrompt,
 			OperationLevel: operationLevel,
-			Action:         action,
+			Action:         legacyAction,
 			ActionName:     actionName,
 			RequiredLevel:  requiredLevel,
 			Policy:         policy,

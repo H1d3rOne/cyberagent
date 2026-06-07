@@ -4,6 +4,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	agentruntime "github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 )
 
 func TestScheduleIntentBlocksImmediateScanSubstitution(t *testing.T) {
@@ -27,7 +29,7 @@ func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
 		prompt        string
 		language      string
 		operation     string
-		action        agentPlannerAction
+		action        agentruntime.AgentLoopAction
 		wantKind      agentPlannerActionGateKind
 		wantPolicy    string
 		wantRequired  string
@@ -40,7 +42,7 @@ func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
 			prompt:       "每小时扫描 https://example.com",
 			language:     "zh",
 			operation:    "bypass",
-			action:       agentPlannerAction{Name: "scan.web.safe", Arguments: map[string]any{"target": "https://example.com"}},
+			action:       agentruntime.AgentLoopAction{Name: "scan.web.safe", Arguments: map[string]any{"target": "https://example.com"}},
 			wantKind:     agentPlannerActionGateCapabilityBlocked,
 			wantRequired: "safe_scan",
 			wantIntentID: agentIntentScheduleCreate,
@@ -51,7 +53,7 @@ func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
 			prompt:        "summarize the project",
 			language:      "en",
 			operation:     "workspace_write",
-			action:        agentPlannerAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
+			action:        agentruntime.AgentLoopAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
 			wantKind:      agentPlannerActionGateExplicitIntentRequired,
 			wantPolicy:    "explicit_operator_intent_required",
 			wantRequired:  "workspace_write",
@@ -63,7 +65,7 @@ func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
 			prompt:        "scan https://example.com",
 			language:      "en",
 			operation:     "read_only",
-			action:        agentPlannerAction{Name: "scan.web.safe", Arguments: map[string]any{"target": "https://example.com"}},
+			action:        agentruntime.AgentLoopAction{Name: "scan.web.safe", Arguments: map[string]any{"target": "https://example.com"}},
 			wantKind:      agentPlannerActionGateOperationLevelRequired,
 			wantPolicy:    "operation_level_required",
 			wantRequired:  "safe_scan",
@@ -75,7 +77,7 @@ func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
 			prompt:        "write file notes.md content: hello",
 			language:      "en",
 			operation:     "workspace_write",
-			action:        agentPlannerAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
+			action:        agentruntime.AgentLoopAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
 			wantKind:      agentPlannerActionGateManualAuthorizationRequired,
 			wantPolicy:    "manual_tool_authorization_required",
 			wantRequired:  "workspace_write",
@@ -87,7 +89,7 @@ func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
 			prompt:       "daemon health",
 			language:     "en",
 			operation:    "read_only",
-			action:       agentPlannerAction{Name: "daemon.health", Arguments: map[string]any{}},
+			action:       agentruntime.AgentLoopAction{Name: "daemon.health", Arguments: map[string]any{}},
 			wantKind:     agentPlannerActionGateAllow,
 			wantRequired: "read_only",
 			wantAction:   "daemon.health",
@@ -97,7 +99,7 @@ func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
 			prompt:       "summarize the project",
 			language:     "en",
 			operation:    "bypass",
-			action:       agentPlannerAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
+			action:       agentruntime.AgentLoopAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
 			wantKind:     agentPlannerActionGateAllow,
 			wantRequired: "workspace_write",
 			wantAction:   "workspace.files.write",
@@ -106,7 +108,11 @@ func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decideAgentPlannerActionGate(tc.prompt, tc.language, tc.operation, tc.action)
+			got := decideAgentPlannerActionGateFromAgentLoopAction(tc.prompt, tc.language, tc.operation, tc.action)
+			legacyGot := decideAgentPlannerActionGate(tc.prompt, tc.language, tc.operation, agentPlannerActionFromAgentLoopAction(tc.action))
+			if legacyGot != got {
+				t.Fatalf("legacy gate decision = %#v, want runtime decision %#v", legacyGot, got)
+			}
 			if got.Kind != tc.wantKind {
 				t.Fatalf("Kind = %q, want %q (decision=%#v)", got.Kind, tc.wantKind, got)
 			}

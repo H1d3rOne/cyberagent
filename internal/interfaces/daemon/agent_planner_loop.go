@@ -1234,6 +1234,13 @@ func agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action agentP
 	}
 }
 
+func cloneAgentLoopAction(action runtime.AgentLoopAction) runtime.AgentLoopAction {
+	return runtime.AgentLoopAction{
+		Name:      action.Name,
+		Arguments: runtime.CloneAgentLoopActionArguments(action.Arguments),
+	}
+}
+
 func agentPlannerActionFromAgentLoopAction(action runtime.AgentLoopAction) agentPlannerAction {
 	return agentPlannerAction{
 		Name:      action.Name,
@@ -1722,6 +1729,10 @@ type agentPlannerActionGateDecision struct {
 }
 
 func decideAgentPlannerActionGate(operatorPrompt, language, operationLevel string, action agentPlannerAction) agentPlannerActionGateDecision {
+	return decideAgentPlannerActionGateFromAgentLoopAction(operatorPrompt, language, operationLevel, agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action))
+}
+
+func decideAgentPlannerActionGateFromAgentLoopAction(operatorPrompt, language, operationLevel string, action runtime.AgentLoopAction) agentPlannerActionGateDecision {
 	actionName := normalizeAgentPlannerActionName(action.Name)
 	if actionName == "" {
 		actionName = strings.TrimSpace(action.Name)
@@ -1795,22 +1806,21 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 }
 
 func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, actions []runtime.AgentLoopAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
-	legacyActions := agentPlannerActionReplanCyclePlanActionsToAgentPlannerActions(actions)
-	legacyActions = cloneAgentPlannerActions(legacyActions)
-	if len(legacyActions) == 0 {
+	actions = runtime.CloneAgentLoopActions(actions)
+	if len(actions) == 0 {
 		return nil, nil, false
 	}
-	if len(legacyActions) > 6 {
-		legacyActions = legacyActions[:6]
+	if len(actions) > 6 {
+		actions = actions[:6]
 	}
 
 	var messages []agentMessage
 	var toolCalls []agentToolCall
 	queueID := newAgentPlannerActionQueueID(time.Now().UTC())
-	actionCount := len(legacyActions)
-	for idx, action := range legacyActions {
+	actionCount := len(actions)
+	for idx, action := range actions {
 		actionIndex := idx + 1
-		gateDecision := decideAgentPlannerActionGate(operatorPrompt, language, operationLevel, action)
+		gateDecision := decideAgentPlannerActionGateFromAgentLoopAction(operatorPrompt, language, operationLevel, action)
 		actionName := gateDecision.ActionName
 		var actionMessages []agentMessage
 		var actionToolCalls []agentToolCall
@@ -1885,7 +1895,7 @@ func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessio
 			messages = append(messages, authMessage)
 			return messages, toolCalls, true
 		} else {
-			actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, action, authProfiles, defaultAuthProfileID)
+			actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, svc, agentPlannerActionFromAgentLoopAction(action), authProfiles, defaultAuthProfileID)
 		}
 		if err != nil {
 			if actionName == "" {
@@ -1923,11 +1933,11 @@ func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessio
 	return messages, toolCalls, false
 }
 
-func (m *agentManager) requestAgentAuthorizationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language, operatorPrompt, operationLevel string, action agentPlannerAction, actionName, requiredLevel, policy, reason string) agentMessage {
+func (m *agentManager) requestAgentAuthorizationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language, operatorPrompt, operationLevel string, action runtime.AgentLoopAction, actionName, requiredLevel, policy, reason string) agentMessage {
 	if payload, handled := m.runRuntimeRequestAuthorizationMutationForTurn(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, action, actionName, requiredLevel, policy, reason); handled {
 		return payload.Message
 	}
-	payload := m.requestAgentAuthorizationLegacy(sessionID, language, operatorPrompt, action, actionName, requiredLevel, policy, reason)
+	payload := m.requestAgentAuthorizationLegacy(sessionID, language, operatorPrompt, agentPlannerActionFromAgentLoopAction(action), actionName, requiredLevel, policy, reason)
 	return payload.Message
 }
 
