@@ -1229,15 +1229,7 @@ func cloneAgentPlannerActions(actions []agentPlannerAction) []agentPlannerAction
 
 type agentPlannerActionReplanCycleMemorySummary struct {
 	present bool
-	item    agentPlannerActionReplanCycleMemorySummaryItem
-}
-
-type agentPlannerActionReplanCycleMemorySummaryItem struct {
-	Summary       string
-	MessageCount  int
-	LastMessageID string
-	LastMessageAt *time.Time
-	UpdatedAt     time.Time
+	item    runtime.AgentLoopMemorySummary
 }
 
 func agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(summary *agentMemorySummary) agentPlannerActionReplanCycleMemorySummary {
@@ -1246,7 +1238,7 @@ func agentPlannerActionReplanCycleMemorySummaryFromAgentMemorySummary(summary *a
 	}
 	return agentPlannerActionReplanCycleMemorySummary{
 		present: true,
-		item:    agentPlannerActionReplanCycleMemorySummaryItemFromAgentMemorySummary(*summary),
+		item:    agentLoopMemorySummaryFromAgentMemorySummary(*summary),
 	}
 }
 
@@ -1254,16 +1246,16 @@ func (summary agentPlannerActionReplanCycleMemorySummary) legacyAgentMemorySumma
 	if !summary.present {
 		return nil
 	}
-	return summary.item.agentMemorySummary()
+	return agentMemorySummaryFromAgentLoopMemorySummary(summary.item)
 }
 
-func agentPlannerActionReplanCycleMemorySummaryItemFromAgentMemorySummary(summary agentMemorySummary) agentPlannerActionReplanCycleMemorySummaryItem {
+func agentLoopMemorySummaryFromAgentMemorySummary(summary agentMemorySummary) runtime.AgentLoopMemorySummary {
 	var lastMessageAt *time.Time
 	if summary.LastMessageAt != nil {
 		last := *summary.LastMessageAt
 		lastMessageAt = &last
 	}
-	return agentPlannerActionReplanCycleMemorySummaryItem{
+	return runtime.AgentLoopMemorySummary{
 		Summary:       summary.Summary,
 		MessageCount:  summary.MessageCount,
 		LastMessageID: summary.LastMessageID,
@@ -1272,7 +1264,7 @@ func agentPlannerActionReplanCycleMemorySummaryItemFromAgentMemorySummary(summar
 	}
 }
 
-func (summary agentPlannerActionReplanCycleMemorySummaryItem) agentMemorySummary() *agentMemorySummary {
+func agentMemorySummaryFromAgentLoopMemorySummary(summary runtime.AgentLoopMemorySummary) *agentMemorySummary {
 	var lastMessageAt *time.Time
 	if summary.LastMessageAt != nil {
 		last := *summary.LastMessageAt
