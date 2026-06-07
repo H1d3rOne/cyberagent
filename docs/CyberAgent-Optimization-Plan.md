@@ -442,8 +442,9 @@ ownership 边界：
 73. ✅ P0.5-N79 已将 planner action execution turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonPlannerActionExecutionTurnResultPayload` daemon-private wrapper。
 74. ✅ P0.5-N80 已将 planner action execution turn executor payload 的 turn/language/operator/operation/services/authorization 输入收敛为 `runtime.AgentLoopRequest`，仅额外携带 `runtime.AgentLoopAction`。
 75. ✅ P0.5-N81 已将 deterministic route turn executor payload 的 session/prompt/language/operator/operation/services 输入收敛为 `runtime.AgentLoopRequest`，移除 `daemonDeterministicRouteTurnPayload`。
-76. 下一步 P0.5-N82 将 deterministic route turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonDeterministicRouteTurnResultPayload` daemon-private wrapper。
-77. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+76. ✅ P0.5-N82 已将 deterministic route turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonDeterministicRouteTurnResultPayload` daemon-private wrapper。
+77. 下一步 P0.5-N83 为 planner action execution 的 `runtime.AgentLoopRequest + runtime.AgentLoopAction` 组合新增 runtime-neutral payload DTO，移除最后一个 turn executor daemon-private payload wrapper。
+78. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1397,6 +1398,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v113 | 完成 P0.5-N79 planner action execution result payload runtime DTO 收敛：移除 `daemonPlannerActionExecutionTurnResultPayload`，planner action execution turn executor result payload 统一使用 `runtime.AgentLoopTurnResultPayload`，保持 action execution dispatch/fallback 与 shared cycle adapter 行为；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v114 | 完成 P0.5-N80 planner action execution turn payload runtime request 收敛：`daemonPlannerActionExecutionTurnPayload` 改为携带 `runtime.AgentLoopRequest + runtime.AgentLoopAction`，turn executor 从 request clone 中读取 turn/language/operator/operation/tool services/authorization，保持 planner action dispatch/fallback 与 shared cycle adapter 行为；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 | v115 | 完成 P0.5-N81 deterministic route turn payload runtime request 收敛：移除 `daemonDeterministicRouteTurnPayload`，`runtime.TurnContext.Payload` 直接传递 `runtime.AgentLoopRequest`，route executor 从 request clone 读取 turn/prompt/language/operator/operation/tool services 并保持 deterministic route dispatch/fallback 语义；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
+| v116 | 完成 P0.5-N82 deterministic route result payload runtime DTO 收敛：移除 `daemonDeterministicRouteTurnResultPayload`，route executor result payload 统一使用 `runtime.AgentLoopTurnResultPayload`，`routePromptWithRuntimeDeterministicRoute` 在 egress 边界转换回 legacy message/tool call；focused daemon tests、runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

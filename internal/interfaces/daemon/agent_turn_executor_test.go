@@ -488,9 +488,9 @@ func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testi
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonDeterministicRouteTurnResultPayload{
-				Messages:  []agentMessage{expectedMessage},
-				ToolCalls: []agentToolCall{expectedToolCall},
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 			},
 		}, nil
 	}))
@@ -509,8 +509,8 @@ func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testi
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.True(t, called)
-	require.Equal(t, []agentMessage{expectedMessage}, result.Messages)
-	require.Equal(t, []agentToolCall{expectedToolCall}, result.ToolCalls)
+	require.Equal(t, agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}), result.Messages)
+	require.Equal(t, agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}), result.ToolCalls)
 }
 
 func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
@@ -550,9 +550,9 @@ func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonDeterministicRouteTurnResultPayload{
-				Messages:  []agentMessage{expectedMessage},
-				ToolCalls: []agentToolCall{expectedToolCall},
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 			},
 		}, nil
 	}))
@@ -670,9 +670,9 @@ func TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor(t *testing.T) 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonDeterministicRouteTurnResultPayload{
-				Messages:  []agentMessage{expectedMessage},
-				ToolCalls: []agentToolCall{expectedToolCall},
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 			},
 		}, nil
 	}))
@@ -764,9 +764,9 @@ func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonDeterministicRouteTurnResultPayload{
-				Messages:  []agentMessage{expectedMessage},
-				ToolCalls: []agentToolCall{expectedToolCall},
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 			},
 		}, nil
 	}))
@@ -987,8 +987,8 @@ func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonDeterministicRouteTurnResultPayload{
-				Messages: []agentMessage{expectedMessage},
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages: agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
 			},
 		}, nil
 	}))

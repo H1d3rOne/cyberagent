@@ -227,7 +227,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N79：将 planner action execution turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonPlannerActionExecutionTurnResultPayload` daemon-private wrapper。
 - [x] P0.5-N80：将 planner action execution turn executor payload 的 turn/language/operator/operation/services/authorization 输入收敛为 `runtime.AgentLoopRequest`，仅额外携带 `runtime.AgentLoopAction`。
 - [x] P0.5-N81：将 deterministic route turn executor payload 的 session/prompt/language/operator/operation/services 输入收敛为 `runtime.AgentLoopRequest`，减少 deterministic route daemon-private payload 字段。
-- [ ] P0.5-N82：将 deterministic route turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonDeterministicRouteTurnResultPayload` daemon-private wrapper。
+- [x] P0.5-N82：将 deterministic route turn executor result payload 收敛为 `runtime.AgentLoopTurnResultPayload`，移除 `daemonDeterministicRouteTurnResultPayload` daemon-private wrapper。
+- [ ] P0.5-N83：为 planner action execution 的 `runtime.AgentLoopRequest + runtime.AgentLoopAction` 组合新增 runtime-neutral payload DTO，移除最后一个 turn executor daemon-private payload wrapper。
 
 当前盘点（2026-06-08）：
 
@@ -1035,6 +1036,18 @@ git diff --check
 ```
 
 结果：移除 `daemonDeterministicRouteTurnPayload`，deterministic route turn executor payload 改为直接携带 `runtime.AgentLoopRequest`，route executor 从 request clone 中读取 turn/prompt/language/operator/operation/tool services；focused daemon tests、runtime/daemon 包测试与 diff check 通过。
+
+
+本轮增量（P0.5-N82：deterministic route result payload runtime DTO 收敛）：
+
+```bash
+gofmt -w internal/interfaces/daemon/agent_turn_executor.go internal/interfaces/daemon/agent_turn_executor_test.go internal/interfaces/daemon/agent_send_message_lifecycle_test.go internal/interfaces/daemon/agent_send_message_response_merge_test.go
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor|TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor|TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor|TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor|TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor|TestAgentManagerSendMessageRunTurnLifecycle|TestAgentManagerSendMessageResponseMergeRouteBeforeLLMSynthesis'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：移除 `daemonDeterministicRouteTurnResultPayload`，deterministic route turn executor result payload 统一为 `runtime.AgentLoopTurnResultPayload`，legacy message/tool call 转换推迟到 route prompt adapter egress；focused daemon tests、runtime/daemon 包测试与 diff check 通过。
 
 P1-F1 前端路由/bundle 盘点：
 

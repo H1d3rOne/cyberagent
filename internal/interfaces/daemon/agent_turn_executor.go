@@ -13,11 +13,6 @@ const (
 	daemonTurnExecutionPlannerActionExecution   = "planner_action_execution"
 )
 
-type daemonDeterministicRouteTurnResultPayload struct {
-	Messages  []agentMessage
-	ToolCalls []agentToolCall
-}
-
 type daemonPlannerActionExecutionTurnPayload struct {
 	Request runtime.AgentLoopRequest
 	Action  runtime.AgentLoopAction
@@ -69,9 +64,9 @@ func (e daemonAgentTurnExecutor) executeDeterministicRouteTurn(ctx context.Conte
 	if err != nil {
 		return daemonTurnExecutionErrorResult(turn, err), err
 	}
-	resultPayload := daemonDeterministicRouteTurnResultPayload{
-		Messages:  messages,
-		ToolCalls: toolCalls,
+	resultPayload := runtime.AgentLoopTurnResultPayload{
+		Messages:  agentLoopMessagesFromAgentMessages(messages),
+		ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(toolCalls),
 	}
 	return runtime.TurnResult{
 		Status:  runtime.TurnResultFinished,
@@ -214,10 +209,10 @@ func daemonTurnExecutionErrorResult(turn runtime.TurnContext, err error) runtime
 	}
 }
 
-func (m *agentManager) runRuntimeDeterministicRoute(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, svc routerServices) (daemonDeterministicRouteTurnResultPayload, bool, error) {
+func (m *agentManager) runRuntimeDeterministicRoute(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, svc routerServices) (runtime.AgentLoopTurnResultPayload, bool, error) {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.TurnExecutor() == nil {
-		return daemonDeterministicRouteTurnResultPayload{}, false, nil
+		return runtime.AgentLoopTurnResultPayload{}, false, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -226,20 +221,20 @@ func (m *agentManager) runRuntimeDeterministicRoute(ctx context.Context, session
 	result, err := eng.ExecuteTurn(ctx, agentDeterministicRouteTurnContextFromRequest(loopReq))
 	if errors.Is(err, runtime.ErrTurnExecutorNotAttached) ||
 		errors.Is(result.Error, runtime.ErrTurnExecutorNotAttached) {
-		return daemonDeterministicRouteTurnResultPayload{}, false, nil
+		return runtime.AgentLoopTurnResultPayload{}, false, nil
 	}
 	if err != nil {
-		return daemonDeterministicRouteTurnResultPayload{}, true, err
+		return runtime.AgentLoopTurnResultPayload{}, true, err
 	}
 	if result.Status == runtime.TurnResultBlocked ||
 		(result.Status == runtime.TurnResultRunning && result.Payload == nil) {
-		return daemonDeterministicRouteTurnResultPayload{}, false, nil
+		return runtime.AgentLoopTurnResultPayload{}, false, nil
 	}
-	payload, ok := result.Payload.(daemonDeterministicRouteTurnResultPayload)
+	payload, ok := result.Payload.(runtime.AgentLoopTurnResultPayload)
 	if !ok {
-		return daemonDeterministicRouteTurnResultPayload{}, true, errors.New("daemon: deterministic route turn executor returned invalid payload")
+		return runtime.AgentLoopTurnResultPayload{}, true, errors.New("daemon: deterministic route turn executor returned invalid payload")
 	}
-	return payload, true, nil
+	return payload.Clone(), true, nil
 }
 
 func agentDeterministicRouteRequestFromRuntime(sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding) runtime.AgentLoopRequest {
@@ -275,7 +270,7 @@ func (m *agentManager) routePromptWithRuntimeDeterministicRoute(ctx context.Cont
 		return nil, nil, err
 	}
 	if handled {
-		return routed.Messages, routed.ToolCalls, nil
+		return agentMessagesFromAgentLoopMessages(routed.Messages), agentLoopToolCallItemsToAgentToolCalls(routed.ToolCalls), nil
 	}
 	return m.routePromptForTurn(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
 }

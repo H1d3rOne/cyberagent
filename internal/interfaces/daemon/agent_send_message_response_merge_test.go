@@ -228,9 +228,9 @@ func TestAgentManagerSendMessageResponseMergeRouteBeforeLLMSynthesis(t *testing.
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonDeterministicRouteTurnResultPayload{
-				Messages:  []agentMessage{routeMessage},
-				ToolCalls: []agentToolCall{routeTool},
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{routeMessage}),
+				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{routeTool}),
 			},
 		}, nil
 	}))

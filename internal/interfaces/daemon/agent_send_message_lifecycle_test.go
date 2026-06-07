@@ -41,8 +41,8 @@ func TestAgentManagerSendMessageRunsInsideRuntimeTurnLifecycle(t *testing.T) {
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
 			Reason: "done",
-			Payload: daemonDeterministicRouteTurnResultPayload{
-				Messages: []agentMessage{expectedMessage},
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages: agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
 			},
 		}, nil
 	}))
