@@ -289,7 +289,7 @@ engine-native turn lifecycle 下沉入口建议：
 剩余 daemon-owned seam 分组：
 
 1. **Planner parse / native tool-use**
-   - `handleAgentLLMChat` 与 `synthesizeAgentToolResults` 仍负责 provider request 构造、planner JSON parse、plain-answer fallback、native tool-use action merge、schedule intent override，以及 planner/tool metadata。
+   - P0.5-N102 已把 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule intent override、message phase 与 planner/tool metadata 收敛到 runtime-neutral `AgentLoopPlannerParseResult` + daemon parser helper；`handleAgentLLMChat` 与 `synthesizeAgentToolResults` 仍负责 provider request 构造、provider 调用、metadata merge 与 daemon message/tool adapter。
 2. **Outer loop defaults / preconditions**
    - P0.5-N101 已把 `llm_tool_loop` mode/max_loops/default metadata、plan-only no-action 与 immediate-execution fallback、cycle continue/final plan auto-continue 判断抽为纯 helper；planner chat append/apply 与 loop ownership 仍在 daemon adapter。
    - P0.5-N101 已把 `replan_action_continuation` mode/default metadata 与 max_loops/action/auto_continue precondition 抽为纯 helper；follow-up egress 与真正 loop ownership 仍在 daemon adapter。
@@ -301,7 +301,7 @@ engine-native turn lifecycle 下沉入口建议：
 下一批最小迁移顺序：
 
 1. ✅ P0.5-N101：已抽出 loop mode/default/precondition normalization helper，保持纯重构。
-2. P0.5-N102：将 planner JSON / native tool-use parse/fallback/schedule override 收敛为 runtime-neutral parser result DTO/helper。
+2. ✅ P0.5-N102：已将 planner JSON / native tool-use parse/fallback/schedule override 收敛为 runtime-neutral parser result DTO/helper。
 3. P0.5-N103：将 authorization/capability gate decision + side-effect orchestration 标准化为 runtime-neutral gate/action-batch result DTO，副作用仍经 `SessionMutator` adapter。
 4. P0.5-N104：标准化 StepReplan synthesis failure、auto-continue/max-loop stop 与 follow-up continuation egress metadata/stop reason。
 
@@ -496,8 +496,9 @@ ownership 边界：
 93. ✅ P0.5-N99 已清理 session mutation result adapter 重复 switch：六个 `FromSessionMutationResult` 入口统一走 `daemonSessionMutationResultPayloadFromRuntimeOrLegacy` typed helper，并补 legacy/runtime value/runtime pointer 兼容路径覆盖。
 94. ✅ P0.5-N100 已完成 engine-native runner ownership 审计：确认当前 `AgentLoopRunner` seam 已存在但实际 runner ownership 仍在 daemon adapter，剩余 daemon-owned seam 集中在 planner JSON/native tool-use 解析、loop mode/default/precondition、authorization/capability gate 副作用编排、action batch queue metadata、StepReplan append/failure 与 follow-up continuation egress。
 95. ✅ P0.5-N101 已抽出 loop mode/default/precondition normalization helper：`normalizeAgentLLMToolLoopRequest` / `normalizeAgentReplanActionContinuationRequest` 统一 mode、max_loops 与 append metadata 默认值，step precondition helper 覆盖 plan-only no-action、immediate-execution fallback、cycle continue/final plan auto_continue 与 replan continuation max_loops stop branch。
-96. 下一步 P0.5-N102 收敛 planner parse result DTO；后续 P0.5-N103–N104 依次收敛 gate/action-batch result DTO、StepReplan/follow-up egress stop reason，再考虑真正 engine-owned runner 切换。
-97. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+96. ✅ P0.5-N102 已收敛 planner parse result DTO：新增 `runtime.AgentLoopPlannerParseResult`，daemon parser helper 统一 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule override、message phase 与 metadata；planner chat / tool synthesis 主函数仅保留 provider 调用、metadata merge 与 daemon adapter。
+97. 下一步 P0.5-N103 收敛 gate/action-batch result DTO 与副作用边界；P0.5-N104 再统一 StepReplan/follow-up egress stop reason，之后再考虑真正 engine-owned runner 切换。
+98. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1471,6 +1472,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v133 | 完成 P0.5-N99 session mutation result adapter helper 去重：新增 `daemonSessionMutationResultPayloadFromRuntimeOrLegacy` typed helper，六个 `FromSessionMutationResult` 入口统一复用 legacy fallback/runtime value/runtime pointer 转换路径，并补 helper 覆盖；runtime/daemon 包测试与 diff check 通过。 |
 | v134 | 完成 P0.5-N100 engine-native runner ownership 审计：确认 `AgentLoopRunner` seam 已接入但 runner ownership 仍主要在 daemon adapter，拆分 planner parse/native tool-use、loop precondition/default、authorization/capability gate side effects、StepReplan/follow-up egress 四类剩余 seam，并写入 N101-N104 迁移顺序与最小验证矩阵；runtime/daemon 包测试与 diff check 通过。 |
 | v135 | 完成 P0.5-N101 loop mode/default/precondition normalization helper：LLM tool loop 与 replan continuation 的 mode/default/max_loops/append metadata、plan-only no-action、immediate-execution fallback、cycle continue/final plan auto_continue 与 max_loops stop branch 已收敛到纯 helper；补 focused daemon tests，runtime/daemon 包测试与 diff check 通过。 |
+| v136 | 完成 P0.5-N102 planner parse/native tool-use runtime-neutral parser result：新增 `runtime.AgentLoopPlannerParseResult`，daemon parser helper 统一 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule override、message phase 与 planner metadata；`handleAgentLLMChat` / `synthesizeAgentToolResults` 收敛为 provider 调用、metadata merge 与 daemon adapter 边界；补 runtime clone 与 focused daemon parser parity，runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

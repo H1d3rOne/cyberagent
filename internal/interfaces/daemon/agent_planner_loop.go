@@ -37,73 +37,11 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, sessionID string,
 		return nil, []agentToolCall{tool}, nil, err
 	}
 	tool.Result = agentLLMToolResult(usedAttempt, response, fallbackLog, "")
-	content := agentLLMText(response)
-	plan, parseErr := parseAgentPlannerResponse(content)
-	if parseErr == nil && plan != nil {
-		plan.Phase = firstNonEmpty(agentNormalizePhase(plan.Phase), "plan")
-		tool.Result["planner"] = true
-		tool.Result["planner_todos"] = len(plan.Todos)
-		tool.Result["planner_actions"] = len(agentPlannerActions(plan))
-		if strings.TrimSpace(plan.Answer) != "" {
-			content = strings.TrimSpace(plan.Answer)
-		} else if content != "" {
-			plan.Answer = content
-		}
-	} else {
-		tool.Result["planner"] = false
-		if parseErr != nil {
-			tool.Result["planner_parse_error"] = parseErr.Error()
-		}
-		if fallback := agentFallbackPlannerFromPrompt(agentLatestUserPrompt(history), content, language); fallback != nil {
-			plan = fallback
-			content = strings.TrimSpace(fallback.Answer)
-			tool.Result["planner"] = true
-			tool.Result["planner_fallback"] = true
-			tool.Result["planner_todos"] = len(plan.Todos)
-			tool.Result["planner_actions"] = len(agentPlannerActions(plan))
-		}
-	}
-	nativeActions := agentPlannerActionsFromLLMToolUse(response)
-	if len(nativeActions) > 0 {
-		if plan == nil {
-			plan = agentFallbackPlannerFromPrompt(agentLatestUserPrompt(history), content, language)
-			if plan == nil {
-				plan = &agentPlannerResponse{Phase: "plan"}
-			}
-		}
-		plan.ToolCalls = append(plan.ToolCalls, nativeActions...)
-		tool.Result["planner_native_tool_calls"] = len(nativeActions)
-		tool.Result["planner_actions"] = len(agentPlannerActions(plan))
-	}
-	latestPrompt := agentLatestUserPrompt(history)
-	if plan != nil && len(agentPlannerActions(plan)) == 0 && agentIsScheduleExecutionIntent(latestPrompt) {
-		if fallback := agentFallbackPlannerFromPrompt(latestPrompt, "", language); fallback != nil && len(agentPlannerActions(fallback)) > 0 {
-			plan = fallback
-			content = strings.TrimSpace(fallback.Answer)
-			tool.Result["planner"] = true
-			tool.Result["planner_fallback"] = true
-			tool.Result["planner_schedule_override"] = true
-			tool.Result["planner_todos"] = len(plan.Todos)
-			tool.Result["planner_actions"] = len(agentPlannerActions(plan))
-		}
-	}
-	if strings.TrimSpace(content) == "" {
-		if len(nativeActions) > 0 {
-			content = agentText(language, "我将先调用低风险内置工具检查当前上下文。", "I will first call low-risk built-in tools to inspect the current context.")
-			plan.Answer = content
-		} else {
-			content = agentText(language, "AI provider 返回了空内容。", "The AI provider returned empty content.")
-		}
-	}
-	messagePhase := "plan"
-	if plan != nil {
-		if normalized := agentNormalizePhase(plan.Phase); normalized != "" {
-			messagePhase = normalized
-		}
-		if len(agentPlannerActions(plan)) > 0 {
-			messagePhase = "plan"
-		}
-	}
+	parseResult := agentLLMPlannerChatParseResult(response, agentLatestUserPrompt(history), language)
+	agentMergeLLMPlannerParseMetadata(tool.Result, parseResult)
+	content := parseResult.Content
+	plan := legacyPlannerResponseFromAgentLoopPlan(parseResult.Plan)
+	messagePhase := firstNonEmpty(parseResult.MessagePhase, "plan")
 	tool = agentToolCallWithPhase(tool, messagePhase)
 	message := agentMessageWithPhase(m.message(language, "agent", content, []agentToolCall{tool}, nil), messagePhase)
 	if plan != nil {
@@ -144,44 +82,11 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, sessionID
 
 	tool.Result = agentLLMToolResult(usedAttempt, response, fallbackLog, "step_replan")
 
-	content := agentLLMText(response)
-	plan, parseErr := parseAgentPlannerResponse(content)
-	if parseErr == nil && plan != nil {
-		plan.Phase = firstNonEmpty(agentNormalizePhase(plan.Phase), "step_replan")
-		tool.Result["planner"] = true
-		tool.Result["planner_todos"] = len(plan.Todos)
-		tool.Result["planner_actions"] = len(agentPlannerActions(plan))
-		if strings.TrimSpace(plan.Answer) != "" {
-			content = strings.TrimSpace(plan.Answer)
-		} else if content != "" {
-			plan.Answer = content
-		}
-	} else {
-		tool.Result["planner"] = false
-		if parseErr != nil {
-			tool.Result["planner_parse_error"] = parseErr.Error()
-		}
-		plain := strings.TrimSpace(content)
-		if plain != "" {
-			plan = agentPlannerFromPlainAnswer(plain, "step_replan", language)
-			tool.Result["planner"] = true
-			tool.Result["planner_fallback"] = true
-			tool.Result["planner_todos"] = len(plan.Todos)
-			tool.Result["planner_actions"] = len(agentPlannerActions(plan))
-		}
-	}
-	if strings.TrimSpace(content) == "" {
-		content = agentText(language, "工具执行完成，但 AI provider 返回了空总结。", "Tools executed, but the AI provider returned an empty synthesis.")
-		plan = agentPlannerFromPlainAnswer(content, "final_answer", language)
-	}
-
-	phase := "step_replan"
-	if plan == nil || len(agentPlannerActions(plan)) == 0 {
-		phase = "final_answer"
-		if plan != nil && agentNormalizePhase(plan.Phase) == "" {
-			plan.Phase = phase
-		}
-	}
+	parseResult := agentLLMToolSynthesisParseResult(response, language)
+	agentMergeLLMPlannerParseMetadata(tool.Result, parseResult)
+	content := parseResult.Content
+	plan := legacyPlannerResponseFromAgentLoopPlan(parseResult.Plan)
+	phase := firstNonEmpty(parseResult.MessagePhase, "step_replan")
 	tool = agentToolCallWithPhase(tool, phase)
 	message := agentMessageWithPhase(m.message(language, "agent", content, []agentToolCall{tool}, nil), phase)
 	if plan != nil {
@@ -189,6 +94,164 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, sessionID
 	}
 	applyAgentPlannerToMessage(&message, plan)
 	return []agentMessage{message}, []agentToolCall{tool}, plan, nil
+}
+
+func agentLLMPlannerChatParseResult(response *llm.ChatResponse, latestPrompt, language string) runtime.AgentLoopPlannerParseResult {
+	content := agentLLMText(response)
+	result := runtime.AgentLoopPlannerParseResult{
+		Content:      content,
+		MessagePhase: "plan",
+		Metadata:     map[string]any{},
+	}
+
+	plan, parseErr := parseAgentPlannerResponse(content)
+	if parseErr == nil && plan != nil {
+		plan.Phase = firstNonEmpty(agentNormalizePhase(plan.Phase), "plan")
+		if strings.TrimSpace(plan.Answer) != "" {
+			content = strings.TrimSpace(plan.Answer)
+		} else if content != "" {
+			plan.Answer = content
+		}
+		result.Content = content
+		agentLLMPlannerParseResultMarkPlanner(&result, true, false)
+		agentLLMPlannerParseResultSetPlanStats(&result, plan)
+	} else {
+		result.Metadata["planner"] = false
+		if parseErr != nil {
+			result.ParseError = parseErr.Error()
+			result.Metadata["planner_parse_error"] = parseErr.Error()
+		}
+		if fallback := agentFallbackPlannerFromPrompt(latestPrompt, content, language); fallback != nil {
+			plan = fallback
+			content = strings.TrimSpace(fallback.Answer)
+			result.Content = content
+			agentLLMPlannerParseResultMarkPlanner(&result, true, true)
+			agentLLMPlannerParseResultSetPlanStats(&result, plan)
+		}
+	}
+
+	nativeActions := agentPlannerActionsFromLLMToolUse(response)
+	if len(nativeActions) > 0 {
+		if plan == nil {
+			plan = agentFallbackPlannerFromPrompt(latestPrompt, content, language)
+			if plan == nil {
+				plan = &agentPlannerResponse{Phase: "plan"}
+			}
+		}
+		plan.ToolCalls = append(plan.ToolCalls, nativeActions...)
+		result.NativeToolCallCount = len(nativeActions)
+		result.Metadata["planner_native_tool_calls"] = len(nativeActions)
+		agentLLMPlannerParseResultSetPlanStats(&result, plan)
+	}
+
+	if plan != nil && len(agentPlannerActions(plan)) == 0 && agentIsScheduleExecutionIntent(latestPrompt) {
+		if fallback := agentFallbackPlannerFromPrompt(latestPrompt, "", language); fallback != nil && len(agentPlannerActions(fallback)) > 0 {
+			plan = fallback
+			content = strings.TrimSpace(fallback.Answer)
+			result.Content = content
+			result.ScheduleOverride = true
+			result.Metadata["planner_schedule_override"] = true
+			agentLLMPlannerParseResultMarkPlanner(&result, true, true)
+			agentLLMPlannerParseResultSetPlanStats(&result, plan)
+		}
+	}
+
+	if strings.TrimSpace(content) == "" {
+		if len(nativeActions) > 0 {
+			content = agentText(language, "我将先调用低风险内置工具检查当前上下文。", "I will first call low-risk built-in tools to inspect the current context.")
+			plan.Answer = content
+			result.Content = content
+			result.Plan = agentLoopPlanFromPlannerResponse(plan)
+		} else {
+			content = agentText(language, "AI provider 返回了空内容。", "The AI provider returned empty content.")
+			result.Content = content
+		}
+	}
+
+	if plan != nil {
+		if normalized := agentNormalizePhase(plan.Phase); normalized != "" {
+			result.MessagePhase = normalized
+		}
+		if len(agentPlannerActions(plan)) > 0 {
+			result.MessagePhase = "plan"
+		}
+	}
+	return result.Clone()
+}
+
+func agentLLMToolSynthesisParseResult(response *llm.ChatResponse, language string) runtime.AgentLoopPlannerParseResult {
+	content := agentLLMText(response)
+	result := runtime.AgentLoopPlannerParseResult{
+		Content:      content,
+		MessagePhase: "step_replan",
+		Metadata:     map[string]any{},
+	}
+
+	plan, parseErr := parseAgentPlannerResponse(content)
+	if parseErr == nil && plan != nil {
+		plan.Phase = firstNonEmpty(agentNormalizePhase(plan.Phase), "step_replan")
+		if strings.TrimSpace(plan.Answer) != "" {
+			content = strings.TrimSpace(plan.Answer)
+		} else if content != "" {
+			plan.Answer = content
+		}
+		result.Content = content
+		agentLLMPlannerParseResultMarkPlanner(&result, true, false)
+		agentLLMPlannerParseResultSetPlanStats(&result, plan)
+	} else {
+		result.Metadata["planner"] = false
+		if parseErr != nil {
+			result.ParseError = parseErr.Error()
+			result.Metadata["planner_parse_error"] = parseErr.Error()
+		}
+		plain := strings.TrimSpace(content)
+		if plain != "" {
+			plan = agentPlannerFromPlainAnswer(plain, "step_replan", language)
+			agentLLMPlannerParseResultMarkPlanner(&result, true, true)
+			agentLLMPlannerParseResultSetPlanStats(&result, plan)
+		}
+	}
+	if strings.TrimSpace(content) == "" {
+		content = agentText(language, "工具执行完成，但 AI provider 返回了空总结。", "Tools executed, but the AI provider returned an empty synthesis.")
+		plan = agentPlannerFromPlainAnswer(content, "final_answer", language)
+		result.Content = content
+		result.Plan = agentLoopPlanFromPlannerResponse(plan)
+	}
+
+	if plan == nil || len(agentPlannerActions(plan)) == 0 {
+		result.MessagePhase = "final_answer"
+		if plan != nil && agentNormalizePhase(plan.Phase) == "" {
+			plan.Phase = result.MessagePhase
+			result.Plan = agentLoopPlanFromPlannerResponse(plan)
+		}
+	}
+	return result.Clone()
+}
+
+func agentLLMPlannerParseResultMarkPlanner(result *runtime.AgentLoopPlannerParseResult, planner bool, fallback bool) {
+	result.Planner = planner
+	result.Metadata["planner"] = planner
+	if fallback {
+		result.Fallback = true
+		result.Metadata["planner_fallback"] = true
+	}
+}
+
+func agentLLMPlannerParseResultSetPlanStats(result *runtime.AgentLoopPlannerParseResult, plan *agentPlannerResponse) {
+	result.Plan = agentLoopPlanFromPlannerResponse(plan)
+	result.TodoCount = len(plan.Todos)
+	result.ActionCount = len(agentPlannerActions(plan))
+	result.Metadata["planner_todos"] = result.TodoCount
+	result.Metadata["planner_actions"] = result.ActionCount
+}
+
+func agentMergeLLMPlannerParseMetadata(result map[string]any, parseResult runtime.AgentLoopPlannerParseResult) {
+	if result == nil {
+		return
+	}
+	for key, value := range parseResult.Metadata {
+		result[key] = value
+	}
 }
 
 func (m *agentManager) chatAgentLLM(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, phase string, provider llm.Provider, req llm.ChatRequest) (*llm.ChatResponse, bool, error) {

@@ -247,7 +247,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N99：清理 session mutation result adapter 重复 switch，抽出 typed legacy/runtime egress helper 或按 payload family 分组，减少 `FromSessionMutationResult` boilerplate。
 - [x] P0.5-N100：盘点 engine-native runner ownership 剩余 daemon-owned seam，确认下一批可迁移目标（planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 precondition、follow-up continuation egress）与最小验证矩阵。
 - [x] P0.5-N101：抽出 loop mode/default/precondition normalization helper，覆盖 LLM tool loop mode/max_loops/append metadata、plan-only no-action immediate-execution fallback、replan continuation max_loops/auto_continue stop branch；保持纯重构并补 focused parity 测试。
-- [ ] P0.5-N102：将 planner JSON / native tool-call parse/fallback/schedule override 收敛为 runtime-neutral parser result DTO/helper，`handleAgentLLMChat` / `synthesizeAgentToolResults` 仅保留 LLM provider 与 daemon message/tool adapter 边界。
+- [x] P0.5-N102：将 planner JSON / native tool-call parse/fallback/schedule override 收敛为 runtime-neutral parser result DTO/helper，`handleAgentLLMChat` / `synthesizeAgentToolResults` 仅保留 LLM provider 与 daemon message/tool adapter 边界。
 - [ ] P0.5-N103：将 authorization/capability gate decision + side-effect orchestration 标准化为 runtime-neutral gate/action-batch result DTO，先保持 mutation 副作用仍经 `SessionMutator` adapter，覆盖四类 gate parity。
 - [ ] P0.5-N104：标准化 StepReplan synthesis failure、auto-continue/max-loop stop 与 follow-up continuation egress metadata/stop reason，为后续真正 engine-owned loop runner 切换提供统一验收口径。
 
@@ -310,7 +310,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
   - replan continuation auto-continue / stop / max_loops 分支，以及 follow-up response merge。
   - `planner_loop` 与 `replan_action_continuation` 的 task/run/turn/prompt/operation_level metadata 对齐。
 - P0.5-N101 loop default/precondition helper 已完成：`normalizeAgentLLMToolLoopRequest` / `normalizeAgentReplanActionContinuationRequest` 统一 mode、max_loops 与 append metadata 默认值，`agentLLMToolLoopStepPrecondition` / `agentLLMToolLoopNextPlanFromCycleResult` / `agentReplanActionContinuationStepPrecondition` 收敛 plan-only、immediate-execution fallback、auto_continue 与 max_loops 停止判断；focused parity 覆盖 metadata clone、显式 metadata 保留、fallback action 与 stop branch。
-- 下一批迁移顺序：N102 先收敛 planner parse/native tool-use result；N103 下沉 gate/action-batch result DTO 与副作用边界；N104 最后统一 StepReplan/follow-up egress stop reason 后再考虑真正 engine-owned runner 切换。
+- P0.5-N102 planner parse result DTO/helper 已完成：新增 runtime-neutral `runtime.AgentLoopPlannerParseResult`，`agentLLMPlannerChatParseResult` / `agentLLMToolSynthesisParseResult` 统一承载 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule override、message phase 与 planner metadata；`handleAgentLLMChat` / `synthesizeAgentToolResults` 只负责 provider 调用、metadata merge 与 daemon message/tool/legacy plan adapter。
+- 下一批迁移顺序：N103 先下沉 gate/action-batch result DTO 与副作用边界；N104 再统一 StepReplan/follow-up egress stop reason 后考虑真正 engine-owned runner 切换。
 
 ### 7.2 P1 Frontend / QA
 
@@ -360,6 +361,17 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 ---
 
 ## 8. 最新本地验证记录
+
+2026-06-08 本轮增量（P0.5-N102：planner parse/native tool-use runtime-neutral parser result）：
+
+```bash
+go test -count=1 ./internal/agent/runtime -run TestAgentLoopPlannerParseResultCloneIsolatesMutableFields
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentLLMPlannerChatParseResultParsesJSONAndMetadata|TestAgentLLMPlannerChatParseResultMergesNativeToolUse|TestAgentLLMPlannerChatParseResultScheduleOverride|TestAgentLLMToolSynthesisParseResultPlainAndEmptyFallback'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：focused runtime/daemon parser tests、runtime/daemon 包测试与 diff check 通过；planner JSON parse、native tool-use only、schedule override、plain synthesis fallback 与 empty synthesis fallback 均通过 `runtime.AgentLoopPlannerParseResult` clone/parity 覆盖。
 
 2026-06-08 本轮增量（P0.5-N101：loop mode/default/precondition normalization helper）：
 
