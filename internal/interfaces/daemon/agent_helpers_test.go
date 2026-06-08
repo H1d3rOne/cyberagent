@@ -137,23 +137,42 @@ func TestAgentPlannerActionGateDecisionOrder(t *testing.T) {
 
 func TestAgentPlannerActionQueueMetadata(t *testing.T) {
 	metadata := agentPlannerActionQueueMetadata("queue-test", 2, 3, "daemon.health")
-	if metadata["action_queue_id"] != "queue-test" {
-		t.Fatalf("action_queue_id = %#v, want queue-test", metadata["action_queue_id"])
+	if metadata[agentruntime.AgentLoopActionQueueIDMetadataKey] != "queue-test" {
+		t.Fatalf("action_queue_id = %#v, want queue-test", metadata[agentruntime.AgentLoopActionQueueIDMetadataKey])
 	}
-	if metadata["action_index"] != 2 {
-		t.Fatalf("action_index = %#v, want 2", metadata["action_index"])
+	if metadata[agentruntime.AgentLoopActionIndexMetadataKey] != 2 {
+		t.Fatalf("action_index = %#v, want 2", metadata[agentruntime.AgentLoopActionIndexMetadataKey])
 	}
-	if metadata["action_count"] != 3 {
-		t.Fatalf("action_count = %#v, want 3", metadata["action_count"])
+	if metadata[agentruntime.AgentLoopActionCountMetadataKey] != 3 {
+		t.Fatalf("action_count = %#v, want 3", metadata[agentruntime.AgentLoopActionCountMetadataKey])
 	}
-	if metadata["action_name"] != "daemon.health" {
-		t.Fatalf("action_name = %#v, want daemon.health", metadata["action_name"])
+	if metadata[agentruntime.AgentLoopActionNameMetadataKey] != "daemon.health" {
+		t.Fatalf("action_name = %#v, want daemon.health", metadata[agentruntime.AgentLoopActionNameMetadataKey])
 	}
-	if _, ok := metadata["action_index"].(int); !ok {
-		t.Fatalf("action_index type = %T, want int", metadata["action_index"])
+	if _, ok := metadata[agentruntime.AgentLoopActionIndexMetadataKey].(int); !ok {
+		t.Fatalf("action_index type = %T, want int", metadata[agentruntime.AgentLoopActionIndexMetadataKey])
 	}
-	if _, ok := metadata["action_count"].(int); !ok {
-		t.Fatalf("action_count type = %T, want int", metadata["action_count"])
+	if _, ok := metadata[agentruntime.AgentLoopActionCountMetadataKey].(int); !ok {
+		t.Fatalf("action_count type = %T, want int", metadata[agentruntime.AgentLoopActionCountMetadataKey])
+	}
+
+	prepared := prepareAgentPlannerActionBatch([]agentruntime.AgentLoopAction{
+		{Name: "daemon.health", Arguments: map[string]any{"probe": "one"}},
+		{Name: "plugins.list", Arguments: map[string]any{"probe": "two"}},
+		{Name: "runs.list", Arguments: map[string]any{"probe": "three"}},
+		{Name: "runs.context", Arguments: map[string]any{"probe": "four"}},
+		{Name: "runs.approvals.list", Arguments: map[string]any{"probe": "five"}},
+		{Name: "workspace.files.list", Arguments: map[string]any{"probe": "six"}},
+		{Name: "workspace.search", Arguments: map[string]any{"probe": "seven"}},
+	}, "queue-batch")
+	if len(prepared.Actions) != agentPlannerActionBatchMaxActions {
+		t.Fatalf("prepared actions = %d, want max %d", len(prepared.Actions), agentPlannerActionBatchMaxActions)
+	}
+	if !prepared.Result.Truncated || prepared.Result.ActionCount != agentPlannerActionBatchMaxActions {
+		t.Fatalf("prepared result = %#v, want truncated effective count", prepared.Result)
+	}
+	if prepared.Result.Metadata[agentruntime.AgentLoopActionQueueIDMetadataKey] != "queue-batch" || prepared.Result.Metadata[agentruntime.AgentLoopActionCountMetadataKey] != agentPlannerActionBatchMaxActions {
+		t.Fatalf("prepared metadata = %#v", prepared.Result.Metadata)
 	}
 }
 

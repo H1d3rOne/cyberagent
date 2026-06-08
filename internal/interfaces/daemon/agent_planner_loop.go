@@ -936,15 +936,30 @@ func agentLoopToolCallsWithPhase(calls []runtime.AgentLoopToolCall, phase string
 }
 
 func withAgentLoopToolMetadata(tool runtime.AgentLoopToolCall, metadata map[string]interface{}) runtime.AgentLoopToolCall {
-	merged := agentToolDefaultMetadata(tool.Name)
-	for key, value := range tool.Metadata {
-		merged[key] = value
+	return runtime.AgentLoopToolCallWithMetadata(tool, runtime.MergeAgentLoopMetadata(agentToolDefaultMetadata(tool.Name), tool.Metadata, metadata))
+}
+
+func agentLoopToolCallsWithMetadata(calls []runtime.AgentLoopToolCall, metadata map[string]interface{}) []runtime.AgentLoopToolCall {
+	if calls == nil {
+		return nil
 	}
-	for key, value := range metadata {
-		merged[key] = value
+	out := runtime.CloneAgentLoopToolCalls(calls)
+	for i := range out {
+		out[i] = withAgentLoopToolMetadata(out[i], metadata)
 	}
-	out := tool.Clone()
-	out.Metadata = merged
+	return out
+}
+
+func agentLoopMessagesWithToolMetadata(messages []runtime.AgentLoopMessage, metadata map[string]interface{}) []runtime.AgentLoopMessage {
+	if messages == nil {
+		return nil
+	}
+	out := runtime.CloneAgentLoopMessages(messages)
+	for i := range out {
+		for j := range out[i].ToolCalls {
+			out[i].ToolCalls[j] = withAgentLoopToolMetadata(out[i].ToolCalls[j], metadata)
+		}
+	}
 	return out
 }
 
@@ -2136,17 +2151,18 @@ func (m *agentManager) agentPlannerActionGateResultForDecision(ctx context.Conte
 	return result
 }
 
+const agentPlannerActionBatchMaxActions = 6
+
 func newAgentPlannerActionQueueID(now time.Time) string {
 	return strings.Replace(runs.NewJobID(now.UTC()), "job_", "queue_", 1)
 }
 
+func prepareAgentPlannerActionBatch(actions []runtime.AgentLoopAction, queueID string) runtime.AgentLoopPreparedActionBatch {
+	return runtime.PrepareAgentLoopActionBatch(actions, queueID, agentPlannerActionBatchMaxActions)
+}
+
 func agentPlannerActionQueueMetadata(queueID string, index, count int, actionName string) map[string]interface{} {
-	return map[string]interface{}{
-		"action_queue_id": queueID,
-		"action_index":    index,
-		"action_count":    count,
-		"action_name":     actionName,
-	}
+	return runtime.AgentLoopActionQueueMetadata(queueID, index, count, actionName)
 }
 
 func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
@@ -2164,25 +2180,16 @@ func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessio
 
 func (m *agentManager) executeAgentPlannerActionBatch(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, actions []runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) runtime.AgentLoopActionBatchResult {
 	toolServices = toolServices.Clone()
-	actions = runtime.CloneAgentLoopActions(actions)
 	authorization = authorization.Clone()
-	result := runtime.AgentLoopActionBatchResult{
-		ActionCount: len(actions),
+	queueID := ""
+	if len(actions) > 0 {
+		queueID = newAgentPlannerActionQueueID(time.Now().UTC())
 	}
+	preparedBatch := prepareAgentPlannerActionBatch(actions, queueID)
+	actions = preparedBatch.Actions
+	result := preparedBatch.Result
 	if len(actions) == 0 {
 		return result
-	}
-	if len(actions) > 6 {
-		result.Truncated = true
-		actions = actions[:6]
-		result.ActionCount = len(actions)
-	}
-
-	queueID := newAgentPlannerActionQueueID(time.Now().UTC())
-	result.Metadata = map[string]any{
-		"action_queue_id": queueID,
-		"action_count":    len(actions),
-		"truncated":       result.Truncated,
 	}
 	actionCount := len(actions)
 	for idx, action := range actions {
@@ -2226,14 +2233,8 @@ func (m *agentManager) executeAgentPlannerActionBatch(ctx context.Context, sessi
 			actionToolCalls = agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{tool})
 		}
 		actionMetadata := agentPlannerActionQueueMetadata(queueID, actionIndex, actionCount, actionName)
-		for i := range actionToolCalls {
-			actionToolCalls[i] = withAgentLoopToolMetadata(actionToolCalls[i], actionMetadata)
-		}
-		for i := range actionMessages {
-			for j := range actionMessages[i].ToolCalls {
-				actionMessages[i].ToolCalls[j] = withAgentLoopToolMetadata(actionMessages[i].ToolCalls[j], actionMetadata)
-			}
-		}
+		actionToolCalls = agentLoopToolCallsWithMetadata(actionToolCalls, actionMetadata)
+		actionMessages = agentLoopMessagesWithToolMetadata(actionMessages, actionMetadata)
 		result.Messages = append(result.Messages, actionMessages...)
 		result.ToolCalls = append(result.ToolCalls, actionToolCalls...)
 		result.ProcessedActionCount = actionIndex

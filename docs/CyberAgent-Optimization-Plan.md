@@ -292,6 +292,7 @@ engine-native turn lifecycle 下沉入口建议：
    - P0.5-N102 已把 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule intent override、message phase 与 planner/tool metadata 收敛到 runtime-neutral `AgentLoopPlannerParseResult` + daemon parser helper；`handleAgentLLMChat` 与 `synthesizeAgentToolResults` 仍负责 provider request 构造、provider 调用与 metadata merge。
    - P0.5-N107 已把 parse 后 message/tool/plan egress 统一到 `agentLLMStageResultPayloadFromPlannerParse`，先构造 runtime `AgentLoopLLMStageResultPayload`，legacy 返回值集中由 `agentLoopLLMStageResultPayloadToLegacy` 转换，减少 planner chat / tool synthesis 重复 daemon adapter 代码。
    - P0.5-N108 已把 planner_chat / tool_synthesis 的 `RunLLMStage` dispatch、`ErrLLMStageRunnerNotAttached` fallback、invalid payload 与 payload clone 逻辑统一到 `runRuntimeAgentLLMStage` / `agentLLMStageDispatchInput`，stage turn/payload/metadata 构造也改为共用 helper。
+   - P0.5-N109 已把 action batch 截断/metadata seed、queue metadata key 与 tool/message metadata stamp 收敛到 runtime `AgentLoopPreparedActionBatch` / `PrepareAgentLoopActionBatch` / metadata helper，daemon batch 执行只保留 queue ID 生成、legacy default tool metadata 与实际 side-effect 调度。
 2. **Outer loop defaults / preconditions**
    - P0.5-N101 已把 `llm_tool_loop` mode/max_loops/default metadata、plan-only no-action 与 immediate-execution fallback、cycle continue/final plan auto-continue 判断抽为纯 helper；planner chat append/apply 与 loop ownership 仍在 daemon adapter。
    - P0.5-N101 已把 `replan_action_continuation` mode/default metadata 与 max_loops/action/auto_continue precondition 抽为纯 helper；follow-up egress 与真正 loop ownership 仍在 daemon adapter。
@@ -313,7 +314,8 @@ engine-native turn lifecycle 下沉入口建议：
 6. ✅ P0.5-N106：已清理 outer loop 旧 trampoline / side-effect compatibility 边界，明确 SendMessage/control+LLM 与 follow-up continuation 可直接进入 `RunAgentLoop`，`RunLLMTurn` / replan `ExecuteTurn` 保留兼容。
 7. ✅ P0.5-N107：已继续下沉 planner/provider stage egress 边界，parse 后统一生成 runtime `AgentLoopLLMStageResultPayload`，legacy message/tool/plan 返回只保留在兼容转换边界。
 8. ✅ P0.5-N108：已继续清理 planner/provider stage compatibility，planner_chat 与 tool_synthesis 共用 stage dispatch/fallback/payload helper。
-9. P0.5-N109：继续按 N108 后边界收敛剩余 side-effect adapter，优先评估 action execution batch/queue metadata 或 session mutation 编排 helper。
+9. ✅ P0.5-N109：已继续按 N108 后边界收敛 action execution batch/queue metadata helper。
+10. P0.5-N110：继续按 N109 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估单 action execution error fallback 或 authorization approve action metadata helper。
 
 最小验证矩阵：
 
@@ -513,8 +515,9 @@ ownership 边界：
 100. ✅ P0.5-N106 已清理 outer loop 旧 trampoline：SendMessage LLM 主入口、control+LLM 与 follow-up continuation 直接调用 `runRuntimeAgentLoopResult` / `Engine.RunAgentLoop`；`RunLLMTurn` 与 replan `ExecuteTurn` 仅保留兼容 trampoline，egress payload/max_loops 映射共用 helper。
 101. ✅ P0.5-N107 已收敛 planner/provider stage egress helper：planner chat 与 tool synthesis parse 后统一经 runtime `AgentLoopLLMStageResultPayload` 构造 message/tool/plan 输出，legacy 返回集中在兼容边界转换，并补 clone/phase parity 覆盖。
 102. ✅ P0.5-N108 已收敛 planner/provider stage dispatch helper：planner_chat 与 tool_synthesis 共用 `runRuntimeAgentLLMStage` dispatch、NotAttached fallback、invalid payload 与 payload clone 逻辑，并补 fallback/invalid/payload clone focused 覆盖。
-103. 下一步 P0.5-N109 继续按 N108 后边界收敛剩余 side-effect adapter，优先评估 action execution batch/queue metadata 或 session mutation 编排 helper。
-104. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+103. ✅ P0.5-N109 已收敛 action batch/queue metadata runtime helper：runtime 统一 batch 截断、queue/batch metadata key、tool/message metadata merge 与 clone；daemon action batch 复用 helper，并补 queue metadata 一致性与 gate stop 覆盖。
+104. 下一步 P0.5-N110 继续按 N109 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估单 action execution error fallback 或 authorization approve action metadata helper。
+105. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1495,6 +1498,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v140 | 完成 P0.5-N106 outer loop 旧 trampoline / compatibility 边界清理：`runRuntimeLLMToolLoopAgentLoop` 与 `runRuntimeReplanActionContinuationAgentLoop` 直接调用 `runRuntimeAgentLoopResult` / `Engine.RunAgentLoop`；`RunLLMTurn` 与 replan `ExecuteTurn` 降为兼容入口，egress payload/max_loops 映射共用 helper；补 LLM fallback、authorization follow-up 与 response merge direct AgentLoopRunner 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 | v141 | 完成 P0.5-N107 planner/provider stage egress runtime payload helper：`handleAgentLLMChat` 与 `synthesizeAgentToolResults` 在 parse metadata merge 后统一通过 `agentLLMStageResultPayloadFromPlannerParse` 生成 runtime `AgentLoopLLMStageResultPayload`，legacy message/tool/plan 返回集中到 `agentLoopLLMStageResultPayloadToLegacy`；补 helper clone/phase parity、planner/synthesis stage focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 | v142 | 完成 P0.5-N108 planner/provider stage dispatch compatibility helper：新增 `runRuntimeAgentLLMStage` / `agentLLMStageDispatchInput` 与 stage turn/payload/metadata helper，planner_chat 与 tool_synthesis 共用 `RunLLMStage` dispatch、NotAttached fallback、invalid payload 与 runtime payload clone 逻辑；补 fallback、invalid payload、payload clone 与现有 stage dispatch focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
+| v143 | 完成 P0.5-N109 action batch/queue metadata runtime helper：新增 `AgentLoopPreparedActionBatch` / `PrepareAgentLoopActionBatch`、queue/batch metadata key constants 与 tool/message metadata merge helper；daemon `executeAgentPlannerActionBatch` 复用 runtime batch setup，补截断 clone、queue metadata 一致性与 gate stop focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

@@ -180,3 +180,120 @@ func TestAgentManagerExecutePlannerActionBatchGateResultParity(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentManagerExecuteAgentPlannerActionListThreadsActionQueueMetadata(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	executed := 0
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		executed++
+		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
+		require.True(t, ok, "payload type = %T", turn.Payload)
+		probe, _ := payload.Action.Arguments["probe"].(string)
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages: []runtime.AgentLoopMessage{{
+					ID:      "msg-" + probe,
+					Role:    "tool",
+					Content: "executed " + probe,
+					ToolCalls: []runtime.AgentLoopToolCall{{
+						ID:       "tool-message-" + probe,
+						Name:     "daemon.health",
+						Metadata: map[string]any{"phase": "message-" + probe},
+					}},
+				}},
+				ToolCalls: []runtime.AgentLoopToolCall{{
+					ID:       "tool-top-" + probe,
+					Name:     "daemon.health",
+					Metadata: map[string]any{"phase": "top-" + probe},
+				}},
+			},
+		}, nil
+	}))
+
+	result := mgr.executeAgentPlannerActionBatch(
+		context.Background(),
+		"session-action-queue",
+		agentRuntimeTurnRef{TaskID: "task-action-queue", RunID: "run-action-queue", TurnID: "turn-action-queue"},
+		"daemon health twice",
+		"en",
+		"tester",
+		"read_only",
+		runtime.AgentLoopToolServiceBinding{},
+		[]runtime.AgentLoopAction{
+			{Name: "daemon.health", Arguments: map[string]any{"probe": "first"}},
+			{Name: "daemon.health", Arguments: map[string]any{"probe": "second"}},
+		},
+		runtime.AgentLoopAuthorization{},
+	)
+
+	require.Equal(t, 2, executed)
+	require.False(t, result.AuthorizationRequired)
+	require.Equal(t, 2, result.ActionCount)
+	require.Equal(t, 2, result.ProcessedActionCount)
+	require.False(t, result.Truncated)
+	require.Nil(t, result.StopGate)
+	require.Len(t, result.ToolCalls, 2)
+	require.Len(t, result.Messages, 2)
+
+	queueID, ok := result.Metadata[runtime.AgentLoopActionQueueIDMetadataKey].(string)
+	require.True(t, ok, "queue id metadata type = %T", result.Metadata[runtime.AgentLoopActionQueueIDMetadataKey])
+	require.NotEmpty(t, queueID)
+	require.Equal(t, 2, result.Metadata[runtime.AgentLoopActionCountMetadataKey])
+	require.Equal(t, false, result.Metadata[runtime.AgentLoopActionBatchTruncatedMetadataKey])
+
+	for idx, probe := range []string{"first", "second"} {
+		wantIndex := idx + 1
+		topMetadata := result.ToolCalls[idx].Metadata
+		messageMetadata := result.Messages[idx].ToolCalls[0].Metadata
+		require.Equal(t, "top-"+probe, topMetadata["phase"])
+		require.Equal(t, "message-"+probe, messageMetadata["phase"])
+		for _, metadata := range []map[string]any{topMetadata, messageMetadata} {
+			require.Equal(t, queueID, metadata[runtime.AgentLoopActionQueueIDMetadataKey])
+			require.Equal(t, wantIndex, metadata[runtime.AgentLoopActionIndexMetadataKey])
+			require.Equal(t, 2, metadata[runtime.AgentLoopActionCountMetadataKey])
+			require.Equal(t, "daemon.health", metadata[runtime.AgentLoopActionNameMetadataKey])
+			require.Equal(t, "low", metadata["risk"])
+		}
+	}
+}
+
+func TestAgentManagerExecutePlannerActionBatchStopsAtGateBeforeFollowingActions(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	executed := 0
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, _ runtime.TurnContext) (runtime.TurnResult, error) {
+		executed++
+		return runtime.TurnResult{Status: runtime.TurnResultFinished}, nil
+	}))
+
+	result := mgr.executeAgentPlannerActionBatch(
+		context.Background(),
+		"session-action-gate-stop",
+		agentRuntimeTurnRef{TaskID: "task-action-gate-stop", RunID: "run-action-gate-stop", TurnID: "turn-action-gate-stop"},
+		"summarize the project",
+		"en",
+		"tester",
+		"workspace_write",
+		runtime.AgentLoopToolServiceBinding{},
+		[]runtime.AgentLoopAction{
+			{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md", "content": "hello"}},
+			{Name: "daemon.health", Arguments: map[string]any{"probe": "should-not-run"}},
+		},
+		runtime.AgentLoopAuthorization{},
+	)
+
+	require.Equal(t, 0, executed)
+	require.True(t, result.AuthorizationRequired)
+	require.Equal(t, 2, result.ActionCount)
+	require.Equal(t, 1, result.ProcessedActionCount)
+	require.NotNil(t, result.StopGate)
+	require.Equal(t, runtime.AgentLoopActionGateExplicitIntentRequired, result.StopGate.Decision.Kind)
+	require.Len(t, result.Messages, 1)
+	require.Empty(t, result.ToolCalls)
+}
