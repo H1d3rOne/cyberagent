@@ -1,5 +1,14 @@
 package runtime
 
+const (
+	// AgentLoopAuthorizationIDMetadataKey stores the authorization request ID
+	// associated with an approved action execution.
+	AgentLoopAuthorizationIDMetadataKey = "authorization_id"
+	// AgentLoopAuthorizationStatusMetadataKey stores the approval status stamped
+	// onto tool calls produced after an authorization decision.
+	AgentLoopAuthorizationStatusMetadataKey = "authorization_status"
+)
+
 // AgentLoopAuthorization is the runtime-neutral authorization context used by
 // planner loop action execution and LLM synthesis stages.
 type AgentLoopAuthorization struct {
@@ -66,4 +75,14 @@ func CloneAgentLoopBoolPtr(value *bool) *bool {
 	}
 	cloned := *value
 	return &cloned
+}
+
+// AgentLoopAuthorizationActionMetadata builds metadata for tool calls produced
+// by an action executed after an authorization approval.
+func AgentLoopAuthorizationActionMetadata(authorizationID, status, actionName string) map[string]any {
+	return map[string]any{
+		AgentLoopAuthorizationIDMetadataKey:     authorizationID,
+		AgentLoopAuthorizationStatusMetadataKey: status,
+		AgentLoopActionNameMetadataKey:          actionName,
+	}
 }

@@ -107,19 +107,9 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 	}
 	runtimeActionMessages = agentLoopMessagesWithPhase(runtimeActionMessages, "step")
 	runtimeActionToolCalls = agentLoopToolCallsWithPhase(runtimeActionToolCalls, "step")
-	authorizationMetadata := map[string]interface{}{
-		"authorization_id":     pending.ID,
-		"authorization_status": "approved",
-		"action_name":          pending.ActionName,
-	}
-	for i := range runtimeActionToolCalls {
-		runtimeActionToolCalls[i] = withAgentLoopToolMetadata(runtimeActionToolCalls[i], authorizationMetadata)
-	}
-	for i := range runtimeActionMessages {
-		for j := range runtimeActionMessages[i].ToolCalls {
-			runtimeActionMessages[i].ToolCalls[j] = withAgentLoopToolMetadata(runtimeActionMessages[i].ToolCalls[j], authorizationMetadata)
-		}
-	}
+	authorizationMetadata := runtime.AgentLoopAuthorizationActionMetadata(pending.ID, "approved", pending.ActionName)
+	runtimeActionToolCalls = agentLoopToolCallsWithMetadata(runtimeActionToolCalls, authorizationMetadata)
+	runtimeActionMessages = agentLoopMessagesWithToolMetadata(runtimeActionMessages, authorizationMetadata)
 	actionMessages := agentMessagesFromAgentLoopMessages(runtimeActionMessages)
 	if len(actionMessages) > 0 {
 		m.appendMessagesForTurn(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, daemonTurnExecutionPlannerActionExecution, operationLevel, actionMessages...)

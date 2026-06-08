@@ -39,3 +39,16 @@ func TestAgentLoopAuthorizationCloneIsolatesAuthProfiles(t *testing.T) {
 		t.Fatalf("clone reused Enabled pointer")
 	}
 }
+
+func TestAgentLoopAuthorizationActionMetadata(t *testing.T) {
+	metadata := AgentLoopAuthorizationActionMetadata("auth-1", "approved", "daemon.health")
+	if metadata[AgentLoopAuthorizationIDMetadataKey] != "auth-1" {
+		t.Fatalf("authorization_id = %#v, want auth-1", metadata[AgentLoopAuthorizationIDMetadataKey])
+	}
+	if metadata[AgentLoopAuthorizationStatusMetadataKey] != "approved" {
+		t.Fatalf("authorization_status = %#v, want approved", metadata[AgentLoopAuthorizationStatusMetadataKey])
+	}
+	if metadata[AgentLoopActionNameMetadataKey] != "daemon.health" {
+		t.Fatalf("action_name = %#v, want daemon.health", metadata[AgentLoopActionNameMetadataKey])
+	}
+}

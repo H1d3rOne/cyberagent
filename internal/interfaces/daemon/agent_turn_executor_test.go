@@ -300,6 +300,10 @@ func TestAgentManagerDecideAgentAuthorizationApprovedActionAppendUsesExternalTur
 	require.Equal(t, "step", payload.Messages[0].Phase)
 	require.Len(t, payload.Messages[0].ToolCalls, 1)
 	require.Equal(t, "daemon.health", payload.Messages[0].ToolCalls[0].Name)
+	metadata := payload.Messages[0].ToolCalls[0].Metadata
+	require.Equal(t, "auth-external-authorization", metadata[runtime.AgentLoopAuthorizationIDMetadataKey])
+	require.Equal(t, "approved", metadata[runtime.AgentLoopAuthorizationStatusMetadataKey])
+	require.Equal(t, "daemon.health", metadata[runtime.AgentLoopActionNameMetadataKey])
 }
 
 func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefThroughRuntimeRunners(t *testing.T) {
