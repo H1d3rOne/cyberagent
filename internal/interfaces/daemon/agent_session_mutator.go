@@ -418,6 +418,13 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 		ctx = context.Background()
 	}
 	action = cloneAgentLoopAction(action)
+	actionMetadataName := firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(action.Name))
+	requestMetadata := runtime.AgentLoopAuthorizationRequestMutationMetadata(
+		actionMetadataName,
+		normalizeAgentOperationLevel(firstNonEmpty(requiredLevel, "read_only")),
+		strings.TrimSpace(policy),
+		operationLevel,
+	)
 	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
 		Turn: runtime.TurnContext{
 			SessionID:      sessionID,
@@ -427,10 +434,7 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 			Prompt:         operatorPrompt,
 			Origin:         string(runtime.SessionMutationRequestAuthorization),
 			OperationLevel: operationLevel,
-			Metadata: map[string]any{
-				"mutator": "session_mutation",
-				"kind":    string(runtime.SessionMutationRequestAuthorization),
-			},
+			Metadata:       runtime.AgentLoopSessionMutationMetadata(runtime.SessionMutationRequestAuthorization),
 		},
 		Kind: runtime.SessionMutationRequestAuthorization,
 		Payload: runtime.AgentLoopAuthorizationRequestPayload{
@@ -441,14 +445,7 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 			Policy:        policy,
 			Reason:        reason,
 		},
-		Metadata: map[string]any{
-			"mutator":         "session_mutation",
-			"kind":            string(runtime.SessionMutationRequestAuthorization),
-			"action_name":     firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(action.Name)),
-			"required_level":  normalizeAgentOperationLevel(firstNonEmpty(requiredLevel, "read_only")),
-			"policy":          strings.TrimSpace(policy),
-			"operation_level": operationLevel,
-		},
+		Metadata: requestMetadata,
 	})
 	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
 		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
@@ -474,6 +471,7 @@ func (m *agentManager) runRuntimeCapabilityBlockedMutationForTurn(ctx context.Co
 	}
 	actionName = firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(actionName))
 	intentID = strings.TrimSpace(intentID)
+	requestMetadata := runtime.AgentLoopCapabilityBlockedMutationMetadata(actionName, intentID, strings.TrimSpace(suggestedPrompt), operationLevel)
 	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
 		Turn: runtime.TurnContext{
 			SessionID:      sessionID,
@@ -483,14 +481,7 @@ func (m *agentManager) runRuntimeCapabilityBlockedMutationForTurn(ctx context.Co
 			Prompt:         operatorPrompt,
 			Origin:         string(runtime.SessionMutationCapabilityBlocked),
 			OperationLevel: operationLevel,
-			Metadata: map[string]any{
-				"mutator":          "session_mutation",
-				"kind":             string(runtime.SessionMutationCapabilityBlocked),
-				"action_name":      actionName,
-				"intent_id":        intentID,
-				"suggested_prompt": strings.TrimSpace(suggestedPrompt),
-				"operation_level":  operationLevel,
-			},
+			Metadata:       runtime.CloneAgentLoopMapStringAny(requestMetadata),
 		},
 		Kind: runtime.SessionMutationCapabilityBlocked,
 		Payload: runtime.AgentLoopCapabilityBlockedPayload{
@@ -500,14 +491,7 @@ func (m *agentManager) runRuntimeCapabilityBlockedMutationForTurn(ctx context.Co
 			Reason:          reason,
 			SuggestedPrompt: suggestedPrompt,
 		},
-		Metadata: map[string]any{
-			"mutator":          "session_mutation",
-			"kind":             string(runtime.SessionMutationCapabilityBlocked),
-			"action_name":      actionName,
-			"intent_id":        intentID,
-			"suggested_prompt": strings.TrimSpace(suggestedPrompt),
-			"operation_level":  operationLevel,
-		},
+		Metadata: requestMetadata,
 	})
 	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
 		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {

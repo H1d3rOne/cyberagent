@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
@@ -141,6 +142,10 @@ func TestAgentManagerExecutePlannerActionBatchGateResultParity(t *testing.T) {
 			require.Equal(t, turnRef.TurnID, records[0].Turn.TurnID)
 			require.Equal(t, tc.prompt, records[0].Turn.Prompt)
 			require.Equal(t, tc.operationLevel, records[0].Turn.OperationLevel)
+			require.Equal(t, runtime.AgentLoopSessionMutationMutatorMetadataValue, records[0].Turn.Metadata[runtime.AgentLoopSessionMutationMutatorMetadataKey])
+			require.Equal(t, string(tc.wantMutationKind), records[0].Turn.Metadata[runtime.AgentLoopSessionMutationKindMetadataKey])
+			require.Equal(t, runtime.AgentLoopSessionMutationMutatorMetadataValue, records[0].Metadata[runtime.AgentLoopSessionMutationMutatorMetadataKey])
+			require.Equal(t, string(tc.wantMutationKind), records[0].Metadata[runtime.AgentLoopSessionMutationKindMetadataKey])
 
 			switch tc.wantMutationKind {
 			case runtime.SessionMutationCapabilityBlocked:
@@ -152,6 +157,11 @@ func TestAgentManagerExecutePlannerActionBatchGateResultParity(t *testing.T) {
 				require.Equal(t, decision.IntentID, payload.IntentID)
 				require.Equal(t, decision.Reason, payload.Reason)
 				require.Equal(t, decision.SuggestedPrompt, payload.SuggestedPrompt)
+				require.Equal(t, decision.ActionName, records[0].Metadata[runtime.AgentLoopActionNameMetadataKey])
+				require.Equal(t, decision.IntentID, records[0].Metadata[runtime.AgentLoopSessionMutationIntentIDMetadataKey])
+				require.Equal(t, strings.TrimSpace(decision.SuggestedPrompt), records[0].Metadata[runtime.AgentLoopSessionMutationSuggestedPromptMetadataKey])
+				require.Equal(t, tc.operationLevel, records[0].Metadata[runtime.AgentLoopSessionMutationOperationLevelMetadataKey])
+				require.Equal(t, decision.ActionName, records[0].Turn.Metadata[runtime.AgentLoopActionNameMetadataKey])
 			case runtime.SessionMutationRequestAuthorization:
 				require.Equal(t, string(runtime.SessionMutationRequestAuthorization), records[0].Turn.Origin)
 				payload, ok := records[0].Payload.(runtime.AgentLoopAuthorizationRequestPayload)
@@ -161,6 +171,10 @@ func TestAgentManagerExecutePlannerActionBatchGateResultParity(t *testing.T) {
 				require.Equal(t, tc.wantRequired, payload.RequiredLevel)
 				require.Equal(t, tc.wantPolicy, payload.Policy)
 				require.Equal(t, tc.action, payload.Action)
+				require.Equal(t, decision.ActionName, records[0].Metadata[runtime.AgentLoopActionNameMetadataKey])
+				require.Equal(t, tc.wantRequired, records[0].Metadata[runtime.AgentLoopSessionMutationRequiredLevelMetadataKey])
+				require.Equal(t, tc.wantPolicy, records[0].Metadata[runtime.AgentLoopSessionMutationPolicyMetadataKey])
+				require.Equal(t, tc.operationLevel, records[0].Metadata[runtime.AgentLoopSessionMutationOperationLevelMetadataKey])
 			default:
 				t.Fatalf("unexpected mutation kind %s", tc.wantMutationKind)
 			}
