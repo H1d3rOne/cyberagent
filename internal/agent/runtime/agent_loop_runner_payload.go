@@ -1,8 +1,9 @@
 package runtime
 
-// AgentLoopMode selects the engine-owned loop runner behavior. The two modes
-// preserve the daemon legacy split while sharing one runtime-neutral request /
-// result contract.
+// AgentLoopMode selects the engine-owned loop runner behavior. The public
+// outer modes preserve the daemon legacy split while sharing one
+// runtime-neutral request / result contract; the cycle mode is an internal
+// compatibility sub-mode during migration.
 type AgentLoopMode string
 
 const (
@@ -13,6 +14,12 @@ const (
 	// AgentLoopModeReplanContinuation starts from an existing plan and only
 	// continues the Action → StepReplan cycle when auto-continue is allowed.
 	AgentLoopModeReplanContinuation AgentLoopMode = "replan_action_continuation"
+
+	// AgentLoopModePlannerActionReplanCycle executes exactly one Action →
+	// StepReplan cycle. It is the side-effect compatibility sub-mode used by
+	// engine-owned outer loop runners while the action/synthesis adapters still
+	// live in daemon.
+	AgentLoopModePlannerActionReplanCycle AgentLoopMode = "planner_action_replan_cycle"
 )
 
 // AgentLoopRequest is the runtime-neutral boundary for the future

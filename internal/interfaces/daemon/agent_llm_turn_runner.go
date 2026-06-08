@@ -22,7 +22,7 @@ func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LL
 		return daemonLLMTurnErrorResult(req, err), err
 	}
 	loop = loop.Clone()
-	loopResult, err := r.manager.runAgentLLMToolLoopAgentLoopResult(ctx, loop)
+	loopResult, err := r.manager.runRuntimeAgentLoopResult(ctx, loop)
 
 	status := runtime.TurnResultFinished
 	reason := "legacy daemon LLM tool loop executed"

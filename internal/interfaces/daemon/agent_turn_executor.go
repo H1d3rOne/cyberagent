@@ -96,7 +96,10 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 		ctx = context.Background()
 	}
 	loopReq := payload.Clone()
-	loopResult := e.manager.runAgentReplanActionContinuationAgentLoopResult(ctx, loopReq)
+	loopResult, err := e.manager.runRuntimeAgentLoopResult(ctx, loopReq)
+	if err != nil {
+		return daemonTurnExecutionErrorResult(turn, err), err
+	}
 	resultPayload := runtime.AgentLoopTurnResultPayload{
 		Messages:   runtime.CloneAgentLoopMessages(loopResult.Messages),
 		ToolCalls:  runtime.CloneAgentLoopToolCalls(loopResult.ToolCalls),

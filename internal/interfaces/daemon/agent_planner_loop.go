@@ -1652,6 +1652,7 @@ type agentPlannerActionReplanCycleResult struct {
 const (
 	agentPlannerActionReplanCycleMetadataActionAppendOrigin                      = "action_append_origin"
 	agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage = "append_action_tool_calls_before_empty_message"
+	agentPlannerActionReplanCycleMetadataParentMode                              = "parent_mode"
 	agentPlannerActionReplanCycleMetadataContinue                                = runtime.AgentLoopEgressMetadataContinue
 	agentPlannerActionReplanCycleStopReasonLegacyDaemonLoopExecuted              = runtime.AgentLoopStopReasonLegacyDaemonLoopExecuted
 )
@@ -1805,11 +1806,12 @@ func agentPlannerActionReplanCycleTurnContext(sessionID string, turnRef agentRun
 }
 
 func (m *agentManager) runRuntimeAgentPlannerActionReplanCycle(ctx context.Context, mode runtime.AgentLoopMode, req agentPlannerActionReplanCycleRequest) agentPlannerActionReplanCycleResult {
-	return agentPlannerActionReplanCycleResultFromAgentLoopResult(m.runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx, req.agentLoopRequest(mode)))
+	loopReq := req.agentLoopRequest(mode)
+	return agentPlannerActionReplanCycleResultFromAgentLoopResult(m.runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx, loopReq))
 }
 
 func (m *agentManager) runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) runtime.AgentLoopResult {
-	req := loopReq.Clone()
+	req := agentPlannerActionReplanCycleAgentLoopRequest(loopReq)
 	eng := m.runtimeEngine()
 	if eng == nil {
 		return normalizeAgentPlannerActionReplanCycleAgentLoopResult(m.runAgentPlannerActionReplanCycleAgentLoop(ctx, req))
@@ -1822,7 +1824,24 @@ func (m *agentManager) runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx cont
 }
 
 func (m *agentManager) runAgentPlannerActionReplanCycle(ctx context.Context, req agentPlannerActionReplanCycleRequest) agentPlannerActionReplanCycleResult {
-	return agentPlannerActionReplanCycleResultFromAgentLoopResult(m.runAgentPlannerActionReplanCycleAgentLoop(ctx, req.agentLoopRequest("")))
+	return agentPlannerActionReplanCycleResultFromAgentLoopResult(m.runAgentPlannerActionReplanCycleAgentLoop(ctx, req.agentLoopRequest(runtime.AgentLoopModePlannerActionReplanCycle)))
+}
+
+func agentPlannerActionReplanCycleAgentLoopRequest(loopReq runtime.AgentLoopRequest) runtime.AgentLoopRequest {
+	req := loopReq.Clone()
+	parentMode := req.Mode
+	req.Mode = runtime.AgentLoopModePlannerActionReplanCycle
+	if parentMode != "" && parentMode != runtime.AgentLoopModePlannerActionReplanCycle {
+		metadata := runtime.CloneAgentLoopMapStringAny(req.Metadata)
+		if metadata == nil {
+			metadata = map[string]any{}
+		}
+		if _, ok := metadata[agentPlannerActionReplanCycleMetadataParentMode]; !ok {
+			metadata[agentPlannerActionReplanCycleMetadataParentMode] = string(parentMode)
+		}
+		req.Metadata = metadata
+	}
+	return req
 }
 
 func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) runtime.AgentLoopResult {

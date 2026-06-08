@@ -250,11 +250,12 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N102：将 planner JSON / native tool-call parse/fallback/schedule override 收敛为 runtime-neutral parser result DTO/helper，`handleAgentLLMChat` / `synthesizeAgentToolResults` 仅保留 LLM provider 与 daemon message/tool adapter 边界。
 - [x] P0.5-N103：将 authorization/capability gate decision + side-effect orchestration 标准化为 runtime-neutral gate/action-batch result DTO，先保持 mutation 副作用仍经 `SessionMutator` adapter，覆盖四类 gate parity。
 - [x] P0.5-N104：标准化 StepReplan synthesis failure、auto-continue/max-loop stop 与 follow-up continuation egress metadata/stop reason，为后续真正 engine-owned loop runner 切换提供统一验收口径。
-- [ ] P0.5-N105：进行真正 engine-owned loop runner 切换与 completion audit，验证 runtime seam owns loop control 后 daemon adapter 只保留 legacy IO/side-effect compatibility。
+- [x] P0.5-N105：进行真正 engine-owned loop runner 切换与 completion audit，验证 runtime seam owns loop control 后 daemon adapter 只保留 legacy IO/side-effect compatibility。
+- [ ] P0.5-N106：清理 outer loop 旧 trampoline / side-effect compatibility 边界，优先盘点 `RunLLMTurn` / `ExecuteTurn` 是否还能进一步退化为调用方兼容层，并明确 planner/action/session 副作用后续下沉顺序。
 
 当前盘点（2026-06-08）：
 
-- 已经走 engine seam：`record_user_message`、`append_messages`、`control_session`、`resolve_authorization`、`request_authorization`、`capability_blocked`；deterministic route / replan continuation / planner action execution；LLM turn runner；planner chat 与 tool synthesis stage。
+- 已经走 engine seam：`record_user_message`、`append_messages`、`control_session`、`resolve_authorization`、`request_authorization`、`capability_blocked`；deterministic route / planner action execution；LLM turn runner；planner chat 与 tool synthesis stage；`llm_tool_loop` / `replan_action_continuation` outer loop 现在经 `AgentLoopRunner` 接管，内部 Action → StepReplan 通过 `planner_action_replan_cycle` 兼容 sub-mode 执行。
 - 已清理 session mutation 输入 payload 的 daemon-private wrapper：append/record/request_authorization/capability_blocked/control/resolve 均由 runtime DTO + TurnContext 承载；append_messages、record_user_message、request_authorization、capability_blocked、control_session 与 resolve_authorization result 已先经 runtime `AgentLoopAppendMessagesResultPayload` / `AgentLoopRecordUserMessageResultPayload` / `AgentLoopRequestAuthorizationResultPayload` / `AgentLoopCapabilityBlockedResultPayload` / `AgentLoopControlSessionResultPayload` / `AgentLoopResolveAuthorizationResultPayload` / `AgentLoopSessionSnapshot` roundtrip，legacy result struct 仅作为 daemon adapter/caller DTO 与兼容 fallback 保留。
 - session mutation result payload 已整体迁入 runtime-neutral DTO：append/record/request_authorization/capability_blocked/control/resolve 均具备 runtime result DTO 与 daemon adapter roundtrip；legacy fallback helper 已收敛并重命名为 adapter-only compatibility 路径，daemon mutator 六类输出均有 runtime DTO 类型断言覆盖，`FromSessionMutationResult` 重复 switch 已收敛为 typed runtime/legacy egress helper。
 - 已输出 engine-native runner 草案：建议将 `llm_tool_loop` 与 `replan_action_continuation` 统一为单个 loop runner 的两个 mode，明确请求/响应 payload、authorization gate、action queue metadata、synthesis、append/persist ownership 与迁移顺序。
@@ -270,8 +271,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - 已将 LLM stage runner payload/result 迁到 runtime-neutral `runtime.AgentLoopLLMStagePayload` / `runtime.AgentLoopLLMStageResultPayload`：planner_chat 与 tool_synthesis 不再通过 daemon-private stage payload 携带 legacy request/history/memory/tool messages/plan，daemon stage runner 仅在 ingress/egress adapter 转换 legacy 类型，并通过 runtime DTO clone 隔离 mutable fields。
 - 已将 tool service binding adapter compatibility 迁到 runtime-neutral `runtime.AgentLoopToolServiceBinding`：LLM tool loop request、deterministic route / replan continuation / planner action execution payload 与 `agentPlannerActionReplanCycleToolContext` 不再直接持有 `routerServices`；daemon adapter 通过 `agentLoopToolServiceBindingFromRouterServices` / `legacyRouterServicesFromAgentLoopToolServiceBinding` 解包，并保持 `jobs` 等服务引用不丢失。
 - registry handler runtime 也已改为持有 runtime-neutral `runtime.AgentLoopToolServiceBinding`：`agentRegistryHandlerRuntime.Services` 不再暴露 daemon `routerServices`，builtin handler 只在调用 legacy handler adapter 时通过 `legacyRouterServices()` 解包，并保持 auth profiles slice clone 语义。
-- engine-native loop runner 的顶层 DTO 已落到 runtime package：`runtime.AgentLoopMode` 覆盖 `llm_tool_loop` / `replan_action_continuation` 两种 mode，`runtime.AgentLoopRequest` 汇总 Turn/LLM/history/memory/plan/state/authorization/tool services/metadata，`runtime.AgentLoopResult` 汇总 state/messages/tool calls/final plan/stop reason/queue IDs/metadata；`Engine.RunAgentLoop` / `AgentLoopRunner` seam 已接入 daemon shared cycle runner adapter，shared cycle 入口已通过 seam dispatch；`runRuntimeAgentPlannerActionReplanCycleAgentLoop` 已成为 runtime DTO 主入口，外层 `runAgentLLMToolLoop` / `runAgentReplanActionContinuation` 轮次间也保持 runtime state/plan/result。
-- daemon shared cycle request/result 已具备 `runtime.AgentLoopRequest` / `runtime.AgentLoopResult` adapter 映射：覆盖 turn/LLM/auth/memory/plan/state/history/tool service/options metadata/result continue/stop reason，验证 roundtrip 与 clone 隔离；当前 `daemonAgentLoopRunner` 已直接调用 runtime request 主流程，shared cycle 内部以 `runtime.AgentLoopState` 聚合 action execution / tool synthesis 输出，action execution 与 synthesis helper 也已改为接收 runtime `AgentLoopRequest` 并返回 runtime `AgentLoopResult`，daemon-private cycle request/state wrapper 主要保留为 legacy helper 兼容层，尚未迁移完整 loop ownership。
+- engine-native loop runner 的顶层 DTO 已落到 runtime package：`runtime.AgentLoopMode` 覆盖 `llm_tool_loop` / `replan_action_continuation` 两种 outer mode，并新增 `planner_action_replan_cycle` 作为迁移期内部 sub-mode；`runtime.AgentLoopRequest` 汇总 Turn/LLM/history/memory/plan/state/authorization/tool services/metadata，`runtime.AgentLoopResult` 汇总 state/messages/tool calls/final plan/stop reason/queue IDs/metadata；`Engine.RunAgentLoop` / `AgentLoopRunner` seam 已接管 outer loop control，LLM turn runner 与 replan continuation executor 现在只做兼容 trampoline 并转调 `runRuntimeAgentLoopResult`。
+- daemon shared cycle request/result 已具备 `runtime.AgentLoopRequest` / `runtime.AgentLoopResult` adapter 映射：覆盖 turn/LLM/auth/memory/plan/state/history/tool service/options metadata/result continue/stop reason，验证 roundtrip 与 clone 隔离；当前 `daemonAgentLoopRunner` 会按 mode 分派完整 `llm_tool_loop` outer loop、完整 `replan_action_continuation` outer loop，或单轮 `planner_action_replan_cycle` shared cycle；shared cycle 内部以 `runtime.AgentLoopState` 聚合 action execution / tool synthesis 输出，action execution 与 synthesis helper 也已改为接收 runtime `AgentLoopRequest` 并返回 runtime `AgentLoopResult`，daemon-private cycle request/state wrapper 主要保留为 legacy helper 兼容层。
 - shared cycle request 已使用 runtime-native turn boundary：`agentPlannerActionReplanCycleRequest.Turn` 现在是 `runtime.TurnContext`，session/task/run/turn/prompt/origin/operation_level 不再作为散列 daemon 参数传入；仅在落回 append/action/synthesis legacy adapter 时转换为 `agentRuntimeTurnRef`。
 - shared cycle request 已拆分 authorization 与 LLM synthesis request：action execution 只读取 runtime-neutral `runtime.AgentLoopAuthorization`，并通过 `runAgentPlannerActionReplanCycleActionExecutionAgentLoop` 在 helper 内临时转换 tool services / auth profiles / action snapshot；StepReplan synthesis 兼容路径已集中到 `runAgentPlannerActionReplanCycleSynthesisAgentLoop`，由 runtime DTO 临时转换到 legacy request。
 - shared cycle request 的 LLM synthesis 输入已迁到 runtime-neutral `runtime.AgentLoopLLMRequest`：只保留 provider/model/API key/base URL/instructions/origin/operation_level/auth hints，并在调用 legacy synthesis adapter 时临时转换回 `sendAgentMessageRequest`。
@@ -296,8 +297,9 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - 闲置的 `runtime.AgentLoopTurnPayload` 已清理，runtime LLM turn 输入侧统一使用 `runtime.AgentLoopRequest`，输出侧保留 `runtime.AgentLoopTurnResultPayload`。
 - `runRuntimeLLMToolLoop` 已新增 runtime request 主入口 `runRuntimeLLMToolLoopAgentLoop`；SendMessage LLM/control+LLM branch 先通过 `agentLLMToolLoopRequestFromLegacy` 构造 `runtime.AgentLoopRequest`，再进入 engine `RunLLMTurn` dispatch。
 - `runRuntimeReplanActionContinuation` 已新增 runtime request 主入口 `runRuntimeReplanActionContinuationAgentLoop`；authorization approve follow-up 与 route-before-LLM synthesis follow-up branch 先通过 `agentReplanActionContinuationRequestFromLegacy` 构造 `runtime.AgentLoopRequest`，再进入 engine `ExecuteTurn` dispatch。
-- P0.5-N100 runner ownership 审计结论：
-  - `daemonAgentLoopRunner.RunAgentLoop` 当前只把 `llm_tool_loop` / `replan_action_continuation` 两种 mode 转发到 `runAgentPlannerActionReplanCycleAgentLoop`；engine seam 已存在，但 runner 实际 ownership 仍在 daemon adapter 内。
+- P0.5-N105 runner ownership completion audit：
+  - `daemonAgentLoopRunner.RunAgentLoop` 现在按 `llm_tool_loop`、`replan_action_continuation`、`planner_action_replan_cycle` 三种 mode 分派；前两者拥有完整 outer loop control，后者只执行单轮 Action → StepReplan cycle，避免 outer runner 递归。
+  - `daemonAgentLLMTurnRunner` 与 replan continuation `daemonAgentTurnExecutor` 现在通过 `runRuntimeAgentLoopResult` 转调 `Engine.RunAgentLoop`，保留旧 turn/executor seam 作为兼容 trampoline；stop_reason / loop_count / max_loops egress 继续透传。
   - LLM planner chat / StepReplan synthesis 的 provider 调用、planner JSON parse、plain-answer fallback、native tool-use action merge 与 schedule intent override 仍在 `handleAgentLLMChat` / `synthesizeAgentToolResults`。
   - `runAgentLLMToolLoopAgentLoop` 仍拥有 mode/default/max_loops、append metadata、planner chat append/apply、plan-only no-action 与 immediate-execution fallback、auto-continue stop 判断。
   - `runAgentReplanActionContinuationAgentLoop` 仍拥有 continuation max_loops、已有 plan action/auto_continue precondition 与循环停止条件；follow-up egress stop reason / loop_count / max_loops metadata 已按 N104 标准化。
@@ -314,7 +316,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
   - `planner_loop` 与 `replan_action_continuation` 的 task/run/turn/prompt/operation_level metadata 对齐。
 - P0.5-N101 loop default/precondition helper 已完成：`normalizeAgentLLMToolLoopRequest` / `normalizeAgentReplanActionContinuationRequest` 统一 mode、max_loops 与 append metadata 默认值，`agentLLMToolLoopStepPrecondition` / `agentLLMToolLoopNextPlanFromCycleResult` / `agentReplanActionContinuationStepPrecondition` 收敛 plan-only、immediate-execution fallback、auto_continue 与 max_loops 停止判断；focused parity 覆盖 metadata clone、显式 metadata 保留、fallback action 与 stop branch。
 - P0.5-N102 planner parse result DTO/helper 已完成：新增 runtime-neutral `runtime.AgentLoopPlannerParseResult`，`agentLLMPlannerChatParseResult` / `agentLLMToolSynthesisParseResult` 统一承载 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule override、message phase 与 planner metadata；`handleAgentLLMChat` / `synthesizeAgentToolResults` 只负责 provider 调用、metadata merge 与 daemon message/tool/legacy plan adapter。
-- 下一批迁移顺序：N105 进行真正 engine-owned loop runner 切换与 completion audit；重点确认 runtime seam owns loop control 后 daemon adapter 只保留 legacy IO/side-effect compatibility。
+- P0.5-N105 outer loop runner 切换已完成：outer loop control 经 `Engine.RunAgentLoop` / `AgentLoopRunner`，单轮 shared cycle 使用 `planner_action_replan_cycle` sub-mode 保持 side-effect compatibility；focused 覆盖 LLM outer loop、continuation outer loop、LLMTurn trampoline 与 TurnExecutor trampoline。
+- 下一批迁移顺序：N106 清理 outer loop 旧 trampoline / side-effect compatibility 边界，重点确认哪些调用方可直接进入 `RunAgentLoop`，以及 planner/action/session 副作用后续下沉顺序。
 
 ### 7.2 P1 Frontend / QA
 
@@ -364,6 +367,16 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 ---
 
 ## 8. 最新本地验证记录
+
+2026-06-08 本轮增量（P0.5-N105：engine-owned outer loop runner 切换与 completion audit）：
+
+```bash
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestRunAgentLoop|TestAgentManagerRunRuntimeAgentPlannerActionReplanCycleDispatchesEngineRunner|TestAgentManagerRunAgentLLMToolLoopCarriesRuntimeLoopDTOBetweenCycles|TestDaemonAgentLoopRunnerExecutesSharedCycleFromRuntimeRequest|TestDaemonAgentLoopRunnerExecutesLLMToolOuterLoopFromRuntimeRequest|TestDaemonAgentLoopRunnerExecutesReplanContinuationOuterLoopFromRuntimeRequest|TestDaemonLLMTurnRunnerDispatchesThroughRuntimeAgentLoopRunner|TestDaemonTurnExecutorReplanContinuationDispatchesThroughRuntimeAgentLoopRunner|TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner|TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：runtime/daemon focused 与包级测试通过；`daemonAgentLoopRunner` 现在按 `llm_tool_loop` / `replan_action_continuation` / `planner_action_replan_cycle` 分派，outer loop control 已通过 `Engine.RunAgentLoop` 接管；LLM turn runner 与 replan continuation executor 只保留兼容 trampoline 并透传标准 egress metadata。
 
 2026-06-08 本轮增量（P0.5-N104：AgentLoop egress stop reason 标准化）：
 
