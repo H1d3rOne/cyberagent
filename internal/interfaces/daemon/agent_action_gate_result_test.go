@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
+	"github.com/H1d3rOne/cyberagent/internal/core/services"
 	"github.com/stretchr/testify/require"
 )
 
@@ -258,6 +259,58 @@ func TestAgentManagerExecuteAgentPlannerActionListThreadsActionQueueMetadata(t *
 			require.Equal(t, "daemon.health", metadata[runtime.AgentLoopActionNameMetadataKey])
 			require.Equal(t, "low", metadata["risk"])
 		}
+	}
+}
+
+func TestAgentManagerExecutePlannerActionBatchErrorFallbackUsesRuntimeResultHelper(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, _ runtime.TurnContext) (runtime.TurnResult, error) {
+		err := services.NewError(services.CodeUnsupported, "unsupported action", map[string]any{
+			"action":  "service-detail-action",
+			"target":  "https://example.com",
+			"missing": "plugin",
+		}, nil)
+		return runtime.TurnResult{Status: runtime.TurnResultFailed, Error: err}, err
+	}))
+
+	result := mgr.executeAgentPlannerActionBatch(
+		context.Background(),
+		"session-action-error-fallback",
+		agentRuntimeTurnRef{TaskID: "task-action-error-fallback", RunID: "run-action-error-fallback", TurnID: "turn-action-error-fallback"},
+		"run daemon health",
+		"en",
+		"tester",
+		"read_only",
+		runtime.AgentLoopToolServiceBinding{},
+		[]runtime.AgentLoopAction{{Name: "daemon.health", Arguments: map[string]any{"probe": "failure"}}},
+		runtime.AgentLoopAuthorization{},
+	)
+
+	require.False(t, result.AuthorizationRequired)
+	require.Equal(t, 1, result.ActionCount)
+	require.Equal(t, 1, result.ProcessedActionCount)
+	require.Len(t, result.ToolCalls, 1)
+	require.Len(t, result.Messages, 1)
+	require.Len(t, result.Messages[0].ToolCalls, 1)
+
+	queueID, ok := result.Metadata[runtime.AgentLoopActionQueueIDMetadataKey].(string)
+	require.True(t, ok, "queue id metadata type = %T", result.Metadata[runtime.AgentLoopActionQueueIDMetadataKey])
+	require.NotEmpty(t, queueID)
+	for _, call := range []runtime.AgentLoopToolCall{result.ToolCalls[0], result.Messages[0].ToolCalls[0]} {
+		require.NotNil(t, call.Error)
+		require.Equal(t, services.CodeUnsupported, call.Error.Code)
+		require.Equal(t, "daemon.health", call.Result[runtime.AgentLoopActionResultActionKey])
+		require.Equal(t, "https://example.com", call.Result["target"])
+		require.Equal(t, "plugin", call.Result["missing"])
+		details, ok := call.Result[runtime.AgentLoopActionResultDetailsKey].(map[string]any)
+		require.True(t, ok, "details type = %T", call.Result[runtime.AgentLoopActionResultDetailsKey])
+		require.Equal(t, "service-detail-action", details["action"])
+		require.Equal(t, queueID, call.Metadata[runtime.AgentLoopActionQueueIDMetadataKey])
+		require.Equal(t, 1, call.Metadata[runtime.AgentLoopActionIndexMetadataKey])
+		require.Equal(t, "daemon.health", call.Metadata[runtime.AgentLoopActionNameMetadataKey])
 	}
 }
 

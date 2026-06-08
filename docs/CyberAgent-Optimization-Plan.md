@@ -294,11 +294,12 @@ engine-native turn lifecycle 下沉入口建议：
    - P0.5-N108 已把 planner_chat / tool_synthesis 的 `RunLLMStage` dispatch、`ErrLLMStageRunnerNotAttached` fallback、invalid payload 与 payload clone 逻辑统一到 `runRuntimeAgentLLMStage` / `agentLLMStageDispatchInput`，stage turn/payload/metadata 构造也改为共用 helper。
    - P0.5-N109 已把 action batch 截断/metadata seed、queue metadata key 与 tool/message metadata stamp 收敛到 runtime `AgentLoopPreparedActionBatch` / `PrepareAgentLoopActionBatch` / metadata helper，daemon batch 执行只保留 queue ID 生成、legacy default tool metadata 与实际 side-effect 调度。
    - P0.5-N110 已把 authorization approve 后 action execution 的 authorization/action metadata key 与 metadata map 构造收敛到 runtime `AgentLoopAuthorizationActionMetadata`，daemon 复用 shared tool/message metadata helper 盖到 top-level 与 message 内 tool calls。
+   - P0.5-N111 已把单 action execution error fallback 的 result map 构造收敛到 runtime `AgentLoopActionExecutionErrorResult`，保持 service error details 嵌套、顶层展开与 action name 不被 details 覆盖。
 2. **Outer loop defaults / preconditions**
    - P0.5-N101 已把 `llm_tool_loop` mode/max_loops/default metadata、plan-only no-action 与 immediate-execution fallback、cycle continue/final plan auto-continue 判断抽为纯 helper；planner chat append/apply 与 loop ownership 仍在 daemon adapter。
    - P0.5-N101 已把 `replan_action_continuation` mode/default metadata 与 max_loops/action/auto_continue precondition 抽为纯 helper；follow-up egress 与真正 loop ownership 仍在 daemon adapter。
 3. **Action gate / side effects**
-   - P0.5-N103 已新增 runtime-neutral `AgentLoopActionGateDecision` / `AgentLoopActionGateResult` / `AgentLoopActionBatchResult`，`executeAgentPlannerActionList` 降为 batch result wrapper；P0.5-N109/N110 已下沉 action queue metadata 与 authorization approve metadata helper；request_authorization / capability_blocked session mutation 仍经 daemon `SessionMutator` adapter 编排，单 action execution error fallback 与 batch 上限仍在 daemon。
+   - P0.5-N103 已新增 runtime-neutral `AgentLoopActionGateDecision` / `AgentLoopActionGateResult` / `AgentLoopActionBatchResult`，`executeAgentPlannerActionList` 降为 batch result wrapper；P0.5-N109/N110/N111 已下沉 action queue metadata、authorization approve metadata 与单 action execution error fallback result helper；request_authorization / capability_blocked session mutation 仍经 daemon `SessionMutator` adapter 编排，batch 上限与 action/session mutation request metadata 仍在 daemon。
 4. **StepReplan append / failure egress**
    - P0.5-N104 已新增 runtime-neutral `AgentLoopEgressResult`，标准化 `planner_error`、`step_replan_synthesis_error`、`no_actions`、`auto_continue_disabled`、`cycle_stopped`、`max_loops` 等 stop reason，并把 `stop_reason` / `loop_count` / `max_loops` 透传到 `AgentLoopResult`、LLM/replan turn payload 与 executor Data。
    - P0.5-N105 已将 outer loop control 切到 `AgentLoopRunner`：`daemonAgentLLMTurnRunner` / replan continuation executor 通过 `runRuntimeAgentLoopResult` 转调 `Engine.RunAgentLoop`，并以 `planner_action_replan_cycle` sub-mode 避免 runner 递归。
@@ -317,7 +318,8 @@ engine-native turn lifecycle 下沉入口建议：
 8. ✅ P0.5-N108：已继续清理 planner/provider stage compatibility，planner_chat 与 tool_synthesis 共用 stage dispatch/fallback/payload helper。
 9. ✅ P0.5-N109：已继续按 N108 后边界收敛 action execution batch/queue metadata helper。
 10. ✅ P0.5-N110：已继续按 N109 后边界收敛 authorization approve action metadata helper。
-11. P0.5-N111：继续按 N110 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估单 action execution error fallback result helper 或 authorization/session mutation request metadata helper。
+11. ✅ P0.5-N111：已继续按 N110 后边界收敛 single action execution error fallback result helper。
+12. P0.5-N112：继续按 N111 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 authorization/session mutation request metadata helper 或 action execution turn request helper。
 
 最小验证矩阵：
 
@@ -519,8 +521,9 @@ ownership 边界：
 102. ✅ P0.5-N108 已收敛 planner/provider stage dispatch helper：planner_chat 与 tool_synthesis 共用 `runRuntimeAgentLLMStage` dispatch、NotAttached fallback、invalid payload 与 payload clone 逻辑，并补 fallback/invalid/payload clone focused 覆盖。
 103. ✅ P0.5-N109 已收敛 action batch/queue metadata runtime helper：runtime 统一 batch 截断、queue/batch metadata key、tool/message metadata merge 与 clone；daemon action batch 复用 helper，并补 queue metadata 一致性与 gate stop 覆盖。
 104. ✅ P0.5-N110 已收敛 authorization approve action metadata runtime helper：runtime 统一 `authorization_id` / `authorization_status` / `action_name` metadata 构造，daemon approval action append 复用 shared tool/message metadata stamp helper，并补 append metadata 覆盖。
-105. 下一步 P0.5-N111 继续按 N110 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估单 action execution error fallback result helper 或 authorization/session mutation request metadata helper。
-106. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+105. ✅ P0.5-N111 已收敛 single action execution error fallback result runtime helper：runtime 统一 action error fallback tool result map 构造、service details 嵌套与顶层展开，daemon action batch error 分支复用 helper，并补 details/action 不覆盖与 queue metadata 覆盖。
+106. 下一步 P0.5-N112 继续按 N111 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 authorization/session mutation request metadata helper 或 action execution turn request helper。
+107. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1503,6 +1506,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v142 | 完成 P0.5-N108 planner/provider stage dispatch compatibility helper：新增 `runRuntimeAgentLLMStage` / `agentLLMStageDispatchInput` 与 stage turn/payload/metadata helper，planner_chat 与 tool_synthesis 共用 `RunLLMStage` dispatch、NotAttached fallback、invalid payload 与 runtime payload clone 逻辑；补 fallback、invalid payload、payload clone 与现有 stage dispatch focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 | v143 | 完成 P0.5-N109 action batch/queue metadata runtime helper：新增 `AgentLoopPreparedActionBatch` / `PrepareAgentLoopActionBatch`、queue/batch metadata key constants 与 tool/message metadata merge helper；daemon `executeAgentPlannerActionBatch` 复用 runtime batch setup，补截断 clone、queue metadata 一致性与 gate stop focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 | v144 | 完成 P0.5-N110 authorization approve action metadata helper：新增 runtime authorization metadata key/helper，批准后 action execution 的 top-level/message tool metadata stamp 复用 runtime/daemon shared metadata helper；补 runtime metadata helper 与 approval append metadata focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
+| v145 | 完成 P0.5-N111 single action execution error fallback result helper：新增 runtime `AgentLoopActionExecutionErrorResult` 与 action/details result key constants，daemon action batch error fallback 复用 runtime helper，保留 service error details 嵌套、顶层展开与 action name 不被 details 覆盖；补 runtime helper 与 daemon error fallback focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

@@ -1,6 +1,10 @@
 package runtime
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/H1d3rOne/cyberagent/internal/core/services"
+)
 
 func TestAgentLoopActionGateAndBatchResultCloneIsolatesMutableFields(t *testing.T) {
 	gate := AgentLoopActionGateResult{
@@ -138,5 +142,35 @@ func TestAgentLoopActionQueueAndToolMetadataHelpersClone(t *testing.T) {
 	}
 	if _, ok := messages[0].ToolCalls[0].Metadata[AgentLoopActionQueueIDMetadataKey]; ok {
 		t.Fatalf("original message tool call was mutated: %#v", messages[0].ToolCalls[0].Metadata)
+	}
+}
+
+func TestAgentLoopActionExecutionErrorResultExpandsServiceDetails(t *testing.T) {
+	err := services.NewError(services.CodeUnsupported, "unsupported action", map[string]any{
+		"action":  "service-detail-action",
+		"target":  "https://example.com",
+		"missing": "plugin",
+	}, nil)
+
+	result := AgentLoopActionExecutionErrorResult("daemon.health", err)
+	if result[AgentLoopActionResultActionKey] != "daemon.health" {
+		t.Fatalf("action = %#v, want daemon.health", result[AgentLoopActionResultActionKey])
+	}
+	if result["target"] != "https://example.com" || result["missing"] != "plugin" {
+		t.Fatalf("expanded details missing: %#v", result)
+	}
+	if result["action"] != "daemon.health" {
+		t.Fatalf("details overwrote top-level action: %#v", result)
+	}
+	details, ok := result[AgentLoopActionResultDetailsKey].(map[string]any)
+	if !ok {
+		t.Fatalf("details type = %T, want map[string]any", result[AgentLoopActionResultDetailsKey])
+	}
+	if details["action"] != "service-detail-action" || details["target"] != "https://example.com" {
+		t.Fatalf("nested details = %#v", details)
+	}
+	err.Details["target"] = "mutated"
+	if result["target"] != "https://example.com" || details["target"] != "https://example.com" {
+		t.Fatalf("result shares service error details: result=%#v details=%#v", result, details)
 	}
 }

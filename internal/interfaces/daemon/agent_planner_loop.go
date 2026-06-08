@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -2216,19 +2215,7 @@ func (m *agentManager) executeAgentPlannerActionBatch(ctx context.Context, sessi
 				actionName = "agent.action"
 			}
 			tool := failedAgentToolCall(actionName, err)
-			tool.Result = map[string]any{
-				"action": actionName,
-			}
-			var serviceErr *services.ServiceError
-			if errors.As(err, &serviceErr) && len(serviceErr.Details) > 0 {
-				tool.Result["details"] = serviceErr.Details
-				for key, value := range serviceErr.Details {
-					if key == "action" {
-						continue
-					}
-					tool.Result[key] = value
-				}
-			}
+			tool.Result = runtime.AgentLoopActionExecutionErrorResult(actionName, err)
 			actionMessages = agentLoopMessagesFromAgentMessages([]agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)})
 			actionToolCalls = agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{tool})
 		}
