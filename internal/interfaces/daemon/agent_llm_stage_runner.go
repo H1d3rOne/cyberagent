@@ -107,105 +107,123 @@ func daemonLLMStageResultData(stage runtime.LLMStage, turn runtime.TurnContext) 
 }
 
 func (m *agentManager) runRuntimeAgentLLMPlannerChat(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, *runtime.AgentLoopPlan, error) {
-	eng := m.runtimeEngine()
-	if eng == nil || eng.LLMStageRunner() == nil {
-		messages, toolCalls, plan, err := m.handleAgentLLMChat(ctx, sessionID, turnRef, language, req, history, memorySummary)
-		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), agentLoopPlanPtrFromAgentPlannerResponse(plan), err
-	}
-
-	turn := runtime.TurnContext{
+	payload, err := m.runRuntimeAgentLLMStage(ctx, runtime.LLMStagePlannerChat, agentLLMStageDispatchInput{
 		SessionID:      sessionID,
-		TaskID:         turnRef.TaskID,
-		RunID:          turnRef.RunID,
-		TurnID:         turnRef.TurnID,
+		TurnRef:        turnRef,
 		Prompt:         prompt,
-		Origin:         req.Origin,
+		Language:       language,
 		OperationLevel: operationLevel,
-		Metadata: map[string]any{
-			"runner": "llm_stage",
-			"stage":  string(runtime.LLMStagePlannerChat),
-		},
-	}
-	result, err := eng.RunLLMStage(ctx, runtime.LLMStageRequest{
-		Turn:  turn,
-		Stage: runtime.LLMStagePlannerChat,
-		Payload: runtime.AgentLoopLLMStagePayload{
-			Turn:          runtime.CloneAgentLoopTurnContext(turn),
-			Language:      language,
-			LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
-			History:       agentLoopMessagesFromAgentMessages(history),
-			MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
-		},
-		Metadata: map[string]any{
-			"runner": "llm_stage",
-			"stage":  string(runtime.LLMStagePlannerChat),
-		},
+		Request:        req,
+		History:        history,
+		MemorySummary:  memorySummary,
+	}, func() ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
+		messages, toolCalls, plan, err := m.handleAgentLLMChat(ctx, sessionID, turnRef, language, req, history, memorySummary)
+		return messages, toolCalls, plan, err
 	})
-	if errors.Is(err, runtime.ErrLLMStageRunnerNotAttached) {
-		messages, toolCalls, plan, fallbackErr := m.handleAgentLLMChat(ctx, sessionID, turnRef, language, req, history, memorySummary)
-		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), agentLoopPlanPtrFromAgentPlannerResponse(plan), fallbackErr
-	}
-
-	payload, ok := agentLoopLLMStageResultPayloadFromLLMStageResult(result.Payload)
-	if ok {
-		return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), runtime.CloneAgentLoopPlan(payload.Plan), err
-	}
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return nil, nil, nil, errors.New("daemon: llm planner chat runner returned invalid payload")
+	return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), runtime.CloneAgentLoopPlan(payload.Plan), nil
 }
 
 func (m *agentManager) runRuntimeAgentLLMToolSynthesis(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, toolMessages []runtime.AgentLoopMessage) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, *runtime.AgentLoopPlan, error) {
 	toolMessages = runtime.CloneAgentLoopMessages(toolMessages)
+	payload, err := m.runRuntimeAgentLLMStage(ctx, runtime.LLMStageToolSynthesis, agentLLMStageDispatchInput{
+		SessionID:      sessionID,
+		TurnRef:        turnRef,
+		Prompt:         prompt,
+		Language:       language,
+		OperationLevel: operationLevel,
+		Request:        req,
+		History:        history,
+		MemorySummary:  memorySummary,
+		ToolMessages:   toolMessages,
+	}, func() ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
+		messages, toolCalls, plan, err := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, agentMessagesFromAgentLoopMessages(toolMessages))
+		return messages, toolCalls, plan, err
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), runtime.CloneAgentLoopPlan(payload.Plan), nil
+}
+
+type agentLLMStageDispatchInput struct {
+	SessionID      string
+	TurnRef        agentRuntimeTurnRef
+	Prompt         string
+	Language       string
+	OperationLevel string
+	Request        sendAgentMessageRequest
+	History        []agentMessage
+	MemorySummary  *agentMemorySummary
+	ToolMessages   []runtime.AgentLoopMessage
+}
+
+func (m *agentManager) runRuntimeAgentLLMStage(ctx context.Context, stage runtime.LLMStage, input agentLLMStageDispatchInput, fallback func() ([]agentMessage, []agentToolCall, *agentPlannerResponse, error)) (runtime.AgentLoopLLMStageResultPayload, error) {
 	eng := m.runtimeEngine()
 	if eng == nil || eng.LLMStageRunner() == nil {
-		messages, toolCalls, plan, err := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, agentMessagesFromAgentLoopMessages(toolMessages))
-		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), agentLoopPlanPtrFromAgentPlannerResponse(plan), err
+		return agentLoopLLMStageResultPayloadFromLegacyFallback(fallback)
 	}
 
-	turn := runtime.TurnContext{
-		SessionID:      sessionID,
-		TaskID:         turnRef.TaskID,
-		RunID:          turnRef.RunID,
-		TurnID:         turnRef.TurnID,
-		Prompt:         prompt,
-		Origin:         req.Origin,
-		OperationLevel: operationLevel,
-		Metadata: map[string]any{
-			"runner": "llm_stage",
-			"stage":  string(runtime.LLMStageToolSynthesis),
-		},
-	}
+	turn := agentLLMStageTurnContext(stage, input)
 	result, err := eng.RunLLMStage(ctx, runtime.LLMStageRequest{
-		Turn:  turn,
-		Stage: runtime.LLMStageToolSynthesis,
-		Payload: runtime.AgentLoopLLMStagePayload{
-			Turn:          runtime.CloneAgentLoopTurnContext(turn),
-			Language:      language,
-			LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(req),
-			History:       agentLoopMessagesFromAgentMessages(history),
-			MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(memorySummary),
-			ToolMessages:  runtime.CloneAgentLoopMessages(toolMessages),
-		},
-		Metadata: map[string]any{
-			"runner": "llm_stage",
-			"stage":  string(runtime.LLMStageToolSynthesis),
-		},
+		Turn:     turn,
+		Stage:    stage,
+		Payload:  agentLLMStagePayloadFromDispatchInput(turn, input),
+		Metadata: agentLLMStageMetadata(stage),
 	})
 	if errors.Is(err, runtime.ErrLLMStageRunnerNotAttached) {
-		messages, toolCalls, plan, fallbackErr := m.synthesizeAgentToolResults(ctx, sessionID, turnRef, language, req, history, memorySummary, agentMessagesFromAgentLoopMessages(toolMessages))
-		return agentLoopMessagesFromAgentMessages(messages), agentLoopToolCallItemsFromAgentToolCalls(toolCalls), agentLoopPlanPtrFromAgentPlannerResponse(plan), fallbackErr
+		return agentLoopLLMStageResultPayloadFromLegacyFallback(fallback)
 	}
 
 	payload, ok := agentLoopLLMStageResultPayloadFromLLMStageResult(result.Payload)
 	if ok {
-		return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), runtime.CloneAgentLoopPlan(payload.Plan), err
+		return payload, err
 	}
 	if err != nil {
-		return nil, nil, nil, err
+		return runtime.AgentLoopLLMStageResultPayload{}, err
 	}
-	return nil, nil, nil, errors.New("daemon: llm tool synthesis runner returned invalid payload")
+	return runtime.AgentLoopLLMStageResultPayload{}, fmt.Errorf("daemon: llm %s runner returned invalid payload", stage)
+}
+
+func agentLLMStageTurnContext(stage runtime.LLMStage, input agentLLMStageDispatchInput) runtime.TurnContext {
+	return runtime.TurnContext{
+		SessionID:      input.SessionID,
+		TaskID:         input.TurnRef.TaskID,
+		RunID:          input.TurnRef.RunID,
+		TurnID:         input.TurnRef.TurnID,
+		Prompt:         input.Prompt,
+		Origin:         input.Request.Origin,
+		OperationLevel: input.OperationLevel,
+		Metadata:       agentLLMStageMetadata(stage),
+	}
+}
+
+func agentLLMStagePayloadFromDispatchInput(turn runtime.TurnContext, input agentLLMStageDispatchInput) runtime.AgentLoopLLMStagePayload {
+	return runtime.AgentLoopLLMStagePayload{
+		Turn:          runtime.CloneAgentLoopTurnContext(turn),
+		Language:      input.Language,
+		LLMRequest:    agentPlannerActionReplanCycleLLMRequestFromMessageRequest(input.Request),
+		History:       agentLoopMessagesFromAgentMessages(input.History),
+		MemorySummary: agentLoopMemorySummaryPtrFromAgentMemorySummary(input.MemorySummary),
+		ToolMessages:  runtime.CloneAgentLoopMessages(input.ToolMessages),
+	}
+}
+
+func agentLLMStageMetadata(stage runtime.LLMStage) map[string]any {
+	return map[string]any{
+		"runner": "llm_stage",
+		"stage":  string(stage),
+	}
+}
+
+func agentLoopLLMStageResultPayloadFromLegacyFallback(fallback func() ([]agentMessage, []agentToolCall, *agentPlannerResponse, error)) (runtime.AgentLoopLLMStageResultPayload, error) {
+	if fallback == nil {
+		return runtime.AgentLoopLLMStageResultPayload{}, errors.New("daemon: llm stage fallback is not configured")
+	}
+	messages, toolCalls, plan, err := fallback()
+	return agentLoopLLMStageResultPayloadFromLegacy(messages, toolCalls, plan), err
 }
 
 func agentLoopLLMStagePayloadFromLLMStageRequest(payload any) (runtime.AgentLoopLLMStagePayload, bool) {

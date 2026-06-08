@@ -253,7 +253,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N105：进行真正 engine-owned loop runner 切换与 completion audit，验证 runtime seam owns loop control 后 daemon adapter 只保留 legacy IO/side-effect compatibility。
 - [x] P0.5-N106：清理 outer loop 旧 trampoline / side-effect compatibility 边界，优先盘点 `RunLLMTurn` / `ExecuteTurn` 是否还能进一步退化为调用方兼容层，并明确 planner/action/session 副作用后续下沉顺序。
 - [x] P0.5-N107：按 N106 边界结论继续下沉 planner/provider、action execution 与 session mutation 副作用，优先选择一个可独立验证的 adapter family 做 engine-native DTO 收敛。
-- [ ] P0.5-N108：继续清理 planner/provider stage compatibility，优先把 provider request/stage result 边界的重复 fallback/legacy 转换再收敛一层，或转向 action execution/session mutation 剩余副作用 adapter。
+- [x] P0.5-N108：继续清理 planner/provider stage compatibility，优先把 provider request/stage result 边界的重复 fallback/legacy 转换再收敛一层，或转向 action execution/session mutation 剩余副作用 adapter。
+- [ ] P0.5-N109：继续按 N108 后边界收敛剩余 side-effect adapter，优先评估 action execution batch/queue metadata 或 session mutation 编排是否可再抽一层 runtime helper。
 
 当前盘点（2026-06-08）：
 
@@ -321,7 +322,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - P0.5-N105 outer loop runner 切换已完成：outer loop control 经 `Engine.RunAgentLoop` / `AgentLoopRunner`，单轮 shared cycle 使用 `planner_action_replan_cycle` sub-mode 保持 side-effect compatibility；focused 覆盖 LLM outer loop、continuation outer loop、LLMTurn trampoline 与 TurnExecutor trampoline。
 - P0.5-N106 outer loop 旧 trampoline 清理已完成：`runRuntimeLLMToolLoopAgentLoop` 与 `runRuntimeReplanActionContinuationAgentLoop` 直接调用 `runRuntimeAgentLoopResult`，`RunLLMTurn` 与 replan `ExecuteTurn` 仅保留兼容入口；response merge、LLM fallback、authorization approve follow-up 已补直接 AgentLoopRunner 覆盖。
 - P0.5-N107 planner/provider stage egress helper 已完成：`handleAgentLLMChat` / `synthesizeAgentToolResults` 在 parse metadata merge 后统一通过 `agentLLMStageResultPayloadFromPlannerParse` 构造 runtime `AgentLoopLLMStageResultPayload`，legacy 返回值集中到 `agentLoopLLMStageResultPayloadToLegacy` 兼容边界；补 helper clone/phase parity 覆盖。
-- 下一批迁移顺序：N108 继续清理 planner/provider stage compatibility 的 provider request/result fallback 重复转换，或转向 action execution/session mutation 剩余副作用 adapter。
+- P0.5-N108 planner/provider stage dispatch helper 已完成：新增 `runRuntimeAgentLLMStage`、`agentLLMStageDispatchInput` 与 stage turn/payload/metadata helper，planner_chat 与 tool_synthesis 共用 `RunLLMStage` dispatch、`ErrLLMStageRunnerNotAttached` fallback、invalid payload 与 runtime payload clone 逻辑；补 fallback、invalid payload、payload clone 与现有 stage dispatch 覆盖。
+- 下一批迁移顺序：N109 继续按 N108 后边界收敛剩余 side-effect adapter，优先评估 action execution batch/queue metadata 或 session mutation 编排 helper。
 
 ### 7.2 P1 Frontend / QA
 
@@ -371,6 +373,16 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 ---
 
 ## 8. 最新本地验证记录
+
+2026-06-08 本轮增量（P0.5-N108：planner/provider stage dispatch compatibility helper）：
+
+```bash
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerRunRuntimeAgentLLMStage|TestAgentLLMStagePayloadFromDispatchInputClonesMutableFields|TestAgentManagerRunRuntimeAgentLLMPlannerChatDispatchesEngineStageRunner|TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：focused 与 runtime/daemon 包级测试通过；planner_chat 与 tool_synthesis 的 stage dispatch、NotAttached fallback、invalid payload 与 payload clone 逻辑已统一到 `runRuntimeAgentLLMStage` / `agentLLMStageDispatchInput` helper。
 
 2026-06-08 本轮增量（P0.5-N107：planner/provider stage egress runtime payload helper）：
 
