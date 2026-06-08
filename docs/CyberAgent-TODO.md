@@ -252,7 +252,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N104：标准化 StepReplan synthesis failure、auto-continue/max-loop stop 与 follow-up continuation egress metadata/stop reason，为后续真正 engine-owned loop runner 切换提供统一验收口径。
 - [x] P0.5-N105：进行真正 engine-owned loop runner 切换与 completion audit，验证 runtime seam owns loop control 后 daemon adapter 只保留 legacy IO/side-effect compatibility。
 - [x] P0.5-N106：清理 outer loop 旧 trampoline / side-effect compatibility 边界，优先盘点 `RunLLMTurn` / `ExecuteTurn` 是否还能进一步退化为调用方兼容层，并明确 planner/action/session 副作用后续下沉顺序。
-- [ ] P0.5-N107：按 N106 边界结论继续下沉 planner/provider、action execution 与 session mutation 副作用，优先选择一个可独立验证的 adapter family 做 engine-native DTO 收敛。
+- [x] P0.5-N107：按 N106 边界结论继续下沉 planner/provider、action execution 与 session mutation 副作用，优先选择一个可独立验证的 adapter family 做 engine-native DTO 收敛。
+- [ ] P0.5-N108：继续清理 planner/provider stage compatibility，优先把 provider request/stage result 边界的重复 fallback/legacy 转换再收敛一层，或转向 action execution/session mutation 剩余副作用 adapter。
 
 当前盘点（2026-06-08）：
 
@@ -319,7 +320,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - P0.5-N102 planner parse result DTO/helper 已完成：新增 runtime-neutral `runtime.AgentLoopPlannerParseResult`，`agentLLMPlannerChatParseResult` / `agentLLMToolSynthesisParseResult` 统一承载 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule override、message phase 与 planner metadata；`handleAgentLLMChat` / `synthesizeAgentToolResults` 只负责 provider 调用、metadata merge 与 daemon message/tool/legacy plan adapter。
 - P0.5-N105 outer loop runner 切换已完成：outer loop control 经 `Engine.RunAgentLoop` / `AgentLoopRunner`，单轮 shared cycle 使用 `planner_action_replan_cycle` sub-mode 保持 side-effect compatibility；focused 覆盖 LLM outer loop、continuation outer loop、LLMTurn trampoline 与 TurnExecutor trampoline。
 - P0.5-N106 outer loop 旧 trampoline 清理已完成：`runRuntimeLLMToolLoopAgentLoop` 与 `runRuntimeReplanActionContinuationAgentLoop` 直接调用 `runRuntimeAgentLoopResult`，`RunLLMTurn` 与 replan `ExecuteTurn` 仅保留兼容入口；response merge、LLM fallback、authorization approve follow-up 已补直接 AgentLoopRunner 覆盖。
-- 下一批迁移顺序：N107 按 planner/provider、action execution、session mutation 副作用边界继续下沉，优先选择一个 adapter family 做 runtime DTO 收敛与 focused parity。
+- P0.5-N107 planner/provider stage egress helper 已完成：`handleAgentLLMChat` / `synthesizeAgentToolResults` 在 parse metadata merge 后统一通过 `agentLLMStageResultPayloadFromPlannerParse` 构造 runtime `AgentLoopLLMStageResultPayload`，legacy 返回值集中到 `agentLoopLLMStageResultPayloadToLegacy` 兼容边界；补 helper clone/phase parity 覆盖。
+- 下一批迁移顺序：N108 继续清理 planner/provider stage compatibility 的 provider request/result fallback 重复转换，或转向 action execution/session mutation 剩余副作用 adapter。
 
 ### 7.2 P1 Frontend / QA
 
@@ -370,6 +372,15 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 
 ## 8. 最新本地验证记录
 
+2026-06-08 本轮增量（P0.5-N107：planner/provider stage egress runtime payload helper）：
+
+```bash
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentLLMPlannerChatParseResult|TestAgentLLMToolSynthesisParseResult|TestAgentLLMStageResultPayloadFromPlannerParseBuildsRuntimeDTO|TestAgentLoopLLMStageResultPayloadToLegacyClonesRuntimePayload|TestAgentManagerRunRuntimeAgentLLMPlannerChatDispatchesEngineStageRunner|TestAgentManagerRunRuntimeAgentLLMToolSynthesisDispatchesEngineStageRunner'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：focused 与 runtime/daemon 包级测试通过；planner chat 与 tool synthesis 的 parse 后消息/工具/plan egress 已统一到 runtime `AgentLoopLLMStageResultPayload` helper，legacy message/tool/plan 返回只保留在兼容转换边界。
 
 2026-06-08 本轮增量（P0.5-N106：outer loop 旧 trampoline / compatibility 边界清理）：
 

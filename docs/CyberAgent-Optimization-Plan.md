@@ -289,7 +289,8 @@ engine-native turn lifecycle 下沉入口建议：
 剩余 daemon-owned seam 分组：
 
 1. **Planner parse / native tool-use**
-   - P0.5-N102 已把 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule intent override、message phase 与 planner/tool metadata 收敛到 runtime-neutral `AgentLoopPlannerParseResult` + daemon parser helper；`handleAgentLLMChat` 与 `synthesizeAgentToolResults` 仍负责 provider request 构造、provider 调用、metadata merge 与 daemon message/tool adapter。
+   - P0.5-N102 已把 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule intent override、message phase 与 planner/tool metadata 收敛到 runtime-neutral `AgentLoopPlannerParseResult` + daemon parser helper；`handleAgentLLMChat` 与 `synthesizeAgentToolResults` 仍负责 provider request 构造、provider 调用与 metadata merge。
+   - P0.5-N107 已把 parse 后 message/tool/plan egress 统一到 `agentLLMStageResultPayloadFromPlannerParse`，先构造 runtime `AgentLoopLLMStageResultPayload`，legacy 返回值集中由 `agentLoopLLMStageResultPayloadToLegacy` 转换，减少 planner chat / tool synthesis 重复 daemon adapter 代码。
 2. **Outer loop defaults / preconditions**
    - P0.5-N101 已把 `llm_tool_loop` mode/max_loops/default metadata、plan-only no-action 与 immediate-execution fallback、cycle continue/final plan auto-continue 判断抽为纯 helper；planner chat append/apply 与 loop ownership 仍在 daemon adapter。
    - P0.5-N101 已把 `replan_action_continuation` mode/default metadata 与 max_loops/action/auto_continue precondition 抽为纯 helper；follow-up egress 与真正 loop ownership 仍在 daemon adapter。
@@ -309,7 +310,8 @@ engine-native turn lifecycle 下沉入口建议：
 4. ✅ P0.5-N104：已标准化 StepReplan synthesis failure、auto-continue/max-loop stop 与 follow-up continuation egress metadata/stop reason。
 5. ✅ P0.5-N105：已完成真正 engine-owned outer loop runner 切换与 completion audit，确认 runtime seam owns loop control 后 daemon adapter 只保留 legacy IO/side-effect compatibility。
 6. ✅ P0.5-N106：已清理 outer loop 旧 trampoline / side-effect compatibility 边界，明确 SendMessage/control+LLM 与 follow-up continuation 可直接进入 `RunAgentLoop`，`RunLLMTurn` / replan `ExecuteTurn` 保留兼容。
-7. P0.5-N107：按 N106 边界结论继续下沉 planner/provider、action execution 或 session mutation 副作用，优先选择一个 adapter family 做 runtime DTO 收敛。
+7. ✅ P0.5-N107：已继续下沉 planner/provider stage egress 边界，parse 后统一生成 runtime `AgentLoopLLMStageResultPayload`，legacy message/tool/plan 返回只保留在兼容转换边界。
+8. P0.5-N108：继续清理 planner/provider stage compatibility 的 provider request/result fallback 重复转换，或转向 action execution/session mutation 剩余副作用 adapter。
 
 最小验证矩阵：
 
@@ -507,8 +509,9 @@ ownership 边界：
 98. ✅ P0.5-N104 已标准化 AgentLoop egress stop reason：新增 `runtime.AgentLoopEgressResult`，StepReplan synthesis failure、no actions、auto_continue disabled、cycle stopped、max_loops 与 planner error 均能在 runtime result / turn payload / executor Data 中携带 `stop_reason`、`loop_count`、`max_loops`。
 99. ✅ P0.5-N105 已完成 engine-owned outer loop runner 切换：`daemonAgentLoopRunner` 现在分派 `llm_tool_loop` / `replan_action_continuation` outer loop 与 `planner_action_replan_cycle` 单轮 compatibility sub-mode；LLMTurn runner 与 replan continuation executor 已改为转调 `runRuntimeAgentLoopResult`。
 100. ✅ P0.5-N106 已清理 outer loop 旧 trampoline：SendMessage LLM 主入口、control+LLM 与 follow-up continuation 直接调用 `runRuntimeAgentLoopResult` / `Engine.RunAgentLoop`；`RunLLMTurn` 与 replan `ExecuteTurn` 仅保留兼容 trampoline，egress payload/max_loops 映射共用 helper。
-101. 下一步 P0.5-N107 按 planner/provider、action execution、session mutation 副作用边界继续下沉一个 adapter family。
-102. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+101. ✅ P0.5-N107 已收敛 planner/provider stage egress helper：planner chat 与 tool synthesis parse 后统一经 runtime `AgentLoopLLMStageResultPayload` 构造 message/tool/plan 输出，legacy 返回集中在兼容边界转换，并补 clone/phase parity 覆盖。
+102. 下一步 P0.5-N108 继续清理 planner/provider stage compatibility 的 provider request/result fallback 重复转换，或转向 action execution/session mutation 剩余副作用 adapter。
+103. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1487,6 +1490,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v138 | 完成 P0.5-N104 AgentLoop egress stop reason 标准化：新增 `runtime.AgentLoopEgressResult`，统一 StepReplan synthesis failure、no actions、auto_continue disabled、cycle stopped、max_loops 与 planner error 的 `stop_reason` / `loop_count` / `max_loops` metadata，并透传到 LLM/replan turn payload 与 executor Data；补 runtime clone、loop stop branch 与 StepReplan synthesis failure focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 | v139 | 完成 P0.5-N105 engine-owned outer loop runner 切换：`daemonAgentLoopRunner` 现在分派完整 `llm_tool_loop`、完整 `replan_action_continuation` 与单轮 `planner_action_replan_cycle` compatibility sub-mode；LLMTurn runner 与 replan continuation executor 转调 `runRuntimeAgentLoopResult`，focused 覆盖 outer loop、sub-mode parent metadata 与 egress 透传，runtime/daemon 包测试与 diff check 通过。 |
 | v140 | 完成 P0.5-N106 outer loop 旧 trampoline / compatibility 边界清理：`runRuntimeLLMToolLoopAgentLoop` 与 `runRuntimeReplanActionContinuationAgentLoop` 直接调用 `runRuntimeAgentLoopResult` / `Engine.RunAgentLoop`；`RunLLMTurn` 与 replan `ExecuteTurn` 降为兼容入口，egress payload/max_loops 映射共用 helper；补 LLM fallback、authorization follow-up 与 response merge direct AgentLoopRunner 覆盖，runtime/daemon 包测试与 diff check 通过。 |
+| v141 | 完成 P0.5-N107 planner/provider stage egress runtime payload helper：`handleAgentLLMChat` 与 `synthesizeAgentToolResults` 在 parse metadata merge 后统一通过 `agentLLMStageResultPayloadFromPlannerParse` 生成 runtime `AgentLoopLLMStageResultPayload`，legacy message/tool/plan 返回集中到 `agentLoopLLMStageResultPayloadToLegacy`；补 helper clone/phase parity、planner/synthesis stage focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

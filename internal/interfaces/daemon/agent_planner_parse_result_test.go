@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
+	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/stretchr/testify/require"
 )
 
@@ -94,4 +95,83 @@ func TestAgentLLMToolSynthesisParseResultPlainAndEmptyFallback(t *testing.T) {
 	require.False(t, hasTodoMetadata)
 	require.NotNil(t, empty.Plan)
 	require.Equal(t, "final_answer", empty.Plan.Phase)
+}
+
+func TestAgentLLMStageResultPayloadFromPlannerParseBuildsRuntimeDTO(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	tool := agentToolCall{
+		ID:     "tool-planner",
+		Name:   "LLM chat",
+		Result: map[string]any{"planner": true},
+	}
+	parseResult := runtime.AgentLoopPlannerParseResult{
+		Content:      "planned response",
+		MessagePhase: "plan",
+		Plan: &runtime.AgentLoopPlan{
+			Phase:     "plan",
+			Answer:    "planned response",
+			Reasoning: "reasoning summary",
+			Actions: []runtime.AgentLoopAction{{
+				Name:      "daemon.health",
+				Arguments: map[string]any{"probe": "runtime"},
+			}},
+		},
+		Metadata: map[string]any{"planner": true},
+	}
+
+	payload := mgr.agentLLMStageResultPayloadFromPlannerParse("en", tool, parseResult, "step_replan")
+
+	require.Len(t, payload.Messages, 1)
+	require.Len(t, payload.ToolCalls, 1)
+	require.Equal(t, "planned response", payload.Messages[0].Content)
+	require.Equal(t, "plan", payload.Messages[0].Phase)
+	require.Equal(t, "reasoning summary", payload.Messages[0].Reasoning)
+	require.Len(t, payload.Messages[0].ToolCalls, 1)
+	require.Equal(t, "tool-planner", payload.Messages[0].ToolCalls[0].ID)
+	require.Equal(t, "plan", payload.ToolCalls[0].Metadata["phase"])
+	require.NotNil(t, payload.Plan)
+	require.Equal(t, "daemon.health", payload.Plan.Actions[0].Name)
+
+	payload.Plan.Actions[0].Arguments["probe"] = "mutated"
+	require.Equal(t, "runtime", parseResult.Plan.Actions[0].Arguments["probe"])
+}
+
+func TestAgentLoopLLMStageResultPayloadToLegacyClonesRuntimePayload(t *testing.T) {
+	payload := runtime.AgentLoopLLMStageResultPayload{
+		Messages: []runtime.AgentLoopMessage{{
+			ID:      "msg-runtime",
+			Role:    "agent",
+			Content: "runtime message",
+			Phase:   "final_answer",
+		}},
+		ToolCalls: []runtime.AgentLoopToolCall{{
+			ID:       "tool-runtime",
+			Name:     "LLM synthesis",
+			Metadata: map[string]any{"phase": "final_answer"},
+		}},
+		Plan: &runtime.AgentLoopPlan{
+			Phase:  "final_answer",
+			Answer: "runtime message",
+			Actions: []runtime.AgentLoopAction{{
+				Name:      "daemon.health",
+				Arguments: map[string]any{"probe": "runtime"},
+			}},
+		},
+	}
+
+	messages, toolCalls, plan := agentLoopLLMStageResultPayloadToLegacy(payload)
+
+	require.Len(t, messages, 1)
+	require.Len(t, toolCalls, 1)
+	require.NotNil(t, plan)
+	require.Equal(t, "runtime message", messages[0].Content)
+	require.Equal(t, "final_answer", toolCalls[0].Metadata["phase"])
+	require.Equal(t, "runtime", plan.Actions[0].Arguments["probe"])
+
+	messages[0].Content = "mutated message"
+	toolCalls[0].Metadata["phase"] = "mutated_phase"
+	plan.Actions[0].Arguments["probe"] = "mutated"
+	require.Equal(t, "runtime message", payload.Messages[0].Content)
+	require.Equal(t, "final_answer", payload.ToolCalls[0].Metadata["phase"])
+	require.Equal(t, "runtime", payload.Plan.Actions[0].Arguments["probe"])
 }

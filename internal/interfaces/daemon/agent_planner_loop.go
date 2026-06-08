@@ -39,16 +39,9 @@ func (m *agentManager) handleAgentLLMChat(ctx context.Context, sessionID string,
 	tool.Result = agentLLMToolResult(usedAttempt, response, fallbackLog, "")
 	parseResult := agentLLMPlannerChatParseResult(response, agentLatestUserPrompt(history), language)
 	agentMergeLLMPlannerParseMetadata(tool.Result, parseResult)
-	content := parseResult.Content
-	plan := legacyPlannerResponseFromAgentLoopPlan(parseResult.Plan)
-	messagePhase := firstNonEmpty(parseResult.MessagePhase, "plan")
-	tool = agentToolCallWithPhase(tool, messagePhase)
-	message := agentMessageWithPhase(m.message(language, "agent", content, []agentToolCall{tool}, nil), messagePhase)
-	if plan != nil {
-		message.Reasoning = trimSummary(plan.Reasoning, 800)
-	}
-	applyAgentPlannerToMessage(&message, plan)
-	return []agentMessage{message}, []agentToolCall{tool}, plan, nil
+	payload := m.agentLLMStageResultPayloadFromPlannerParse(language, tool, parseResult, "plan")
+	messages, toolCalls, plan := agentLoopLLMStageResultPayloadToLegacy(payload)
+	return messages, toolCalls, plan, nil
 }
 
 func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language string, req sendAgentMessageRequest, history []agentMessage, memory *agentMemorySummary, toolMessages []agentMessage) ([]agentMessage, []agentToolCall, *agentPlannerResponse, error) {
@@ -84,16 +77,9 @@ func (m *agentManager) synthesizeAgentToolResults(ctx context.Context, sessionID
 
 	parseResult := agentLLMToolSynthesisParseResult(response, language)
 	agentMergeLLMPlannerParseMetadata(tool.Result, parseResult)
-	content := parseResult.Content
-	plan := legacyPlannerResponseFromAgentLoopPlan(parseResult.Plan)
-	phase := firstNonEmpty(parseResult.MessagePhase, "step_replan")
-	tool = agentToolCallWithPhase(tool, phase)
-	message := agentMessageWithPhase(m.message(language, "agent", content, []agentToolCall{tool}, nil), phase)
-	if plan != nil {
-		message.Reasoning = trimSummary(plan.Reasoning, 800)
-	}
-	applyAgentPlannerToMessage(&message, plan)
-	return []agentMessage{message}, []agentToolCall{tool}, plan, nil
+	payload := m.agentLLMStageResultPayloadFromPlannerParse(language, tool, parseResult, "step_replan")
+	messages, toolCalls, plan := agentLoopLLMStageResultPayloadToLegacy(payload)
+	return messages, toolCalls, plan, nil
 }
 
 func agentLLMPlannerChatParseResult(response *llm.ChatResponse, latestPrompt, language string) runtime.AgentLoopPlannerParseResult {
@@ -252,6 +238,24 @@ func agentMergeLLMPlannerParseMetadata(result map[string]any, parseResult runtim
 	for key, value := range parseResult.Metadata {
 		result[key] = value
 	}
+}
+
+func (m *agentManager) agentLLMStageResultPayloadFromPlannerParse(language string, tool agentToolCall, parseResult runtime.AgentLoopPlannerParseResult, defaultPhase string) runtime.AgentLoopLLMStageResultPayload {
+	parseResult = parseResult.Clone()
+	plan := legacyPlannerResponseFromAgentLoopPlan(parseResult.Plan)
+	phase := firstNonEmpty(parseResult.MessagePhase, defaultPhase)
+	tool = agentToolCallWithPhase(tool, phase)
+	message := agentMessageWithPhase(m.message(language, "agent", parseResult.Content, []agentToolCall{tool}, nil), phase)
+	if plan != nil {
+		message.Reasoning = trimSummary(plan.Reasoning, 800)
+	}
+	applyAgentPlannerToMessage(&message, plan)
+	return agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{message}, []agentToolCall{tool}, plan)
+}
+
+func agentLoopLLMStageResultPayloadToLegacy(payload runtime.AgentLoopLLMStageResultPayload) ([]agentMessage, []agentToolCall, *agentPlannerResponse) {
+	payload = payload.Clone()
+	return agentMessagesFromAgentLoopMessages(payload.Messages), agentLoopToolCallItemsToAgentToolCalls(payload.ToolCalls), legacyPlannerResponseFromAgentLoopPlan(payload.Plan)
 }
 
 func (m *agentManager) chatAgentLLM(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, phase string, provider llm.Provider, req llm.ChatRequest) (*llm.ChatResponse, bool, error) {
