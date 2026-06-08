@@ -86,7 +86,11 @@ func cloneAgentLoopSessionMutationPayload[T agentLoopSessionMutationPayloadClone
 	return zero, false
 }
 
-func daemonSessionMutationResultPayload[T any](result runtime.SessionMutationResult) (T, bool) {
+// daemonLegacySessionMutationResultPayload is the adapter-only compatibility
+// fallback for callers that still return daemon legacy result payload structs.
+// daemonSessionMutator.MutateSession must return runtime AgentLoop result DTOs;
+// legacy structs are only consumed by daemon egress adapters/caller shims.
+func daemonLegacySessionMutationResultPayload[T any](result runtime.SessionMutationResult) (T, bool) {
 	var zero T
 	if payload, ok := result.Payload.(T); ok {
 		return payload, true

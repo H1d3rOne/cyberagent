@@ -37,20 +37,20 @@ func TestCloneAgentLoopSessionMutationPayload(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestDaemonSessionMutationResultPayload(t *testing.T) {
+func TestDaemonLegacySessionMutationResultPayload(t *testing.T) {
 	resultPayload := daemonControlSessionMutationResultPayload{
 		Session: agentSession{SessionID: "agent-result"},
 		Message: agentMessage{ID: "msg-result"},
 		Mutated: true,
 	}
 	result := runtime.SessionMutationResult{Payload: resultPayload}
-	cloned, ok := daemonSessionMutationResultPayload[daemonControlSessionMutationResultPayload](result)
+	payload, ok := daemonLegacySessionMutationResultPayload[daemonControlSessionMutationResultPayload](result)
 	require.True(t, ok)
-	require.Equal(t, "agent-result", cloned.Session.SessionID)
-	require.Equal(t, "msg-result", cloned.Message.ID)
-	require.True(t, cloned.Mutated)
+	require.Equal(t, "agent-result", payload.Session.SessionID)
+	require.Equal(t, "msg-result", payload.Message.ID)
+	require.True(t, payload.Mutated)
 
-	_, ok = daemonSessionMutationResultPayload[daemonControlSessionMutationResultPayload](runtime.SessionMutationResult{Payload: "invalid"})
+	_, ok = daemonLegacySessionMutationResultPayload[daemonControlSessionMutationResultPayload](runtime.SessionMutationResult{Payload: "invalid"})
 	require.False(t, ok)
 }
 
@@ -658,6 +658,209 @@ func TestDaemonSessionMutatorAppendMessagesReturnsAgentLoopResultPayload(t *test
 	require.Equal(t, sessionID, payload.Session.SessionID)
 	require.Len(t, payload.Session.Messages, len(created.Session.Messages)+1)
 	require.Equal(t, "msg-append-runtime-result", payload.Session.Messages[len(payload.Session.Messages)-1].ID)
+}
+
+func TestDaemonSessionMutatorReturnsAgentLoopResultPayloads(t *testing.T) {
+	testCases := []struct {
+		name   string
+		build  func(t *testing.T, mgr *agentManager, sessionID string) runtime.SessionMutationRequest
+		assert func(t *testing.T, sessionID string, result runtime.SessionMutationResult)
+	}{
+		{
+			name: "append_messages",
+			build: func(t *testing.T, _ *agentManager, sessionID string) runtime.SessionMutationRequest {
+				return runtime.SessionMutationRequest{
+					Turn: runtime.TurnContext{
+						SessionID:      sessionID,
+						OperationLevel: "safe_scan",
+					},
+					Kind: runtime.SessionMutationAppendMessages,
+					Payload: runtime.AgentLoopAppendMessagesPayload{
+						Messages: []runtime.AgentLoopMessage{{
+							ID:      "msg-mutator-runtime-append",
+							Role:    "agent",
+							Content: "append through runtime result dto",
+						}},
+					},
+				}
+			},
+			assert: func(t *testing.T, sessionID string, result runtime.SessionMutationResult) {
+				payload, ok := result.Payload.(runtime.AgentLoopAppendMessagesResultPayload)
+				require.True(t, ok, "payload type = %T", result.Payload)
+				require.Equal(t, sessionID, payload.Session.SessionID)
+				require.True(t, payload.Mutated)
+			},
+		},
+		{
+			name: "record_user_message",
+			build: func(t *testing.T, _ *agentManager, sessionID string) runtime.SessionMutationRequest {
+				return runtime.SessionMutationRequest{
+					Turn: runtime.TurnContext{
+						SessionID:      sessionID,
+						Prompt:         "record through runtime result dto",
+						OperationLevel: "safe_scan",
+					},
+					Kind: runtime.SessionMutationRecordUserMessage,
+					Payload: runtime.AgentLoopRecordUserMessagePayload{
+						Operator: "operator-1",
+						Language: "en",
+					},
+				}
+			},
+			assert: func(t *testing.T, sessionID string, result runtime.SessionMutationResult) {
+				payload, ok := result.Payload.(runtime.AgentLoopRecordUserMessageResultPayload)
+				require.True(t, ok, "payload type = %T", result.Payload)
+				require.Equal(t, sessionID, payload.Session.SessionID)
+				require.Equal(t, "user", payload.UserMessage.Role)
+				require.Equal(t, "record through runtime result dto", payload.UserMessage.Content)
+				require.True(t, payload.Mutated)
+			},
+		},
+		{
+			name: "request_authorization",
+			build: func(t *testing.T, _ *agentManager, sessionID string) runtime.SessionMutationRequest {
+				return runtime.SessionMutationRequest{
+					Turn: runtime.TurnContext{
+						SessionID:      sessionID,
+						Prompt:         "request authorization through runtime result dto",
+						OperationLevel: "read_only",
+					},
+					Kind: runtime.SessionMutationRequestAuthorization,
+					Payload: runtime.AgentLoopAuthorizationRequestPayload{
+						Language:      "en",
+						Action:        runtime.AgentLoopAction{Name: "scan.web.safe", Arguments: map[string]any{"target": "https://example.com"}},
+						ActionName:    "scan.web.safe",
+						RequiredLevel: "safe_scan",
+						Policy:        "operation_level_required",
+						Reason:        "safe scan requires authorization",
+					},
+				}
+			},
+			assert: func(t *testing.T, sessionID string, result runtime.SessionMutationResult) {
+				payload, ok := result.Payload.(runtime.AgentLoopRequestAuthorizationResultPayload)
+				require.True(t, ok, "payload type = %T", result.Payload)
+				require.Equal(t, sessionID, payload.Session.SessionID)
+				require.Equal(t, "scan.web.safe", payload.Authorization.ActionName)
+				require.Equal(t, "safe_scan", payload.Authorization.RequiredLevel)
+				require.True(t, payload.Mutated)
+			},
+		},
+		{
+			name: "capability_blocked",
+			build: func(t *testing.T, _ *agentManager, sessionID string) runtime.SessionMutationRequest {
+				return runtime.SessionMutationRequest{
+					Turn: runtime.TurnContext{
+						SessionID:      sessionID,
+						Prompt:         "block mismatched capability through runtime result dto",
+						OperationLevel: "safe_scan",
+					},
+					Kind: runtime.SessionMutationCapabilityBlocked,
+					Payload: runtime.AgentLoopCapabilityBlockedPayload{
+						Language:        "en",
+						ActionName:      "scan.web.safe",
+						IntentID:        agentIntentContentDiscovery,
+						Reason:          "requested capability is outside the available safe action",
+						SuggestedPrompt: "use the safe scan action",
+					},
+				}
+			},
+			assert: func(t *testing.T, sessionID string, result runtime.SessionMutationResult) {
+				payload, ok := result.Payload.(runtime.AgentLoopCapabilityBlockedResultPayload)
+				require.True(t, ok, "payload type = %T", result.Payload)
+				require.Equal(t, sessionID, payload.Session.SessionID)
+				require.Equal(t, "scan.web.safe", payload.ActionName)
+				require.Equal(t, agentIntentContentDiscovery, payload.IntentID)
+				require.True(t, payload.Mutated)
+			},
+		},
+		{
+			name: "control_session",
+			build: func(t *testing.T, _ *agentManager, sessionID string) runtime.SessionMutationRequest {
+				return runtime.SessionMutationRequest{
+					Turn: runtime.TurnContext{
+						SessionID:      sessionID,
+						Prompt:         "resume later",
+						OperationLevel: "safe_scan",
+					},
+					Kind: runtime.SessionMutationControlSession,
+					Payload: runtime.AgentLoopControlSessionPayload{
+						Action:   "pause",
+						Reason:   "operator pause",
+						Operator: "operator-1",
+						Language: "en",
+					},
+				}
+			},
+			assert: func(t *testing.T, sessionID string, result runtime.SessionMutationResult) {
+				payload, ok := result.Payload.(runtime.AgentLoopControlSessionResultPayload)
+				require.True(t, ok, "payload type = %T", result.Payload)
+				require.Equal(t, sessionID, payload.Session.SessionID)
+				require.Equal(t, "paused", payload.Session.Status)
+				require.Equal(t, "agent", payload.Message.Role)
+				require.True(t, payload.Mutated)
+			},
+		},
+		{
+			name: "resolve_authorization",
+			build: func(t *testing.T, mgr *agentManager, sessionID string) runtime.SessionMutationRequest {
+				t.Helper()
+				pending := mgr.requestAgentAuthorizationLegacy(
+					sessionID,
+					"en",
+					"resolve authorization through runtime result dto",
+					agentPlannerAction{Name: "scan.web.safe", Arguments: map[string]any{"target": "https://example.com"}},
+					"scan.web.safe",
+					"safe_scan",
+					"manual",
+					"needs operator authorization",
+				)
+				require.NotEmpty(t, pending.Authorization.ID)
+				return runtime.SessionMutationRequest{
+					Turn: runtime.TurnContext{
+						SessionID:      sessionID,
+						OperationLevel: "safe_scan",
+					},
+					Kind: runtime.SessionMutationResolveAuthorization,
+					Payload: runtime.AgentLoopResolveAuthorizationPayload{
+						Decision:               "deny",
+						AuthorizationID:        pending.Authorization.ID,
+						Reason:                 "not in scope",
+						Operator:               "operator-1",
+						Language:               "en",
+						OperationLevelProvided: true,
+					},
+				}
+			},
+			assert: func(t *testing.T, sessionID string, result runtime.SessionMutationResult) {
+				payload, ok := result.Payload.(runtime.AgentLoopResolveAuthorizationResultPayload)
+				require.True(t, ok, "payload type = %T", result.Payload)
+				require.Equal(t, sessionID, payload.Session.SessionID)
+				require.Equal(t, "denied", payload.Pending.Status)
+				require.Equal(t, "safe_scan", payload.OperationLevel)
+				require.True(t, payload.Mutated)
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr := newAgentManager(t.TempDir())
+			created, err := mgr.CreateSession(createAgentSessionRequest{
+				Operator:       "tester",
+				Language:       "en",
+				OperationLevel: "safe_scan",
+			})
+			require.NoError(t, err)
+			sessionID := created.Session.SessionID
+			mutator := daemonSessionMutator{manager: mgr}
+
+			result, err := mutator.MutateSession(context.Background(), tc.build(t, mgr, sessionID))
+
+			require.NoError(t, err)
+			require.Equal(t, runtime.TurnResultFinished, result.Status)
+			tc.assert(t, sessionID, result)
+		})
+	}
 }
 
 func TestAgentManagerAppendMessagesWithPlannerDispatchesSessionMutator(t *testing.T) {

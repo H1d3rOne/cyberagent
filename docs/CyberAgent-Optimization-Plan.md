@@ -458,8 +458,9 @@ ownership 边界：
 89. ✅ P0.5-N95 已将 request_authorization result 迁移到 runtime-neutral `AgentLoopRequestAuthorizationResultPayload`，复用 session snapshot/authorization/message adapter。
 90. ✅ P0.5-N96 已将 capability_blocked result 迁移到 runtime-neutral `AgentLoopCapabilityBlockedResultPayload`，复用 session snapshot adapter 并保持 blocked response metadata。
 91. ✅ P0.5-N97 已将 append_messages result 迁移到 runtime-neutral `AgentLoopAppendMessagesResultPayload`，复用 session snapshot/compaction adapter，并收敛最后一个 session mutation result legacy payload。
-92. 下一步 P0.5-N98 审计并清理 session mutation result legacy fallback/helper 用法，确认 daemon mutator 输出均为 runtime DTO，legacy result struct 只留作 adapter/caller DTO。
-93. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+92. ✅ P0.5-N98 已审计并清理 session mutation result legacy fallback/helper 用法：legacy fallback helper 重命名为 `daemonLegacySessionMutationResultPayload` 并限定 adapter-only compatibility，daemon mutator 六类输出均补 runtime `AgentLoop*ResultPayload` 类型断言覆盖。
+93. 下一步 P0.5-N99 清理 session mutation result adapter 重复 switch，抽出 typed legacy/runtime egress helper 或按 payload family 分组，减少 `FromSessionMutationResult` boilerplate。
+94. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1429,6 +1430,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v129 | 完成 P0.5-N95 request_authorization result runtime DTO 收敛：新增 `runtime.AgentLoopRequestAuthorizationResultPayload` 与 clone helper，daemon request_authorization mutator result 改为 runtime DTO 输出，egress adapter 支持 runtime DTO 与 legacy fallback 双路径；补 runtime clone 隔离、daemon adapter roundtrip 与 planner authorization dispatch 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 | v130 | 完成 P0.5-N96 capability_blocked result runtime DTO 收敛：新增 `runtime.AgentLoopCapabilityBlockedResultPayload` 与 clone helper，daemon capability_blocked mutator result 改为 runtime DTO 输出，egress adapter 支持 runtime DTO 与 legacy fallback 双路径；补 runtime clone 隔离、daemon adapter roundtrip 与 capability mismatch dispatch 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 | v131 | 完成 P0.5-N97 append_messages result runtime DTO 收敛：新增 `runtime.AgentLoopAppendMessagesResultPayload` 与 clone helper，daemon append_messages mutator result 改为 runtime DTO 输出，egress adapter 支持 runtime DTO 与 legacy fallback 双路径；补 runtime clone 隔离、daemon adapter roundtrip 与 daemon mutator 输出 runtime DTO 覆盖，runtime/daemon 包测试与 diff check 通过。 |
+| v132 | 完成 P0.5-N98 session mutation result legacy fallback/helper 审计：legacy fallback helper 重命名为 `daemonLegacySessionMutationResultPayload` 并标注 adapter-only compatibility，append/record/request_authorization/capability_blocked/control/resolve 的 daemon mutator 输出均补 runtime `AgentLoop*ResultPayload` 类型断言覆盖；runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

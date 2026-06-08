@@ -6,7 +6,7 @@ import (
 )
 
 func daemonRecordUserMessageMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonRecordUserMessageMutationResultPayload, bool) {
-	if payload, ok := daemonSessionMutationResultPayload[daemonRecordUserMessageMutationResultPayload](result); ok {
+	if payload, ok := daemonLegacySessionMutationResultPayload[daemonRecordUserMessageMutationResultPayload](result); ok {
 		return payload, true
 	}
 	switch payload := result.Payload.(type) {
@@ -46,7 +46,7 @@ func daemonRecordUserMessageMutationResultPayloadFromAgentLoop(payload runtime.A
 }
 
 func daemonControlSessionMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonControlSessionMutationResultPayload, bool) {
-	if payload, ok := daemonSessionMutationResultPayload[daemonControlSessionMutationResultPayload](result); ok {
+	if payload, ok := daemonLegacySessionMutationResultPayload[daemonControlSessionMutationResultPayload](result); ok {
 		return payload, true
 	}
 	switch payload := result.Payload.(type) {
@@ -84,7 +84,7 @@ func daemonControlSessionMutationResultPayloadFromAgentLoop(payload runtime.Agen
 }
 
 func daemonResolveAuthorizationMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonResolveAuthorizationMutationResultPayload, bool) {
-	if payload, ok := daemonSessionMutationResultPayload[daemonResolveAuthorizationMutationResultPayload](result); ok {
+	if payload, ok := daemonLegacySessionMutationResultPayload[daemonResolveAuthorizationMutationResultPayload](result); ok {
 		return payload, true
 	}
 	switch payload := result.Payload.(type) {
@@ -132,7 +132,7 @@ func daemonResolveAuthorizationMutationResultPayloadFromAgentLoop(payload runtim
 }
 
 func daemonRequestAuthorizationMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonRequestAuthorizationMutationResultPayload, bool) {
-	if payload, ok := daemonSessionMutationResultPayload[daemonRequestAuthorizationMutationResultPayload](result); ok {
+	if payload, ok := daemonLegacySessionMutationResultPayload[daemonRequestAuthorizationMutationResultPayload](result); ok {
 		return payload, true
 	}
 	switch payload := result.Payload.(type) {
@@ -176,7 +176,7 @@ func daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(payload runtim
 }
 
 func daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonCapabilityBlockedMutationResultPayload, bool) {
-	if payload, ok := daemonSessionMutationResultPayload[daemonCapabilityBlockedMutationResultPayload](result); ok {
+	if payload, ok := daemonLegacySessionMutationResultPayload[daemonCapabilityBlockedMutationResultPayload](result); ok {
 		return payload, true
 	}
 	switch payload := result.Payload.(type) {
@@ -216,7 +216,7 @@ func daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(payload runtime.A
 }
 
 func daemonAppendMessagesMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonAppendMessagesMutationResultPayload, bool) {
-	if payload, ok := daemonSessionMutationResultPayload[daemonAppendMessagesMutationResultPayload](result); ok {
+	if payload, ok := daemonLegacySessionMutationResultPayload[daemonAppendMessagesMutationResultPayload](result); ok {
 		return payload, true
 	}
 	switch payload := result.Payload.(type) {
