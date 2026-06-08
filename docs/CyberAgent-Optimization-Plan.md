@@ -242,7 +242,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 1. ✅ 先定义 engine 侧 `TurnExecutor`/`TurnContext` seam，只复用现有 daemon legacy executor，不改变行为。
 2. ✅ 将 `beginRuntimeTurn` / `finishRuntimeTurn` 的状态迁移到 engine API，daemon 仍负责 session adapter。
-3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入、`ControlSession` 状态写入、planner/manual authorization request 与 capability mismatch blocked state 已经 engine session mutation dispatch，LLM fallback manual authorization branch 已补覆盖确认 provider failure warning + authorization append mutation 与 pending authorization request mutation 的 turn metadata 对齐；no-LLM deterministic route、control auto-continue route、active-run continue context fetch、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation、authorization approved planner action execution，以及 LLM planner/replan loop 内部 action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters；planner/replan/LLM/SendMessage append 与外部 control/authorization append 已经改为携带 turnRef 的 `append_messages` dispatch；authorization approve 后的 planner action execution、tool synthesis 与 follow-up continuation runtime runner 也已贯穿同一个 external turnRef；append/control/resolve authorization 的 `memory_compacted` events 已补齐 mutation turnRef metadata；deterministic route 内部 capability-gap plan-only planner apply 已沿用外层 turnRef 进入 turn-aware append mutation；`llm_tool_loop` / `replan_action_continuation` engine-native loop runner 草案已补齐，`Engine.RunAgentLoop` / `AgentLoopRunner` seam 已挂接 daemon shared cycle adapter，shared cycle 内部主状态已推进到 runtime `AgentLoopRequest` / `AgentLoopResult` / `AgentLoopState`，action execution / tool synthesis helper 与外层 cycle dispatch 入口均已改为 runtime DTO 输入输出；planner loop action queue metadata 与 authorization/capability gate decision helper 已抽出并补 parity 覆盖，gate/result 与 action batch egress 已进一步收敛为 runtime-neutral DTO；`SendMessage` response merge regression matrix 已补齐 control continue/revise、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback 与 active-run continue parity。
+3. 进行中：新增 `RunLLMTurn`/`LLMTurnRunner` seam、`RunLLMStage`/`LLMStageRunner` seam 与 `MutateSession`/`SessionMutator` seam；`SendMessage` 的 LLM 主入口已经 engine dispatch 到 daemon legacy `runAgentLLMToolLoop`，loop 内部 planner chat / tool synthesis、auto-continue StepReplan synthesis、authorization resume synthesis、route-before-LLM/standalone route synthesis 已经 engine stage dispatch 到 `handleAgentLLMChat` / `synthesizeAgentToolResults`；`appendMessagesWithPlanner`、`SendMessage` 开头 user message record、`DecideAgentAuthorization` approve/deny 状态写入、`ControlSession` 状态写入、planner/manual authorization request 与 capability mismatch blocked state 已经 engine session mutation dispatch，LLM fallback manual authorization branch 已补覆盖确认 provider failure warning + authorization append mutation 与 pending authorization request mutation 的 turn metadata 对齐；no-LLM deterministic route、control auto-continue route、active-run continue context fetch、LLM provider failure fallback route、route-before-LLM deterministic pre-route、后续 replan action continuation、authorization approved planner action execution，以及 LLM planner/replan loop 内部 action execution 已经 `ExecuteTurn` dispatch 到 daemon legacy turn adapters；planner/replan/LLM/SendMessage append 与外部 control/authorization append 已经改为携带 turnRef 的 `append_messages` dispatch；authorization approve 后的 planner action execution、tool synthesis 与 follow-up continuation runtime runner 也已贯穿同一个 external turnRef；append/control/resolve authorization 的 `memory_compacted` events 已补齐 mutation turnRef metadata；deterministic route 内部 capability-gap plan-only planner apply 已沿用外层 turnRef 进入 turn-aware append mutation；`llm_tool_loop` / `replan_action_continuation` engine-native loop runner 草案已补齐，`Engine.RunAgentLoop` / `AgentLoopRunner` seam 已挂接 daemon shared cycle adapter，shared cycle 内部主状态已推进到 runtime `AgentLoopRequest` / `AgentLoopResult` / `AgentLoopState`，action execution / tool synthesis helper 与外层 cycle dispatch 入口均已改为 runtime DTO 输入输出；planner loop action queue metadata 与 authorization/capability gate decision helper 已抽出并补 parity 覆盖，gate/result 与 action batch egress 已进一步收敛为 runtime-neutral DTO；StepReplan synthesis failure、auto-continue/max-loop stop 与 follow-up continuation egress 已统一携带 runtime stop reason / loop_count / max_loops metadata；`SendMessage` response merge regression matrix 已补齐 control continue/revise、pending authorization gate、route-before-LLM synthesis，并复跑 no-LLM route、LLM fallback 与 active-run continue parity。
 4. ✅ `SendMessage` Begin/Finish lifecycle 已收敛为 `runtime.Engine.RunTurnLifecycle` bounded runner；response merge branches 拆入 daemon turn body helper，继续作为迁移 adapter 保持 parity。
 
 已完成的 seam 边界：
@@ -284,7 +284,7 @@ engine-native turn lifecycle 下沉入口建议：
 
 ### 4.0 Runner ownership 审计（P0.5-N100）
 
-当前结论：`runtime.Engine.RunAgentLoop` / `AgentLoopRunner` seam、runtime-neutral `AgentLoopRequest` / `AgentLoopResult` / `AgentLoopState` 已落地，daemon adapter 已可直接消费 runtime request；但真正的 loop ownership 尚未迁出 daemon，`daemonAgentLoopRunner.RunAgentLoop` 目前只是把两种 mode 转发到 daemon shared cycle 主流程。
+当前结论：`runtime.Engine.RunAgentLoop` / `AgentLoopRunner` seam、runtime-neutral `AgentLoopRequest` / `AgentLoopResult` / `AgentLoopState` 与标准化 loop egress stop reason 已落地，daemon adapter 已可直接消费 runtime request 并返回可断言的 stop metadata；但真正的 loop ownership 尚未迁出 daemon，`daemonAgentLoopRunner.RunAgentLoop` 目前仍把两种 mode 转发到 daemon shared cycle 主流程。
 
 剩余 daemon-owned seam 分组：
 
@@ -296,14 +296,16 @@ engine-native turn lifecycle 下沉入口建议：
 3. **Action gate / side effects**
    - P0.5-N103 已新增 runtime-neutral `AgentLoopActionGateDecision` / `AgentLoopActionGateResult` / `AgentLoopActionBatchResult`，`executeAgentPlannerActionList` 降为 batch result wrapper；request_authorization / capability_blocked session mutation 仍经 daemon `SessionMutator` adapter 编排，action queue metadata、单 action execution error fallback 与 batch 上限仍在 daemon。
 4. **StepReplan append / failure egress**
-   - `runAgentPlannerActionReplanCycleAgentLoop` 仍负责 action message append、StepReplan append/apply、synthesis failure warning、continue metadata 与 stop reason；runtime DTO 只承载结果，副作用仍由 daemon 触发。
+   - P0.5-N104 已新增 runtime-neutral `AgentLoopEgressResult`，标准化 `planner_error`、`step_replan_synthesis_error`、`no_actions`、`auto_continue_disabled`、`cycle_stopped`、`max_loops` 等 stop reason，并把 `stop_reason` / `loop_count` / `max_loops` 透传到 `AgentLoopResult`、LLM/replan turn payload 与 executor Data。
+   - 剩余 ownership：`runAgentPlannerActionReplanCycleAgentLoop` 仍负责 action message append、StepReplan append/apply 与 synthesis failure warning 生成；session mutation 副作用仍由 daemon 触发。
 
 下一批最小迁移顺序：
 
 1. ✅ P0.5-N101：已抽出 loop mode/default/precondition normalization helper，保持纯重构。
 2. ✅ P0.5-N102：已将 planner JSON / native tool-use parse/fallback/schedule override 收敛为 runtime-neutral parser result DTO/helper。
 3. ✅ P0.5-N103：已将 authorization/capability gate decision + side-effect orchestration 标准化为 runtime-neutral gate/action-batch result DTO，副作用仍经 `SessionMutator` adapter。
-4. P0.5-N104：标准化 StepReplan synthesis failure、auto-continue/max-loop stop 与 follow-up continuation egress metadata/stop reason。
+4. ✅ P0.5-N104：已标准化 StepReplan synthesis failure、auto-continue/max-loop stop 与 follow-up continuation egress metadata/stop reason。
+5. P0.5-N105：进行真正 engine-owned loop runner 切换与 completion audit，确认 runtime seam owns loop control 后 daemon adapter 只保留 legacy IO/side-effect compatibility。
 
 最小验证矩阵：
 
@@ -312,7 +314,7 @@ engine-native turn lifecycle 下沉入口建议：
 - capability mismatch、explicit intent、operation level、manual authorization 四类 gate 的 session status、pending authorization / blocked state、message phase 与 append 顺序。
 - action queue metadata 在 top-level tool calls 与 message 内 tool calls 上一致。
 - single action execution error fallback 的 message/tool result 与 service error details 展开语义。
-- StepReplan synthesis success/failure warning、append origin、planner apply 与 final plan egress。
+- StepReplan synthesis success/failure warning、append origin、planner apply、final plan egress 与标准 stop reason metadata。
 - replan continuation auto-continue / stop / max_loops 与 follow-up response merge。
 - `planner_loop` 与 `replan_action_continuation` 的 task/run/turn/prompt/operation_level metadata 对齐。
 
@@ -498,8 +500,9 @@ ownership 边界：
 95. ✅ P0.5-N101 已抽出 loop mode/default/precondition normalization helper：`normalizeAgentLLMToolLoopRequest` / `normalizeAgentReplanActionContinuationRequest` 统一 mode、max_loops 与 append metadata 默认值，step precondition helper 覆盖 plan-only no-action、immediate-execution fallback、cycle continue/final plan auto_continue 与 replan continuation max_loops stop branch。
 96. ✅ P0.5-N102 已收敛 planner parse result DTO：新增 `runtime.AgentLoopPlannerParseResult`，daemon parser helper 统一 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule override、message phase 与 metadata；planner chat / tool synthesis 主函数仅保留 provider 调用、metadata merge 与 daemon adapter。
 97. ✅ P0.5-N103 已收敛 gate/action-batch result DTO 与副作用边界：新增 `runtime.AgentLoopActionGateDecision` / `AgentLoopActionGateResult` / `AgentLoopActionBatchResult`，四类 gate side-effect 输出与 batch accumulator 不再使用 daemon-private result struct；副作用暂仍通过 daemon `SessionMutator` adapter。
-98. 下一步 P0.5-N104 统一 StepReplan/follow-up egress stop reason，之后再考虑真正 engine-owned runner 切换。
-99. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+98. ✅ P0.5-N104 已标准化 AgentLoop egress stop reason：新增 `runtime.AgentLoopEgressResult`，StepReplan synthesis failure、no actions、auto_continue disabled、cycle stopped、max_loops 与 planner error 均能在 runtime result / turn payload / executor Data 中携带 `stop_reason`、`loop_count`、`max_loops`。
+99. 下一步 P0.5-N105 进行真正 engine-owned loop runner 切换与 completion audit。
+100. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1475,6 +1478,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v135 | 完成 P0.5-N101 loop mode/default/precondition normalization helper：LLM tool loop 与 replan continuation 的 mode/default/max_loops/append metadata、plan-only no-action、immediate-execution fallback、cycle continue/final plan auto_continue 与 max_loops stop branch 已收敛到纯 helper；补 focused daemon tests，runtime/daemon 包测试与 diff check 通过。 |
 | v136 | 完成 P0.5-N102 planner parse/native tool-use runtime-neutral parser result：新增 `runtime.AgentLoopPlannerParseResult`，daemon parser helper 统一 planner JSON parse、plain/prompt fallback、native tool-use action merge、schedule override、message phase 与 planner metadata；`handleAgentLLMChat` / `synthesizeAgentToolResults` 收敛为 provider 调用、metadata merge 与 daemon adapter 边界；补 runtime clone 与 focused daemon parser parity，runtime/daemon 包测试与 diff check 通过。 |
 | v137 | 完成 P0.5-N103 authorization/capability gate 与 action-batch result DTO 收敛：新增 `runtime.AgentLoopActionGateDecision` / `AgentLoopActionGateResult` / `AgentLoopActionBatchResult`，daemon gate side-effect helper 返回 runtime DTO，`executeAgentPlannerActionList` 降为 batch result wrapper；补四类 gate parity 与 runtime clone 覆盖，runtime/daemon 包测试与 diff check 通过。 |
+| v138 | 完成 P0.5-N104 AgentLoop egress stop reason 标准化：新增 `runtime.AgentLoopEgressResult`，统一 StepReplan synthesis failure、no actions、auto_continue disabled、cycle stopped、max_loops 与 planner error 的 `stop_reason` / `loop_count` / `max_loops` metadata，并透传到 LLM/replan turn payload 与 executor Data；补 runtime clone、loop stop branch 与 StepReplan synthesis failure focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 

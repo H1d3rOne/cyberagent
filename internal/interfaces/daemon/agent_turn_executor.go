@@ -96,10 +96,15 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 		ctx = context.Background()
 	}
 	loopReq := payload.Clone()
-	messages, toolCalls := e.manager.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
+	loopResult := e.manager.runAgentReplanActionContinuationAgentLoopResult(ctx, loopReq)
 	resultPayload := runtime.AgentLoopTurnResultPayload{
-		Messages:  runtime.CloneAgentLoopMessages(messages),
-		ToolCalls: runtime.CloneAgentLoopToolCalls(toolCalls),
+		Messages:   runtime.CloneAgentLoopMessages(loopResult.Messages),
+		ToolCalls:  runtime.CloneAgentLoopToolCalls(loopResult.ToolCalls),
+		FinalPlan:  runtime.CloneAgentLoopPlan(loopResult.FinalPlan),
+		StopReason: loopResult.StopReason,
+		LoopCount:  loopResult.LoopCount,
+		MaxLoops:   intFromAny(loopResult.Metadata[runtime.AgentLoopEgressMetadataMaxLoops]),
+		Metadata:   runtime.CloneAgentLoopMapStringAny(loopResult.Metadata),
 	}
 	return runtime.TurnResult{
 		Status:  runtime.TurnResultFinished,
@@ -112,10 +117,12 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 			"task_id":          turn.TaskID,
 			"run_id":           turn.RunID,
 			"turn_id":          turn.TurnID,
-			"message_count":    len(messages),
-			"tool_call_count":  len(toolCalls),
+			"message_count":    len(loopResult.Messages),
+			"tool_call_count":  len(loopResult.ToolCalls),
 			"operation_level":  loopReq.Turn.OperationLevel,
-			"max_loops":        loopReq.MaxLoops,
+			"max_loops":        resultPayload.MaxLoops,
+			"loop_count":       resultPayload.LoopCount,
+			"stop_reason":      resultPayload.StopReason,
 			"manager_attached": true,
 		},
 	}, nil

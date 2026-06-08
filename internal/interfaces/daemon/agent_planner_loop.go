@@ -350,6 +350,11 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 }
 
 func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
+	result, err := m.runAgentLLMToolLoopAgentLoopResult(ctx, loopReq)
+	return runtime.CloneAgentLoopMessages(result.Messages), runtime.CloneAgentLoopToolCalls(result.ToolCalls), err
+}
+
+func (m *agentManager) runAgentLLMToolLoopAgentLoopResult(ctx context.Context, loopReq runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 	loopReq = normalizeAgentLLMToolLoopRequest(loopReq)
 
 	initialHistory := runtime.CloneAgentLoopMessages(loopReq.History)
@@ -362,7 +367,15 @@ func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq
 	planLegacyMessages := agentMessagesFromAgentLoopMessages(planMessages)
 	planLegacy := agentPlannerResponsePtrFromAgentLoopPlan(plan)
 	if err != nil {
-		return planMessages, planToolCalls, err
+		state := runtime.AgentLoopState{
+			ResponseMessages: runtime.CloneAgentLoopMessages(planMessages),
+			ToolCalls:        runtime.CloneAgentLoopToolCalls(planToolCalls),
+			LoopHistory:      runtime.CloneAgentLoopMessages(initialHistory),
+		}
+		return agentLoopEgressResultFromState(state, plan, runtime.AgentLoopStopReasonPlannerError, 0, loopReq.MaxLoops, false, map[string]any{
+			"mode":  string(loopReq.Mode),
+			"error": err.Error(),
+		}), err
 	}
 
 	m.appendMessagesWithPlannerForTurn(ctx, loopReq.Turn.SessionID, turnRef, loopReq.Turn.Prompt, string(runtime.LLMStagePlannerChat), loopReq.Turn.OperationLevel, planLegacy, planLegacyMessages...)
@@ -375,9 +388,12 @@ func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq
 	}
 
 	cyclePlan := runtime.CloneAgentLoopPlan(plan)
+	stopReason := agentLoopStopReasonFromPlan(cyclePlan)
+	loopCount := 0
 	for step := 0; step < loopReq.MaxLoops; step++ {
 		stepPlan := agentLLMToolLoopStepPrecondition(loopReq, step, cyclePlan)
 		if !stepPlan.Continue {
+			stopReason = agentLoopStopReasonFromPlan(stepPlan.Plan)
 			break
 		}
 		cyclePlan = stepPlan.Plan
@@ -388,15 +404,24 @@ func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq
 		cycleReq.State = cycleState.Clone()
 		cycleReq.MaxLoops = loopReq.MaxLoops
 		cycle := m.runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx, cycleReq)
+		loopCount++
 		cycleState = cycle.State.Clone()
-		nextPlan, continueLoop := agentLLMToolLoopNextPlanFromCycleResult(cycle)
-		if !continueLoop {
+		next := agentLLMToolLoopNextPlanDecisionFromCycleResult(cycle)
+		cyclePlan = runtime.CloneAgentLoopPlan(cycle.FinalPlan)
+		stopReason = next.StopReason
+		if !next.Continue {
 			break
 		}
-		cyclePlan = nextPlan
+		cyclePlan = next.Plan
+		if loopCount >= loopReq.MaxLoops {
+			stopReason = runtime.AgentLoopStopReasonMaxLoops
+			break
+		}
 	}
 
-	return runtime.CloneAgentLoopMessages(cycleState.ResponseMessages), runtime.CloneAgentLoopToolCalls(cycleState.ToolCalls), nil
+	return agentLoopEgressResultFromState(cycleState, cyclePlan, stopReason, loopCount, loopReq.MaxLoops, false, map[string]any{
+		"mode": string(loopReq.Mode),
+	}), nil
 }
 
 func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
@@ -477,16 +502,72 @@ func agentLLMToolLoopStepPrecondition(loopReq runtime.AgentLoopRequest, step int
 }
 
 func agentLLMToolLoopNextPlanFromCycleResult(cycle runtime.AgentLoopResult) (*runtime.AgentLoopPlan, bool) {
+	next := agentLLMToolLoopNextPlanDecisionFromCycleResult(cycle)
+	return runtime.CloneAgentLoopPlan(next.Plan), next.Continue
+}
+
+type agentLoopNextPlanDecision struct {
+	Plan       *runtime.AgentLoopPlan
+	Continue   bool
+	StopReason string
+}
+
+func agentLLMToolLoopNextPlanDecisionFromCycleResult(cycle runtime.AgentLoopResult) agentLoopNextPlanDecision {
 	if !agentPlannerActionReplanCycleContinueFromAgentLoopResult(cycle) {
-		return nil, false
+		return agentLoopNextPlanDecision{StopReason: agentLoopStopReasonFromCycleStop(cycle)}
 	}
 	if !agentLoopPlanHasActions(cycle.FinalPlan) {
-		return nil, false
+		return agentLoopNextPlanDecision{StopReason: runtime.AgentLoopStopReasonNoActions}
 	}
 	if !agentLoopPlanShouldAutoContinue(cycle.FinalPlan) {
-		return nil, false
+		return agentLoopNextPlanDecision{StopReason: runtime.AgentLoopStopReasonAutoContinueDisabled}
 	}
-	return runtime.CloneAgentLoopPlan(cycle.FinalPlan), true
+	return agentLoopNextPlanDecision{Plan: runtime.CloneAgentLoopPlan(cycle.FinalPlan), Continue: true}
+}
+
+func agentLoopStopReasonFromCycleStop(cycle runtime.AgentLoopResult) string {
+	if reason := stringFromAny(cycle.Metadata[runtime.AgentLoopEgressMetadataStopReason]); reason != "" && reason != runtime.AgentLoopStopReasonLegacyDaemonLoopExecuted {
+		return reason
+	}
+	if cycle.StopReason != "" && cycle.StopReason != runtime.AgentLoopStopReasonLegacyDaemonLoopExecuted {
+		return cycle.StopReason
+	}
+	return runtime.AgentLoopStopReasonCycleStopped
+}
+
+func agentLoopStopReasonFromPlan(plan *runtime.AgentLoopPlan) string {
+	if !agentLoopPlanHasActions(plan) {
+		return runtime.AgentLoopStopReasonNoActions
+	}
+	if !agentLoopPlanShouldAutoContinue(plan) {
+		return runtime.AgentLoopStopReasonAutoContinueDisabled
+	}
+	return runtime.AgentLoopStopReasonMaxLoops
+}
+
+func agentReplanActionContinuationStopReason(loopReq runtime.AgentLoopRequest, plan *runtime.AgentLoopPlan) string {
+	if loopReq.MaxLoops <= 0 {
+		return runtime.AgentLoopStopReasonMaxLoops
+	}
+	return agentLoopStopReasonFromPlan(plan)
+}
+
+func agentLoopEgressResultFromState(state runtime.AgentLoopState, finalPlan *runtime.AgentLoopPlan, stopReason string, loopCount, maxLoops int, continueLoop bool, metadata map[string]any) runtime.AgentLoopResult {
+	if stopReason == "" {
+		stopReason = runtime.AgentLoopStopReasonCycleStopped
+	}
+	egress := runtime.AgentLoopEgressResult{
+		State:      state.Clone(),
+		Messages:   runtime.CloneAgentLoopMessages(state.ResponseMessages),
+		ToolCalls:  runtime.CloneAgentLoopToolCalls(state.ToolCalls),
+		FinalPlan:  runtime.CloneAgentLoopPlan(finalPlan),
+		StopReason: stopReason,
+		Continue:   continueLoop,
+		LoopCount:  loopCount,
+		MaxLoops:   maxLoops,
+		Metadata:   runtime.CloneAgentLoopMapStringAny(metadata),
+	}
+	return egress.AgentLoopResult()
 }
 
 func normalizeAgentReplanActionContinuationRequest(loopReq runtime.AgentLoopRequest) runtime.AgentLoopRequest {
@@ -507,15 +588,25 @@ func agentReplanActionContinuationStepPrecondition(loopReq runtime.AgentLoopRequ
 }
 
 func (m *agentManager) runAgentReplanActionContinuationAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
+	result := m.runAgentReplanActionContinuationAgentLoopResult(ctx, loopReq)
+	return runtime.CloneAgentLoopMessages(result.Messages), runtime.CloneAgentLoopToolCalls(result.ToolCalls)
+}
+
+func (m *agentManager) runAgentReplanActionContinuationAgentLoopResult(ctx context.Context, loopReq runtime.AgentLoopRequest) runtime.AgentLoopResult {
 	loopReq = normalizeAgentReplanActionContinuationRequest(loopReq)
-	if loopReq.MaxLoops <= 0 {
-		return nil, nil
-	}
 
 	cycleState := agentPlannerActionReplanCycleStateFromAgentLoopRequest(loopReq)
 	cyclePlan := runtime.CloneAgentLoopPlan(loopReq.InitialPlan)
+	stopReason := agentReplanActionContinuationStopReason(loopReq, cyclePlan)
+	loopCount := 0
+	if loopReq.MaxLoops <= 0 {
+		return agentLoopEgressResultFromState(cycleState, cyclePlan, stopReason, loopCount, loopReq.MaxLoops, false, map[string]any{
+			"mode": string(loopReq.Mode),
+		})
+	}
 	for step := 0; step < loopReq.MaxLoops; step++ {
 		if !agentReplanActionContinuationStepPrecondition(loopReq, cyclePlan) {
+			stopReason = agentReplanActionContinuationStopReason(loopReq, cyclePlan)
 			break
 		}
 
@@ -526,13 +617,22 @@ func (m *agentManager) runAgentReplanActionContinuationAgentLoop(ctx context.Con
 		cycleReq.State = cycleState.Clone()
 		cycleReq.MaxLoops = loopReq.MaxLoops
 		cycle := m.runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx, cycleReq)
+		loopCount++
 		cycleState = cycle.State.Clone()
 		if !agentPlannerActionReplanCycleContinueFromAgentLoopResult(cycle) {
+			stopReason = agentLoopStopReasonFromCycleStop(cycle)
 			break
 		}
 		cyclePlan = runtime.CloneAgentLoopPlan(cycle.FinalPlan)
+		stopReason = agentReplanActionContinuationStopReason(loopReq, cyclePlan)
+		if loopCount >= loopReq.MaxLoops && agentReplanActionContinuationStepPrecondition(loopReq, cyclePlan) {
+			stopReason = runtime.AgentLoopStopReasonMaxLoops
+			break
+		}
 	}
-	return runtime.CloneAgentLoopMessages(cycleState.ResponseMessages), runtime.CloneAgentLoopToolCalls(cycleState.ToolCalls)
+	return agentLoopEgressResultFromState(cycleState, cyclePlan, stopReason, loopCount, loopReq.MaxLoops, false, map[string]any{
+		"mode": string(loopReq.Mode),
+	})
 }
 
 type agentPlannerActionReplanCycleOptions struct {
@@ -1552,8 +1652,8 @@ type agentPlannerActionReplanCycleResult struct {
 const (
 	agentPlannerActionReplanCycleMetadataActionAppendOrigin                      = "action_append_origin"
 	agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage = "append_action_tool_calls_before_empty_message"
-	agentPlannerActionReplanCycleMetadataContinue                                = "continue"
-	agentPlannerActionReplanCycleStopReasonLegacyDaemonLoopExecuted              = "legacy_daemon_agent_loop_executed"
+	agentPlannerActionReplanCycleMetadataContinue                                = runtime.AgentLoopEgressMetadataContinue
+	agentPlannerActionReplanCycleStopReasonLegacyDaemonLoopExecuted              = runtime.AgentLoopStopReasonLegacyDaemonLoopExecuted
 )
 
 func (req agentPlannerActionReplanCycleRequest) agentLoopRequest(mode runtime.AgentLoopMode) runtime.AgentLoopRequest {
@@ -1644,16 +1744,14 @@ func agentPlannerActionReplanCycleMetadataFromOptions(options agentPlannerAction
 
 func (result agentPlannerActionReplanCycleResult) agentLoopResult(stopReason string) runtime.AgentLoopResult {
 	state := result.State.state.Clone()
-	return runtime.AgentLoopResult{
+	return runtime.AgentLoopEgressResult{
 		State:      state,
 		Messages:   runtime.CloneAgentLoopMessages(state.ResponseMessages),
 		ToolCalls:  runtime.CloneAgentLoopToolCalls(state.ToolCalls),
 		FinalPlan:  result.Plan.agentLoopPlan(),
 		StopReason: stopReason,
-		Metadata: map[string]any{
-			agentPlannerActionReplanCycleMetadataContinue: result.Continue,
-		},
-	}
+		Continue:   result.Continue,
+	}.AgentLoopResult()
 }
 
 func agentPlannerActionReplanCycleResultFromAgentLoopResult(loopResult runtime.AgentLoopResult) agentPlannerActionReplanCycleResult {
@@ -1734,18 +1832,21 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 	options := agentPlannerActionReplanCycleOptionsFromAgentLoopRequest(loopReq)
 	state := agentPlannerActionReplanCycleStateFromAgentLoopRequest(loopReq)
 	finalPlan := agentPlannerActionReplanCycleInitialAgentLoopPlanFromRequest(loopReq)
-	finish := func(continueLoop bool) runtime.AgentLoopResult {
+	finish := func(continueLoop bool, stopReason string, metadata map[string]any) runtime.AgentLoopResult {
+		if stopReason == "" {
+			stopReason = agentPlannerActionReplanCycleStopReasonLegacyDaemonLoopExecuted
+		}
 		clonedState := state.Clone()
-		return runtime.AgentLoopResult{
+		return runtime.AgentLoopEgressResult{
 			State:      clonedState,
 			Messages:   runtime.CloneAgentLoopMessages(clonedState.ResponseMessages),
 			ToolCalls:  runtime.CloneAgentLoopToolCalls(clonedState.ToolCalls),
 			FinalPlan:  runtime.CloneAgentLoopPlan(finalPlan),
-			StopReason: agentPlannerActionReplanCycleStopReasonLegacyDaemonLoopExecuted,
-			Metadata: map[string]any{
-				agentPlannerActionReplanCycleMetadataContinue: continueLoop,
-			},
-		}
+			StopReason: stopReason,
+			Continue:   continueLoop,
+			MaxLoops:   loopReq.MaxLoops,
+			Metadata:   runtime.CloneAgentLoopMapStringAny(metadata),
+		}.AgentLoopResult()
 	}
 
 	actionExecution := m.runAgentPlannerActionReplanCycleActionExecutionAgentLoop(ctx, loopReq)
@@ -1760,13 +1861,13 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 		state.ToolCalls = append(state.ToolCalls, actionToolCalls.agentLoopToolCalls()...)
 	}
 	if actionMessages.len() == 0 {
-		return finish(false)
+		return finish(false, "", nil)
 	}
 	if !options.AppendActionToolCallsBeforeEmptyMessage {
 		state.ToolCalls = append(state.ToolCalls, actionToolCalls.agentLoopToolCalls()...)
 	}
 	if actionExecution.AuthorizationRequired {
-		return finish(false)
+		return finish(false, "", nil)
 	}
 
 	synthesis, synthesisErr := m.runAgentPlannerActionReplanCycleSynthesisAgentLoop(
@@ -1790,7 +1891,10 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 		m.appendMessagesForTurn(ctx, turn.SessionID, turnRef, turn.Prompt, options.ActionAppendOrigin, turn.OperationLevel, warningMessages.legacyAgentMessages()...)
 		state.ResponseMessages = append(state.ResponseMessages, warningMessages.agentLoopMessages()...)
 		state.ToolCalls = append(state.ToolCalls, warningToolCalls.agentLoopToolCalls()...)
-		return finish(false)
+		return finish(false, runtime.AgentLoopStopReasonStepReplanSynthesisError, map[string]any{
+			"phase": "step_replan",
+			"error": synthesisErr.Error(),
+		})
 	}
 	synthesisMessages := agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(synthesis.Messages)
 	synthesisToolCalls := agentPlannerActionReplanCycleToolCallsFromAgentLoopToolCalls(synthesis.ToolCalls)
@@ -1802,7 +1906,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 		state.ToolCalls = append(state.ToolCalls, synthesisToolCalls.agentLoopToolCalls()...)
 	}
 	finalPlan = synthesisPlan
-	return finish(true)
+	return finish(true, "", nil)
 }
 
 func (m *agentManager) runAgentPlannerActionReplanCycleActionExecution(ctx context.Context, req agentPlannerActionReplanCycleRequest) agentPlannerActionReplanCycleActionExecutionResult {

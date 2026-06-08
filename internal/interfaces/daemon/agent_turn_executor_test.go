@@ -1464,6 +1464,47 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t 
 	require.Equal(t, agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}), toolCalls)
 }
 
+func TestDaemonAgentTurnExecutorReplanContinuationReturnsEgressPayload(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	loopReq := runtime.AgentLoopRequest{
+		Mode: runtime.AgentLoopModeReplanContinuation,
+		Turn: agentPlannerActionReplanCycleTurnContext(
+			"session-continuation-egress",
+			agentRuntimeTurnRef{TaskID: "task-continuation-egress", RunID: "run-continuation-egress", TurnID: "turn-continuation-egress"},
+			"continue",
+			"user",
+			"read_only",
+		),
+		Language: "en",
+		Operator: "tester",
+		InitialPlan: agentLoopPlanFromPlannerResponse(&agentPlannerResponse{
+			Phase: "step_replan",
+			NextAction: &agentNextAction{
+				Type:         "continue",
+				AutoContinue: true,
+			},
+			Actions: []agentPlannerAction{{Name: "daemon.health"}},
+		}),
+		MaxLoops: 0,
+	}
+
+	result, err := daemonAgentTurnExecutor{manager: mgr}.ExecuteTurn(context.Background(), agentReplanActionContinuationTurnContextFromRequest(loopReq))
+
+	require.NoError(t, err)
+	require.Equal(t, runtime.TurnResultFinished, result.Status)
+	payload, ok := result.Payload.(runtime.AgentLoopTurnResultPayload)
+	require.True(t, ok, "payload type = %T", result.Payload)
+	require.Equal(t, runtime.AgentLoopStopReasonMaxLoops, payload.StopReason)
+	require.Equal(t, runtime.AgentLoopStopReasonMaxLoops, payload.Metadata[runtime.AgentLoopEgressMetadataStopReason])
+	require.Equal(t, 0, payload.LoopCount)
+	require.Equal(t, 0, payload.MaxLoops)
+	require.Equal(t, runtime.AgentLoopStopReasonMaxLoops, result.Data["stop_reason"])
+	require.Equal(t, 0, result.Data["loop_count"])
+	require.Equal(t, 0, result.Data["max_loops"])
+	require.Equal(t, 0, result.Data["message_count"])
+	require.Equal(t, 0, result.Data["tool_call_count"])
+}
+
 func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())

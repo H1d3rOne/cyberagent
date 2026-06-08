@@ -22,7 +22,7 @@ func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LL
 		return daemonLLMTurnErrorResult(req, err), err
 	}
 	loop = loop.Clone()
-	messages, toolCalls, err := r.manager.runAgentLLMToolLoopAgentLoop(ctx, loop)
+	loopResult, err := r.manager.runAgentLLMToolLoopAgentLoopResult(ctx, loop)
 
 	status := runtime.TurnResultFinished
 	reason := "legacy daemon LLM tool loop executed"
@@ -30,20 +30,29 @@ func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LL
 		status = runtime.TurnResultFailed
 		reason = err.Error()
 	}
+	maxLoops := intFromAny(loopResult.Metadata[runtime.AgentLoopEgressMetadataMaxLoops])
 	return runtime.LLMTurnResult{
 		Status: status,
 		Reason: reason,
 		Error:  err,
 		Payload: runtime.AgentLoopTurnResultPayload{
-			Messages:  runtime.CloneAgentLoopMessages(messages),
-			ToolCalls: runtime.CloneAgentLoopToolCalls(toolCalls),
+			Messages:   runtime.CloneAgentLoopMessages(loopResult.Messages),
+			ToolCalls:  runtime.CloneAgentLoopToolCalls(loopResult.ToolCalls),
+			FinalPlan:  runtime.CloneAgentLoopPlan(loopResult.FinalPlan),
+			StopReason: loopResult.StopReason,
+			LoopCount:  loopResult.LoopCount,
+			MaxLoops:   maxLoops,
+			Metadata:   runtime.CloneAgentLoopMapStringAny(loopResult.Metadata),
 		},
 		Data: map[string]any{
-			"runner":     "daemon_legacy_llm_tool_loop",
-			"session_id": loop.Turn.SessionID,
-			"task_id":    loop.Turn.TaskID,
-			"run_id":     loop.Turn.RunID,
-			"turn_id":    loop.Turn.TurnID,
+			"runner":      "daemon_legacy_llm_tool_loop",
+			"session_id":  loop.Turn.SessionID,
+			"task_id":     loop.Turn.TaskID,
+			"run_id":      loop.Turn.RunID,
+			"turn_id":     loop.Turn.TurnID,
+			"stop_reason": loopResult.StopReason,
+			"loop_count":  loopResult.LoopCount,
+			"max_loops":   maxLoops,
 		},
 	}, err
 }

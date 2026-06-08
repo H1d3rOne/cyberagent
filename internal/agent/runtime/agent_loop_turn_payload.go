@@ -6,13 +6,24 @@ package runtime
 type AgentLoopTurnResultPayload struct {
 	Messages  []AgentLoopMessage
 	ToolCalls []AgentLoopToolCall
+	FinalPlan *AgentLoopPlan
+
+	StopReason string
+	LoopCount  int
+	MaxLoops   int
+	Metadata   map[string]any
 }
 
 // Clone returns a copy with message/tool-call mutable fields isolated.
 func (payload AgentLoopTurnResultPayload) Clone() AgentLoopTurnResultPayload {
 	return AgentLoopTurnResultPayload{
-		Messages:  CloneAgentLoopMessages(payload.Messages),
-		ToolCalls: CloneAgentLoopToolCalls(payload.ToolCalls),
+		Messages:   CloneAgentLoopMessages(payload.Messages),
+		ToolCalls:  CloneAgentLoopToolCalls(payload.ToolCalls),
+		FinalPlan:  CloneAgentLoopPlan(payload.FinalPlan),
+		StopReason: payload.StopReason,
+		LoopCount:  payload.LoopCount,
+		MaxLoops:   payload.MaxLoops,
+		Metadata:   CloneAgentLoopMapStringAny(payload.Metadata),
 	}
 }
 

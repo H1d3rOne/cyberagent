@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -352,6 +353,244 @@ func TestAgentLLMToolLoopNextPlanFromCycleResultStopsWithoutAutoContinue(t *test
 	})
 	require.False(t, ok)
 	require.Nil(t, manualContinue)
+
+	manualDecision := agentLLMToolLoopNextPlanDecisionFromCycleResult(runtime.AgentLoopResult{
+		FinalPlan: manualContinuePlan,
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataContinue: true,
+		},
+	})
+	require.False(t, manualDecision.Continue)
+	require.Equal(t, runtime.AgentLoopStopReasonAutoContinueDisabled, manualDecision.StopReason)
+
+	noActionPlan := runtime.CloneAgentLoopPlan(finalPlan)
+	noActionPlan.Actions = nil
+	noActionDecision := agentLLMToolLoopNextPlanDecisionFromCycleResult(runtime.AgentLoopResult{
+		FinalPlan: noActionPlan,
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataContinue: true,
+		},
+	})
+	require.False(t, noActionDecision.Continue)
+	require.Equal(t, runtime.AgentLoopStopReasonNoActions, noActionDecision.StopReason)
+
+	cycleStopDecision := agentLLMToolLoopNextPlanDecisionFromCycleResult(runtime.AgentLoopResult{
+		StopReason: runtime.AgentLoopStopReasonStepReplanSynthesisError,
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataContinue: false,
+		},
+	})
+	require.False(t, cycleStopDecision.Continue)
+	require.Equal(t, runtime.AgentLoopStopReasonStepReplanSynthesisError, cycleStopDecision.StopReason)
+}
+
+func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisFailureEgress(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	actionMessage := agentMessage{
+		ID:      "msg-cycle-synthesis-failure-action",
+		Role:    "tool",
+		Content: "action completed before synthesis failure",
+		ToolCalls: []agentToolCall{{
+			ID:   "tool-cycle-synthesis-failure-action",
+			Name: "daemon.health",
+		}},
+	}
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "action handled",
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{actionMessage}),
+				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(actionMessage.ToolCalls),
+			},
+		}, nil
+	}))
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		require.Equal(t, runtime.LLMStageToolSynthesis, req.Stage)
+		return runtime.LLMStageResult{}, errors.New("synthetic step replan failure")
+	}))
+
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+
+	loopReq := runtime.AgentLoopRequest{
+		Mode: runtime.AgentLoopModeReplanContinuation,
+		Turn: agentPlannerActionReplanCycleTurnContext(
+			"session-cycle-synthesis-failure",
+			agentRuntimeTurnRef{TaskID: "task-cycle-synthesis-failure", RunID: "run-cycle-synthesis-failure", TurnID: "turn-cycle-synthesis-failure"},
+			"continue daemon health",
+			"user",
+			"read_only",
+		),
+		Language:   "en",
+		Operator:   "tester",
+		LLMRequest: runtime.AgentLoopLLMRequest{Model: "gpt-cycle-synthesis-failure"},
+		InitialPlan: agentLoopPlanFromPlannerResponse(&agentPlannerResponse{
+			Phase: "step_replan",
+			NextAction: &agentNextAction{
+				Type:         "continue",
+				AutoContinue: true,
+			},
+			Actions: []agentPlannerAction{{Name: "daemon.health"}},
+		}),
+		State: runtime.AgentLoopState{
+			LoopHistory: []runtime.AgentLoopMessage{{ID: "history-cycle-synthesis-failure", Role: "user", Content: "continue daemon health"}},
+		},
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataActionAppendOrigin: daemonTurnExecutionReplanActionContinuation,
+		},
+	}
+
+	result := mgr.runAgentPlannerActionReplanCycleAgentLoop(context.Background(), loopReq)
+
+	require.Equal(t, runtime.AgentLoopStopReasonStepReplanSynthesisError, result.StopReason)
+	require.Equal(t, runtime.AgentLoopStopReasonStepReplanSynthesisError, result.Metadata[runtime.AgentLoopEgressMetadataStopReason])
+	require.Equal(t, false, result.Metadata[agentPlannerActionReplanCycleMetadataContinue])
+	require.Equal(t, "step_replan", result.Metadata["phase"])
+	require.Contains(t, stringFromAny(result.Metadata["error"]), "synthetic step replan failure")
+	require.Len(t, result.Messages, 2)
+	require.Equal(t, actionMessage.ID, result.Messages[0].ID)
+	require.Equal(t, "step", result.Messages[0].Phase)
+	require.Equal(t, "step_replan", result.Messages[1].Phase)
+	require.Contains(t, result.Messages[1].Content, "StepReplan synthesis failed")
+	require.Len(t, result.ToolCalls, 2)
+	require.Equal(t, "step_replan", firstNonEmpty(stringFromAny(result.ToolCalls[1].Metadata["agent_phase"]), stringFromAny(result.ToolCalls[1].Metadata["phase"])))
+	require.Len(t, appendMutations, 2)
+	require.Equal(t, daemonTurnExecutionReplanActionContinuation, appendMutations[0].Turn.Origin)
+	require.Equal(t, daemonTurnExecutionReplanActionContinuation, appendMutations[1].Turn.Origin)
+}
+
+func TestAgentManagerRunAgentLLMToolLoopResultStopsAtMaxLoops(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	planMessage := agentMessage{ID: "msg-llm-max-plan", Role: "agent", Content: "plan", Phase: "plan"}
+	actionMessage := agentMessage{
+		ID:      "msg-llm-max-action",
+		Role:    "tool",
+		Content: "action executed",
+		ToolCalls: []agentToolCall{{
+			ID:   "tool-llm-max-action",
+			Name: "daemon.health",
+		}},
+	}
+	synthesisMessage := agentMessage{ID: "msg-llm-max-synthesis", Role: "agent", Content: "continue", Phase: "step_replan"}
+	initialPlan := &agentPlannerResponse{
+		Phase: "plan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+		Actions: []agentPlannerAction{{Name: "daemon.health", Arguments: map[string]any{"probe": "first"}}},
+	}
+	nextPlan := &agentPlannerResponse{
+		Phase: "step_replan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+		Actions: []agentPlannerAction{{Name: "daemon.health", Arguments: map[string]any{"probe": "second"}}},
+	}
+
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
+		return runtime.TurnResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "action handled",
+			Payload: runtime.AgentLoopTurnResultPayload{
+				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{actionMessage}),
+				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls(actionMessage.ToolCalls),
+			},
+		}, nil
+	}))
+	eng.AttachLLMStageRunner(runtime.LLMStageRunnerFunc(func(_ context.Context, req runtime.LLMStageRequest) (runtime.LLMStageResult, error) {
+		switch req.Stage {
+		case runtime.LLMStagePlannerChat:
+			return runtime.LLMStageResult{
+				Status:  runtime.TurnResultFinished,
+				Reason:  "planner handled",
+				Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{planMessage}, nil, initialPlan),
+			}, nil
+		case runtime.LLMStageToolSynthesis:
+			return runtime.LLMStageResult{
+				Status:  runtime.TurnResultFinished,
+				Reason:  "synthesis handled",
+				Payload: agentLoopLLMStageResultPayloadFromLegacy([]agentMessage{synthesisMessage}, nil, nextPlan),
+			}, nil
+		default:
+			t.Fatalf("unexpected stage %s", req.Stage)
+			return runtime.LLMStageResult{}, nil
+		}
+	}))
+	appendMutations := []runtime.SessionMutationRequest{}
+	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
+
+	result, err := mgr.runAgentLLMToolLoopAgentLoopResult(context.Background(), runtime.AgentLoopRequest{
+		Mode: runtime.AgentLoopModeLLMToolLoop,
+		Turn: agentPlannerActionReplanCycleTurnContext(
+			"session-llm-max",
+			agentRuntimeTurnRef{TaskID: "task-llm-max", RunID: "run-llm-max", TurnID: "turn-llm-max"},
+			"run daemon health twice",
+			"user",
+			"read_only",
+		),
+		Language:   "en",
+		Operator:   "tester",
+		LLMRequest: runtime.AgentLoopLLMRequest{Model: "gpt-llm-max"},
+		History:    []runtime.AgentLoopMessage{{ID: "history-llm-max", Role: "user", Content: "run daemon health twice"}},
+		MaxLoops:   1,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, runtime.AgentLoopStopReasonMaxLoops, result.StopReason)
+	require.Equal(t, runtime.AgentLoopStopReasonMaxLoops, result.Metadata[runtime.AgentLoopEgressMetadataStopReason])
+	require.Equal(t, 1, result.LoopCount)
+	require.Equal(t, 1, result.Metadata[runtime.AgentLoopEgressMetadataLoopCount])
+	require.Equal(t, 1, result.Metadata[runtime.AgentLoopEgressMetadataMaxLoops])
+	require.Equal(t, string(runtime.AgentLoopModeLLMToolLoop), result.Metadata["mode"])
+	require.NotNil(t, result.FinalPlan)
+	require.Equal(t, "second", result.FinalPlan.Actions[0].Arguments["probe"])
+	require.Equal(t, []string{planMessage.ID, actionMessage.ID, synthesisMessage.ID}, agentLoopMessageIDs(result.Messages))
+	require.Len(t, appendMutations, 3)
+}
+
+func TestAgentManagerRunAgentReplanActionContinuationResultStopEgress(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	plan := agentLoopPlanFromPlannerResponse(&agentPlannerResponse{
+		Phase: "step_replan",
+		NextAction: &agentNextAction{
+			Type:         "continue",
+			AutoContinue: true,
+		},
+		Actions: []agentPlannerAction{{Name: "daemon.health"}},
+	})
+
+	maxZero := mgr.runAgentReplanActionContinuationAgentLoopResult(context.Background(), runtime.AgentLoopRequest{
+		Mode:        runtime.AgentLoopModeReplanContinuation,
+		InitialPlan: runtime.CloneAgentLoopPlan(plan),
+		MaxLoops:    0,
+	})
+	require.Equal(t, runtime.AgentLoopStopReasonMaxLoops, maxZero.StopReason)
+	require.Equal(t, runtime.AgentLoopStopReasonMaxLoops, maxZero.Metadata[runtime.AgentLoopEgressMetadataStopReason])
+	require.Equal(t, 0, maxZero.Metadata[runtime.AgentLoopEgressMetadataLoopCount])
+	require.Equal(t, 0, maxZero.Metadata[runtime.AgentLoopEgressMetadataMaxLoops])
+
+	manualPlan := runtime.CloneAgentLoopPlan(plan)
+	manualPlan.NextAction.AutoContinue = false
+	manual := mgr.runAgentReplanActionContinuationAgentLoopResult(context.Background(), runtime.AgentLoopRequest{
+		Mode:        runtime.AgentLoopModeReplanContinuation,
+		InitialPlan: manualPlan,
+		MaxLoops:    1,
+	})
+	require.Equal(t, runtime.AgentLoopStopReasonAutoContinueDisabled, manual.StopReason)
+	require.Equal(t, runtime.AgentLoopStopReasonAutoContinueDisabled, manual.Metadata[runtime.AgentLoopEgressMetadataStopReason])
+	require.Equal(t, 0, manual.LoopCount)
+	require.Equal(t, 1, manual.Metadata[runtime.AgentLoopEgressMetadataMaxLoops])
 }
 
 func TestNormalizeAgentReplanActionContinuationRequestDefaultsAndPreconditions(t *testing.T) {
