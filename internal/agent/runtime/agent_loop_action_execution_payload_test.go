@@ -48,3 +48,29 @@ func TestAgentLoopActionExecutionPayloadCloneIsolatesMutableFields(t *testing.T)
 		t.Fatalf("clone shares action arguments: %#v", cloned.Action.Arguments)
 	}
 }
+
+func TestAgentLoopActionExecutionTurnMetadataMergesAndClones(t *testing.T) {
+	existing := map[string]any{
+		"phase": "step_replan",
+		AgentLoopActionExecutionExecutorMetadataKey: "legacy_executor",
+		AgentLoopActionExecutionKindMetadataKey:     "legacy_kind",
+		AgentLoopActionNameMetadataKey:              "legacy.action",
+	}
+
+	metadata := AgentLoopActionExecutionTurnMetadata(existing, "planner_action_execution", "safe_scan", "daemon.health")
+	existing["phase"] = "mutated_phase"
+	metadata["new_key"] = "new_value"
+
+	if metadata["phase"] != "step_replan" {
+		t.Fatalf("metadata did not preserve cloned existing fields: %#v", metadata)
+	}
+	if metadata[AgentLoopActionExecutionExecutorMetadataKey] != AgentLoopActionExecutionExecutorMetadataValue ||
+		metadata[AgentLoopActionExecutionKindMetadataKey] != "planner_action_execution" ||
+		metadata[AgentLoopActionExecutionOperationLevelMetadataKey] != "safe_scan" ||
+		metadata[AgentLoopActionNameMetadataKey] != "daemon.health" {
+		t.Fatalf("action execution metadata = %#v", metadata)
+	}
+	if _, ok := existing["new_key"]; ok {
+		t.Fatalf("metadata result shares original map: existing=%#v metadata=%#v", existing, metadata)
+	}
+}

@@ -258,7 +258,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N110：继续按 N109 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估单 action execution error fallback 或 authorization approve action metadata 是否可抽为 runtime helper。
 - [x] P0.5-N111：继续按 N110 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估单 action execution error fallback result helper 或 authorization/session mutation request metadata helper。
 - [x] P0.5-N112：继续按 N111 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 authorization/session mutation request metadata helper 或 action execution turn request helper。
-- [ ] P0.5-N113：继续按 N112 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 action execution turn request/context metadata helper 或 batch queue ID/max ownership helper。
+- [x] P0.5-N113：继续按 N112 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 action execution turn request/context metadata helper 或 batch queue ID/max ownership helper。
+- [ ] P0.5-N114：继续按 N113 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 batch queue ID/max ownership helper 或 deterministic/replan turn execution metadata helper。
 
 当前盘点（2026-06-08）：
 
@@ -266,7 +267,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - 已清理 session mutation 输入 payload 的 daemon-private wrapper：append/record/request_authorization/capability_blocked/control/resolve 均由 runtime DTO + TurnContext 承载；append_messages、record_user_message、request_authorization、capability_blocked、control_session 与 resolve_authorization result 已先经 runtime `AgentLoopAppendMessagesResultPayload` / `AgentLoopRecordUserMessageResultPayload` / `AgentLoopRequestAuthorizationResultPayload` / `AgentLoopCapabilityBlockedResultPayload` / `AgentLoopControlSessionResultPayload` / `AgentLoopResolveAuthorizationResultPayload` / `AgentLoopSessionSnapshot` roundtrip，legacy result struct 仅作为 daemon adapter/caller DTO 与兼容 fallback 保留。
 - session mutation result payload 已整体迁入 runtime-neutral DTO：append/record/request_authorization/capability_blocked/control/resolve 均具备 runtime result DTO 与 daemon adapter roundtrip；legacy fallback helper 已收敛并重命名为 adapter-only compatibility 路径，daemon mutator 六类输出均有 runtime DTO 类型断言覆盖，`FromSessionMutationResult` 重复 switch 已收敛为 typed runtime/legacy egress helper。
 - 已输出 engine-native runner 草案：建议将 `llm_tool_loop` 与 `replan_action_continuation` 统一为单个 loop runner 的两个 mode，明确请求/响应 payload、authorization gate、action queue metadata、synthesis、append/persist ownership 与迁移顺序。
-- 已抽出 planner loop helper：`decideAgentPlannerActionGate` 负责无副作用计算 capability mismatch / explicit intent / operation level / manual authorization / allow 决策；`runtime.PrepareAgentLoopActionBatch` / `AgentLoopActionQueueMetadata` / `AgentLoopToolCallWithMetadata` / `AgentLoopAuthorizationActionMetadata` / `AgentLoopActionExecutionErrorResult` / `AgentLoopAuthorizationRequestMutationMetadata` / `AgentLoopCapabilityBlockedMutationMetadata` 负责统一 action batch 截断、queue/authorization/session mutation metadata 字段、error fallback result/details 展开、metadata merge 与 clone 隔离，daemon wrapper 只保留 queue ID 生成、legacy default tool metadata 与实际 action/session side effect 调度。
+- 已抽出 planner loop helper：`decideAgentPlannerActionGate` 负责无副作用计算 capability mismatch / explicit intent / operation level / manual authorization / allow 决策；`runtime.PrepareAgentLoopActionBatch` / `AgentLoopActionQueueMetadata` / `AgentLoopToolCallWithMetadata` / `AgentLoopAuthorizationActionMetadata` / `AgentLoopActionExecutionErrorResult` / `AgentLoopAuthorizationRequestMutationMetadata` / `AgentLoopCapabilityBlockedMutationMetadata` / `AgentLoopActionExecutionTurnMetadata` 负责统一 action batch 截断、queue/authorization/session mutation/action execution turn metadata 字段、error fallback result/details 展开、metadata merge 与 clone 隔离，daemon wrapper 只保留 queue ID 生成、legacy default tool metadata、turn kind/origin 选择与实际 action/session side effect 调度。
 - action gate / action batch egress 已收敛到 runtime-neutral DTO：新增 `runtime.AgentLoopActionGateDecision` / `AgentLoopActionGateResult` / `AgentLoopActionBatchResult`，`executeAgentPlannerActionList` 降为 batch result wrapper；capability_blocked / request_authorization 副作用仍经 `SessionMutator` adapter，四类 gate parity 已补 focused 覆盖。
 - loop egress 已标准化到 runtime-neutral DTO：新增 `runtime.AgentLoopEgressResult` 与统一 metadata key，`planner_error` / `step_replan_synthesis_error` / `no_actions` / `auto_continue_disabled` / `cycle_stopped` / `max_loops` 均能在 `AgentLoopResult`、LLM/replan turn payload 与 executor Data 中携带 `stop_reason`、`loop_count`、`max_loops`；StepReplan synthesis failure warning 仍保留原 message/tool 行为，但 egress stop reason 已可稳定断言。
 - 已抽出 planner action/replan cycle helper：`runAgentPlannerActionReplanCycle` 统一 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 的 Action → action append → tool synthesis → synthesis append 骨架；两种入口仍保留各自前置条件、append origin 与 response/tool merge 语义；action execution 与 StepReplan synthesis 的 legacy adapter 调用已分别收敛到 cycle-private helper。
@@ -331,7 +332,8 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - P0.5-N110 authorization approve action metadata helper 已完成：新增 runtime `AgentLoopAuthorizationActionMetadata` 与 authorization metadata key constants，批准后 action execution 的 top-level/message tool metadata stamp 复用 runtime/daemon shared metadata helper，并覆盖 approval append metadata。
 - P0.5-N111 single action execution error fallback result helper 已完成：新增 runtime `AgentLoopActionExecutionErrorResult` 与 result key constants，daemon action batch error fallback 复用 helper，保留 service error details 嵌套与 top-level 展开语义，并避免 details 覆盖 action name。
 - P0.5-N112 authorization/capability session mutation metadata helper 已完成：新增 runtime session mutation metadata key/helper，request_authorization 与 capability_blocked mutation request metadata 构造复用 runtime helper，并覆盖 request/turn metadata。
-- 下一批迁移顺序：N113 继续按 N112 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 action execution turn request/context metadata helper 或 batch queue ID/max ownership helper。
+- P0.5-N113 action execution turn metadata helper 已完成：新增 runtime action execution turn metadata key/helper，planner action execution turn context 复用 helper 构造 executor/kind/operation_level/action_name metadata，并覆盖 metadata merge 与 clone 隔离。
+- 下一批迁移顺序：N114 继续按 N113 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 batch queue ID/max ownership helper 或 deterministic/replan turn execution metadata helper。
 
 ### 7.2 P1 Frontend / QA
 
@@ -381,6 +383,17 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 ---
 
 ## 8. 最新本地验证记录
+
+2026-06-08 本轮增量（P0.5-N113：action execution turn metadata helper）：
+
+```bash
+go test -count=1 ./internal/agent/runtime -run 'TestAgentLoopActionExecution'
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon
+git diff --check
+```
+
+结果：focused 与 runtime/daemon 包级测试通过；planner action execution turn context 的 executor/kind/operation_level/action_name metadata 已迁到 runtime helper，保持原 request/action payload clone 与 turn metadata merge 语义。
 
 2026-06-08 本轮增量（P0.5-N112：authorization/capability session mutation metadata helper）：
 

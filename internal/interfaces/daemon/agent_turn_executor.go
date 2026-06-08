@@ -388,14 +388,11 @@ func agentPlannerActionExecutionTurnContextFromRequest(loopReq runtime.AgentLoop
 		Request: loopReq.Clone(),
 		Action:  runtime.CloneAgentLoopAction(action),
 	}
-	metadata := runtime.CloneAgentLoopMapStringAny(turn.Metadata)
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	metadata["executor"] = "turn_execution"
-	metadata["kind"] = daemonTurnExecutionPlannerActionExecution
-	metadata["operation_level"] = turn.OperationLevel
-	metadata["action_name"] = normalizeAgentPlannerActionName(action.Name)
-	turn.Metadata = metadata
+	turn.Metadata = runtime.AgentLoopActionExecutionTurnMetadata(
+		turn.Metadata,
+		daemonTurnExecutionPlannerActionExecution,
+		turn.OperationLevel,
+		normalizeAgentPlannerActionName(action.Name),
+	)
 	return turn
 }
