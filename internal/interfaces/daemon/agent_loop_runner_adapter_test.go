@@ -253,6 +253,154 @@ func TestAgentPlannerActionReplanCycleRuntimeRequestHelpersCloneAndDefault(t *te
 	require.Equal(t, "runtime-helper", plan.Actions[0].Arguments["probe"])
 }
 
+func TestNormalizeAgentLLMToolLoopRequestDefaultsAndPreservesExplicitMetadata(t *testing.T) {
+	loopReq := runtime.AgentLoopRequest{
+		MaxLoops: 0,
+		Metadata: map[string]any{
+			"keep": "value",
+		},
+	}
+
+	normalized := normalizeAgentLLMToolLoopRequest(loopReq)
+
+	require.Equal(t, runtime.AgentLoopModeLLMToolLoop, normalized.Mode)
+	require.Equal(t, 3, normalized.MaxLoops)
+	require.Equal(t, "value", normalized.Metadata["keep"])
+	require.Equal(t, "planner_loop", normalized.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
+	require.Equal(t, true, normalized.Metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage])
+
+	loopReq.Metadata["keep"] = "mutated"
+	require.Equal(t, "value", normalized.Metadata["keep"])
+
+	explicit := normalizeAgentLLMToolLoopRequest(runtime.AgentLoopRequest{
+		MaxLoops: 7,
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataActionAppendOrigin:                      "custom_origin",
+			agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage: false,
+		},
+	})
+	require.Equal(t, runtime.AgentLoopModeLLMToolLoop, explicit.Mode)
+	require.Equal(t, 7, explicit.MaxLoops)
+	require.Equal(t, "custom_origin", explicit.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
+	require.Equal(t, false, explicit.Metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage])
+}
+
+func TestAgentLLMToolLoopStepPreconditionFallbackAndStopBranches(t *testing.T) {
+	planOnly := &runtime.AgentLoopPlan{
+		Phase:  "plan",
+		Answer: "plan only",
+	}
+	hold := agentLLMToolLoopStepPrecondition(runtime.AgentLoopRequest{
+		Turn:     runtime.TurnContext{Prompt: "make a plan for daemon health"},
+		Language: "en",
+	}, 0, planOnly)
+	require.False(t, hold.Continue)
+	require.False(t, agentLoopPlanHasActions(hold.Plan))
+
+	run := agentLLMToolLoopStepPrecondition(runtime.AgentLoopRequest{
+		Turn:     runtime.TurnContext{Prompt: "run daemon health now"},
+		Language: "en",
+	}, 0, nil)
+	require.True(t, run.Continue)
+	require.True(t, agentLoopPlanShouldAutoContinue(run.Plan))
+	require.Equal(t, []string{"daemon.health"}, []string{agentLoopPlanActions(run.Plan)[0].Name})
+
+	secondStep := agentLLMToolLoopStepPrecondition(runtime.AgentLoopRequest{
+		Turn:     runtime.TurnContext{Prompt: "run daemon health now"},
+		Language: "en",
+	}, 1, nil)
+	require.False(t, secondStep.Continue)
+}
+
+func TestAgentLLMToolLoopNextPlanFromCycleResultStopsWithoutAutoContinue(t *testing.T) {
+	finalPlan := &runtime.AgentLoopPlan{
+		Phase:      "step_replan",
+		NextAction: &runtime.AgentLoopNextAction{Type: "continue", AutoContinue: true},
+		Actions: []runtime.AgentLoopAction{{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "next"},
+		}},
+	}
+	next, ok := agentLLMToolLoopNextPlanFromCycleResult(runtime.AgentLoopResult{
+		FinalPlan: finalPlan,
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataContinue: true,
+		},
+	})
+	require.True(t, ok)
+	require.Equal(t, "next", next.Actions[0].Arguments["probe"])
+
+	finalPlan.Actions[0].Arguments["probe"] = "mutated"
+	require.Equal(t, "next", next.Actions[0].Arguments["probe"])
+
+	noContinue, ok := agentLLMToolLoopNextPlanFromCycleResult(runtime.AgentLoopResult{
+		FinalPlan: finalPlan,
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataContinue: false,
+		},
+	})
+	require.False(t, ok)
+	require.Nil(t, noContinue)
+
+	manualContinuePlan := runtime.CloneAgentLoopPlan(finalPlan)
+	manualContinuePlan.NextAction.AutoContinue = false
+	manualContinue, ok := agentLLMToolLoopNextPlanFromCycleResult(runtime.AgentLoopResult{
+		FinalPlan: manualContinuePlan,
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataContinue: true,
+		},
+	})
+	require.False(t, ok)
+	require.Nil(t, manualContinue)
+}
+
+func TestNormalizeAgentReplanActionContinuationRequestDefaultsAndPreconditions(t *testing.T) {
+	loopReq := runtime.AgentLoopRequest{
+		Mode:     runtime.AgentLoopModeLLMToolLoop,
+		MaxLoops: 0,
+		Metadata: map[string]any{
+			"keep": "value",
+		},
+	}
+
+	normalized := normalizeAgentReplanActionContinuationRequest(loopReq)
+
+	require.Equal(t, runtime.AgentLoopModeReplanContinuation, normalized.Mode)
+	require.Equal(t, 0, normalized.MaxLoops)
+	require.Equal(t, "value", normalized.Metadata["keep"])
+	require.Equal(t, daemonTurnExecutionReplanActionContinuation, normalized.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
+
+	loopReq.Metadata["keep"] = "mutated"
+	require.Equal(t, "value", normalized.Metadata["keep"])
+
+	explicit := normalizeAgentReplanActionContinuationRequest(runtime.AgentLoopRequest{
+		Metadata: map[string]any{
+			agentPlannerActionReplanCycleMetadataActionAppendOrigin: "custom_continuation",
+		},
+	})
+	require.Equal(t, "custom_continuation", explicit.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
+
+	plan := &runtime.AgentLoopPlan{
+		Phase:      "step_replan",
+		NextAction: &runtime.AgentLoopNextAction{Type: "continue", AutoContinue: true},
+		Actions: []runtime.AgentLoopAction{{
+			Name: "daemon.health",
+		}},
+	}
+	require.False(t, agentReplanActionContinuationStepPrecondition(normalized, plan))
+
+	normalized.MaxLoops = 1
+	require.True(t, agentReplanActionContinuationStepPrecondition(normalized, plan))
+
+	manualContinuePlan := runtime.CloneAgentLoopPlan(plan)
+	manualContinuePlan.NextAction.AutoContinue = false
+	require.False(t, agentReplanActionContinuationStepPrecondition(normalized, manualContinuePlan))
+
+	noActionPlan := runtime.CloneAgentLoopPlan(plan)
+	noActionPlan.Actions = nil
+	require.False(t, agentReplanActionContinuationStepPrecondition(normalized, noActionPlan))
+}
+
 func TestAgentLoopPlanActionsNormalizeDedupeAndClone(t *testing.T) {
 	plan := &runtime.AgentLoopPlan{
 		Phase:      "step_replan",

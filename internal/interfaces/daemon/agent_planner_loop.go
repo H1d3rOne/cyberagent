@@ -287,22 +287,7 @@ func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string
 }
 
 func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
-	loopReq = loopReq.Clone()
-	loopReq.Mode = runtime.AgentLoopModeLLMToolLoop
-	if loopReq.MaxLoops <= 0 {
-		loopReq.MaxLoops = reqMaxAgentReplans(sendMessageRequestFromAgentLoopLLMRequest(loopReq.LLMRequest))
-	}
-	metadata := runtime.CloneAgentLoopMapStringAny(loopReq.Metadata)
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	if stringFromAny(metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin]) == "" {
-		metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin] = "planner_loop"
-	}
-	if _, ok := metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage]; !ok {
-		metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage] = true
-	}
-	loopReq.Metadata = metadata
+	loopReq = normalizeAgentLLMToolLoopRequest(loopReq)
 
 	initialHistory := runtime.CloneAgentLoopMessages(loopReq.History)
 	if len(initialHistory) == 0 && len(loopReq.State.LoopHistory) > 0 {
@@ -328,21 +313,11 @@ func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq
 
 	cyclePlan := runtime.CloneAgentLoopPlan(plan)
 	for step := 0; step < loopReq.MaxLoops; step++ {
-		if !agentLoopPlanHasActions(cyclePlan) {
-			// Respect a structured model plan that intentionally stops at Plan and
-			// asks the operator/runtime to continue. Fallback actions are only
-			// created when the latest operator prompt clearly asks to execute now
-			// but the provider forgot to emit actions.
-			if step == 0 && agentPromptRequestsImmediateExecution(loopReq.Turn.Prompt) {
-				fallback := agentFallbackPlannerFromPrompt(loopReq.Turn.Prompt, "", loopReq.Language)
-				cyclePlan = agentLoopPlanFromPlannerResponse(fallback)
-				if !agentLoopPlanHasActions(cyclePlan) {
-					break
-				}
-			} else {
-				break
-			}
+		stepPlan := agentLLMToolLoopStepPrecondition(loopReq, step, cyclePlan)
+		if !stepPlan.Continue {
+			break
 		}
+		cyclePlan = stepPlan.Plan
 
 		cycleReq := loopReq.Clone()
 		cycleReq.History = runtime.CloneAgentLoopMessages(cycleState.LoopHistory)
@@ -351,16 +326,11 @@ func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq
 		cycleReq.MaxLoops = loopReq.MaxLoops
 		cycle := m.runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx, cycleReq)
 		cycleState = cycle.State.Clone()
-		if !agentPlannerActionReplanCycleContinueFromAgentLoopResult(cycle) {
+		nextPlan, continueLoop := agentLLMToolLoopNextPlanFromCycleResult(cycle)
+		if !continueLoop {
 			break
 		}
-		if !agentLoopPlanHasActions(cycle.FinalPlan) {
-			break
-		}
-		if !agentLoopPlanShouldAutoContinue(cycle.FinalPlan) {
-			break
-		}
-		cyclePlan = runtime.CloneAgentLoopPlan(cycle.FinalPlan)
+		cyclePlan = nextPlan
 	}
 
 	return runtime.CloneAgentLoopMessages(cycleState.ResponseMessages), runtime.CloneAgentLoopToolCalls(cycleState.ToolCalls), nil
@@ -393,23 +363,84 @@ func agentReplanActionContinuationRequestFromLegacy(sessionID string, turnRef ag
 	}
 }
 
+type agentLoopStepPrecondition struct {
+	Plan     *runtime.AgentLoopPlan
+	Continue bool
+}
+
+func normalizeAgentLLMToolLoopRequest(loopReq runtime.AgentLoopRequest) runtime.AgentLoopRequest {
+	loopReq = loopReq.Clone()
+	loopReq.Mode = runtime.AgentLoopModeLLMToolLoop
+	if loopReq.MaxLoops <= 0 {
+		loopReq.MaxLoops = reqMaxAgentReplans(sendMessageRequestFromAgentLoopLLMRequest(loopReq.LLMRequest))
+	}
+	appendActionToolCallsBeforeEmptyMessage := true
+	loopReq.Metadata = agentLoopRequestMetadataWithDefaults(loopReq.Metadata, "planner_loop", &appendActionToolCallsBeforeEmptyMessage)
+	return loopReq
+}
+
+func agentLoopRequestMetadataWithDefaults(metadata map[string]any, actionAppendOrigin string, appendActionToolCallsBeforeEmptyMessage *bool) map[string]any {
+	cloned := runtime.CloneAgentLoopMapStringAny(metadata)
+	if cloned == nil {
+		cloned = map[string]any{}
+	}
+	if stringFromAny(cloned[agentPlannerActionReplanCycleMetadataActionAppendOrigin]) == "" {
+		cloned[agentPlannerActionReplanCycleMetadataActionAppendOrigin] = actionAppendOrigin
+	}
+	if appendActionToolCallsBeforeEmptyMessage != nil {
+		if _, ok := cloned[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage]; !ok {
+			cloned[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage] = *appendActionToolCallsBeforeEmptyMessage
+		}
+	}
+	return cloned
+}
+
+func agentLLMToolLoopStepPrecondition(loopReq runtime.AgentLoopRequest, step int, plan *runtime.AgentLoopPlan) agentLoopStepPrecondition {
+	plan = runtime.CloneAgentLoopPlan(plan)
+	if agentLoopPlanHasActions(plan) {
+		return agentLoopStepPrecondition{Plan: plan, Continue: true}
+	}
+	// Respect a structured model plan that intentionally stops at Plan and asks
+	// the operator/runtime to continue. Fallback actions are only created when
+	// the latest operator prompt clearly asks to execute now but the provider
+	// forgot to emit actions.
+	if step == 0 && agentPromptRequestsImmediateExecution(loopReq.Turn.Prompt) {
+		fallback := agentLoopPlanFromPlannerResponse(agentFallbackPlannerFromPrompt(loopReq.Turn.Prompt, "", loopReq.Language))
+		if agentLoopPlanHasActions(fallback) {
+			return agentLoopStepPrecondition{Plan: fallback, Continue: true}
+		}
+	}
+	return agentLoopStepPrecondition{Plan: plan, Continue: false}
+}
+
+func agentLLMToolLoopNextPlanFromCycleResult(cycle runtime.AgentLoopResult) (*runtime.AgentLoopPlan, bool) {
+	if !agentPlannerActionReplanCycleContinueFromAgentLoopResult(cycle) {
+		return nil, false
+	}
+	if !agentLoopPlanHasActions(cycle.FinalPlan) {
+		return nil, false
+	}
+	if !agentLoopPlanShouldAutoContinue(cycle.FinalPlan) {
+		return nil, false
+	}
+	return runtime.CloneAgentLoopPlan(cycle.FinalPlan), true
+}
+
 func normalizeAgentReplanActionContinuationRequest(loopReq runtime.AgentLoopRequest) runtime.AgentLoopRequest {
 	loopReq = loopReq.Clone()
-	if loopReq.Mode == "" {
-		loopReq.Mode = runtime.AgentLoopModeReplanContinuation
-	}
-	if loopReq.Mode != runtime.AgentLoopModeReplanContinuation {
-		loopReq.Mode = runtime.AgentLoopModeReplanContinuation
-	}
-	if stringFromAny(loopReq.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin]) == "" {
-		metadata := runtime.CloneAgentLoopMapStringAny(loopReq.Metadata)
-		if metadata == nil {
-			metadata = map[string]any{}
-		}
-		metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin] = daemonTurnExecutionReplanActionContinuation
-		loopReq.Metadata = metadata
-	}
+	loopReq.Mode = runtime.AgentLoopModeReplanContinuation
+	loopReq.Metadata = agentLoopRequestMetadataWithDefaults(loopReq.Metadata, daemonTurnExecutionReplanActionContinuation, nil)
 	return loopReq
+}
+
+func agentReplanActionContinuationStepPrecondition(loopReq runtime.AgentLoopRequest, plan *runtime.AgentLoopPlan) bool {
+	if loopReq.MaxLoops <= 0 {
+		return false
+	}
+	if !agentLoopPlanHasActions(plan) {
+		return false
+	}
+	return agentLoopPlanShouldAutoContinue(plan)
 }
 
 func (m *agentManager) runAgentReplanActionContinuationAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
@@ -421,10 +452,7 @@ func (m *agentManager) runAgentReplanActionContinuationAgentLoop(ctx context.Con
 	cycleState := agentPlannerActionReplanCycleStateFromAgentLoopRequest(loopReq)
 	cyclePlan := runtime.CloneAgentLoopPlan(loopReq.InitialPlan)
 	for step := 0; step < loopReq.MaxLoops; step++ {
-		if !agentLoopPlanHasActions(cyclePlan) {
-			break
-		}
-		if !agentLoopPlanShouldAutoContinue(cyclePlan) {
+		if !agentReplanActionContinuationStepPrecondition(loopReq, cyclePlan) {
 			break
 		}
 
