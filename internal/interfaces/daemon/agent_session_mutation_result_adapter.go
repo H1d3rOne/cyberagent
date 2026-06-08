@@ -5,21 +5,32 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 )
 
-func daemonRecordUserMessageMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonRecordUserMessageMutationResultPayload, bool) {
-	if payload, ok := daemonLegacySessionMutationResultPayload[daemonRecordUserMessageMutationResultPayload](result); ok {
+func daemonSessionMutationResultPayloadFromRuntimeOrLegacy[Legacy any, AgentLoop agentLoopSessionMutationPayloadCloner[AgentLoop]](
+	result runtime.SessionMutationResult,
+	convert func(AgentLoop) Legacy,
+) (Legacy, bool) {
+	var zero Legacy
+	if payload, ok := daemonLegacySessionMutationResultPayload[Legacy](result); ok {
 		return payload, true
 	}
 	switch payload := result.Payload.(type) {
-	case runtime.AgentLoopRecordUserMessageResultPayload:
-		return daemonRecordUserMessageMutationResultPayloadFromAgentLoop(payload), true
-	case *runtime.AgentLoopRecordUserMessageResultPayload:
+	case AgentLoop:
+		return convert(payload), true
+	case *AgentLoop:
 		if payload == nil {
-			return daemonRecordUserMessageMutationResultPayload{}, false
+			return zero, false
 		}
-		return daemonRecordUserMessageMutationResultPayloadFromAgentLoop(payload.Clone()), true
+		return convert((*payload).Clone()), true
 	default:
-		return daemonRecordUserMessageMutationResultPayload{}, false
+		return zero, false
 	}
+}
+
+func daemonRecordUserMessageMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonRecordUserMessageMutationResultPayload, bool) {
+	return daemonSessionMutationResultPayloadFromRuntimeOrLegacy[daemonRecordUserMessageMutationResultPayload, runtime.AgentLoopRecordUserMessageResultPayload](
+		result,
+		daemonRecordUserMessageMutationResultPayloadFromAgentLoop,
+	)
 }
 
 func agentLoopRecordUserMessageResultPayloadFromDaemon(payload daemonRecordUserMessageMutationResultPayload) runtime.AgentLoopRecordUserMessageResultPayload {
@@ -46,20 +57,10 @@ func daemonRecordUserMessageMutationResultPayloadFromAgentLoop(payload runtime.A
 }
 
 func daemonControlSessionMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonControlSessionMutationResultPayload, bool) {
-	if payload, ok := daemonLegacySessionMutationResultPayload[daemonControlSessionMutationResultPayload](result); ok {
-		return payload, true
-	}
-	switch payload := result.Payload.(type) {
-	case runtime.AgentLoopControlSessionResultPayload:
-		return daemonControlSessionMutationResultPayloadFromAgentLoop(payload), true
-	case *runtime.AgentLoopControlSessionResultPayload:
-		if payload == nil {
-			return daemonControlSessionMutationResultPayload{}, false
-		}
-		return daemonControlSessionMutationResultPayloadFromAgentLoop(payload.Clone()), true
-	default:
-		return daemonControlSessionMutationResultPayload{}, false
-	}
+	return daemonSessionMutationResultPayloadFromRuntimeOrLegacy[daemonControlSessionMutationResultPayload, runtime.AgentLoopControlSessionResultPayload](
+		result,
+		daemonControlSessionMutationResultPayloadFromAgentLoop,
+	)
 }
 
 func agentLoopControlSessionResultPayloadFromDaemon(payload daemonControlSessionMutationResultPayload) runtime.AgentLoopControlSessionResultPayload {
@@ -84,20 +85,10 @@ func daemonControlSessionMutationResultPayloadFromAgentLoop(payload runtime.Agen
 }
 
 func daemonResolveAuthorizationMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonResolveAuthorizationMutationResultPayload, bool) {
-	if payload, ok := daemonLegacySessionMutationResultPayload[daemonResolveAuthorizationMutationResultPayload](result); ok {
-		return payload, true
-	}
-	switch payload := result.Payload.(type) {
-	case runtime.AgentLoopResolveAuthorizationResultPayload:
-		return daemonResolveAuthorizationMutationResultPayloadFromAgentLoop(payload), true
-	case *runtime.AgentLoopResolveAuthorizationResultPayload:
-		if payload == nil {
-			return daemonResolveAuthorizationMutationResultPayload{}, false
-		}
-		return daemonResolveAuthorizationMutationResultPayloadFromAgentLoop(payload.Clone()), true
-	default:
-		return daemonResolveAuthorizationMutationResultPayload{}, false
-	}
+	return daemonSessionMutationResultPayloadFromRuntimeOrLegacy[daemonResolveAuthorizationMutationResultPayload, runtime.AgentLoopResolveAuthorizationResultPayload](
+		result,
+		daemonResolveAuthorizationMutationResultPayloadFromAgentLoop,
+	)
 }
 
 func agentLoopResolveAuthorizationResultPayloadFromDaemon(payload daemonResolveAuthorizationMutationResultPayload) runtime.AgentLoopResolveAuthorizationResultPayload {
@@ -132,20 +123,10 @@ func daemonResolveAuthorizationMutationResultPayloadFromAgentLoop(payload runtim
 }
 
 func daemonRequestAuthorizationMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonRequestAuthorizationMutationResultPayload, bool) {
-	if payload, ok := daemonLegacySessionMutationResultPayload[daemonRequestAuthorizationMutationResultPayload](result); ok {
-		return payload, true
-	}
-	switch payload := result.Payload.(type) {
-	case runtime.AgentLoopRequestAuthorizationResultPayload:
-		return daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(payload), true
-	case *runtime.AgentLoopRequestAuthorizationResultPayload:
-		if payload == nil {
-			return daemonRequestAuthorizationMutationResultPayload{}, false
-		}
-		return daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(payload.Clone()), true
-	default:
-		return daemonRequestAuthorizationMutationResultPayload{}, false
-	}
+	return daemonSessionMutationResultPayloadFromRuntimeOrLegacy[daemonRequestAuthorizationMutationResultPayload, runtime.AgentLoopRequestAuthorizationResultPayload](
+		result,
+		daemonRequestAuthorizationMutationResultPayloadFromAgentLoop,
+	)
 }
 
 func agentLoopRequestAuthorizationResultPayloadFromDaemon(payload daemonRequestAuthorizationMutationResultPayload) runtime.AgentLoopRequestAuthorizationResultPayload {
@@ -176,20 +157,10 @@ func daemonRequestAuthorizationMutationResultPayloadFromAgentLoop(payload runtim
 }
 
 func daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonCapabilityBlockedMutationResultPayload, bool) {
-	if payload, ok := daemonLegacySessionMutationResultPayload[daemonCapabilityBlockedMutationResultPayload](result); ok {
-		return payload, true
-	}
-	switch payload := result.Payload.(type) {
-	case runtime.AgentLoopCapabilityBlockedResultPayload:
-		return daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(payload), true
-	case *runtime.AgentLoopCapabilityBlockedResultPayload:
-		if payload == nil {
-			return daemonCapabilityBlockedMutationResultPayload{}, false
-		}
-		return daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(payload.Clone()), true
-	default:
-		return daemonCapabilityBlockedMutationResultPayload{}, false
-	}
+	return daemonSessionMutationResultPayloadFromRuntimeOrLegacy[daemonCapabilityBlockedMutationResultPayload, runtime.AgentLoopCapabilityBlockedResultPayload](
+		result,
+		daemonCapabilityBlockedMutationResultPayloadFromAgentLoop,
+	)
 }
 
 func agentLoopCapabilityBlockedResultPayloadFromDaemon(payload daemonCapabilityBlockedMutationResultPayload) runtime.AgentLoopCapabilityBlockedResultPayload {
@@ -216,20 +187,10 @@ func daemonCapabilityBlockedMutationResultPayloadFromAgentLoop(payload runtime.A
 }
 
 func daemonAppendMessagesMutationResultPayloadFromSessionMutationResult(result runtime.SessionMutationResult) (daemonAppendMessagesMutationResultPayload, bool) {
-	if payload, ok := daemonLegacySessionMutationResultPayload[daemonAppendMessagesMutationResultPayload](result); ok {
-		return payload, true
-	}
-	switch payload := result.Payload.(type) {
-	case runtime.AgentLoopAppendMessagesResultPayload:
-		return daemonAppendMessagesMutationResultPayloadFromAgentLoop(payload), true
-	case *runtime.AgentLoopAppendMessagesResultPayload:
-		if payload == nil {
-			return daemonAppendMessagesMutationResultPayload{}, false
-		}
-		return daemonAppendMessagesMutationResultPayloadFromAgentLoop(payload.Clone()), true
-	default:
-		return daemonAppendMessagesMutationResultPayload{}, false
-	}
+	return daemonSessionMutationResultPayloadFromRuntimeOrLegacy[daemonAppendMessagesMutationResultPayload, runtime.AgentLoopAppendMessagesResultPayload](
+		result,
+		daemonAppendMessagesMutationResultPayloadFromAgentLoop,
+	)
 }
 
 func agentLoopAppendMessagesResultPayloadFromDaemon(payload daemonAppendMessagesMutationResultPayload) runtime.AgentLoopAppendMessagesResultPayload {

@@ -54,6 +54,47 @@ func TestDaemonLegacySessionMutationResultPayload(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestDaemonSessionMutationResultPayloadFromRuntimeOrLegacy(t *testing.T) {
+	convert := func(result runtime.SessionMutationResult) (daemonControlSessionMutationResultPayload, bool) {
+		return daemonSessionMutationResultPayloadFromRuntimeOrLegacy[daemonControlSessionMutationResultPayload, runtime.AgentLoopControlSessionResultPayload](
+			result,
+			daemonControlSessionMutationResultPayloadFromAgentLoop,
+		)
+	}
+
+	legacyPayload := daemonControlSessionMutationResultPayload{
+		Session: agentSession{SessionID: "legacy-result"},
+		Message: agentMessage{ID: "msg-legacy"},
+		Mutated: true,
+	}
+	gotLegacy, ok := convert(runtime.SessionMutationResult{Payload: legacyPayload})
+	require.True(t, ok)
+	require.Equal(t, "legacy-result", gotLegacy.Session.SessionID)
+	require.Equal(t, "msg-legacy", gotLegacy.Message.ID)
+	require.True(t, gotLegacy.Mutated)
+
+	runtimePayload := runtime.AgentLoopControlSessionResultPayload{
+		Session: runtime.AgentLoopSessionSnapshot{SessionID: "runtime-result"},
+		Message: runtime.AgentLoopMessage{ID: "msg-runtime"},
+		Mutated: true,
+	}
+	gotRuntime, ok := convert(runtime.SessionMutationResult{Payload: runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, "runtime-result", gotRuntime.Session.SessionID)
+	require.Equal(t, "msg-runtime", gotRuntime.Message.ID)
+
+	gotPointer, ok := convert(runtime.SessionMutationResult{Payload: &runtimePayload})
+	require.True(t, ok)
+	require.Equal(t, gotRuntime, gotPointer)
+
+	var nilRuntimePayload *runtime.AgentLoopControlSessionResultPayload
+	_, ok = convert(runtime.SessionMutationResult{Payload: nilRuntimePayload})
+	require.False(t, ok)
+
+	_, ok = convert(runtime.SessionMutationResult{Payload: "invalid"})
+	require.False(t, ok)
+}
+
 func TestAgentLoopRecordUserMessageResultPayloadAdapterRoundTrip(t *testing.T) {
 	now := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
 	lastMessageAt := now.Add(-time.Hour)
