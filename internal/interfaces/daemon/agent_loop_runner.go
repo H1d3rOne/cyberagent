@@ -37,6 +37,9 @@ func (r daemonAgentLoopRunner) RunAgentLoop(ctx context.Context, req runtime.Age
 }
 
 func (m *agentManager) runRuntimeAgentLoopResult(ctx context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	req = req.Clone()
 	eng := m.runtimeEngine()
 	if eng == nil || eng.AgentLoopRunner() == nil {

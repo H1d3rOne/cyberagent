@@ -30,20 +30,11 @@ func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LL
 		status = runtime.TurnResultFailed
 		reason = err.Error()
 	}
-	maxLoops := intFromAny(loopResult.Metadata[runtime.AgentLoopEgressMetadataMaxLoops])
 	return runtime.LLMTurnResult{
-		Status: status,
-		Reason: reason,
-		Error:  err,
-		Payload: runtime.AgentLoopTurnResultPayload{
-			Messages:   runtime.CloneAgentLoopMessages(loopResult.Messages),
-			ToolCalls:  runtime.CloneAgentLoopToolCalls(loopResult.ToolCalls),
-			FinalPlan:  runtime.CloneAgentLoopPlan(loopResult.FinalPlan),
-			StopReason: loopResult.StopReason,
-			LoopCount:  loopResult.LoopCount,
-			MaxLoops:   maxLoops,
-			Metadata:   runtime.CloneAgentLoopMapStringAny(loopResult.Metadata),
-		},
+		Status:  status,
+		Reason:  reason,
+		Error:   err,
+		Payload: agentLoopTurnResultPayloadFromAgentLoopResult(loopResult),
 		Data: map[string]any{
 			"runner":      "daemon_legacy_llm_tool_loop",
 			"session_id":  loop.Turn.SessionID,
@@ -52,7 +43,7 @@ func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LL
 			"turn_id":     loop.Turn.TurnID,
 			"stop_reason": loopResult.StopReason,
 			"loop_count":  loopResult.LoopCount,
-			"max_loops":   maxLoops,
+			"max_loops":   agentLoopResultMaxLoops(loopResult),
 		},
 	}, err
 }
@@ -81,35 +72,11 @@ func (m *agentManager) runRuntimeLLMToolLoop(ctx context.Context, sessionID stri
 }
 
 func (m *agentManager) runRuntimeLLMToolLoopAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
-	loopReq = loopReq.Clone()
-	eng := m.runtimeEngine()
-	if eng == nil || eng.LLMTurnRunner() == nil {
-		return m.runAgentLLMToolLoopAgentLoop(ctx, loopReq)
-	}
-
+	loopReq = normalizeAgentLLMToolLoopRequest(loopReq)
 	turn := agentLLMToolLoopTurnContextFromRequest(loopReq)
 	loopReq.Turn = runtime.CloneAgentLoopTurnContext(turn)
-	result, err := eng.RunLLMTurn(ctx, runtime.LLMTurnRequest{
-		Turn:    turn,
-		Payload: loopReq.Clone(),
-		Metadata: map[string]any{
-			"runner":   "llm_tool_loop",
-			"language": loopReq.Language,
-			"operator": loopReq.Operator,
-		},
-	})
-	if errors.Is(err, runtime.ErrLLMTurnRunnerNotAttached) {
-		return m.runAgentLLMToolLoopAgentLoop(ctx, loopReq)
-	}
-
-	payload, ok := agentLoopTurnResultPayloadFromLLMTurnResult(result.Payload)
-	if ok {
-		return runtime.CloneAgentLoopMessages(payload.Messages), runtime.CloneAgentLoopToolCalls(payload.ToolCalls), err
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	return nil, nil, errors.New("daemon: llm turn runner returned invalid payload")
+	loopResult, err := m.runRuntimeAgentLoopResult(ctx, loopReq)
+	return runtime.CloneAgentLoopMessages(loopResult.Messages), runtime.CloneAgentLoopToolCalls(loopResult.ToolCalls), err
 }
 
 func agentLLMToolLoopRequestFromLegacy(sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) runtime.AgentLoopRequest {

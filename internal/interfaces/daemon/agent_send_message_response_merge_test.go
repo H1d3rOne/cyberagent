@@ -59,19 +59,14 @@ func TestAgentManagerSendMessageResponseMergeControlLLMBranches(t *testing.T) {
 			expectedMessage := agentMessage{ID: tc.wantMessages[2], Role: "agent", Content: "llm continued after control"}
 			expectedTool := agentToolCall{ID: tc.wantTools[0], Name: "LLM chat", Status: contracts.StatusSucceeded}
 			llmCalled := false
-			eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, req runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
+			eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, payload runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 				llmCalled = true
-				require.Equal(t, sessionID, req.Turn.SessionID)
-				require.NotEmpty(t, req.Turn.TaskID)
-				require.NotEmpty(t, req.Turn.RunID)
-				require.NotEmpty(t, req.Turn.TurnID)
-				require.Equal(t, tc.prompt, req.Turn.Prompt)
-				require.Equal(t, "read_only", req.Turn.OperationLevel)
-
-				payload, ok := req.Payload.(runtime.AgentLoopRequest)
-				require.True(t, ok, "payload type = %T", req.Payload)
 				require.Equal(t, sessionID, payload.Turn.SessionID)
+				require.NotEmpty(t, payload.Turn.TaskID)
+				require.NotEmpty(t, payload.Turn.RunID)
+				require.NotEmpty(t, payload.Turn.TurnID)
 				require.Equal(t, tc.prompt, payload.Turn.Prompt)
+				require.Equal(t, "read_only", payload.Turn.OperationLevel)
 				require.Equal(t, "operator-1", payload.Operator)
 				require.Equal(t, runtime.AgentLoopModeLLMToolLoop, payload.Mode)
 				require.Equal(t, "planner_loop", payload.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
@@ -80,13 +75,9 @@ func TestAgentManagerSendMessageResponseMergeControlLLMBranches(t *testing.T) {
 				require.Equal(t, tc.prompt, payload.History[len(payload.History)-2].Content)
 				require.Equal(t, "agent", payload.History[len(payload.History)-1].Role)
 
-				return runtime.LLMTurnResult{
-					Status: runtime.TurnResultFinished,
-					Reason: "done",
-					Payload: runtime.AgentLoopTurnResultPayload{
-						Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
-						ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedTool}),
-					},
+				return runtime.AgentLoopResult{
+					Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+					ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedTool}),
 				}, nil
 			}))
 
@@ -235,10 +226,10 @@ func TestAgentManagerSendMessageResponseMergeRouteBeforeLLMSynthesis(t *testing.
 		}, nil
 	}))
 
-	llmTurnCalled := false
-	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, _ runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
-		llmTurnCalled = true
-		return runtime.LLMTurnResult{Status: runtime.TurnResultFailed, Reason: "llm turn should not run"}, nil
+	agentLoopCalled := false
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, _ runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+		agentLoopCalled = true
+		return runtime.AgentLoopResult{StopReason: "agent loop should not run"}, nil
 	}))
 
 	synthesisTool := agentToolCall{ID: "tool-route-before-synthesis-merge", Name: "LLM synthesis", Status: contracts.StatusSucceeded}
@@ -280,7 +271,7 @@ func TestAgentManagerSendMessageResponseMergeRouteBeforeLLMSynthesis(t *testing.
 
 	require.NoError(t, err)
 	require.True(t, routeCalled)
-	require.False(t, llmTurnCalled)
+	require.False(t, agentLoopCalled)
 	require.True(t, synthesisCalled)
 	require.Len(t, resp.Messages, 3)
 	require.Equal(t, "user", resp.Messages[0].Role)

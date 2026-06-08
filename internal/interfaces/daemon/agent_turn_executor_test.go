@@ -375,16 +375,6 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 					ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{actionTool}),
 				},
 			}, nil
-		case daemonTurnExecutionReplanActionContinuation:
-			turnExecutions = append(turnExecutions, turn)
-			payload, ok := turn.Payload.(runtime.AgentLoopRequest)
-			require.True(t, ok, "payload type = %T", turn.Payload)
-			require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(synthesisPlan), payload.InitialPlan)
-			return runtime.TurnResult{
-				Status:  runtime.TurnResultFinished,
-				Reason:  "follow-up handled by test executor",
-				Payload: runtime.AgentLoopTurnResultPayload{},
-			}, nil
 		default:
 			return runtime.TurnResult{Status: runtime.TurnResultRunning}, nil
 		}
@@ -405,6 +395,14 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 		}, nil
 	}))
 
+	loopExecutions := []runtime.AgentLoopRequest{}
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+		loopExecutions = append(loopExecutions, req)
+		require.Equal(t, runtime.AgentLoopModeReplanContinuation, req.Mode)
+		require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(synthesisPlan), req.InitialPlan)
+		return runtime.AgentLoopResult{}, nil
+	}))
+
 	appendMutations := []runtime.SessionMutationRequest{}
 	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 
@@ -422,7 +420,8 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 	require.Equal(t, approvalCanonicalStateApproved, resp.ApprovalState.State)
 
 	expectedTurnID := "turn_auth-external-authorization-flow"
-	require.Len(t, turnExecutions, 2)
+	require.Len(t, turnExecutions, 1)
+	require.Len(t, loopExecutions, 1)
 	require.Len(t, llmStages, 1)
 	require.Len(t, appendMutations, 2)
 	for _, turn := range turnExecutions {
@@ -433,8 +432,17 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 		require.Equal(t, "run daemon health and summarize after approval", turn.Prompt)
 		require.Equal(t, "read_only", turn.OperationLevel)
 	}
+	for _, loopReq := range loopExecutions {
+		require.Equal(t, sessionID, loopReq.Turn.SessionID)
+		require.Equal(t, "task-external-authorization-flow", loopReq.Turn.TaskID)
+		require.Equal(t, runID, loopReq.Turn.RunID)
+		require.Equal(t, expectedTurnID, loopReq.Turn.TurnID)
+		require.Equal(t, "run daemon health and summarize after approval", loopReq.Turn.Prompt)
+		require.Equal(t, "read_only", loopReq.Turn.OperationLevel)
+		require.Equal(t, daemonTurnExecutionReplanActionContinuation, loopReq.Turn.Origin)
+		require.Equal(t, daemonTurnExecutionReplanActionContinuation, loopReq.Turn.Metadata["kind"])
+	}
 	require.Equal(t, daemonTurnExecutionPlannerActionExecution, turnExecutions[0].Metadata["kind"])
-	require.Equal(t, daemonTurnExecutionReplanActionContinuation, turnExecutions[1].Metadata["kind"])
 
 	require.Equal(t, sessionID, llmStages[0].Turn.SessionID)
 	require.Equal(t, "task-external-authorization-flow", llmStages[0].Turn.TaskID)
@@ -730,16 +738,11 @@ func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 
 	llmErr := errors.New("provider down")
 	llmCalled := false
-	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, req runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 		llmCalled = true
 		require.Equal(t, sessionID, req.Turn.SessionID)
 		require.Equal(t, "hello fallback route", req.Turn.Prompt)
-		return runtime.LLMTurnResult{
-			Status:  runtime.TurnResultFailed,
-			Reason:  llmErr.Error(),
-			Error:   llmErr,
-			Payload: runtime.AgentLoopTurnResultPayload{},
-		}, llmErr
+		return runtime.AgentLoopResult{StopReason: llmErr.Error()}, llmErr
 	}))
 
 	expectedMessage := agentMessage{ID: "msg-llm-fallback-route", Role: "agent", Content: "fallback routed through executor"}
@@ -843,7 +846,7 @@ func TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations(t *
 
 	llmErr := errors.New("provider down")
 	llmCalled := false
-	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, req runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 		llmCalled = true
 		require.Equal(t, sessionID, req.Turn.SessionID)
 		require.Equal(t, prompt, req.Turn.Prompt)
@@ -851,12 +854,7 @@ func TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations(t *
 		require.NotEmpty(t, req.Turn.RunID)
 		require.NotEmpty(t, req.Turn.TurnID)
 		require.Equal(t, "workspace_write", req.Turn.OperationLevel)
-		return runtime.LLMTurnResult{
-			Status:  runtime.TurnResultFailed,
-			Reason:  llmErr.Error(),
-			Error:   llmErr,
-			Payload: runtime.AgentLoopTurnResultPayload{},
-		}, llmErr
+		return runtime.AgentLoopResult{StopReason: llmErr.Error()}, llmErr
 	}))
 
 	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
@@ -958,9 +956,9 @@ func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
 	require.True(t, agentShouldRouteBeforeLLMSynthesis(prompt))
 
 	llmCalled := false
-	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, _ runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, _ runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 		llmCalled = true
-		return runtime.LLMTurnResult{Status: runtime.TurnResultFailed, Reason: "llm should not run"}, errors.New("llm should not run")
+		return runtime.AgentLoopResult{StopReason: "llm should not run"}, errors.New("llm should not run")
 	}))
 
 	expectedMessage := agentMessage{ID: "msg-route-before-llm", Role: "tool", Content: "route-before-llm through executor"}
@@ -1033,7 +1031,7 @@ func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
 	require.Equal(t, "step", payload.Messages[0].Phase)
 }
 
-func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
+func TestAgentManagerRunRuntimeLLMToolLoopDispatchesAgentLoopRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
@@ -1051,23 +1049,14 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 	memorySummary := &agentMemorySummary{Summary: "memory", LastMessageAt: &lastMessageAt}
 	jobs := newJobManager(jobManagerConfig{RunsDir: t.TempDir()})
 	called := false
-	eng.AttachLLMTurnRunner(runtime.LLMTurnRunnerFunc(func(_ context.Context, req runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, payload runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 		called = true
-		require.Equal(t, "session-llm-runner", req.Turn.SessionID)
-		require.Equal(t, "task-llm-runner", req.Turn.TaskID)
-		require.Equal(t, "run-llm-runner", req.Turn.RunID)
-		require.Equal(t, "turn-llm-runner", req.Turn.TurnID)
-		require.Equal(t, "plan safely", req.Turn.Prompt)
-		require.Equal(t, "read_only", req.Turn.OperationLevel)
-		require.Equal(t, "llm_tool_loop", req.Metadata["runner"])
-
-		payload, ok := req.Payload.(runtime.AgentLoopRequest)
-		require.True(t, ok, "payload type = %T", req.Payload)
 		require.Equal(t, "session-llm-runner", payload.Turn.SessionID)
 		require.Equal(t, "task-llm-runner", payload.Turn.TaskID)
 		require.Equal(t, "run-llm-runner", payload.Turn.RunID)
 		require.Equal(t, "turn-llm-runner", payload.Turn.TurnID)
 		require.Equal(t, "plan safely", payload.Turn.Prompt)
+		require.Equal(t, "llm_tool_loop", payload.Turn.Metadata["runner"])
 		require.Equal(t, "zh-CN", payload.Language)
 		require.Equal(t, "operator-1", payload.Operator)
 		require.Equal(t, "read_only", payload.Turn.OperationLevel)
@@ -1096,15 +1085,10 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesEngineRunner(t *testing.T) {
 		*payload.MemorySummary.LastMessageAt = lastMessageAt.Add(time.Hour)
 		payload.LLMRequest.AuthProfiles[0].Token = "mutated-token"
 		*payload.LLMRequest.AuthProfiles[0].Enabled = false
-		require.Equal(t, "llm_tool_loop", req.Turn.Metadata["runner"])
 
-		return runtime.LLMTurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
-				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
-				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
-			},
+		return runtime.AgentLoopResult{
+			Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+			ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 		}, nil
 	}))
 
@@ -1384,7 +1368,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 	require.Equal(t, "next", resultPlan.actions()[0].Arguments["probe"])
 }
 
-func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t *testing.T) {
+func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesAgentLoopRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
@@ -1403,27 +1387,18 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t 
 		}},
 	}
 	called := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, payload runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 		called = true
-		require.Equal(t, "session-replan-continuation", turn.SessionID)
-		require.Equal(t, "task-replan-continuation", turn.TaskID)
-		require.Equal(t, "run-replan-continuation", turn.RunID)
-		require.Equal(t, "turn-replan-continuation", turn.TurnID)
-		require.Equal(t, "continue daemon health", turn.Prompt)
-		require.Equal(t, daemonTurnExecutionReplanActionContinuation, turn.Origin)
-		require.Equal(t, "read_only", turn.OperationLevel)
-		require.Equal(t, "turn_execution", turn.Metadata["executor"])
-		require.Equal(t, daemonTurnExecutionReplanActionContinuation, turn.Metadata["kind"])
-		require.Equal(t, 2, turn.Metadata["max_loops"])
-
-		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
-		require.True(t, ok, "payload type = %T", turn.Payload)
 		require.Equal(t, runtime.AgentLoopModeReplanContinuation, payload.Mode)
 		require.Equal(t, "session-replan-continuation", payload.Turn.SessionID)
 		require.Equal(t, "task-replan-continuation", payload.Turn.TaskID)
 		require.Equal(t, "run-replan-continuation", payload.Turn.RunID)
 		require.Equal(t, "turn-replan-continuation", payload.Turn.TurnID)
 		require.Equal(t, "continue daemon health", payload.Turn.Prompt)
+		require.Equal(t, daemonTurnExecutionReplanActionContinuation, payload.Turn.Origin)
+		require.Equal(t, "turn_execution", payload.Turn.Metadata["executor"])
+		require.Equal(t, daemonTurnExecutionReplanActionContinuation, payload.Turn.Metadata["kind"])
+		require.Equal(t, 2, payload.Turn.Metadata["max_loops"])
 		require.Equal(t, "en", payload.Language)
 		require.Equal(t, "tester", payload.Operator)
 		require.Equal(t, "read_only", payload.Turn.OperationLevel)
@@ -1433,13 +1408,9 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesTurnExecutor(t 
 		require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(expectedPlan), payload.InitialPlan)
 		require.Equal(t, 2, payload.MaxLoops)
 
-		return runtime.TurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
-				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
-				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
-			},
+		return runtime.AgentLoopResult{
+			Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+			ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 		}, nil
 	}))
 

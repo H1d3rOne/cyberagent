@@ -100,15 +100,7 @@ func (e daemonAgentTurnExecutor) executeReplanActionContinuationTurn(ctx context
 	if err != nil {
 		return daemonTurnExecutionErrorResult(turn, err), err
 	}
-	resultPayload := runtime.AgentLoopTurnResultPayload{
-		Messages:   runtime.CloneAgentLoopMessages(loopResult.Messages),
-		ToolCalls:  runtime.CloneAgentLoopToolCalls(loopResult.ToolCalls),
-		FinalPlan:  runtime.CloneAgentLoopPlan(loopResult.FinalPlan),
-		StopReason: loopResult.StopReason,
-		LoopCount:  loopResult.LoopCount,
-		MaxLoops:   intFromAny(loopResult.Metadata[runtime.AgentLoopEgressMetadataMaxLoops]),
-		Metadata:   runtime.CloneAgentLoopMapStringAny(loopResult.Metadata),
-	}
+	resultPayload := agentLoopTurnResultPayloadFromAgentLoopResult(loopResult)
 	return runtime.TurnResult{
 		Status:  runtime.TurnResultFinished,
 		Reason:  "legacy daemon replan action continuation executed",
@@ -286,38 +278,31 @@ func (m *agentManager) runRuntimeReplanActionContinuation(ctx context.Context, s
 
 func (m *agentManager) runRuntimeReplanActionContinuationAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
 	loopReq = normalizeAgentReplanActionContinuationRequest(loopReq)
-	eng := m.runtimeEngine()
-	if eng == nil || eng.TurnExecutor() == nil {
-		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
-	}
+	fallbackReq := loopReq.Clone()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	result, err := eng.ExecuteTurn(ctx, agentReplanActionContinuationTurnContextFromRequest(loopReq))
-	if errors.Is(err, runtime.ErrTurnExecutorNotAttached) ||
-		errors.Is(result.Error, runtime.ErrTurnExecutorNotAttached) ||
-		result.Status == runtime.TurnResultBlocked ||
-		(result.Status == runtime.TurnResultRunning && result.Payload == nil) {
-		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
-	}
+	turn := agentReplanActionContinuationTurnBoundaryFromRequest(loopReq)
+	loopReq.Turn = runtime.CloneAgentLoopTurnContext(turn)
+	loopResult, err := m.runRuntimeAgentLoopResult(ctx, loopReq)
 	if err != nil {
-		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
+		return m.runAgentReplanActionContinuationAgentLoop(ctx, fallbackReq)
 	}
-	payload, ok := result.Payload.(runtime.AgentLoopTurnResultPayload)
-	if !ok {
-		return m.runAgentReplanActionContinuationAgentLoop(ctx, loopReq)
-	}
-	payload = payload.Clone()
-	return payload.Messages, payload.ToolCalls
+	return runtime.CloneAgentLoopMessages(loopResult.Messages), runtime.CloneAgentLoopToolCalls(loopResult.ToolCalls)
 }
 
 func agentReplanActionContinuationTurnContextFromRequest(loopReq runtime.AgentLoopRequest) runtime.TurnContext {
+	turn := agentReplanActionContinuationTurnBoundaryFromRequest(loopReq)
+	turn.Payload = loopReq.Clone()
+	return turn
+}
+
+func agentReplanActionContinuationTurnBoundaryFromRequest(loopReq runtime.AgentLoopRequest) runtime.TurnContext {
 	turn := runtime.CloneAgentLoopTurnContext(loopReq.Turn)
 	turn.Origin = daemonTurnExecutionReplanActionContinuation
 	if turn.TurnIndex == 0 {
 		turn.TurnIndex = 1
 	}
-	turn.Payload = loopReq.Clone()
 	metadata := runtime.CloneAgentLoopMapStringAny(turn.Metadata)
 	if metadata == nil {
 		metadata = map[string]any{}
@@ -328,6 +313,25 @@ func agentReplanActionContinuationTurnContextFromRequest(loopReq runtime.AgentLo
 	metadata["max_loops"] = loopReq.MaxLoops
 	turn.Metadata = metadata
 	return turn
+}
+
+func agentLoopTurnResultPayloadFromAgentLoopResult(loopResult runtime.AgentLoopResult) runtime.AgentLoopTurnResultPayload {
+	return runtime.AgentLoopTurnResultPayload{
+		Messages:   runtime.CloneAgentLoopMessages(loopResult.Messages),
+		ToolCalls:  runtime.CloneAgentLoopToolCalls(loopResult.ToolCalls),
+		FinalPlan:  runtime.CloneAgentLoopPlan(loopResult.FinalPlan),
+		StopReason: loopResult.StopReason,
+		LoopCount:  loopResult.LoopCount,
+		MaxLoops:   agentLoopResultMaxLoops(loopResult),
+		Metadata:   runtime.CloneAgentLoopMapStringAny(loopResult.Metadata),
+	}
+}
+
+func agentLoopResultMaxLoops(loopResult runtime.AgentLoopResult) int {
+	if maxLoops := intFromAny(loopResult.Metadata[runtime.AgentLoopEgressMetadataMaxLoops]); maxLoops != 0 {
+		return maxLoops
+	}
+	return intFromAny(loopResult.Metadata["max_loops"])
 }
 
 func (m *agentManager) runRuntimePlannerActionExecution(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, action runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
