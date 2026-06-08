@@ -3,15 +3,15 @@ package runtime
 const (
 	// AgentLoopActionExecutionExecutorMetadataKey stores the executor adapter
 	// that dispatched a planner action execution turn.
-	AgentLoopActionExecutionExecutorMetadataKey = "executor"
+	AgentLoopActionExecutionExecutorMetadataKey = AgentLoopTurnExecutionExecutorMetadataKey
 	// AgentLoopActionExecutionExecutorMetadataValue is the stable executor label
 	// for planner action execution turn requests.
-	AgentLoopActionExecutionExecutorMetadataValue = "turn_execution"
+	AgentLoopActionExecutionExecutorMetadataValue = AgentLoopTurnExecutionExecutorMetadataValue
 	// AgentLoopActionExecutionKindMetadataKey stores the turn execution kind.
-	AgentLoopActionExecutionKindMetadataKey = "kind"
+	AgentLoopActionExecutionKindMetadataKey = AgentLoopTurnExecutionKindMetadataKey
 	// AgentLoopActionExecutionOperationLevelMetadataKey stores the active
 	// operation level for the planner action execution turn.
-	AgentLoopActionExecutionOperationLevelMetadataKey = "operation_level"
+	AgentLoopActionExecutionOperationLevelMetadataKey = AgentLoopTurnExecutionOperationLevelMetadataKey
 )
 
 // AgentLoopActionExecutionPayload is the runtime-neutral turn executor payload
@@ -37,10 +37,7 @@ func CloneAgentLoopActionExecutionPayload(payload AgentLoopActionExecutionPayloa
 // AgentLoopActionExecutionTurnMetadata clones existing turn metadata and stamps
 // the runtime-neutral action execution fields used by daemon turn executors.
 func AgentLoopActionExecutionTurnMetadata(metadata map[string]any, kind, operationLevel, actionName string) map[string]any {
-	return MergeAgentLoopMetadata(metadata, map[string]any{
-		AgentLoopActionExecutionExecutorMetadataKey:       AgentLoopActionExecutionExecutorMetadataValue,
-		AgentLoopActionExecutionKindMetadataKey:           kind,
-		AgentLoopActionExecutionOperationLevelMetadataKey: operationLevel,
-		AgentLoopActionNameMetadataKey:                    actionName,
+	return AgentLoopTurnExecutionMetadata(metadata, kind, operationLevel, map[string]any{
+		AgentLoopActionNameMetadataKey: actionName,
 	})
 }

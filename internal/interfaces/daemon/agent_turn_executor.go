@@ -250,14 +250,11 @@ func agentDeterministicRouteTurnContextFromRequest(loopReq runtime.AgentLoopRequ
 		turn.TurnIndex = 1
 	}
 	turn.Payload = loopReq.Clone()
-	metadata := runtime.CloneAgentLoopMapStringAny(turn.Metadata)
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	metadata["executor"] = "turn_execution"
-	metadata["kind"] = daemonTurnExecutionDeterministicRoute
-	metadata["operation_level"] = turn.OperationLevel
-	turn.Metadata = metadata
+	turn.Metadata = runtime.AgentLoopTurnExecutionMetadata(
+		turn.Metadata,
+		daemonTurnExecutionDeterministicRoute,
+		turn.OperationLevel,
+	)
 	return turn
 }
 
@@ -303,15 +300,14 @@ func agentReplanActionContinuationTurnBoundaryFromRequest(loopReq runtime.AgentL
 	if turn.TurnIndex == 0 {
 		turn.TurnIndex = 1
 	}
-	metadata := runtime.CloneAgentLoopMapStringAny(turn.Metadata)
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	metadata["executor"] = "turn_execution"
-	metadata["kind"] = daemonTurnExecutionReplanActionContinuation
-	metadata["operation_level"] = turn.OperationLevel
-	metadata["max_loops"] = loopReq.MaxLoops
-	turn.Metadata = metadata
+	turn.Metadata = runtime.AgentLoopTurnExecutionMetadata(
+		turn.Metadata,
+		daemonTurnExecutionReplanActionContinuation,
+		turn.OperationLevel,
+		map[string]any{
+			runtime.AgentLoopTurnExecutionMaxLoopsMetadataKey: loopReq.MaxLoops,
+		},
+	)
 	return turn
 }
 

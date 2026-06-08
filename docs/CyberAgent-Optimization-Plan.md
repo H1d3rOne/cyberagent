@@ -297,11 +297,12 @@ engine-native turn lifecycle 下沉入口建议：
    - P0.5-N111 已把单 action execution error fallback 的 result map 构造收敛到 runtime `AgentLoopActionExecutionErrorResult`，保持 service error details 嵌套、顶层展开与 action name 不被 details 覆盖。
    - P0.5-N112 已把 request_authorization / capability_blocked session mutation request metadata key 与 map 构造收敛到 runtime `AgentLoopSessionMutationMetadata` / authorization/capability metadata helper。
    - P0.5-N113 已把 planner action execution turn context 的 executor/kind/operation_level/action_name metadata 构造收敛到 runtime `AgentLoopActionExecutionTurnMetadata`。
+   - P0.5-N114 已把 deterministic route 与 replan continuation turn boundary 的 executor/kind/operation_level/max_loops metadata 构造收敛到 runtime `AgentLoopTurnExecutionMetadata`，action execution helper 也复用 generic helper。
 2. **Outer loop defaults / preconditions**
    - P0.5-N101 已把 `llm_tool_loop` mode/max_loops/default metadata、plan-only no-action 与 immediate-execution fallback、cycle continue/final plan auto-continue 判断抽为纯 helper；planner chat append/apply 与 loop ownership 仍在 daemon adapter。
    - P0.5-N101 已把 `replan_action_continuation` mode/default metadata 与 max_loops/action/auto_continue precondition 抽为纯 helper；follow-up egress 与真正 loop ownership 仍在 daemon adapter。
 3. **Action gate / side effects**
-   - P0.5-N103 已新增 runtime-neutral `AgentLoopActionGateDecision` / `AgentLoopActionGateResult` / `AgentLoopActionBatchResult`，`executeAgentPlannerActionList` 降为 batch result wrapper；P0.5-N109/N110/N111/N112/N113 已下沉 action queue metadata、authorization approve metadata、单 action execution error fallback result helper、authorization/capability mutation metadata helper 与 action execution turn metadata helper；request_authorization / capability_blocked session mutation 仍经 daemon `SessionMutator` adapter 编排，batch queue ID/max ownership 与其他 turn execution metadata helper 仍在 daemon。
+   - P0.5-N103 已新增 runtime-neutral `AgentLoopActionGateDecision` / `AgentLoopActionGateResult` / `AgentLoopActionBatchResult`，`executeAgentPlannerActionList` 降为 batch result wrapper；P0.5-N109/N110/N111/N112/N113/N114 已下沉 action queue metadata、authorization approve metadata、单 action execution error fallback result helper、authorization/capability mutation metadata helper、action execution turn metadata helper 与 deterministic/replan turn execution metadata helper；request_authorization / capability_blocked session mutation 仍经 daemon `SessionMutator` adapter 编排，batch queue ID/max ownership 仍在 daemon。
 4. **StepReplan append / failure egress**
    - P0.5-N104 已新增 runtime-neutral `AgentLoopEgressResult`，标准化 `planner_error`、`step_replan_synthesis_error`、`no_actions`、`auto_continue_disabled`、`cycle_stopped`、`max_loops` 等 stop reason，并把 `stop_reason` / `loop_count` / `max_loops` 透传到 `AgentLoopResult`、LLM/replan turn payload 与 executor Data。
    - P0.5-N105 已将 outer loop control 切到 `AgentLoopRunner`：`daemonAgentLLMTurnRunner` / replan continuation executor 通过 `runRuntimeAgentLoopResult` 转调 `Engine.RunAgentLoop`，并以 `planner_action_replan_cycle` sub-mode 避免 runner 递归。
@@ -323,7 +324,8 @@ engine-native turn lifecycle 下沉入口建议：
 11. ✅ P0.5-N111：已继续按 N110 后边界收敛 single action execution error fallback result helper。
 12. ✅ P0.5-N112：已继续按 N111 后边界收敛 authorization/capability session mutation request metadata helper。
 13. ✅ P0.5-N113：已继续按 N112 后边界收敛 action execution turn request/context metadata helper。
-14. P0.5-N114：继续按 N113 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 batch queue ID/max ownership helper 或 deterministic/replan turn execution metadata helper。
+14. ✅ P0.5-N114：已继续按 N113 后边界收敛 deterministic/replan turn execution metadata helper。
+15. P0.5-N115：继续按 N114 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 batch queue ID/max ownership helper。
 
 最小验证矩阵：
 
@@ -528,8 +530,9 @@ ownership 边界：
 105. ✅ P0.5-N111 已收敛 single action execution error fallback result runtime helper：runtime 统一 action error fallback tool result map 构造、service details 嵌套与顶层展开，daemon action batch error 分支复用 helper，并补 details/action 不覆盖与 queue metadata 覆盖。
 106. ✅ P0.5-N112 已收敛 authorization/capability session mutation metadata runtime helper：runtime 统一 session mutation mutator/kind/action/required_level/policy/intent/suggested_prompt/operation_level metadata key 与 map 构造，daemon request_authorization / capability_blocked mutation request 复用 helper，并补 request/turn metadata 覆盖。
 107. ✅ P0.5-N113 已收敛 action execution turn metadata runtime helper：runtime 统一 planner action execution turn 的 executor/kind/operation_level/action_name metadata key 与 map 构造，daemon action execution turn context 复用 helper，并补 metadata merge/clone 与 dispatch 覆盖。
-108. 下一步 P0.5-N114 继续按 N113 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 batch queue ID/max ownership helper 或 deterministic/replan turn execution metadata helper。
-109. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
+108. ✅ P0.5-N114 已收敛 deterministic/replan turn execution metadata runtime helper：runtime 统一 turn execution executor/kind/operation_level/max_loops metadata key 与 map 构造，daemon deterministic route / replan continuation turn boundary 复用 helper，并补 metadata merge/clone 与 dispatch 覆盖。
+109. 下一步 P0.5-N115 继续按 N114 后边界收敛 action execution / session mutation 剩余副作用 adapter，优先评估 batch queue ID/max ownership helper。
+110. ✅ P0.5-N7 已收敛 `SendMessage` response merge regression matrix；✅ P0.5-N8 已把 `SendMessage` Begin/Finish 主生命周期下沉到 `RunTurnLifecycle`，response merge branch body 暂留 daemon adapter。
 
 最低回归覆盖：
 
@@ -1515,6 +1518,7 @@ P1-F6 已落地 Agent Cockpit 视觉回归 smoke：
 | v145 | 完成 P0.5-N111 single action execution error fallback result helper：新增 runtime `AgentLoopActionExecutionErrorResult` 与 action/details result key constants，daemon action batch error fallback 复用 runtime helper，保留 service error details 嵌套、顶层展开与 action name 不被 details 覆盖；补 runtime helper 与 daemon error fallback focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 | v146 | 完成 P0.5-N112 authorization/capability session mutation metadata helper：新增 runtime session mutation metadata key/helper，request_authorization 与 capability_blocked mutation request metadata 构造复用 runtime helper；补 runtime metadata helper 与 gate side-effect request/turn metadata focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 | v147 | 完成 P0.5-N113 action execution turn metadata helper：新增 runtime action execution turn metadata key/helper，planner action execution turn context 复用 `AgentLoopActionExecutionTurnMetadata` 构造 executor/kind/operation_level/action_name metadata；补 metadata merge/clone helper 与 daemon dispatch focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
+| v148 | 完成 P0.5-N114 deterministic/replan turn execution metadata helper：新增 runtime `AgentLoopTurnExecutionMetadata` 与通用 turn execution metadata key/max_loops key，deterministic route 与 replan continuation turn boundary 复用 helper，action execution turn metadata helper 改为复用 generic helper；补 generic/action metadata helper 与 deterministic/replan dispatch focused 覆盖，runtime/daemon 包测试与 diff check 通过。 |
 
 ---
 
