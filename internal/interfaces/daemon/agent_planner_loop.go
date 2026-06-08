@@ -1886,25 +1886,17 @@ func reqMaxAgentReplans(req sendAgentMessageRequest) int {
 	return 3
 }
 
-type agentPlannerActionGateKind string
+type agentPlannerActionGateKind = runtime.AgentLoopActionGateKind
 
 const (
-	agentPlannerActionGateAllow                       agentPlannerActionGateKind = "allow"
-	agentPlannerActionGateCapabilityBlocked           agentPlannerActionGateKind = "capability_blocked"
-	agentPlannerActionGateExplicitIntentRequired      agentPlannerActionGateKind = "explicit_operator_intent_required"
-	agentPlannerActionGateOperationLevelRequired      agentPlannerActionGateKind = "operation_level_required"
-	agentPlannerActionGateManualAuthorizationRequired agentPlannerActionGateKind = "manual_tool_authorization_required"
+	agentPlannerActionGateAllow                       = runtime.AgentLoopActionGateAllow
+	agentPlannerActionGateCapabilityBlocked           = runtime.AgentLoopActionGateCapabilityBlocked
+	agentPlannerActionGateExplicitIntentRequired      = runtime.AgentLoopActionGateExplicitIntentRequired
+	agentPlannerActionGateOperationLevelRequired      = runtime.AgentLoopActionGateOperationLevelRequired
+	agentPlannerActionGateManualAuthorizationRequired = runtime.AgentLoopActionGateManualAuthorizationRequired
 )
 
-type agentPlannerActionGateDecision struct {
-	Kind            agentPlannerActionGateKind
-	ActionName      string
-	RequiredLevel   string
-	Policy          string
-	Reason          string
-	IntentID        string
-	SuggestedPrompt string
-}
+type agentPlannerActionGateDecision = runtime.AgentLoopActionGateDecision
 
 func decideAgentPlannerActionGate(operatorPrompt, language, operationLevel string, action agentPlannerAction) agentPlannerActionGateDecision {
 	return decideAgentPlannerActionGateFromAgentLoopAction(operatorPrompt, language, operationLevel, agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action))
@@ -1966,6 +1958,57 @@ func decideAgentPlannerActionGateFromAgentLoopAction(operatorPrompt, language, o
 	return decision
 }
 
+func (m *agentManager) agentPlannerActionGateResultForDecision(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operationLevel string, action runtime.AgentLoopAction, gateDecision runtime.AgentLoopActionGateDecision) runtime.AgentLoopActionGateResult {
+	result := runtime.AgentLoopActionGateResult{
+		Decision: gateDecision.Clone(),
+	}
+
+	switch gateDecision.Kind {
+	case runtime.AgentLoopActionGateCapabilityBlocked:
+		actionName := gateDecision.ActionName
+		policyErr := services.NewError(services.CodePolicyDenied, "non-equivalent tool action blocked", map[string]any{
+			"intent":              gateDecision.IntentID,
+			"action":              actionName,
+			"suggested_prompt":    gateDecision.SuggestedPrompt,
+			"capability_mismatch": true,
+		}, nil)
+		tool := failedAgentToolCall("agent.capability_match", policyErr)
+		tool.Result = map[string]any{
+			"intent":           gateDecision.IntentID,
+			"action":           actionName,
+			"suggested_prompt": gateDecision.SuggestedPrompt,
+		}
+		m.markAgentCapabilityBlockedForTurn(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, actionName, gateDecision.IntentID, gateDecision.Reason, gateDecision.SuggestedPrompt)
+		message := agentMessageWithPhase(m.message(language, "agent", gateDecision.Reason, []agentToolCall{tool}, nil), "step_replan")
+		result.Messages = []runtime.AgentLoopMessage{agentLoopMessageFromAgentMessage(message)}
+		result.ToolCalls = []runtime.AgentLoopToolCall{agentLoopToolCallFromAgentToolCall(agentToolCallWithPhase(tool, "step_replan"))}
+		result.AuthorizationRequired = true
+		result.Handled = true
+	case runtime.AgentLoopActionGateExplicitIntentRequired,
+		runtime.AgentLoopActionGateOperationLevelRequired,
+		runtime.AgentLoopActionGateManualAuthorizationRequired:
+		authMessage := m.requestAgentAuthorizationForTurn(
+			ctx,
+			sessionID,
+			turnRef,
+			language,
+			operatorPrompt,
+			operationLevel,
+			action,
+			gateDecision.ActionName,
+			gateDecision.RequiredLevel,
+			gateDecision.Policy,
+			gateDecision.Reason,
+		)
+		authMessage = agentMessageWithPhase(authMessage, "step")
+		result.Messages = []runtime.AgentLoopMessage{agentLoopMessageFromAgentMessage(authMessage)}
+		result.AuthorizationRequired = true
+		result.Handled = true
+	}
+
+	return result
+}
+
 func newAgentPlannerActionQueueID(now time.Time) string {
 	return strings.Replace(runs.NewJobID(now.UTC()), "job_", "queue_", 1)
 }
@@ -1988,19 +2031,32 @@ func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID
 }
 
 func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, actions []runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, bool) {
+	result := m.executeAgentPlannerActionBatch(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, toolServices, actions, authorization)
+	return runtime.CloneAgentLoopMessages(result.Messages), runtime.CloneAgentLoopToolCalls(result.ToolCalls), result.AuthorizationRequired
+}
+
+func (m *agentManager) executeAgentPlannerActionBatch(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, actions []runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) runtime.AgentLoopActionBatchResult {
 	toolServices = toolServices.Clone()
 	actions = runtime.CloneAgentLoopActions(actions)
 	authorization = authorization.Clone()
+	result := runtime.AgentLoopActionBatchResult{
+		ActionCount: len(actions),
+	}
 	if len(actions) == 0 {
-		return nil, nil, false
+		return result
 	}
 	if len(actions) > 6 {
+		result.Truncated = true
 		actions = actions[:6]
+		result.ActionCount = len(actions)
 	}
 
-	var messages []runtime.AgentLoopMessage
-	var toolCalls []runtime.AgentLoopToolCall
 	queueID := newAgentPlannerActionQueueID(time.Now().UTC())
+	result.Metadata = map[string]any{
+		"action_queue_id": queueID,
+		"action_count":    len(actions),
+		"truncated":       result.Truncated,
+	}
 	actionCount := len(actions)
 	for idx, action := range actions {
 		actionIndex := idx + 1
@@ -2009,76 +2065,16 @@ func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessio
 		var actionMessages []runtime.AgentLoopMessage
 		var actionToolCalls []runtime.AgentLoopToolCall
 		var err error
-		if gateDecision.Kind == agentPlannerActionGateCapabilityBlocked {
-			policyErr := services.NewError(services.CodePolicyDenied, "non-equivalent tool action blocked", map[string]any{
-				"intent":              gateDecision.IntentID,
-				"action":              actionName,
-				"suggested_prompt":    gateDecision.SuggestedPrompt,
-				"capability_mismatch": true,
-			}, nil)
-			tool := failedAgentToolCall("agent.capability_match", policyErr)
-			tool.Result = map[string]any{
-				"intent":           gateDecision.IntentID,
-				"action":           actionName,
-				"suggested_prompt": gateDecision.SuggestedPrompt,
-			}
-			m.markAgentCapabilityBlockedForTurn(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, actionName, gateDecision.IntentID, gateDecision.Reason, gateDecision.SuggestedPrompt)
-			message := agentMessageWithPhase(m.message(language, "agent", gateDecision.Reason, []agentToolCall{tool}, nil), "step_replan")
-			messages = append(messages, agentLoopMessageFromAgentMessage(message))
-			toolCalls = append(toolCalls, agentLoopToolCallFromAgentToolCall(agentToolCallWithPhase(tool, "step_replan")))
-			return messages, toolCalls, true
-		} else if gateDecision.Kind == agentPlannerActionGateExplicitIntentRequired {
-			authMessage := m.requestAgentAuthorizationForTurn(
-				ctx,
-				sessionID,
-				turnRef,
-				language,
-				operatorPrompt,
-				operationLevel,
-				action,
-				actionName,
-				gateDecision.RequiredLevel,
-				gateDecision.Policy,
-				gateDecision.Reason,
-			)
-			authMessage = agentMessageWithPhase(authMessage, "step")
-			messages = append(messages, agentLoopMessageFromAgentMessage(authMessage))
-			return messages, toolCalls, true
-		} else if gateDecision.Kind == agentPlannerActionGateOperationLevelRequired {
-			authMessage := m.requestAgentAuthorizationForTurn(
-				ctx,
-				sessionID,
-				turnRef,
-				language,
-				operatorPrompt,
-				operationLevel,
-				action,
-				actionName,
-				gateDecision.RequiredLevel,
-				gateDecision.Policy,
-				gateDecision.Reason,
-			)
-			authMessage = agentMessageWithPhase(authMessage, "step")
-			messages = append(messages, agentLoopMessageFromAgentMessage(authMessage))
-			return messages, toolCalls, true
-		} else if gateDecision.Kind == agentPlannerActionGateManualAuthorizationRequired {
-			authMessage := m.requestAgentAuthorizationForTurn(
-				ctx,
-				sessionID,
-				turnRef,
-				language,
-				operatorPrompt,
-				operationLevel,
-				action,
-				actionName,
-				gateDecision.RequiredLevel,
-				gateDecision.Policy,
-				gateDecision.Reason,
-			)
-			authMessage = agentMessageWithPhase(authMessage, "step")
-			messages = append(messages, agentLoopMessageFromAgentMessage(authMessage))
-			return messages, toolCalls, true
-		} else {
+		gateResult := m.agentPlannerActionGateResultForDecision(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, action, gateDecision)
+		if gateResult.Handled {
+			result.Messages = append(result.Messages, gateResult.Messages...)
+			result.ToolCalls = append(result.ToolCalls, gateResult.ToolCalls...)
+			result.AuthorizationRequired = gateResult.AuthorizationRequired
+			result.ProcessedActionCount = actionIndex
+			result.StopGate = &gateResult
+			return result
+		}
+		if gateDecision.Kind == runtime.AgentLoopActionGateAllow {
 			actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, toolServices, action, authorization)
 		}
 		if err != nil {
@@ -2111,10 +2107,11 @@ func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessio
 				actionMessages[i].ToolCalls[j] = withAgentLoopToolMetadata(actionMessages[i].ToolCalls[j], actionMetadata)
 			}
 		}
-		messages = append(messages, actionMessages...)
-		toolCalls = append(toolCalls, actionToolCalls...)
+		result.Messages = append(result.Messages, actionMessages...)
+		result.ToolCalls = append(result.ToolCalls, actionToolCalls...)
+		result.ProcessedActionCount = actionIndex
 	}
-	return messages, toolCalls, false
+	return result
 }
 
 func (m *agentManager) requestAgentAuthorizationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language, operatorPrompt, operationLevel string, action runtime.AgentLoopAction, actionName, requiredLevel, policy, reason string) agentMessage {

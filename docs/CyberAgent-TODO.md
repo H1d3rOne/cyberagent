@@ -248,7 +248,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N100：盘点 engine-native runner ownership 剩余 daemon-owned seam，确认下一批可迁移目标（planner JSON/native tool call 解析、authorization/capability gate 副作用、StepReplan 外层 precondition、follow-up continuation egress）与最小验证矩阵。
 - [x] P0.5-N101：抽出 loop mode/default/precondition normalization helper，覆盖 LLM tool loop mode/max_loops/append metadata、plan-only no-action immediate-execution fallback、replan continuation max_loops/auto_continue stop branch；保持纯重构并补 focused parity 测试。
 - [x] P0.5-N102：将 planner JSON / native tool-call parse/fallback/schedule override 收敛为 runtime-neutral parser result DTO/helper，`handleAgentLLMChat` / `synthesizeAgentToolResults` 仅保留 LLM provider 与 daemon message/tool adapter 边界。
-- [ ] P0.5-N103：将 authorization/capability gate decision + side-effect orchestration 标准化为 runtime-neutral gate/action-batch result DTO，先保持 mutation 副作用仍经 `SessionMutator` adapter，覆盖四类 gate parity。
+- [x] P0.5-N103：将 authorization/capability gate decision + side-effect orchestration 标准化为 runtime-neutral gate/action-batch result DTO，先保持 mutation 副作用仍经 `SessionMutator` adapter，覆盖四类 gate parity。
 - [ ] P0.5-N104：标准化 StepReplan synthesis failure、auto-continue/max-loop stop 与 follow-up continuation egress metadata/stop reason，为后续真正 engine-owned loop runner 切换提供统一验收口径。
 
 当前盘点（2026-06-08）：
@@ -258,6 +258,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - session mutation result payload 已整体迁入 runtime-neutral DTO：append/record/request_authorization/capability_blocked/control/resolve 均具备 runtime result DTO 与 daemon adapter roundtrip；legacy fallback helper 已收敛并重命名为 adapter-only compatibility 路径，daemon mutator 六类输出均有 runtime DTO 类型断言覆盖，`FromSessionMutationResult` 重复 switch 已收敛为 typed runtime/legacy egress helper。
 - 已输出 engine-native runner 草案：建议将 `llm_tool_loop` 与 `replan_action_continuation` 统一为单个 loop runner 的两个 mode，明确请求/响应 payload、authorization gate、action queue metadata、synthesis、append/persist ownership 与迁移顺序。
 - 已抽出 planner loop helper：`decideAgentPlannerActionGate` 负责无副作用计算 capability mismatch / explicit intent / operation level / manual authorization / allow 决策；`agentPlannerActionQueueMetadata` 负责统一 action queue metadata 字段与类型。
+- action gate / action batch egress 已收敛到 runtime-neutral DTO：新增 `runtime.AgentLoopActionGateDecision` / `AgentLoopActionGateResult` / `AgentLoopActionBatchResult`，`executeAgentPlannerActionList` 降为 batch result wrapper；capability_blocked / request_authorization 副作用仍经 `SessionMutator` adapter，四类 gate parity 已补 focused 覆盖。
 - 已抽出 planner action/replan cycle helper：`runAgentPlannerActionReplanCycle` 统一 `runAgentLLMToolLoop` 与 `runAgentReplanActionContinuation` 的 Action → action append → tool synthesis → synthesis append 骨架；两种入口仍保留各自前置条件、append origin 与 response/tool merge 语义；action execution 与 StepReplan synthesis 的 legacy adapter 调用已分别收敛到 cycle-private helper。
 - 已把 shared cycle helper 的输入/输出整理为 daemon-private DTO：`agentPlannerActionReplanCycleRequest` 承载 turn/cycle-private LLM request/authorization/tool context/plan handle/options，`agentPlannerActionReplanCycleState` 承载 response/tool/history state，`agentPlannerActionReplanCycleResult` 承载新 state/final plan handle/continue decision；为后续替换 runtime-neutral DTO 做前置。
 - 已将 cycle tool call DTO 迁到 runtime-neutral `runtime.AgentLoopToolCall` / `runtime.AgentLoopToolCallError`：cycle message/tool wrappers 不再持有 daemon-private tool call DTO，daemon 仅在 legacy `agentToolCall` ingress/egress adapter 边界转换。
@@ -299,7 +300,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
   - `runAgentLLMToolLoopAgentLoop` 仍拥有 mode/default/max_loops、append metadata、planner chat append/apply、plan-only no-action 与 immediate-execution fallback、auto-continue stop 判断。
   - `runAgentReplanActionContinuationAgentLoop` 仍拥有 continuation max_loops、已有 plan action/auto_continue precondition、循环停止条件与 follow-up egress。
   - `runAgentPlannerActionReplanCycleAgentLoop` 仍拥有 action message append、StepReplan append/apply、synthesis failure warning 与 continue metadata；runtime DTO 已贯穿，但 session mutation 副作用仍由 daemon 触发。
-  - `executeAgentPlannerActionList` 仍拥有 action batch 上限、action queue metadata、authorization/capability gate 副作用编排、per-action error fallback；纯 gate decision helper 已抽出，但 request_authorization/capability_blocked mutation orchestration 仍在 daemon。
+  - `executeAgentPlannerActionList` 仍拥有 action batch 上限、action queue metadata 与 per-action error fallback；authorization/capability gate decision/result 与 batch egress 已收敛到 runtime DTO，request_authorization/capability_blocked mutation orchestration 暂仍在 daemon，经 `SessionMutator` adapter 执行。
 - P0.5-N100 最小验证矩阵：
   - planner chat parse error / plain answer fallback / native tool-use only / schedule override。
   - plan-only no actions 与 immediate-execution fallback actions 不混淆。
