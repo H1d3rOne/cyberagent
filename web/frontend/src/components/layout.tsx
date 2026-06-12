@@ -4,6 +4,7 @@ import {
   Activity,
   Bot,
   BrainCircuit,
+  BriefcaseBusiness,
   Crosshair,
   History,
   KeyRound,
@@ -12,11 +13,13 @@ import {
   Radar,
   Settings,
   ShieldCheck,
+  UserRound,
   WifiOff,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useConsole } from '@/lib/console'
 import type { DaemonConnectionStatus } from '@/lib/api'
+import { consoleSessionModeLabel, consoleSessionScopeLabel, normalizeConsoleSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
 
 const navItems = [
@@ -24,16 +27,20 @@ const navItems = [
   { to: '/agent', icon: Bot, labelKey: 'agent' as const },
   { to: '/skills', icon: BrainCircuit, labelKey: 'skills' as const },
   { to: '/mcp', icon: Network, labelKey: 'mcp' as const },
+  { to: '/ops', icon: Activity, labelKey: 'ops' as const },
   { to: '/tasks', icon: Crosshair, labelKey: 'tasks' as const },
   { to: '/history', icon: History, labelKey: 'history' as const },
   { to: '/settings', icon: Settings, labelKey: 'settings' as const },
 ]
 
 export function Layout() {
-  const { client, language, setLanguage, t } = useConsole()
+  const { client, language, serverScopeStatus, setLanguage, settings, t } = useConsole()
   const [connection, setConnection] = useState<DaemonConnectionStatus>('offline')
   const online = connection === 'online'
   const unauthorized = connection === 'unauthorized'
+  const session = normalizeConsoleSession(settings.session, settings.operator)
+  const sessionMode = consoleSessionModeLabel(session, language)
+  const sessionScope = consoleSessionScopeLabel(session)
   const connectionLabel = online
     ? t('connected')
     : unauthorized
@@ -41,6 +48,26 @@ export function Layout() {
         ? '需要令牌'
         : 'Token required'
       : t('offline')
+  const sessionHint = unauthorized
+    ? language === 'zh'
+      ? '需要 daemon token'
+      : 'Daemon token required'
+    : serverScopeStatus === 'loading'
+      ? language === 'zh'
+        ? '同步作用域…'
+        : 'Syncing scope…'
+    : sessionScope
+  const sessionStatusLabel = serverScopeStatus === 'synced'
+    ? language === 'zh'
+      ? '后端已同步'
+      : 'Server synced'
+    : serverScopeStatus === 'loading'
+      ? language === 'zh'
+        ? '同步中'
+        : 'Syncing'
+      : language === 'zh'
+        ? '本地回退'
+        : 'Local fallback'
 
   useEffect(() => {
     let cancelled = false
@@ -143,6 +170,28 @@ export function Layout() {
             </div>
 
             <div className="ml-auto flex items-center gap-2">
+              <Link
+                to="/settings#session-workspace"
+                className="group inline-flex min-h-11 max-w-[15rem] items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-left transition hover:border-primary/30 hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:max-w-[18rem]"
+                aria-label={
+                  language === 'zh'
+                    ? `当前身份与工作区：${sessionMode}，${sessionHint}`
+                    : `Current identity and workspace: ${sessionMode}, ${sessionHint}`
+                }
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
+                  {unauthorized ? <KeyRound className="h-4 w-4" /> : <UserRound className="h-4 w-4" />}
+                </span>
+                <span className="hidden min-w-0 sm:block">
+                  <span className="block truncate text-xs font-medium text-foreground">{sessionMode}</span>
+                  <span className={cn('mt-0.5 flex items-center gap-1 truncate font-mono text-[11px]', unauthorized ? 'text-amber-300' : 'text-muted-foreground')}>
+                    <BriefcaseBusiness className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{sessionHint}</span>
+                  </span>
+                  <span className="mt-0.5 block truncate text-[10px] text-muted-foreground/70">{sessionStatusLabel}</span>
+                </span>
+              </Link>
+
               <span
                 className={cn(
                   'inline-flex h-10 items-center gap-2 rounded-2xl border px-3 font-mono text-xs',

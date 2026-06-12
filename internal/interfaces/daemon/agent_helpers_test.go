@@ -8,6 +8,10 @@ import (
 	agentruntime "github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 )
 
+func testAgentLoopToolServices() agentruntime.AgentLoopToolServiceBinding {
+	return agentLoopToolServiceBindingFromRouterServices(routerServices{})
+}
+
 func TestScheduleIntentBlocksImmediateScanSubstitution(t *testing.T) {
 	reason, _, mismatch := agentPlannerActionCapabilityMismatch("每小时扫描 https://example.com", "scan.web.safe", "zh")
 	if !mismatch {
@@ -156,7 +160,7 @@ func TestAgentPlannerActionQueueMetadata(t *testing.T) {
 		t.Fatalf("action_count type = %T, want int", metadata[agentruntime.AgentLoopActionCountMetadataKey])
 	}
 
-	prepared := prepareAgentPlannerActionBatch([]agentruntime.AgentLoopAction{
+	prepared := agentruntime.PrepareAgentLoopActionBatchWithGeneratedQueueID([]agentruntime.AgentLoopAction{
 		{Name: "daemon.health", Arguments: map[string]any{"probe": "one"}},
 		{Name: "plugins.list", Arguments: map[string]any{"probe": "two"}},
 		{Name: "runs.list", Arguments: map[string]any{"probe": "three"}},
@@ -164,15 +168,161 @@ func TestAgentPlannerActionQueueMetadata(t *testing.T) {
 		{Name: "runs.approvals.list", Arguments: map[string]any{"probe": "five"}},
 		{Name: "workspace.files.list", Arguments: map[string]any{"probe": "six"}},
 		{Name: "workspace.search", Arguments: map[string]any{"probe": "seven"}},
-	}, "queue-batch")
-	if len(prepared.Actions) != agentPlannerActionBatchMaxActions {
-		t.Fatalf("prepared actions = %d, want max %d", len(prepared.Actions), agentPlannerActionBatchMaxActions)
+	}, func() string { return "queue-batch" })
+	if len(prepared.Actions) != agentruntime.AgentLoopActionBatchDefaultMaxActions {
+		t.Fatalf("prepared actions = %d, want max %d", len(prepared.Actions), agentruntime.AgentLoopActionBatchDefaultMaxActions)
 	}
-	if !prepared.Result.Truncated || prepared.Result.ActionCount != agentPlannerActionBatchMaxActions {
+	if !prepared.Result.Truncated || prepared.Result.ActionCount != agentruntime.AgentLoopActionBatchDefaultMaxActions {
 		t.Fatalf("prepared result = %#v, want truncated effective count", prepared.Result)
 	}
-	if prepared.Result.Metadata[agentruntime.AgentLoopActionQueueIDMetadataKey] != "queue-batch" || prepared.Result.Metadata[agentruntime.AgentLoopActionCountMetadataKey] != agentPlannerActionBatchMaxActions {
+	if prepared.Result.Metadata[agentruntime.AgentLoopActionQueueIDMetadataKey] != "queue-batch" || prepared.Result.Metadata[agentruntime.AgentLoopActionCountMetadataKey] != agentruntime.AgentLoopActionBatchDefaultMaxActions {
 		t.Fatalf("prepared metadata = %#v", prepared.Result.Metadata)
+	}
+}
+
+func TestAppendAgentPlannerActionBatchResultWithQueueMetadataPreservesDefaultMetadata(t *testing.T) {
+	prepared := agentruntime.PrepareAgentLoopActionBatch([]agentruntime.AgentLoopAction{
+		{Name: "daemon.health", Arguments: map[string]any{"probe": "first"}},
+		{Name: "plugins.list", Arguments: map[string]any{"probe": "second"}},
+	}, "queue-test", 0)
+	result := prepared.Result
+	messages := []agentruntime.AgentLoopMessage{{
+		ID:   "msg-action",
+		Role: "tool",
+		ToolCalls: []agentruntime.AgentLoopToolCall{{
+			ID:       "tool-message",
+			Name:     "daemon.health",
+			Metadata: map[string]any{"phase": "message-phase"},
+		}},
+	}}
+	toolCalls := []agentruntime.AgentLoopToolCall{{
+		ID:       "tool-top",
+		Name:     "daemon.health",
+		Metadata: map[string]any{"phase": "top-phase"},
+	}}
+
+	appendAgentPlannerActionBatchResultWithQueueMetadata(&result, prepared, 2, "daemon.health", messages, toolCalls)
+	messages[0].ToolCalls[0].Metadata["phase"] = "mutated-message"
+	toolCalls[0].Metadata["phase"] = "mutated-top"
+
+	if result.ProcessedActionCount != 2 {
+		t.Fatalf("ProcessedActionCount = %d, want 2", result.ProcessedActionCount)
+	}
+	if len(result.Messages) != 1 || len(result.ToolCalls) != 1 || len(result.Messages[0].ToolCalls) != 1 {
+		t.Fatalf("unexpected result shape: messages=%#v toolCalls=%#v", result.Messages, result.ToolCalls)
+	}
+	for _, metadata := range []map[string]any{result.ToolCalls[0].Metadata, result.Messages[0].ToolCalls[0].Metadata} {
+		if metadata[agentruntime.AgentLoopActionQueueIDMetadataKey] != "queue-test" ||
+			metadata[agentruntime.AgentLoopActionIndexMetadataKey] != 2 ||
+			metadata[agentruntime.AgentLoopActionCountMetadataKey] != 2 ||
+			metadata[agentruntime.AgentLoopActionNameMetadataKey] != "daemon.health" ||
+			metadata["risk"] != "low" {
+			t.Fatalf("metadata = %#v, want queue/default metadata", metadata)
+		}
+	}
+	if result.ToolCalls[0].Metadata["phase"] != "top-phase" {
+		t.Fatalf("top-level phase = %#v, want top-phase", result.ToolCalls[0].Metadata["phase"])
+	}
+	if result.Messages[0].ToolCalls[0].Metadata["phase"] != "message-phase" {
+		t.Fatalf("message tool phase = %#v, want message-phase", result.Messages[0].ToolCalls[0].Metadata["phase"])
+	}
+	if _, ok := toolCalls[0].Metadata[agentruntime.AgentLoopActionQueueIDMetadataKey]; ok {
+		t.Fatalf("original top-level call mutated: %#v", toolCalls[0].Metadata)
+	}
+	if _, ok := messages[0].ToolCalls[0].Metadata[agentruntime.AgentLoopActionQueueIDMetadataKey]; ok {
+		t.Fatalf("original message tool call mutated: %#v", messages[0].ToolCalls[0].Metadata)
+	}
+}
+
+func TestApplyAgentPlannerActionBatchStepResultPreservesDefaultMetadata(t *testing.T) {
+	prepared := agentruntime.PrepareAgentLoopActionBatch([]agentruntime.AgentLoopAction{
+		{Name: "daemon.health", Arguments: map[string]any{"probe": "first"}},
+		{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.md"}},
+	}, "queue-step", 0)
+	result := prepared.Result
+	executionStep := agentruntime.AgentLoopActionBatchExecutionStepResult(
+		1,
+		"daemon.health",
+		[]agentruntime.AgentLoopMessage{{
+			ID:   "msg-step",
+			Role: "tool",
+			ToolCalls: []agentruntime.AgentLoopToolCall{{
+				ID:       "tool-message-step",
+				Name:     "daemon.health",
+				Metadata: map[string]any{"phase": "message-phase"},
+			}},
+		}},
+		[]agentruntime.AgentLoopToolCall{{
+			ID:       "tool-top-step",
+			Name:     "daemon.health",
+			Metadata: map[string]any{"phase": "top-phase"},
+		}},
+	)
+
+	if stopped := applyAgentPlannerActionBatchStepResult(&result, prepared, executionStep); stopped {
+		t.Fatalf("execution step stopped")
+	}
+	executionStep.Messages[0].ToolCalls[0].Metadata["phase"] = "mutated-message"
+	executionStep.ToolCalls[0].Metadata["phase"] = "mutated-top"
+
+	if result.ProcessedActionCount != 1 || result.AuthorizationRequired || result.StopGate != nil {
+		t.Fatalf("execution result = %#v, want processed without stop gate", result)
+	}
+	for _, metadata := range []map[string]any{result.ToolCalls[0].Metadata, result.Messages[0].ToolCalls[0].Metadata} {
+		if metadata[agentruntime.AgentLoopActionQueueIDMetadataKey] != "queue-step" ||
+			metadata[agentruntime.AgentLoopActionIndexMetadataKey] != 1 ||
+			metadata[agentruntime.AgentLoopActionCountMetadataKey] != 2 ||
+			metadata[agentruntime.AgentLoopActionNameMetadataKey] != "daemon.health" ||
+			metadata["risk"] != "low" {
+			t.Fatalf("execution metadata = %#v, want queue/default metadata", metadata)
+		}
+	}
+	if result.ToolCalls[0].Metadata["phase"] != "top-phase" ||
+		result.Messages[0].ToolCalls[0].Metadata["phase"] != "message-phase" {
+		t.Fatalf("execution step metadata was not cloned: top=%#v message=%#v", result.ToolCalls[0].Metadata, result.Messages[0].ToolCalls[0].Metadata)
+	}
+
+	gate := agentruntime.AgentLoopActionGateResult{
+		Decision: agentruntime.AgentLoopActionGateDecision{
+			Kind:       agentruntime.AgentLoopActionGateManualAuthorizationRequired,
+			ActionName: "workspace.files.write",
+		},
+		Messages: []agentruntime.AgentLoopMessage{{
+			ID:      "msg-gate-step",
+			Content: "authorization required",
+			ToolCalls: []agentruntime.AgentLoopToolCall{{
+				ID:       "tool-gate-message-step",
+				Name:     "workspace.files.write",
+				Metadata: map[string]any{"phase": "gate-message"},
+			}},
+		}},
+		ToolCalls: []agentruntime.AgentLoopToolCall{{
+			ID:       "tool-gate-top-step",
+			Name:     "workspace.files.write",
+			Metadata: map[string]any{"phase": "gate-top"},
+		}},
+		AuthorizationRequired: true,
+		Handled:               true,
+	}
+	gateStep := agentruntime.AgentLoopActionBatchGateStepResult(2, gate)
+	if stopped := applyAgentPlannerActionBatchStepResult(&result, prepared, gateStep); !stopped {
+		t.Fatalf("gate step did not stop")
+	}
+	gateStep.StopGate.Messages[0].ToolCalls[0].Metadata["phase"] = "mutated-gate-message"
+	gateStep.StopGate.ToolCalls[0].Metadata["phase"] = "mutated-gate-top"
+
+	if !result.AuthorizationRequired || result.ProcessedActionCount != 2 || result.StopGate == nil {
+		t.Fatalf("gate result = %#v, want stopped authorization", result)
+	}
+	if result.StopGate.Decision.ActionName != "workspace.files.write" {
+		t.Fatalf("stop gate decision = %#v", result.StopGate.Decision)
+	}
+	if result.StopGate.Messages[0].ToolCalls[0].Metadata["phase"] != "gate-message" ||
+		result.StopGate.ToolCalls[0].Metadata["phase"] != "gate-top" {
+		t.Fatalf("gate step was not cloned: messages=%#v toolCalls=%#v", result.StopGate.Messages, result.StopGate.ToolCalls)
+	}
+	if _, ok := result.StopGate.ToolCalls[0].Metadata[agentruntime.AgentLoopActionQueueIDMetadataKey]; ok {
+		t.Fatalf("gate step should not receive queue metadata: %#v", result.StopGate.ToolCalls[0].Metadata)
 	}
 }
 

@@ -28,6 +28,41 @@ type Store struct {
 	mu   sync.Mutex
 }
 
+// CurrentSchemaVersion is the SQLite PRAGMA user_version expected by this
+// runtime store implementation.
+const CurrentSchemaVersion = 1
+
+var runtimeSchemaTables = []string{
+	"sessions",
+	"tasks",
+	"runs",
+	"turns",
+	"events",
+	"approvals",
+	"schedules",
+	"memories",
+}
+
+var runtimeSchemaIndexes = []string{
+	"idx_runtime_tasks_session_created",
+	"idx_runtime_runs_task_created",
+	"idx_runtime_turns_run_idx",
+	"idx_runtime_events_task_seq",
+	"idx_runtime_events_run_seq",
+	"idx_runtime_events_session_seq",
+}
+
+// SchemaAudit is a safe-to-log snapshot of the runtime SQLite schema state.
+type SchemaAudit struct {
+	Path            string
+	UserVersion     int
+	ExpectedVersion int
+	Tables          []string
+	Indexes         []string
+	MissingTables   []string
+	MissingIndexes  []string
+}
+
 // Open opens or creates a SQLite runtime store at path.
 func Open(path string) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
@@ -146,7 +181,36 @@ func (s *Store) init(ctx context.Context) error {
 			return fmt.Errorf("init runtime sqlite store: %w", err)
 		}
 	}
+	if err := s.ensureSchemaVersion(ctx); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *Store) ensureSchemaVersion(ctx context.Context) error {
+	version, err := s.readUserVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if version != 0 {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", CurrentSchemaVersion)); err != nil {
+		return fmt.Errorf("set runtime sqlite schema version: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) readUserVersion(ctx context.Context) (int, error) {
+	ctx = runtimeContext(ctx)
+	if s == nil || s.db == nil {
+		return 0, errors.New("runtime sqlite store is not open")
+	}
+	var version int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return 0, fmt.Errorf("read runtime sqlite schema version: %w", err)
+	}
+	return version, nil
 }
 
 // Close closes the underlying database handle.
@@ -163,6 +227,75 @@ func (s *Store) Path() string {
 		return ""
 	}
 	return s.path
+}
+
+// AuditSchema returns a safe-to-log snapshot of the current SQLite runtime
+// schema, including the expected schema version and any required objects that
+// are missing.
+func (s *Store) AuditSchema(ctx context.Context) (SchemaAudit, error) {
+	ctx = runtimeContext(ctx)
+	audit := SchemaAudit{
+		Path:            s.Path(),
+		ExpectedVersion: CurrentSchemaVersion,
+	}
+	version, err := s.readUserVersion(ctx)
+	if err != nil {
+		return audit, err
+	}
+	audit.UserVersion = version
+
+	tables, err := sqliteMasterNames(ctx, s.db, "table", "sqlite_%")
+	if err != nil {
+		return audit, fmt.Errorf("audit runtime sqlite tables: %w", err)
+	}
+	indexes, err := sqliteMasterNames(ctx, s.db, "index", "sqlite_autoindex_%")
+	if err != nil {
+		return audit, fmt.Errorf("audit runtime sqlite indexes: %w", err)
+	}
+	audit.Tables = tables
+	audit.Indexes = indexes
+	audit.MissingTables = missingSchemaObjects(runtimeSchemaTables, tables)
+	audit.MissingIndexes = missingSchemaObjects(runtimeSchemaIndexes, indexes)
+	return audit, nil
+}
+
+func sqliteMasterNames(ctx context.Context, db *sql.DB, objectType, excludePattern string) ([]string, error) {
+	ctx = runtimeContext(ctx)
+	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = ? AND name NOT LIKE ? ORDER BY name`, objectType, excludePattern)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
+func missingSchemaObjects(required, existing []string) []string {
+	if len(required) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(existing))
+	for _, name := range existing {
+		seen[name] = struct{}{}
+	}
+	var missing []string
+	for _, name := range required {
+		if _, ok := seen[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 // SaveTask upserts a runtime task snapshot.

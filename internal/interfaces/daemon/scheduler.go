@@ -267,6 +267,13 @@ func schedulePromptFromLegacyScanWeb(spec scheduleSpec) string {
 }
 
 func (m *scheduleManager) Create(spec scheduleSpec) (scheduleSpec, error) {
+	return m.CreateWithContext(context.Background(), spec)
+}
+
+func (m *scheduleManager) CreateWithContext(ctx context.Context, spec scheduleSpec) (scheduleSpec, error) {
+	if _, err := daemonTenantContext(ctx); err != nil {
+		return scheduleSpec{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
@@ -295,6 +302,13 @@ func (m *scheduleManager) Create(spec scheduleSpec) (scheduleSpec, error) {
 }
 
 func (m *scheduleManager) Update(id string, patch scheduleSpec) (scheduleSpec, error) {
+	return m.UpdateWithContext(context.Background(), id, patch)
+}
+
+func (m *scheduleManager) UpdateWithContext(ctx context.Context, id string, patch scheduleSpec) (scheduleSpec, error) {
+	if _, err := daemonTenantContext(ctx); err != nil {
+		return scheduleSpec{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	current, ok := m.items[id]
@@ -339,6 +353,13 @@ func (m *scheduleManager) Update(id string, patch scheduleSpec) (scheduleSpec, e
 }
 
 func (m *scheduleManager) Delete(id string) error {
+	return m.DeleteWithContext(context.Background(), id)
+}
+
+func (m *scheduleManager) DeleteWithContext(ctx context.Context, id string) error {
+	if _, err := daemonTenantContext(ctx); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.items[id]; !ok {
@@ -351,6 +372,13 @@ func (m *scheduleManager) Delete(id string) error {
 }
 
 func (m *scheduleManager) Get(id string) (scheduleSpec, error) {
+	return m.GetWithContext(context.Background(), id)
+}
+
+func (m *scheduleManager) GetWithContext(ctx context.Context, id string) (scheduleSpec, error) {
+	if _, err := daemonTenantContext(ctx); err != nil {
+		return scheduleSpec{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	current, ok := m.items[id]
@@ -363,6 +391,13 @@ func (m *scheduleManager) Get(id string) (scheduleSpec, error) {
 }
 
 func (m *scheduleManager) List() []scheduleSpec {
+	return m.ListWithContext(context.Background())
+}
+
+func (m *scheduleManager) ListWithContext(ctx context.Context) []scheduleSpec {
+	if _, err := daemonTenantContext(ctx); err != nil {
+		return []scheduleSpec{}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	result := make([]scheduleSpec, 0, len(m.items))
@@ -378,6 +413,13 @@ func (m *scheduleManager) List() []scheduleSpec {
 }
 
 func (m *scheduleManager) SetEnabled(id string, enabled bool) (scheduleSpec, error) {
+	return m.SetEnabledWithContext(context.Background(), id, enabled)
+}
+
+func (m *scheduleManager) SetEnabledWithContext(ctx context.Context, id string, enabled bool) (scheduleSpec, error) {
+	if _, err := daemonTenantContext(ctx); err != nil {
+		return scheduleSpec{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	current, ok := m.items[id]
@@ -405,6 +447,9 @@ func (m *scheduleManager) SetEnabled(id string, enabled bool) (scheduleSpec, err
 }
 
 func (m *scheduleManager) RunNow(ctx context.Context, id string) (scheduleSpec, error) {
+	if _, err := daemonTenantContext(ctx); err != nil {
+		return scheduleSpec{}, err
+	}
 	m.mu.Lock()
 	current, ok := m.items[id]
 	if !ok {
@@ -414,7 +459,7 @@ func (m *scheduleManager) RunNow(ctx context.Context, id string) (scheduleSpec, 
 	clone := *current
 	m.mu.Unlock()
 	m.fire(ctx, clone.ID)
-	return m.Get(id)
+	return m.GetWithContext(ctx, id)
 }
 
 func (m *scheduleManager) scheduleEntryLocked(id string) error {

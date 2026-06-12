@@ -118,7 +118,7 @@ type EventPage struct {
 
 // ListRuns lists known run directories.
 func (s RunService) ListRuns(ctx context.Context, req RunListRequest) (RunListResponse, error) {
-	if err := ctxErr(ctx); err != nil {
+	if _, err := tenantContextForServiceEntry(ctx); err != nil {
 		return RunListResponse{}, err
 	}
 	limit := normalizeLimit(req.Limit, defaultListLimit)
@@ -126,50 +126,10 @@ func (s RunService) ListRuns(ctx context.Context, req RunListRequest) (RunListRe
 	if err != nil {
 		return RunListResponse{}, err
 	}
-	entries, err := os.ReadDir(s.RunsDir)
+	summaries, err := s.scanRunSummaries(ctx, req.Status)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return RunListResponse{Items: []RunSummary{}, EOF: true, Limit: limit}, nil
-		}
-		return RunListResponse{}, internalError("list runs", err)
+		return RunListResponse{}, err
 	}
-
-	summaries := make([]RunSummary, 0, len(entries))
-	for _, entry := range entries {
-		if err := ctxErr(ctx); err != nil {
-			return RunListResponse{}, err
-		}
-		if !entry.IsDir() || !isRunListCandidate(entry.Name()) {
-			continue
-		}
-		layout, err := s.openLayout(entry.Name())
-		if err != nil {
-			if ErrorCodeOf(err) == CodeNotFound || ErrorCodeOf(err) == CodeBadRequest {
-				continue
-			}
-			return RunListResponse{}, err
-		}
-		if !isRunWorkspace(layout) {
-			continue
-		}
-		summary, err := s.summaryForLayout(layout)
-		if err != nil {
-			if ErrorCodeOf(err) == CodeNotFound || ErrorCodeOf(err) == CodeBadRequest {
-				continue
-			}
-			return RunListResponse{}, err
-		}
-		if req.Status != "" && summary.Status != req.Status {
-			continue
-		}
-		summaries = append(summaries, summary)
-	}
-	sort.SliceStable(summaries, func(i, j int) bool {
-		if !summaries[i].CreatedAt.Equal(summaries[j].CreatedAt) {
-			return summaries[i].CreatedAt.After(summaries[j].CreatedAt)
-		}
-		return summaries[i].RunID < summaries[j].RunID
-	})
 
 	if start > len(summaries) {
 		start = len(summaries)
@@ -185,6 +145,57 @@ func (s RunService) ListRuns(ctx context.Context, req RunListRequest) (RunListRe
 		next = strconv.Itoa(end)
 	}
 	return RunListResponse{Items: page, NextCursor: next, EOF: eof, Limit: limit}, nil
+}
+
+func (s RunService) scanRunSummaries(ctx context.Context, status contracts.Status) ([]RunSummary, error) {
+	if err := ctxErr(ctx); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(s.RunsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []RunSummary{}, nil
+		}
+		return nil, internalError("list runs", err)
+	}
+
+	summaries := make([]RunSummary, 0, len(entries))
+	for _, entry := range entries {
+		if err := ctxErr(ctx); err != nil {
+			return nil, err
+		}
+		if !entry.IsDir() || !isRunListCandidate(entry.Name()) {
+			continue
+		}
+		layout, err := s.openLayout(entry.Name())
+		if err != nil {
+			if ErrorCodeOf(err) == CodeNotFound || ErrorCodeOf(err) == CodeBadRequest {
+				continue
+			}
+			return nil, err
+		}
+		if !isRunWorkspace(layout) {
+			continue
+		}
+		summary, err := s.summaryForLayout(layout)
+		if err != nil {
+			if ErrorCodeOf(err) == CodeNotFound || ErrorCodeOf(err) == CodeBadRequest {
+				continue
+			}
+			return nil, err
+		}
+		if status != "" && summary.Status != status {
+			continue
+		}
+		summaries = append(summaries, summary)
+	}
+	sort.SliceStable(summaries, func(i, j int) bool {
+		if !summaries[i].CreatedAt.Equal(summaries[j].CreatedAt) {
+			return summaries[i].CreatedAt.After(summaries[j].CreatedAt)
+		}
+		return summaries[i].RunID < summaries[j].RunID
+	})
+	return summaries, nil
 }
 
 func isRunListCandidate(name string) bool {
@@ -210,7 +221,7 @@ func isRunWorkspace(layout runs.Layout) bool {
 
 // GetRun returns persisted snapshots and summary for one run.
 func (s RunService) GetRun(ctx context.Context, runIDOrPath string) (RunDetail, error) {
-	if err := ctxErr(ctx); err != nil {
+	if _, err := tenantContextForServiceEntry(ctx); err != nil {
 		return RunDetail{}, err
 	}
 	layout, err := s.openLayout(runIDOrPath)
@@ -246,7 +257,7 @@ func (s RunService) GetRun(ctx context.Context, runIDOrPath string) (RunDetail, 
 
 // GetRunSummary returns a lightweight run summary.
 func (s RunService) GetRunSummary(ctx context.Context, runIDOrPath string) (RunSummary, error) {
-	if err := ctxErr(ctx); err != nil {
+	if _, err := tenantContextForServiceEntry(ctx); err != nil {
 		return RunSummary{}, err
 	}
 	layout, err := s.openLayout(runIDOrPath)
@@ -258,7 +269,7 @@ func (s RunService) GetRunSummary(ctx context.Context, runIDOrPath string) (RunS
 
 // GetReport reads an existing report file. It does not regenerate reports.
 func (s RunService) GetReport(ctx context.Context, runIDOrPath, format string) (RunReport, error) {
-	if err := ctxErr(ctx); err != nil {
+	if _, err := tenantContextForServiceEntry(ctx); err != nil {
 		return RunReport{}, err
 	}
 	layout, err := s.openLayout(runIDOrPath)
@@ -292,7 +303,7 @@ func (s RunService) GetReport(ctx context.Context, runIDOrPath, format string) (
 
 // GetArtifactIndex reads artifacts/index.json.
 func (s RunService) GetArtifactIndex(ctx context.Context, runIDOrPath string) (artifactruntime.Index, error) {
-	if err := ctxErr(ctx); err != nil {
+	if _, err := tenantContextForServiceEntry(ctx); err != nil {
 		return artifactruntime.Index{}, err
 	}
 	layout, err := s.openLayout(runIDOrPath)
@@ -311,7 +322,7 @@ func (s RunService) GetArtifactIndex(ctx context.Context, runIDOrPath string) (a
 
 // GetEvents reads events with a numeric cursor. Cursor is the number of events already consumed.
 func (s RunService) GetEvents(ctx context.Context, runIDOrPath, cursor string, limit int) (EventPage, error) {
-	if err := ctxErr(ctx); err != nil {
+	if _, err := tenantContextForServiceEntry(ctx); err != nil {
 		return EventPage{}, err
 	}
 	layout, err := s.openLayout(runIDOrPath)

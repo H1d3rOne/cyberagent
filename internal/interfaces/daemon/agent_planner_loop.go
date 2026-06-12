@@ -348,8 +348,8 @@ func (m *agentManager) chatAgentLLM(ctx context.Context, sessionID string, turnR
 	}, streamed, nil
 }
 
-func (m *agentManager) runAgentLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
-	return m.runAgentLLMToolLoopAgentLoop(ctx, agentLLMToolLoopRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc))
+func (m *agentManager) runAgentLLMToolLoopWithToolServices(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, toolServices runtime.AgentLoopToolServiceBinding) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
+	return m.runAgentLLMToolLoopAgentLoop(ctx, agentLLMToolLoopRequestFromLegacyWithToolServices(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, toolServices))
 }
 
 func (m *agentManager) runAgentLLMToolLoopAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
@@ -427,11 +427,11 @@ func (m *agentManager) runAgentLLMToolLoopAgentLoopResult(ctx context.Context, l
 	}), nil
 }
 
-func (m *agentManager) runAgentReplanActionContinuation(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
-	return m.runAgentReplanActionContinuationAgentLoop(ctx, agentReplanActionContinuationRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc, plan, maxLoops))
+func (m *agentManager) runAgentReplanActionContinuationWithToolServices(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, toolServices runtime.AgentLoopToolServiceBinding, plan *agentPlannerResponse, maxLoops int) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall) {
+	return m.runAgentReplanActionContinuationAgentLoop(ctx, agentReplanActionContinuationRequestFromLegacyWithToolServices(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, toolServices, plan, maxLoops))
 }
 
-func agentReplanActionContinuationRequestFromLegacy(sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices, plan *agentPlannerResponse, maxLoops int) runtime.AgentLoopRequest {
+func agentReplanActionContinuationRequestFromLegacyWithToolServices(sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, toolServices runtime.AgentLoopToolServiceBinding, plan *agentPlannerResponse, maxLoops int) runtime.AgentLoopRequest {
 	loopHistory := agentLoopMessagesFromAgentMessages(history)
 	return runtime.AgentLoopRequest{
 		Mode:          runtime.AgentLoopModeReplanContinuation,
@@ -446,7 +446,7 @@ func agentReplanActionContinuationRequestFromLegacy(sessionID string, turnRef ag
 			LoopHistory: runtime.CloneAgentLoopMessages(loopHistory),
 		},
 		Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
-		ToolServices:  agentLoopToolServiceBindingFromRouterServices(svc),
+		ToolServices:  toolServices.Clone(),
 		MaxLoops:      maxLoops,
 		Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
 			ActionAppendOrigin: daemonTurnExecutionReplanActionContinuation,
@@ -1208,12 +1208,8 @@ type agentPlannerActionReplanCycleToolContext struct {
 	services runtime.AgentLoopToolServiceBinding
 }
 
-func agentPlannerActionReplanCycleToolContextFromRouterServices(svc routerServices) agentPlannerActionReplanCycleToolContext {
-	return agentPlannerActionReplanCycleToolContext{services: agentLoopToolServiceBindingFromRouterServices(svc)}
-}
-
-func (toolCtx agentPlannerActionReplanCycleToolContext) legacyRouterServices() routerServices {
-	return legacyRouterServicesFromAgentLoopToolServiceBinding(toolCtx.services)
+func agentPlannerActionReplanCycleToolContextFromToolServices(toolServices runtime.AgentLoopToolServiceBinding) agentPlannerActionReplanCycleToolContext {
+	return agentPlannerActionReplanCycleToolContext{services: toolServices.Clone()}
 }
 
 type agentPlannerActionReplanCyclePlan struct {
@@ -1830,13 +1826,9 @@ func (m *agentManager) runRuntimeAgentPlannerActionReplanCycle(ctx context.Conte
 
 func (m *agentManager) runRuntimeAgentPlannerActionReplanCycleAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) runtime.AgentLoopResult {
 	req := agentPlannerActionReplanCycleAgentLoopRequest(loopReq)
-	eng := m.runtimeEngine()
-	if eng == nil {
-		return normalizeAgentPlannerActionReplanCycleAgentLoopResult(m.runAgentPlannerActionReplanCycleAgentLoop(ctx, req))
-	}
-	loopResult, err := eng.RunAgentLoop(ctx, req)
+	loopResult, err := m.runRuntimeAgentLoopResult(ctx, req)
 	if err != nil {
-		return normalizeAgentPlannerActionReplanCycleAgentLoopResult(m.runAgentPlannerActionReplanCycleAgentLoop(ctx, req))
+		loopResult = daemonAgentLoopNestedDispatchErrorResult(req, loopResult, err)
 	}
 	return normalizeAgentPlannerActionReplanCycleAgentLoopResult(loopResult)
 }
@@ -1889,19 +1881,17 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 	actionExecution := m.runAgentPlannerActionReplanCycleActionExecutionAgentLoop(ctx, loopReq)
 	actionMessages := agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(actionExecution.Messages).withPhase("step")
 	actionToolCalls := agentPlannerActionReplanCycleToolCallsFromAgentLoopToolCalls(actionExecution.ToolCalls).withPhase("step")
-	if actionMessages.len() > 0 {
-		m.appendMessagesForTurn(ctx, turn.SessionID, turnRef, turn.Prompt, options.ActionAppendOrigin, turn.OperationLevel, actionMessages.legacyAgentMessages()...)
-		state.ResponseMessages = append(state.ResponseMessages, actionMessages.agentLoopMessages()...)
-		state.LoopHistory = append(state.LoopHistory, actionMessages.agentLoopMessages()...)
-	}
-	if options.AppendActionToolCallsBeforeEmptyMessage {
-		state.ToolCalls = append(state.ToolCalls, actionToolCalls.agentLoopToolCalls()...)
-	}
-	if actionMessages.len() == 0 {
+	actionAppend := runtime.AgentLoopReplanCycleApplyActionAppend(
+		state,
+		actionMessages.agentLoopMessages(),
+		actionToolCalls.agentLoopToolCalls(),
+		options.AppendActionToolCallsBeforeEmptyMessage,
+		options.ActionAppendOrigin,
+	)
+	m.appendAgentPlannerActionReplanCycleDecisionForTurn(ctx, turn, turnRef, actionAppend)
+	state = actionAppend.UpdatedState.Clone()
+	if !actionAppend.Append {
 		return finish(false, "", nil)
-	}
-	if !options.AppendActionToolCallsBeforeEmptyMessage {
-		state.ToolCalls = append(state.ToolCalls, actionToolCalls.agentLoopToolCalls()...)
 	}
 	if actionExecution.AuthorizationRequired {
 		return finish(false, "", nil)
@@ -1911,7 +1901,7 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 		ctx,
 		loopReq,
 		state.Clone(),
-		actionMessages.agentLoopMessages(),
+		actionAppend.Messages,
 	)
 	if synthesisErr != nil {
 		warningTool := failedAgentToolCall("LLM synthesis", synthesisErr)
@@ -1925,9 +1915,14 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 		), "step_replan")
 		warningMessages := agentPlannerActionReplanCycleMessagesFromAgentMessages([]agentMessage{warningMessage})
 		warningToolCalls := agentPlannerActionReplanCycleToolCallsFromAgentToolCalls([]agentToolCall{warningTool})
-		m.appendMessagesForTurn(ctx, turn.SessionID, turnRef, turn.Prompt, options.ActionAppendOrigin, turn.OperationLevel, warningMessages.legacyAgentMessages()...)
-		state.ResponseMessages = append(state.ResponseMessages, warningMessages.agentLoopMessages()...)
-		state.ToolCalls = append(state.ToolCalls, warningToolCalls.agentLoopToolCalls()...)
+		warningAppend := runtime.AgentLoopReplanCycleApplyWarningAppend(
+			state,
+			warningMessages.agentLoopMessages(),
+			warningToolCalls.agentLoopToolCalls(),
+			options.ActionAppendOrigin,
+		)
+		m.appendAgentPlannerActionReplanCycleDecisionForTurn(ctx, turn, turnRef, warningAppend)
+		state = warningAppend.UpdatedState.Clone()
 		return finish(false, runtime.AgentLoopStopReasonStepReplanSynthesisError, map[string]any{
 			"phase": "step_replan",
 			"error": synthesisErr.Error(),
@@ -1936,14 +1931,29 @@ func (m *agentManager) runAgentPlannerActionReplanCycleAgentLoop(ctx context.Con
 	synthesisMessages := agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(synthesis.Messages)
 	synthesisToolCalls := agentPlannerActionReplanCycleToolCallsFromAgentLoopToolCalls(synthesis.ToolCalls)
 	synthesisPlan := runtime.CloneAgentLoopPlan(synthesis.FinalPlan)
-	if synthesisMessages.len() > 0 {
-		m.appendMessagesWithPlannerForTurn(ctx, turn.SessionID, turnRef, turn.Prompt, string(runtime.LLMStageToolSynthesis), turn.OperationLevel, legacyPlannerResponseFromAgentLoopPlan(synthesisPlan), synthesisMessages.legacyAgentMessages()...)
-		state.ResponseMessages = append(state.ResponseMessages, synthesisMessages.agentLoopMessages()...)
-		state.LoopHistory = append(state.LoopHistory, synthesisMessages.agentLoopMessages()...)
-		state.ToolCalls = append(state.ToolCalls, synthesisToolCalls.agentLoopToolCalls()...)
-	}
-	finalPlan = synthesisPlan
+	synthesisAppend := runtime.AgentLoopReplanCycleApplySynthesisAppend(
+		state,
+		synthesisMessages.agentLoopMessages(),
+		synthesisToolCalls.agentLoopToolCalls(),
+		synthesisPlan,
+	)
+	m.appendAgentPlannerActionReplanCycleDecisionForTurn(ctx, turn, turnRef, synthesisAppend)
+	state = synthesisAppend.UpdatedState.Clone()
+	finalPlan = runtime.CloneAgentLoopPlan(synthesisAppend.Plan)
 	return finish(true, "", nil)
+}
+
+func (m *agentManager) appendAgentPlannerActionReplanCycleDecisionForTurn(ctx context.Context, turn runtime.TurnContext, turnRef agentRuntimeTurnRef, decision runtime.AgentLoopReplanCycleAppendDecision) {
+	decision = decision.Clone()
+	if !decision.Append || len(decision.Messages) == 0 {
+		return
+	}
+	messages := agentPlannerActionReplanCycleMessagesFromAgentLoopMessages(decision.Messages).legacyAgentMessages()
+	if decision.AppendWithPlanner {
+		m.appendMessagesWithPlannerForTurn(ctx, turn.SessionID, turnRef, turn.Prompt, decision.Origin, turn.OperationLevel, legacyPlannerResponseFromAgentLoopPlan(decision.Plan), messages...)
+		return
+	}
+	m.appendMessagesForTurn(ctx, turn.SessionID, turnRef, turn.Prompt, decision.Origin, turn.OperationLevel, messages...)
 }
 
 func (m *agentManager) runAgentPlannerActionReplanCycleActionExecution(ctx context.Context, req agentPlannerActionReplanCycleRequest) agentPlannerActionReplanCycleActionExecutionResult {
@@ -2150,22 +2160,25 @@ func (m *agentManager) agentPlannerActionGateResultForDecision(ctx context.Conte
 	return result
 }
 
-const agentPlannerActionBatchMaxActions = 6
-
-func newAgentPlannerActionQueueID(now time.Time) string {
-	return strings.Replace(runs.NewJobID(now.UTC()), "job_", "queue_", 1)
-}
-
-func prepareAgentPlannerActionBatch(actions []runtime.AgentLoopAction, queueID string) runtime.AgentLoopPreparedActionBatch {
-	return runtime.PrepareAgentLoopActionBatch(actions, queueID, agentPlannerActionBatchMaxActions)
-}
-
 func agentPlannerActionQueueMetadata(queueID string, index, count int, actionName string) map[string]interface{} {
 	return runtime.AgentLoopActionQueueMetadata(queueID, index, count, actionName)
 }
 
-func (m *agentManager) executeAgentPlannerActions(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, svc routerServices, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
-	messages, toolCalls, authorizationRequired := m.executeAgentPlannerActionList(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, agentLoopToolServiceBindingFromRouterServices(svc), agentPlannerActionReplanCyclePlanActionsFromAgentPlannerActions(agentPlannerActions(plan)), runtime.AgentLoopAuthorization{
+func appendAgentPlannerActionBatchResultWithQueueMetadata(result *runtime.AgentLoopActionBatchResult, preparedBatch runtime.AgentLoopPreparedActionBatch, actionIndex int, actionName string, messages []runtime.AgentLoopMessage, toolCalls []runtime.AgentLoopToolCall) {
+	step := runtime.AgentLoopActionBatchExecutionStepResult(actionIndex, actionName, messages, toolCalls)
+	applyAgentPlannerActionBatchStepResult(result, preparedBatch, step)
+}
+
+func applyAgentPlannerActionBatchStepResult(result *runtime.AgentLoopActionBatchResult, preparedBatch runtime.AgentLoopPreparedActionBatch, step runtime.AgentLoopActionBatchStepResult) bool {
+	if step.StopGate == nil {
+		step.ToolCalls = agentLoopToolCallsWithMetadata(step.ToolCalls, nil)
+		step.Messages = agentLoopMessagesWithToolMetadata(step.Messages, nil)
+	}
+	return runtime.ApplyAgentLoopActionBatchStepResult(result, preparedBatch, step)
+}
+
+func (m *agentManager) executeAgentPlannerActionsWithToolServices(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, plan *agentPlannerResponse, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, bool) {
+	messages, toolCalls, authorizationRequired := m.executeAgentPlannerActionList(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, toolServices, agentPlannerActionReplanCyclePlanActionsFromAgentPlannerActions(agentPlannerActions(plan)), runtime.AgentLoopAuthorization{
 		AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles),
 		DefaultAuthProfileID: defaultAuthProfileID,
 	})
@@ -2177,56 +2190,71 @@ func (m *agentManager) executeAgentPlannerActionList(ctx context.Context, sessio
 	return runtime.CloneAgentLoopMessages(result.Messages), runtime.CloneAgentLoopToolCalls(result.ToolCalls), result.AuthorizationRequired
 }
 
+type agentPlannerActionBatchStepContext struct {
+	sessionID      string
+	turnRef        agentRuntimeTurnRef
+	operatorPrompt string
+	language       string
+	operator       string
+	operationLevel string
+	toolServices   runtime.AgentLoopToolServiceBinding
+	authorization  runtime.AgentLoopAuthorization
+}
+
 func (m *agentManager) executeAgentPlannerActionBatch(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, actions []runtime.AgentLoopAction, authorization runtime.AgentLoopAuthorization) runtime.AgentLoopActionBatchResult {
 	toolServices = toolServices.Clone()
 	authorization = authorization.Clone()
-	queueID := ""
-	if len(actions) > 0 {
-		queueID = newAgentPlannerActionQueueID(time.Now().UTC())
-	}
-	preparedBatch := prepareAgentPlannerActionBatch(actions, queueID)
+	preparedBatch := runtime.PrepareAgentLoopActionBatchWithGeneratedQueueID(actions, func() string {
+		return runtime.AgentLoopActionQueueIDFromJobID(runs.NewJobID(time.Now().UTC()))
+	})
 	actions = preparedBatch.Actions
 	result := preparedBatch.Result
 	if len(actions) == 0 {
 		return result
 	}
-	actionCount := len(actions)
+	stepContext := agentPlannerActionBatchStepContext{
+		sessionID:      sessionID,
+		turnRef:        turnRef,
+		operatorPrompt: operatorPrompt,
+		language:       language,
+		operator:       operator,
+		operationLevel: operationLevel,
+		toolServices:   toolServices,
+		authorization:  authorization,
+	}
 	for idx, action := range actions {
 		actionIndex := idx + 1
-		gateDecision := decideAgentPlannerActionGateFromAgentLoopAction(operatorPrompt, language, operationLevel, action)
-		actionName := gateDecision.ActionName
-		var actionMessages []runtime.AgentLoopMessage
-		var actionToolCalls []runtime.AgentLoopToolCall
-		var err error
-		gateResult := m.agentPlannerActionGateResultForDecision(ctx, sessionID, turnRef, operatorPrompt, language, operationLevel, action, gateDecision)
-		if gateResult.Handled {
-			result.Messages = append(result.Messages, gateResult.Messages...)
-			result.ToolCalls = append(result.ToolCalls, gateResult.ToolCalls...)
-			result.AuthorizationRequired = gateResult.AuthorizationRequired
-			result.ProcessedActionCount = actionIndex
-			result.StopGate = &gateResult
+		step := m.executeAgentPlannerActionBatchStep(ctx, actionIndex, action, stepContext)
+		if applyAgentPlannerActionBatchStepResult(&result, preparedBatch, step) {
 			return result
 		}
-		if gateDecision.Kind == runtime.AgentLoopActionGateAllow {
-			actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, sessionID, turnRef, operatorPrompt, language, operator, operationLevel, toolServices, action, authorization)
-		}
-		if err != nil {
-			if actionName == "" {
-				actionName = "agent.action"
-			}
-			tool := failedAgentToolCall(actionName, err)
-			tool.Result = runtime.AgentLoopActionExecutionErrorResult(actionName, err)
-			actionMessages = agentLoopMessagesFromAgentMessages([]agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)})
-			actionToolCalls = agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{tool})
-		}
-		actionMetadata := agentPlannerActionQueueMetadata(queueID, actionIndex, actionCount, actionName)
-		actionToolCalls = agentLoopToolCallsWithMetadata(actionToolCalls, actionMetadata)
-		actionMessages = agentLoopMessagesWithToolMetadata(actionMessages, actionMetadata)
-		result.Messages = append(result.Messages, actionMessages...)
-		result.ToolCalls = append(result.ToolCalls, actionToolCalls...)
-		result.ProcessedActionCount = actionIndex
 	}
 	return result
+}
+
+func (m *agentManager) executeAgentPlannerActionBatchStep(ctx context.Context, actionIndex int, action runtime.AgentLoopAction, stepContext agentPlannerActionBatchStepContext) runtime.AgentLoopActionBatchStepResult {
+	gateDecision := decideAgentPlannerActionGateFromAgentLoopAction(stepContext.operatorPrompt, stepContext.language, stepContext.operationLevel, action)
+	actionName := gateDecision.ActionName
+	var actionMessages []runtime.AgentLoopMessage
+	var actionToolCalls []runtime.AgentLoopToolCall
+	var err error
+	gateResult := m.agentPlannerActionGateResultForDecision(ctx, stepContext.sessionID, stepContext.turnRef, stepContext.operatorPrompt, stepContext.language, stepContext.operationLevel, action, gateDecision)
+	if gateResult.Handled {
+		return runtime.AgentLoopActionBatchGateStepResult(actionIndex, gateResult)
+	}
+	if gateDecision.Kind == runtime.AgentLoopActionGateAllow {
+		actionMessages, actionToolCalls, err = m.runRuntimePlannerActionExecution(ctx, stepContext.sessionID, stepContext.turnRef, stepContext.operatorPrompt, stepContext.language, stepContext.operator, stepContext.operationLevel, stepContext.toolServices, action, stepContext.authorization)
+	}
+	if err != nil {
+		if actionName == "" {
+			actionName = "agent.action"
+		}
+		tool := failedAgentToolCall(actionName, err)
+		tool.Result = runtime.AgentLoopActionExecutionErrorResult(actionName, err)
+		actionMessages = agentLoopMessagesFromAgentMessages([]agentMessage{m.message(stepContext.language, "tool", err.Error(), []agentToolCall{tool}, nil)})
+		actionToolCalls = agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{tool})
+	}
+	return runtime.AgentLoopActionBatchExecutionStepResult(actionIndex, actionName, actionMessages, actionToolCalls)
 }
 
 func (m *agentManager) requestAgentAuthorizationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language, operatorPrompt, operationLevel string, action runtime.AgentLoopAction, actionName, requiredLevel, policy, reason string) agentMessage {

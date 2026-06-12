@@ -100,3 +100,89 @@ func (result AgentLoopActionBatchResult) Clone() AgentLoopActionBatchResult {
 func CloneAgentLoopActionBatchResult(result AgentLoopActionBatchResult) AgentLoopActionBatchResult {
 	return result.Clone()
 }
+
+// AgentLoopActionBatchStepResult is the runtime-neutral egress for one action
+// batch step. Daemon adapters still own the actual gate side effects and tool
+// execution, then pass the resulting gate/action output through this seam so
+// batch mutation stays centralized in runtime.
+type AgentLoopActionBatchStepResult struct {
+	ActionIndex int
+	ActionName  string
+	Messages    []AgentLoopMessage
+	ToolCalls   []AgentLoopToolCall
+	StopGate    *AgentLoopActionGateResult
+}
+
+// Clone returns a copy with mutable messages/tool calls/gate fields isolated.
+func (result AgentLoopActionBatchStepResult) Clone() AgentLoopActionBatchStepResult {
+	cloned := result
+	cloned.Messages = CloneAgentLoopMessages(result.Messages)
+	cloned.ToolCalls = CloneAgentLoopToolCalls(result.ToolCalls)
+	cloned.StopGate = CloneAgentLoopActionGateResultPtr(result.StopGate)
+	return cloned
+}
+
+// CloneAgentLoopActionBatchStepResult clones an action batch step result.
+func CloneAgentLoopActionBatchStepResult(result AgentLoopActionBatchStepResult) AgentLoopActionBatchStepResult {
+	return result.Clone()
+}
+
+// AgentLoopActionBatchExecutionStepResult builds a non-stopping action
+// execution step result.
+func AgentLoopActionBatchExecutionStepResult(actionIndex int, actionName string, messages []AgentLoopMessage, toolCalls []AgentLoopToolCall) AgentLoopActionBatchStepResult {
+	return AgentLoopActionBatchStepResult{
+		ActionIndex: actionIndex,
+		ActionName:  actionName,
+		Messages:    CloneAgentLoopMessages(messages),
+		ToolCalls:   CloneAgentLoopToolCalls(toolCalls),
+	}
+}
+
+// AgentLoopActionBatchGateStepResult builds a stopping step result from a
+// handled action gate result.
+func AgentLoopActionBatchGateStepResult(actionIndex int, gate AgentLoopActionGateResult) AgentLoopActionBatchStepResult {
+	gateClone := gate.Clone()
+	return AgentLoopActionBatchStepResult{
+		ActionIndex: actionIndex,
+		ActionName:  gate.Decision.ActionName,
+		StopGate:    &gateClone,
+	}
+}
+
+// AppendAgentLoopActionBatchActionResult appends one executed action result to a
+// batch accumulator and records the 1-based processed action index. Inputs are
+// cloned so callers can keep mutating adapter-local message/tool slices.
+func AppendAgentLoopActionBatchActionResult(result *AgentLoopActionBatchResult, actionIndex int, messages []AgentLoopMessage, toolCalls []AgentLoopToolCall) {
+	if result == nil {
+		return
+	}
+	result.Messages = append(result.Messages, CloneAgentLoopMessages(messages)...)
+	result.ToolCalls = append(result.ToolCalls, CloneAgentLoopToolCalls(toolCalls)...)
+	result.ProcessedActionCount = actionIndex
+}
+
+// StopAgentLoopActionBatchAtGate appends a handled gate result, marks the batch
+// stopped, and records authorization state. Message/tool-call slices on the
+// batch and StopGate are isolated from the input and from each other.
+func StopAgentLoopActionBatchAtGate(result *AgentLoopActionBatchResult, actionIndex int, gate AgentLoopActionGateResult) {
+	if result == nil {
+		return
+	}
+	AppendAgentLoopActionBatchActionResult(result, actionIndex, gate.Messages, gate.ToolCalls)
+	gateClone := gate.Clone()
+	result.AuthorizationRequired = gate.AuthorizationRequired
+	result.StopGate = &gateClone
+}
+
+// ApplyAgentLoopActionBatchStepResult mutates the batch accumulator with one
+// runtime-neutral step result. It returns true when the step stopped the batch
+// at a gate; otherwise it appends execution output with action queue metadata.
+func ApplyAgentLoopActionBatchStepResult(result *AgentLoopActionBatchResult, preparedBatch AgentLoopPreparedActionBatch, step AgentLoopActionBatchStepResult) bool {
+	step = step.Clone()
+	if step.StopGate != nil {
+		StopAgentLoopActionBatchAtGate(result, step.ActionIndex, *step.StopGate)
+		return true
+	}
+	AppendAgentLoopActionBatchActionResultWithQueueMetadata(result, preparedBatch, step.ActionIndex, step.ActionName, step.Messages, step.ToolCalls)
+	return false
+}

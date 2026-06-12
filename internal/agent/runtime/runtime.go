@@ -98,16 +98,17 @@ type Store interface {
 // turn/session seams let callers attach the legacy daemon executor / LLM tool
 // loop / session mutator before the planner loop is fully migrated into Engine.
 type Engine struct {
-	store           Store
-	mu              sync.Mutex
-	tasks           map[string]*Task
-	runs            map[string]*Run
-	turns           map[string]*Turn
-	turnExecutor    TurnExecutor
-	llmTurnRunner   LLMTurnRunner
-	llmStageRunner  LLMStageRunner
-	agentLoopRunner AgentLoopRunner
-	sessionMutator  SessionMutator
+	store                   Store
+	mu                      sync.Mutex
+	tasks                   map[string]*Task
+	runs                    map[string]*Run
+	turns                   map[string]*Turn
+	turnExecutor            TurnExecutor
+	llmTurnRunner           LLMTurnRunner
+	llmStageRunner          LLMStageRunner
+	agentLoopRunner         AgentLoopRunner
+	agentLoopActionExecutor AgentLoopActionExecutor
+	sessionMutator          SessionMutator
 
 	events  chan Event // legacy single-consumer stream; prefer Subscribe.
 	nextSeq atomic.Int64

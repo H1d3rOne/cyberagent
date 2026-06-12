@@ -1,0 +1,1724 @@
+package daemon
+
+import "github.com/H1d3rOne/cyberagent/internal/agent/runtime"
+
+type daemonRuntimeCompatibilityTrampolineKind string
+
+const (
+	daemonRuntimeCompatibilityTrampolineLLMTurnRunner                        daemonRuntimeCompatibilityTrampolineKind = "llm_turn_runner"
+	daemonRuntimeCompatibilityTrampolineDeterministicRouteTurnExecutor       daemonRuntimeCompatibilityTrampolineKind = "deterministic_route_turn_executor"
+	daemonRuntimeCompatibilityTrampolineReplanActionContinuationTurnExecutor daemonRuntimeCompatibilityTrampolineKind = "replan_action_continuation_turn_executor"
+	daemonRuntimeCompatibilityTrampolinePlannerActionExecutionTurnExecutor   daemonRuntimeCompatibilityTrampolineKind = "planner_action_execution_turn_executor"
+)
+
+type daemonRuntimeCompatibilityTrampolineScope string
+
+const (
+	daemonRuntimeCompatibilityTrampolineScopeEngineSeam daemonRuntimeCompatibilityTrampolineScope = "engine_seam_compatibility"
+)
+
+type daemonRuntimeCompatibilityTrampolineOwner string
+
+const (
+	daemonRuntimeCompatibilityTrampolineOwnerExternalEngineSeam daemonRuntimeCompatibilityTrampolineOwner = "external_engine_seam"
+)
+
+type daemonRuntimeCompatibilityTrampolineRemovalStage string
+
+const (
+	daemonRuntimeCompatibilityTrampolineRemovalStageActiveCompatibility daemonRuntimeCompatibilityTrampolineRemovalStage = "active_compatibility"
+	daemonRuntimeCompatibilityTrampolineRemovalStageCandidate           daemonRuntimeCompatibilityTrampolineRemovalStage = "removal_candidate"
+)
+
+type daemonRuntimeCompatibilityRuntimeAPIMarker string
+
+const (
+	daemonRuntimeCompatibilityRuntimeAPIMarkerDeprecated          daemonRuntimeCompatibilityRuntimeAPIMarker = "deprecated"
+	daemonRuntimeCompatibilityRuntimeAPIMarkerCompatibilityNotice daemonRuntimeCompatibilityRuntimeAPIMarker = "compatibility_notice"
+)
+
+type daemonRuntimeCompatibilityTrampolineCallerSurface string
+
+const (
+	daemonRuntimeCompatibilityTrampolineCallerSurfaceExternalEngineSeamOnly daemonRuntimeCompatibilityTrampolineCallerSurface = "external_engine_seam_only"
+)
+
+type daemonLLMTurnRunnerCompatibilityRetirementStage string
+
+const (
+	daemonLLMTurnRunnerCompatibilityStageRuntimeAPIDeprecatedRetained daemonLLMTurnRunnerCompatibilityRetirementStage = "runtime_llm_turn_api_deprecated_retained"
+	daemonLLMTurnRunnerCompatibilityStageInternalCallersRetired       daemonLLMTurnRunnerCompatibilityRetirementStage = "internal_run_llm_turn_callers_retired"
+	daemonLLMTurnRunnerCompatibilityStageDefaultAttachmentRetained    daemonLLMTurnRunnerCompatibilityRetirementStage = "attach_engine_llm_turn_runner_retained_for_external_compatibility"
+	daemonLLMTurnRunnerCompatibilityStageAgentLoopMainPathOwned       daemonLLMTurnRunnerCompatibilityRetirementStage = "llm_tool_loop_main_path_uses_agent_loop_runner"
+	daemonLLMTurnRunnerCompatibilityStageNextBoundaryChosen           daemonLLMTurnRunnerCompatibilityRetirementStage = "turn_executor_compatibility_boundary_chosen"
+)
+
+type daemonLLMTurnRunnerCompatibilityDisposition string
+
+const (
+	daemonLLMTurnRunnerCompatibilityDispositionExternalCompatibilityRetained daemonLLMTurnRunnerCompatibilityDisposition = "external_compatibility_retained"
+	daemonLLMTurnRunnerCompatibilityDispositionNoInternalCallers             daemonLLMTurnRunnerCompatibilityDisposition = "no_internal_callers"
+	daemonLLMTurnRunnerCompatibilityDispositionPrimaryAgentLoopPath          daemonLLMTurnRunnerCompatibilityDisposition = "primary_agent_loop_path"
+	daemonLLMTurnRunnerCompatibilityDispositionAuditNextBoundary             daemonLLMTurnRunnerCompatibilityDisposition = "audit_next_boundary"
+)
+
+const daemonLLMTurnRunnerCompatibilityNextBoundaryTurnExecutorCompatibility = "turn_executor_compatibility_trampoline_retirement_readiness"
+
+type daemonTurnExecutorCompatibilityRetirementStage string
+
+const (
+	daemonTurnExecutorCompatibilityStageRuntimeAPICompatibilityRetained daemonTurnExecutorCompatibilityRetirementStage = "runtime_execute_turn_api_compatibility_notice_retained"
+	daemonTurnExecutorCompatibilityStageDeterministicTrampolineExternal daemonTurnExecutorCompatibilityRetirementStage = "deterministic_route_turn_executor_trampoline_external_only"
+	daemonTurnExecutorCompatibilityStageReplanTrampolineExternal        daemonTurnExecutorCompatibilityRetirementStage = "replan_action_continuation_turn_executor_trampoline_external_only"
+	daemonTurnExecutorCompatibilityStageDefaultAttachmentRetained       daemonTurnExecutorCompatibilityRetirementStage = "attach_engine_turn_executor_retained_for_external_compatibility"
+	daemonTurnExecutorCompatibilityStageAgentLoopMainPathOwned          daemonTurnExecutorCompatibilityRetirementStage = "turn_executor_main_path_uses_agent_loop_runner"
+	daemonTurnExecutorCompatibilityStageNextBoundaryChosen              daemonTurnExecutorCompatibilityRetirementStage = "planner_action_execution_turn_executor_boundary_chosen"
+)
+
+type daemonTurnExecutorCompatibilityDisposition string
+
+const (
+	daemonTurnExecutorCompatibilityDispositionExternalCompatibilityRetained daemonTurnExecutorCompatibilityDisposition = "external_compatibility_retained"
+	daemonTurnExecutorCompatibilityDispositionNoInternalCallers             daemonTurnExecutorCompatibilityDisposition = "no_internal_callers"
+	daemonTurnExecutorCompatibilityDispositionPrimaryAgentLoopPath          daemonTurnExecutorCompatibilityDisposition = "primary_agent_loop_path"
+	daemonTurnExecutorCompatibilityDispositionAuditNextBoundary             daemonTurnExecutorCompatibilityDisposition = "audit_next_boundary"
+)
+
+const daemonTurnExecutorCompatibilityNextBoundaryPlannerActionExecutionCompatibility = "planner_action_execution_turn_executor_compatibility_trampoline_retirement_readiness"
+
+type daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage string
+
+const (
+	daemonPlannerActionExecutionTurnExecutorCompatibilityStageRuntimeAPIExternalOnly    daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage = "runtime_execute_turn_api_external_only_retained"
+	daemonPlannerActionExecutionTurnExecutorCompatibilityStagePlannerTrampolineExternal daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage = "planner_action_execution_turn_executor_trampoline_external_only"
+	daemonPlannerActionExecutionTurnExecutorCompatibilityStageInternalCallersRetired    daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage = "planner_action_execution_internal_execute_turn_callers_retired"
+	daemonPlannerActionExecutionTurnExecutorCompatibilityStageAgentLoopMainPathOwned    daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage = "planner_action_execution_agent_loop_main_path_uses_agent_loop_runner"
+	daemonPlannerActionExecutionTurnExecutorCompatibilityStageActionExecutorTargetOwned daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage = "planner_action_execution_compatibility_target_uses_action_executor"
+	daemonPlannerActionExecutionTurnExecutorCompatibilityStageDefaultAttachmentRetained daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage = "attach_engine_turn_executor_retained_for_planner_action_compatibility"
+	daemonPlannerActionExecutionTurnExecutorCompatibilityStageExecuteTurnBoundaryChosen daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage = "execute_turn_api_removal_gate_chosen"
+)
+
+const daemonPlannerActionExecutionTurnExecutorCompatibilityNextBoundaryExecuteTurnAPI = "execute_turn_api_external_compatibility_removal_readiness"
+
+type daemonExecuteTurnAPICompatibilityRetirementStage string
+
+const (
+	daemonExecuteTurnAPICompatibilityStageRuntimeAPIDeprecatedRetained      daemonExecuteTurnAPICompatibilityRetirementStage = "runtime_execute_turn_api_deprecated_retained"
+	daemonExecuteTurnAPICompatibilityStageTurnExecutorDeprecatedRetained    daemonExecuteTurnAPICompatibilityRetirementStage = "runtime_turn_executor_interface_deprecated_retained"
+	daemonExecuteTurnAPICompatibilityStageAllTrampolinesExternalOnly        daemonExecuteTurnAPICompatibilityRetirementStage = "execute_turn_trampolines_all_external_only"
+	daemonExecuteTurnAPICompatibilityStageInternalCallersRetired            daemonExecuteTurnAPICompatibilityRetirementStage = "execute_turn_internal_callers_retired"
+	daemonExecuteTurnAPICompatibilityStageDefaultAttachmentRetained         daemonExecuteTurnAPICompatibilityRetirementStage = "attach_engine_turn_executor_retained_for_deprecated_external_compatibility"
+	daemonExecuteTurnAPICompatibilityStageRemovalBlockedByExternalPolicy    daemonExecuteTurnAPICompatibilityRetirementStage = "execute_turn_removal_blocked_by_external_api_policy"
+	daemonExecuteTurnAPICompatibilityStageDeprecatedAPIPolicyBoundaryChosen daemonExecuteTurnAPICompatibilityRetirementStage = "deprecated_execute_turn_api_policy_boundary_chosen"
+)
+
+const daemonExecuteTurnAPICompatibilityNextBoundaryDeprecatedAPIPolicy = "execute_turn_api_deprecation_marker_and_external_migration_window"
+
+type daemonDeprecatedRuntimeAPIPolicyFamily string
+
+const (
+	daemonDeprecatedRuntimeAPIPolicyFamilyRunLLMTurn  daemonDeprecatedRuntimeAPIPolicyFamily = "run_llm_turn"
+	daemonDeprecatedRuntimeAPIPolicyFamilyExecuteTurn daemonDeprecatedRuntimeAPIPolicyFamily = "execute_turn"
+)
+
+type daemonDeprecatedRuntimeAPIMigrationWindow string
+
+const (
+	daemonDeprecatedRuntimeAPIMigrationWindowCurrentReleaseGate daemonDeprecatedRuntimeAPIMigrationWindow = "current_release_gate"
+)
+
+type daemonDeprecatedRuntimeAPIDefaultAttachmentPolicy string
+
+const (
+	daemonDeprecatedRuntimeAPIDefaultAttachmentRetainedUntilReleaseGate daemonDeprecatedRuntimeAPIDefaultAttachmentPolicy = "retained_until_release_gate"
+)
+
+type daemonDeprecatedRuntimeAPIOptInPolicy string
+
+const (
+	daemonDeprecatedRuntimeAPIOptInDeferredUntilAfterMigrationWindow daemonDeprecatedRuntimeAPIOptInPolicy = "opt_in_deferred_until_after_migration_window"
+)
+
+const daemonDeprecatedRuntimeAPIPolicyNextBoundaryReleaseDocsAndOptInAudit = "deprecated_runtime_api_release_docs_and_opt_in_flag_audit"
+
+type daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStage string
+
+const (
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageReleaseNotesCovered  daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStage = "release_notes_deprecated_runtime_api_notice_covered"
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageAPIContractCovered   daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStage = "api_contract_deprecated_runtime_api_notice_covered"
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageReleaseChecklistGate daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStage = "release_checklist_current_release_gate_covered"
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageReleasePlanCovered   daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStage = "release_plan_migration_window_covered"
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageOptInFlagDeferred    daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStage = "opt_in_compatibility_flag_deferred"
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageNextBoundaryChosen   daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStage = "post_release_gate_opt_in_flag_boundary_chosen"
+)
+
+type daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecision string
+
+const (
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionDocsPublished             daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecision = "release_api_docs_published"
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionDefaultAttachmentRetained daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecision = "default_attachment_retained_until_release_gate"
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionOptInDeferred             daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecision = "opt_in_flag_deferred_until_after_current_release_gate"
+	daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionAuditNextBoundary         daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecision = "audit_next_boundary"
+)
+
+const daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditNextBoundaryPostReleaseGateFlagDecision = "post_release_gate_deprecated_runtime_api_opt_in_flag_decision"
+
+type daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStage string
+
+const (
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageCurrentGateActive                 daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStage = "current_release_gate_still_active"
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageDefaultAttachmentRetained         daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStage = "default_attachment_retained_for_next_gate"
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageExistingRuntimeFallbackOnly       daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStage = "existing_runtime_fallback_switch_only"
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageExplicitCompatibilityFlagNotAdded daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStage = "explicit_deprecated_runtime_api_flag_not_added"
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageNextReleaseGateReassessmentChosen daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStage = "next_release_gate_reassessment_boundary_chosen"
+)
+
+type daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecision string
+
+const (
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionCurrentGateStillActive       daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecision = "current_release_gate_still_active"
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionKeepDefaultAttachments       daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecision = "keep_default_compatibility_attachments"
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionExistingRuntimeFallbackOnly  daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecision = "existing_runtime_fallback_switch_only"
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionDoNotIntroduceFlagBeforeGate daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecision = "do_not_introduce_opt_in_flag_before_current_gate"
+	daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionAuditNextReleaseGate         daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecision = "audit_next_release_gate_boundary"
+)
+
+const daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionNextBoundaryNextReleaseGateReassessment = "next_release_gate_deprecated_runtime_api_opt_in_flag_reassessment"
+
+type daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStage string
+
+const (
+	daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageN224BoundaryConsumed        daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStage = "n224_boundary_consumed"
+	daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageCurrentGateCompletionNeeded daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStage = "current_release_gate_completion_needed"
+	daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageDefaultAttachmentsPreserved daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStage = "default_compatibility_attachments_preserved"
+	daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageNoDedicatedFlagBeforeGate   daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStage = "no_dedicated_opt_in_flag_before_gate"
+	daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageNextBoundaryChosen          daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStage = "current_release_gate_completion_boundary_chosen"
+)
+
+type daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecision string
+
+const (
+	daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionGateNotComplete       daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecision = "gate_not_complete_no_runtime_config_change"
+	daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionPreserveDefaults      daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecision = "preserve_default_compatibility_attachments"
+	daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionDoNotAddFlag          daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecision = "do_not_add_dedicated_opt_in_flag_before_gate"
+	daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionAuditReleaseReadiness daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecision = "audit_current_release_gate_completion_evidence"
+)
+
+const daemonDeprecatedRuntimeAPINextReleaseGateReassessmentNextBoundaryCurrentGateCompletionEvidence = "current_release_gate_completion_evidence_and_release_readiness_audit"
+
+type daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage string
+
+const (
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageN225BoundaryConsumed       daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage = "n225_boundary_consumed"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageReleaseDocsPresent         daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage = "release_api_docs_evidence_present"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageReleaseChecklistPresent    daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage = "release_checklist_evidence_present"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageSourceAuditPresent         daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage = "source_audit_evidence_present"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageRegressionEvidenceRecorded daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage = "regression_evidence_recorded"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageWorkingTreeNotTagReady     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage = "working_tree_not_tag_ready"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageDefaultBehaviorPreserved   daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage = "default_runtime_behavior_preserved"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageNextBoundaryChosen         daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage = "release_candidate_flag_reduction_boundary_chosen"
+)
+
+type daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecision string
+
+const (
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionEvidenceCollected  daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecision = "release_readiness_evidence_collected"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionRegressionPassed   daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecision = "release_readiness_regression_commands_passed"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionReleaseNotTagReady daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecision = "release_not_tag_ready_worktree_dirty"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionPreserveDefaults   daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecision = "preserve_deprecated_runtime_api_defaults"
+	daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionAuditNextBoundary  daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecision = "audit_release_candidate_flag_reduction_boundary"
+)
+
+const daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceNextBoundaryReleaseCandidateStabilization = "release_candidate_stabilization_and_deprecated_runtime_api_flag_reduction_decision"
+
+type daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage string
+
+const (
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageN226BoundaryConsumed        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage = "n226_release_candidate_boundary_consumed"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageReleaseEvidenceAccepted     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage = "release_readiness_evidence_accepted"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageDiffInventoryRecorded       daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage = "release_candidate_diff_inventory_recorded"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageWorkingTreeBlocksReduction  daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage = "working_tree_blocks_flag_reduction"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageDefaultAttachmentsPreserved daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage = "default_compatibility_attachments_preserved"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageDedicatedFlagNotIntroduced  daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage = "dedicated_opt_in_flag_not_introduced"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageNextArchiveBoundaryChosen   daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage = "release_candidate_archive_boundary_chosen"
+)
+
+type daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecision string
+
+const (
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEvidenceAccepted    daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecision = "release_readiness_evidence_accepted"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionInventoryRecorded   daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecision = "release_candidate_diff_inventory_recorded"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionReductionBlocked    daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecision = "flag_reduction_blocked_until_diff_stabilized"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionPreserveDefaults    daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecision = "preserve_default_compatibility_attachments"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionDoNotIntroduceFlag  daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecision = "do_not_introduce_dedicated_opt_in_flag"
+	daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionArchiveNextBoundary daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecision = "audit_release_candidate_diff_archive_and_tag_readiness"
+)
+
+const daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionNextBoundaryDiffArchive = "release_candidate_diff_archive_and_tag_readiness_audit"
+
+type daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage string
+
+const (
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageN227BoundaryConsumed        daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage = "n227_diff_archive_boundary_consumed"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageArchiveDocumentCreated      daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage = "release_candidate_diff_archive_document_created"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageTrackedInventoryRecorded    daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage = "tracked_diff_inventory_recorded"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageUntrackedInventoryRecorded  daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage = "untracked_diff_inventory_recorded"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageTagReadinessBlocked         daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage = "tag_readiness_blocked_until_stage_commit"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageDefaultAttachmentsPreserved daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage = "default_compatibility_attachments_preserved"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageNextStageCommitGateChosen   daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage = "stage_commit_full_regression_boundary_chosen"
+)
+
+type daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecision string
+
+const (
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionArchiveCreated      daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecision = "release_candidate_diff_archive_created"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionInventoryRecorded   daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecision = "diff_inventory_recorded"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionTagReadinessBlocked daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecision = "tag_readiness_blocked_until_stage_commit"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionPreserveDefaults    daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecision = "preserve_default_compatibility_attachments"
+	daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionStageCommitNextGate daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecision = "audit_stage_commit_and_full_regression_gate"
+)
+
+const daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessNextBoundaryStageCommit = "release_candidate_stage_commit_and_full_regression_gate"
+
+type daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage string
+
+const (
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageN228BoundaryConsumed        daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage = "n228_stage_commit_boundary_consumed"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageArchiveArtifactAccepted     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage = "diff_archive_artifact_accepted"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageWorkingTreeStillDirty       daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage = "working_tree_still_dirty"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageStageCommitNotPerformed     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage = "stage_commit_not_performed_without_authorization"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageFullRegressionRecorded      daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage = "full_release_regression_recorded"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageDefaultAttachmentsPreserved daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage = "default_compatibility_attachments_preserved"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageManualAuthorizationBoundary daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage = "manual_stage_commit_tag_authorization_boundary_chosen"
+)
+
+type daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecision string
+
+const (
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionArchiveAccepted     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecision = "diff_archive_accepted_for_gate"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionStillNotTagReady    daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecision = "still_not_tag_ready_working_tree_dirty"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionDoNotStageCommit    daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecision = "do_not_stage_commit_or_tag_without_authorization"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionRegressionRecorded  daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecision = "full_release_regression_recorded"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionPreserveDefaults    daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecision = "preserve_default_compatibility_attachments"
+	daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionManualAuthorization daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecision = "manual_stage_commit_tag_authorization_required"
+)
+
+const daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateNextBoundaryManualAuthorization = "manual_stage_commit_and_tag_authorization"
+
+type daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStage string
+
+const (
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageN229BoundaryConsumed          daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStage = "n229_manual_authorization_boundary_consumed"
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageExplicitAuthorizationNeeded   daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStage = "explicit_user_authorization_needed"
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageGitOpsNotRun                  daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStage = "git_stage_commit_tag_not_run"
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageRuntimeDefaultsPreserved      daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStage = "runtime_defaults_preserved"
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageCompatibilityReductionBlocked daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStage = "compatibility_reduction_blocked"
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageAwaitUserBoundarySelected     daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStage = "await_user_authorization_boundary_selected"
+)
+
+type daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecision string
+
+const (
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionWaitForUserAuthorization daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecision = "wait_for_explicit_user_authorization"
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionDoNotRunGitOps           daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecision = "do_not_run_git_stage_commit_tag"
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionPreserveDefaults         daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecision = "preserve_default_compatibility_attachments"
+	daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionBlockReduction           daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecision = "block_deprecated_runtime_api_reduction"
+)
+
+const daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationNextBoundaryAwaitUser = "await_explicit_user_stage_commit_tag_authorization"
+
+const (
+	daemonRuntimeCompatibilityEntrypointLLMTurnRunner                        = "daemonAgentLLMTurnRunner.RunLLMTurn"
+	daemonRuntimeCompatibilityEntrypointDeterministicRouteTurnExecutor       = "daemonAgentTurnExecutor.executeDeterministicRouteTurn"
+	daemonRuntimeCompatibilityEntrypointReplanActionContinuationTurnExecutor = "daemonAgentTurnExecutor.executeReplanActionContinuationTurn"
+	daemonRuntimeCompatibilityEntrypointPlannerActionExecutionTurnExecutor   = "daemonAgentTurnExecutor.executePlannerActionExecutionTurn"
+	daemonRuntimeDirectEntrypointDeterministicRouteAgentLoop                 = "agentManager.runRuntimeDeterministicRoute"
+	daemonRuntimeDirectEntrypointLLMToolLoopAgentLoop                        = "agentManager.runRuntimeLLMToolLoopAgentLoop"
+	daemonRuntimeDirectEntrypointReplanContinuationAgentLoop                 = "agentManager.runRuntimeReplanActionContinuationAgentLoop"
+	daemonRuntimeDirectEntrypointPlannerActionExecutionAgentLoop             = "agentManager.runRuntimePlannerActionExecution"
+)
+
+type daemonRuntimeCompatibilityTrampolineEntry struct {
+	kind       daemonRuntimeCompatibilityTrampolineKind
+	mode       runtime.AgentLoopMode
+	entrypoint string
+	target     string
+	scope      daemonRuntimeCompatibilityTrampolineScope
+}
+
+type daemonRuntimeCompatibilityTrampolineOwnershipEntry struct {
+	kind          daemonRuntimeCompatibilityTrampolineKind
+	owner         daemonRuntimeCompatibilityTrampolineOwner
+	replacement   string
+	stage         daemonRuntimeCompatibilityTrampolineRemovalStage
+	removalGate   string
+	apiMarker     daemonRuntimeCompatibilityRuntimeAPIMarker
+	apiNote       string
+	callerSurface daemonRuntimeCompatibilityTrampolineCallerSurface
+	callerAudit   string
+}
+
+type daemonLLMTurnRunnerCompatibilityRetirementEntry struct {
+	component    string
+	stage        daemonLLMTurnRunnerCompatibilityRetirementStage
+	disposition  daemonLLMTurnRunnerCompatibilityDisposition
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonTurnExecutorCompatibilityRetirementEntry struct {
+	component    string
+	stage        daemonTurnExecutorCompatibilityRetirementStage
+	disposition  daemonTurnExecutorCompatibilityDisposition
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementEntry struct {
+	component    string
+	stage        daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage
+	disposition  daemonTurnExecutorCompatibilityDisposition
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonExecuteTurnAPICompatibilityRetirementEntry struct {
+	component    string
+	stage        daemonExecuteTurnAPICompatibilityRetirementStage
+	disposition  daemonTurnExecutorCompatibilityDisposition
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonDeprecatedRuntimeAPIPolicyEntry struct {
+	family                  daemonDeprecatedRuntimeAPIPolicyFamily
+	runtimeAPI              string
+	compatibilityRunner     string
+	attachAPI               string
+	replacement             string
+	apiMarker               daemonRuntimeCompatibilityRuntimeAPIMarker
+	callerSurface           daemonRuntimeCompatibilityTrampolineCallerSurface
+	migrationWindow         daemonDeprecatedRuntimeAPIMigrationWindow
+	defaultAttachmentPolicy daemonDeprecatedRuntimeAPIDefaultAttachmentPolicy
+	optInPolicy             daemonDeprecatedRuntimeAPIOptInPolicy
+	removalGate             string
+	evidence                string
+	nextBoundary            string
+	nextStep                string
+}
+
+type daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditEntry struct {
+	component    string
+	document     string
+	stage        daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStage
+	decision     daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecision
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionEntry struct {
+	component    string
+	stage        daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStage
+	decision     daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecision
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonDeprecatedRuntimeAPINextReleaseGateReassessmentEntry struct {
+	component    string
+	stage        daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStage
+	decision     daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecision
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceEntry struct {
+	component    string
+	artifact     string
+	stage        daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage
+	decision     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecision
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEntry struct {
+	component    string
+	artifact     string
+	stage        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage
+	decision     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecision
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessEntry struct {
+	component    string
+	artifact     string
+	stage        daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage
+	decision     daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecision
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateEntry struct {
+	component    string
+	artifact     string
+	stage        daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage
+	decision     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecision
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationEntry struct {
+	component    string
+	artifact     string
+	stage        daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStage
+	decision     daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecision
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+var daemonRuntimeCompatibilityTrampolineTable = [...]daemonRuntimeCompatibilityTrampolineEntry{
+	{
+		kind:       daemonRuntimeCompatibilityTrampolineLLMTurnRunner,
+		mode:       runtime.AgentLoopModeLLMToolLoop,
+		entrypoint: daemonRuntimeCompatibilityEntrypointLLMTurnRunner,
+		target:     "agentManager.runRuntimeAgentLoopResult",
+		scope:      daemonRuntimeCompatibilityTrampolineScopeEngineSeam,
+	},
+	{
+		kind:       daemonRuntimeCompatibilityTrampolineDeterministicRouteTurnExecutor,
+		mode:       runtime.AgentLoopModeDeterministicRoute,
+		entrypoint: daemonRuntimeCompatibilityEntrypointDeterministicRouteTurnExecutor,
+		target:     "agentManager.runAgentDeterministicRouteAgentLoopResult",
+		scope:      daemonRuntimeCompatibilityTrampolineScopeEngineSeam,
+	},
+	{
+		kind:       daemonRuntimeCompatibilityTrampolineReplanActionContinuationTurnExecutor,
+		mode:       runtime.AgentLoopModeReplanContinuation,
+		entrypoint: daemonRuntimeCompatibilityEntrypointReplanActionContinuationTurnExecutor,
+		target:     "agentManager.runRuntimeAgentLoopResult",
+		scope:      daemonRuntimeCompatibilityTrampolineScopeEngineSeam,
+	},
+	{
+		kind:       daemonRuntimeCompatibilityTrampolinePlannerActionExecutionTurnExecutor,
+		mode:       runtime.AgentLoopModePlannerActionExecution,
+		entrypoint: daemonRuntimeCompatibilityEntrypointPlannerActionExecutionTurnExecutor,
+		target:     "daemonAgentLoopActionExecutor.ExecuteAgentLoopAction",
+		scope:      daemonRuntimeCompatibilityTrampolineScopeEngineSeam,
+	},
+}
+
+var daemonRuntimeCompatibilityTrampolineOwnershipTable = [...]daemonRuntimeCompatibilityTrampolineOwnershipEntry{
+	{
+		kind:          daemonRuntimeCompatibilityTrampolineLLMTurnRunner,
+		owner:         daemonRuntimeCompatibilityTrampolineOwnerExternalEngineSeam,
+		replacement:   "runtime.Engine.RunAgentLoop",
+		stage:         daemonRuntimeCompatibilityTrampolineRemovalStageActiveCompatibility,
+		removalGate:   "migrate runtime.Engine.RunLLMTurn compatibility callers to Engine.RunAgentLoop",
+		apiMarker:     daemonRuntimeCompatibilityRuntimeAPIMarkerDeprecated,
+		apiNote:       "runtime.Engine.RunLLMTurn and LLMTurnRunner are marked Deprecated; prefer runtime.Engine.RunAgentLoop",
+		callerSurface: daemonRuntimeCompatibilityTrampolineCallerSurfaceExternalEngineSeamOnly,
+		callerAudit:   "no non-test RunLLMTurn callers outside runtime API definitions, daemon trampoline implementation, AttachEngine attachment, and compatibility audit metadata",
+	},
+	{
+		kind:          daemonRuntimeCompatibilityTrampolineDeterministicRouteTurnExecutor,
+		owner:         daemonRuntimeCompatibilityTrampolineOwnerExternalEngineSeam,
+		replacement:   "runtime.Engine.RunAgentLoop",
+		stage:         daemonRuntimeCompatibilityTrampolineRemovalStageActiveCompatibility,
+		removalGate:   "migrate external runtime.Engine.ExecuteTurn deterministic_route callers to Engine.RunAgentLoop",
+		apiMarker:     daemonRuntimeCompatibilityRuntimeAPIMarkerDeprecated,
+		apiNote:       "runtime.Engine.ExecuteTurn and TurnExecutor are marked Deprecated; internal deterministic_route callers now use Engine.RunAgentLoop",
+		callerSurface: daemonRuntimeCompatibilityTrampolineCallerSurfaceExternalEngineSeamOnly,
+		callerAudit:   "runRuntimeDeterministicRoute uses RunAgentLoop; deterministic route TurnExecutor branch remains reachable only through attached runtime.Engine.ExecuteTurn compatibility input",
+	},
+	{
+		kind:          daemonRuntimeCompatibilityTrampolineReplanActionContinuationTurnExecutor,
+		owner:         daemonRuntimeCompatibilityTrampolineOwnerExternalEngineSeam,
+		replacement:   "runtime.Engine.RunAgentLoop",
+		stage:         daemonRuntimeCompatibilityTrampolineRemovalStageActiveCompatibility,
+		removalGate:   "migrate runtime.Engine.ExecuteTurn replan_action_continuation callers to Engine.RunAgentLoop",
+		apiMarker:     daemonRuntimeCompatibilityRuntimeAPIMarkerDeprecated,
+		apiNote:       "runtime.Engine.ExecuteTurn and TurnExecutor are marked Deprecated; replan_action_continuation migration remains gated on Engine.RunAgentLoop",
+		callerSurface: daemonRuntimeCompatibilityTrampolineCallerSurfaceExternalEngineSeamOnly,
+		callerAudit:   "no non-test agentReplanActionContinuationTurnContextFromRequest references; replan branch remains reachable only through attached runtime.Engine.ExecuteTurn compatibility input",
+	},
+	{
+		kind:          daemonRuntimeCompatibilityTrampolinePlannerActionExecutionTurnExecutor,
+		owner:         daemonRuntimeCompatibilityTrampolineOwnerExternalEngineSeam,
+		replacement:   "runtime.Engine.RunAgentLoop / runtime.Engine.ExecuteAgentLoopAction",
+		stage:         daemonRuntimeCompatibilityTrampolineRemovalStageActiveCompatibility,
+		removalGate:   "migrate runtime.Engine.ExecuteTurn planner_action_execution callers to Engine.RunAgentLoop or Engine.ExecuteAgentLoopAction",
+		apiMarker:     daemonRuntimeCompatibilityRuntimeAPIMarkerDeprecated,
+		apiNote:       "runtime.Engine.ExecuteTurn and TurnExecutor are marked Deprecated; internal planner_action_execution callers now use Engine.RunAgentLoop and Engine.ExecuteAgentLoopAction",
+		callerSurface: daemonRuntimeCompatibilityTrampolineCallerSurfaceExternalEngineSeamOnly,
+		callerAudit:   "runRuntimePlannerActionExecution uses RunAgentLoop; planner action TurnExecutor branch remains reachable only through attached runtime.Engine.ExecuteTurn compatibility input",
+	},
+}
+
+var daemonLLMTurnRunnerCompatibilityRetirementTable = [...]daemonLLMTurnRunnerCompatibilityRetirementEntry{
+	{
+		component:    "runtime_engine_run_llm_turn_api",
+		stage:        daemonLLMTurnRunnerCompatibilityStageRuntimeAPIDeprecatedRetained,
+		disposition:  daemonLLMTurnRunnerCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "runtime.Engine.RunLLMTurn and LLMTurnRunner are deprecated and retained only as an external engine seam; new bounded loop callers should use Engine.RunAgentLoop",
+		nextBoundary: daemonLLMTurnRunnerCompatibilityNextBoundaryTurnExecutorCompatibility,
+		nextStep:     "keep RunLLMTurn active for external compatibility until deprecated API callers are explicitly migrated to Engine.RunAgentLoop",
+	},
+	{
+		component:    "daemon_llm_turn_runner_trampoline",
+		stage:        daemonLLMTurnRunnerCompatibilityStageInternalCallersRetired,
+		disposition:  daemonLLMTurnRunnerCompatibilityDispositionNoInternalCallers,
+		evidence:     "non-test RunLLMTurn callers are limited to the runtime API dispatch; daemonAgentLLMTurnRunner is not used by SendMessage or internal loop callers",
+		nextBoundary: daemonLLMTurnRunnerCompatibilityNextBoundaryTurnExecutorCompatibility,
+		nextStep:     "do not delete the trampoline yet; it still services external Engine.RunLLMTurn compatibility input",
+	},
+	{
+		component:    "send_message_llm_tool_loop_main_path",
+		stage:        daemonLLMTurnRunnerCompatibilityStageAgentLoopMainPathOwned,
+		disposition:  daemonLLMTurnRunnerCompatibilityDispositionPrimaryAgentLoopPath,
+		evidence:     "SendMessage LLM branches call runRuntimeLLMToolLoopAgentLoop, which normalizes AgentLoopModeLLMToolLoop and dispatches through runRuntimeAgentLoopResult / Engine.RunAgentLoop",
+		nextBoundary: daemonLLMTurnRunnerCompatibilityNextBoundaryTurnExecutorCompatibility,
+		nextStep:     "keep the LLM tool loop main path on AgentLoopRunner while the deprecated LLMTurnRunner API remains external-only",
+	},
+	{
+		component:    "attach_engine_llm_turn_runner",
+		stage:        daemonLLMTurnRunnerCompatibilityStageDefaultAttachmentRetained,
+		disposition:  daemonLLMTurnRunnerCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "agentManager.AttachEngine still attaches daemonAgentLLMTurnRunner so existing external Engine.RunLLMTurn callers receive the compatibility trampoline instead of ErrLLMTurnRunnerNotAttached",
+		nextBoundary: daemonLLMTurnRunnerCompatibilityNextBoundaryTurnExecutorCompatibility,
+		nextStep:     "only remove AttachLLMTurnRunner after the deprecated runtime API is no longer supported",
+	},
+	{
+		component:    "llm_turn_runner_next_boundary",
+		stage:        daemonLLMTurnRunnerCompatibilityStageNextBoundaryChosen,
+		disposition:  daemonLLMTurnRunnerCompatibilityDispositionAuditNextBoundary,
+		evidence:     "LLMTurnRunner has no internal production callers and is narrowed to external compatibility; the remaining active compatibility trampolines are TurnExecutor deterministic/replan entrypoints",
+		nextBoundary: daemonLLMTurnRunnerCompatibilityNextBoundaryTurnExecutorCompatibility,
+		nextStep:     "P0.5-N219 should audit deterministic_route and replan_action_continuation TurnExecutor compatibility trampolines for external-only status or further narrowing",
+	},
+}
+
+var daemonTurnExecutorCompatibilityRetirementTable = [...]daemonTurnExecutorCompatibilityRetirementEntry{
+	{
+		component:    "runtime_engine_execute_turn_api",
+		stage:        daemonTurnExecutorCompatibilityStageRuntimeAPICompatibilityRetained,
+		disposition:  daemonTurnExecutorCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "runtime.Engine.ExecuteTurn is retained as an AgentLoop compatibility API and its non-test direct call surface is limited to runtime API dispatch into the attached executor",
+		nextBoundary: daemonTurnExecutorCompatibilityNextBoundaryPlannerActionExecutionCompatibility,
+		nextStep:     "keep ExecuteTurn active for external compatibility until remaining explicit compatibility branches are migrated to Engine.RunAgentLoop or narrower runtime APIs and the API policy gate is decided",
+	},
+	{
+		component:    "deterministic_route_turn_executor_trampoline",
+		stage:        daemonTurnExecutorCompatibilityStageDeterministicTrampolineExternal,
+		disposition:  daemonTurnExecutorCompatibilityDispositionNoInternalCallers,
+		evidence:     "internal deterministic route callers now build AgentLoopRequest and enter runRuntimeAgentLoopResult / Engine.RunAgentLoop; the TurnExecutor branch only services attached ExecuteTurn compatibility input",
+		nextBoundary: daemonTurnExecutorCompatibilityNextBoundaryPlannerActionExecutionCompatibility,
+		nextStep:     "do not delete the deterministic_route trampoline while external Engine.ExecuteTurn deterministic_route callers may still exist",
+	},
+	{
+		component:    "replan_action_continuation_turn_executor_trampoline",
+		stage:        daemonTurnExecutorCompatibilityStageReplanTrampolineExternal,
+		disposition:  daemonTurnExecutorCompatibilityDispositionNoInternalCallers,
+		evidence:     "SendMessage follow-up continuation uses runRuntimeReplanActionContinuationAgentLoop and Engine.RunAgentLoop; the TurnExecutor branch only services attached ExecuteTurn compatibility input",
+		nextBoundary: daemonTurnExecutorCompatibilityNextBoundaryPlannerActionExecutionCompatibility,
+		nextStep:     "do not delete the replan_action_continuation trampoline while external Engine.ExecuteTurn replan callers may still exist",
+	},
+	{
+		component:    "attach_engine_turn_executor",
+		stage:        daemonTurnExecutorCompatibilityStageDefaultAttachmentRetained,
+		disposition:  daemonTurnExecutorCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "agentManager.AttachEngine still attaches daemonAgentTurnExecutor so existing external Engine.ExecuteTurn callers receive compatibility dispatch instead of ErrTurnExecutorNotAttached",
+		nextBoundary: daemonTurnExecutorCompatibilityNextBoundaryPlannerActionExecutionCompatibility,
+		nextStep:     "only remove AttachTurnExecutor after the ExecuteTurn compatibility API and its explicit trampolines are retired",
+	},
+	{
+		component:    "deterministic_route_agent_loop_main_path",
+		stage:        daemonTurnExecutorCompatibilityStageAgentLoopMainPathOwned,
+		disposition:  daemonTurnExecutorCompatibilityDispositionPrimaryAgentLoopPath,
+		evidence:     "runRuntimeDeterministicRouteWithToolServices creates an AgentLoopModeDeterministicRoute request and dispatches through runRuntimeAgentLoopResult / Engine.RunAgentLoop",
+		nextBoundary: daemonTurnExecutorCompatibilityNextBoundaryPlannerActionExecutionCompatibility,
+		nextStep:     "keep deterministic route SendMessage/main callers on AgentLoopRunner while ExecuteTurn remains external-only compatibility",
+	},
+	{
+		component:    "replan_action_continuation_agent_loop_main_path",
+		stage:        daemonTurnExecutorCompatibilityStageAgentLoopMainPathOwned,
+		disposition:  daemonTurnExecutorCompatibilityDispositionPrimaryAgentLoopPath,
+		evidence:     "runRuntimeReplanActionContinuationAgentLoop normalizes AgentLoopModeReplanContinuation and dispatches through runRuntimeAgentLoopResult / Engine.RunAgentLoop",
+		nextBoundary: daemonTurnExecutorCompatibilityNextBoundaryPlannerActionExecutionCompatibility,
+		nextStep:     "keep replan continuation SendMessage/main callers on AgentLoopRunner while ExecuteTurn remains external-only compatibility",
+	},
+	{
+		component:    "turn_executor_next_boundary",
+		stage:        daemonTurnExecutorCompatibilityStageNextBoundaryChosen,
+		disposition:  daemonTurnExecutorCompatibilityDispositionAuditNextBoundary,
+		evidence:     "deterministic_route and replan_action_continuation are external-only; daemonAgentTurnExecutor.ExecuteTurn still exposes planner_action_execution as an explicit compatibility trampoline",
+		nextBoundary: daemonTurnExecutorCompatibilityNextBoundaryPlannerActionExecutionCompatibility,
+		nextStep:     "P0.5-N220 should audit planner_action_execution ExecuteTurn compatibility and decide whether the whole TurnExecutor API can move toward removal candidacy",
+	},
+}
+
+var daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementTable = [...]daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementEntry{
+	{
+		component:    "runtime_engine_execute_turn_api_after_planner_audit",
+		stage:        daemonPlannerActionExecutionTurnExecutorCompatibilityStageRuntimeAPIExternalOnly,
+		disposition:  daemonTurnExecutorCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "after deterministic, replan, and planner_action_execution audits, non-test ExecuteTurn direct calls are limited to runtime API dispatch into the attached TurnExecutor",
+		nextBoundary: daemonPlannerActionExecutionTurnExecutorCompatibilityNextBoundaryExecuteTurnAPI,
+		nextStep:     "evaluate whether ExecuteTurn/TurnExecutor should be marked deprecated or split into a narrower external compatibility seam before deletion candidacy",
+	},
+	{
+		component:    "planner_action_execution_turn_executor_trampoline",
+		stage:        daemonPlannerActionExecutionTurnExecutorCompatibilityStagePlannerTrampolineExternal,
+		disposition:  daemonTurnExecutorCompatibilityDispositionNoInternalCallers,
+		evidence:     "daemonAgentTurnExecutor.ExecuteTurn still accepts kind=planner_action_execution, but internal planner action callers no longer call Engine.ExecuteTurn",
+		nextBoundary: daemonPlannerActionExecutionTurnExecutorCompatibilityNextBoundaryExecuteTurnAPI,
+		nextStep:     "retain the planner_action_execution trampoline only for external ExecuteTurn compatibility until the API removal gate is decided",
+	},
+	{
+		component:    "planner_action_execution_internal_callers",
+		stage:        daemonPlannerActionExecutionTurnExecutorCompatibilityStageInternalCallersRetired,
+		disposition:  daemonTurnExecutorCompatibilityDispositionNoInternalCallers,
+		evidence:     "runRuntimePlannerActionExecution builds AgentLoopModePlannerActionExecution and dispatches through runRuntimeAgentLoopResult / Engine.RunAgentLoop",
+		nextBoundary: daemonPlannerActionExecutionTurnExecutorCompatibilityNextBoundaryExecuteTurnAPI,
+		nextStep:     "keep internal planner action execution callers on AgentLoopRunner and reject regressions that reintroduce ExecuteTurn dispatch",
+	},
+	{
+		component:    "planner_action_execution_agent_loop_main_path",
+		stage:        daemonPlannerActionExecutionTurnExecutorCompatibilityStageAgentLoopMainPathOwned,
+		disposition:  daemonTurnExecutorCompatibilityDispositionPrimaryAgentLoopPath,
+		evidence:     "AgentLoopModePlannerActionExecution reaches runAgentPlannerActionExecutionAgentLoopResult through daemonAgentLoopRunner / Engine.RunAgentLoop",
+		nextBoundary: daemonPlannerActionExecutionTurnExecutorCompatibilityNextBoundaryExecuteTurnAPI,
+		nextStep:     "keep planner action execution main path on AgentLoopRunner while ExecuteTurn remains external-only compatibility",
+	},
+	{
+		component:    "planner_action_execution_turn_executor_target",
+		stage:        daemonPlannerActionExecutionTurnExecutorCompatibilityStageActionExecutorTargetOwned,
+		disposition:  daemonTurnExecutorCompatibilityDispositionPrimaryAgentLoopPath,
+		evidence:     "executePlannerActionExecutionTurn delegates to daemonAgentLoopActionExecutor.ExecuteAgentLoopAction and no longer calls daemonPlannerActionExecutionExecutorForManager directly",
+		nextBoundary: daemonPlannerActionExecutionTurnExecutorCompatibilityNextBoundaryExecuteTurnAPI,
+		nextStep:     "keep the compatibility trampoline targeting ActionExecutor while the ExecuteTurn API removal gate is audited",
+	},
+	{
+		component:    "attach_engine_turn_executor_after_planner_audit",
+		stage:        daemonPlannerActionExecutionTurnExecutorCompatibilityStageDefaultAttachmentRetained,
+		disposition:  daemonTurnExecutorCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "agentManager.AttachEngine still attaches daemonAgentTurnExecutor so existing external ExecuteTurn planner_action_execution callers receive compatibility dispatch",
+		nextBoundary: daemonPlannerActionExecutionTurnExecutorCompatibilityNextBoundaryExecuteTurnAPI,
+		nextStep:     "only remove AttachTurnExecutor after the ExecuteTurn compatibility API is deprecated or retired",
+	},
+	{
+		component:    "execute_turn_api_next_boundary",
+		stage:        daemonPlannerActionExecutionTurnExecutorCompatibilityStageExecuteTurnBoundaryChosen,
+		disposition:  daemonTurnExecutorCompatibilityDispositionAuditNextBoundary,
+		evidence:     "all audited ExecuteTurn branches are external-only compatibility; none are ready for removal until the runtime API compatibility policy is decided",
+		nextBoundary: daemonPlannerActionExecutionTurnExecutorCompatibilityNextBoundaryExecuteTurnAPI,
+		nextStep:     "P0.5-N221 should audit ExecuteTurn/TurnExecutor API deprecation or removal candidacy as a whole",
+	},
+}
+
+var daemonExecuteTurnAPICompatibilityRetirementTable = [...]daemonExecuteTurnAPICompatibilityRetirementEntry{
+	{
+		component:    "runtime_engine_execute_turn_api",
+		stage:        daemonExecuteTurnAPICompatibilityStageRuntimeAPIDeprecatedRetained,
+		disposition:  daemonTurnExecutorCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "runtime.Engine.ExecuteTurn is marked Deprecated and retained only as an external compatibility seam; AgentLoop-shaped callers should use Engine.RunAgentLoop",
+		nextBoundary: daemonExecuteTurnAPICompatibilityNextBoundaryDeprecatedAPIPolicy,
+		nextStep:     "keep ExecuteTurn callable during the external migration window, but reject new internal ExecuteTurn callers",
+	},
+	{
+		component:    "runtime_turn_executor_interface",
+		stage:        daemonExecuteTurnAPICompatibilityStageTurnExecutorDeprecatedRetained,
+		disposition:  daemonTurnExecutorCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "runtime.TurnExecutor, TurnExecutorFunc, AttachTurnExecutor, TurnExecutor, and ExecuteTurn carry Deprecated markers in the runtime package",
+		nextBoundary: daemonExecuteTurnAPICompatibilityNextBoundaryDeprecatedAPIPolicy,
+		nextStep:     "avoid new daemon-owned TurnExecutor adapters unless they are explicitly external-compatibility shims",
+	},
+	{
+		component:    "execute_turn_internal_callers",
+		stage:        daemonExecuteTurnAPICompatibilityStageInternalCallersRetired,
+		disposition:  daemonTurnExecutorCompatibilityDispositionNoInternalCallers,
+		evidence:     "non-test ExecuteTurn call sites are limited to runtime/turn_executor.go dispatch; deterministic, replan, and planner internal callers enter Engine.RunAgentLoop instead",
+		nextBoundary: daemonExecuteTurnAPICompatibilityNextBoundaryDeprecatedAPIPolicy,
+		nextStep:     "keep the source audit in place so SendMessage, planner loop, and replan continuation do not regress to ExecuteTurn",
+	},
+	{
+		component:    "execute_turn_trampolines_all_branches",
+		stage:        daemonExecuteTurnAPICompatibilityStageAllTrampolinesExternalOnly,
+		disposition:  daemonTurnExecutorCompatibilityDispositionNoInternalCallers,
+		evidence:     "deterministic_route, replan_action_continuation, and planner_action_execution TurnExecutor branches are all owned by the external engine seam and remain active compatibility, not removal candidates",
+		nextBoundary: daemonExecuteTurnAPICompatibilityNextBoundaryDeprecatedAPIPolicy,
+		nextStep:     "do not split or delete individual branches until the deprecated ExecuteTurn API policy selects a migration/removal window",
+	},
+	{
+		component:    "attach_engine_turn_executor",
+		stage:        daemonExecuteTurnAPICompatibilityStageDefaultAttachmentRetained,
+		disposition:  daemonTurnExecutorCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "agentManager.AttachEngine still attaches daemonAgentTurnExecutor so existing external ExecuteTurn callers continue receiving compatibility dispatch instead of ErrTurnExecutorNotAttached",
+		nextBoundary: daemonExecuteTurnAPICompatibilityNextBoundaryDeprecatedAPIPolicy,
+		nextStep:     "do not move the default AttachTurnExecutor call to a deletion candidate until the deprecated API policy allows an opt-in or removal plan",
+	},
+	{
+		component:    "execute_turn_api_removal_gate",
+		stage:        daemonExecuteTurnAPICompatibilityStageRemovalBlockedByExternalPolicy,
+		disposition:  daemonTurnExecutorCompatibilityDispositionExternalCompatibilityRetained,
+		evidence:     "all internal branches are external-only, but removal is blocked by the supported external runtime API surface rather than runtime ownership",
+		nextBoundary: daemonExecuteTurnAPICompatibilityNextBoundaryDeprecatedAPIPolicy,
+		nextStep:     "document the external migration policy before replacing the default compatibility attachment with a narrower opt-in seam",
+	},
+	{
+		component:    "execute_turn_api_next_boundary",
+		stage:        daemonExecuteTurnAPICompatibilityStageDeprecatedAPIPolicyBoundaryChosen,
+		disposition:  daemonTurnExecutorCompatibilityDispositionAuditNextBoundary,
+		evidence:     "ExecuteTurn/TurnExecutor can be treated as deprecated external compatibility, but not as a deletion candidate; the next boundary is policy and migration-window definition",
+		nextBoundary: daemonExecuteTurnAPICompatibilityNextBoundaryDeprecatedAPIPolicy,
+		nextStep:     "P0.5-N222 should unify deprecated RunLLMTurn and ExecuteTurn API policy, including whether default compatibility attachments become opt-in after a migration window",
+	},
+}
+
+var daemonDeprecatedRuntimeAPIPolicyTable = [...]daemonDeprecatedRuntimeAPIPolicyEntry{
+	{
+		family:                  daemonDeprecatedRuntimeAPIPolicyFamilyRunLLMTurn,
+		runtimeAPI:              "runtime.Engine.RunLLMTurn",
+		compatibilityRunner:     "runtime.LLMTurnRunner",
+		attachAPI:               "runtime.Engine.AttachLLMTurnRunner",
+		replacement:             "runtime.Engine.RunAgentLoop",
+		apiMarker:               daemonRuntimeCompatibilityRuntimeAPIMarkerDeprecated,
+		callerSurface:           daemonRuntimeCompatibilityTrampolineCallerSurfaceExternalEngineSeamOnly,
+		migrationWindow:         daemonDeprecatedRuntimeAPIMigrationWindowCurrentReleaseGate,
+		defaultAttachmentPolicy: daemonDeprecatedRuntimeAPIDefaultAttachmentRetainedUntilReleaseGate,
+		optInPolicy:             daemonDeprecatedRuntimeAPIOptInDeferredUntilAfterMigrationWindow,
+		removalGate:             "external callers must migrate to runtime.Engine.RunAgentLoop and release/API docs must announce the compatibility window before AttachLLMTurnRunner can become opt-in or be removed",
+		evidence:                "non-test RunLLMTurn call sites are limited to the runtime API dispatch; SendMessage LLM main path uses runRuntimeLLMToolLoopAgentLoop and Engine.RunAgentLoop",
+		nextBoundary:            daemonDeprecatedRuntimeAPIPolicyNextBoundaryReleaseDocsAndOptInAudit,
+		nextStep:                "publish deprecated RunLLMTurn migration guidance and only then decide whether the default AttachLLMTurnRunner compatibility attachment becomes opt-in",
+	},
+	{
+		family:                  daemonDeprecatedRuntimeAPIPolicyFamilyExecuteTurn,
+		runtimeAPI:              "runtime.Engine.ExecuteTurn",
+		compatibilityRunner:     "runtime.TurnExecutor",
+		attachAPI:               "runtime.Engine.AttachTurnExecutor",
+		replacement:             "runtime.Engine.RunAgentLoop / runtime.Engine.ExecuteAgentLoopAction",
+		apiMarker:               daemonRuntimeCompatibilityRuntimeAPIMarkerDeprecated,
+		callerSurface:           daemonRuntimeCompatibilityTrampolineCallerSurfaceExternalEngineSeamOnly,
+		migrationWindow:         daemonDeprecatedRuntimeAPIMigrationWindowCurrentReleaseGate,
+		defaultAttachmentPolicy: daemonDeprecatedRuntimeAPIDefaultAttachmentRetainedUntilReleaseGate,
+		optInPolicy:             daemonDeprecatedRuntimeAPIOptInDeferredUntilAfterMigrationWindow,
+		removalGate:             "external callers must migrate to runtime.Engine.RunAgentLoop or Engine.ExecuteAgentLoopAction and release/API docs must announce the compatibility window before AttachTurnExecutor can become opt-in or be removed",
+		evidence:                "non-test ExecuteTurn call sites are limited to the runtime API dispatch; deterministic, replan, and planner action main paths use AgentLoopRunner or ActionExecutor",
+		nextBoundary:            daemonDeprecatedRuntimeAPIPolicyNextBoundaryReleaseDocsAndOptInAudit,
+		nextStep:                "publish deprecated ExecuteTurn migration guidance and only then decide whether the default AttachTurnExecutor compatibility attachment becomes opt-in",
+	},
+}
+
+var daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditTable = [...]daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditEntry{
+	{
+		component:    "release_notes_deprecated_runtime_api_notice",
+		document:     "docs/release-notes/v0.1.2.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageReleaseNotesCovered,
+		decision:     daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionDocsPublished,
+		evidence:     "release notes now announce RunLLMTurn and ExecuteTurn as Deprecated external compatibility APIs with current_release_gate migration guidance",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditNextBoundaryPostReleaseGateFlagDecision,
+		nextStep:     "keep future release notes aligned before changing AttachLLMTurnRunner or AttachTurnExecutor defaults",
+	},
+	{
+		component:    "api_contract_deprecated_runtime_api_notice",
+		document:     "docs/api/v0.1.2-api-contract.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageAPIContractCovered,
+		decision:     daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionDocsPublished,
+		evidence:     "API contract documents that RunLLMTurn and ExecuteTurn are Go runtime compatibility APIs rather than new HTTP endpoints, and lists RunAgentLoop / ExecuteAgentLoopAction replacements",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditNextBoundaryPostReleaseGateFlagDecision,
+		nextStep:     "preserve the API contract notice while external callers migrate to AgentLoopRunner or ActionExecutor entrypoints",
+	},
+	{
+		component:    "release_checklist_deprecated_runtime_api_gate",
+		document:     "docs/CyberAgent-Release-Checklist.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageReleaseChecklistGate,
+		decision:     daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionDefaultAttachmentRetained,
+		evidence:     "release checklist requires Deprecated/current_release_gate/replacement/default-attachment checks before tagging a release",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditNextBoundaryPostReleaseGateFlagDecision,
+		nextStep:     "run the checklist source-audit commands before any release tag that may narrow deprecated runtime API compatibility",
+	},
+	{
+		component:    "release_plan_migration_window",
+		document:     "docs/CyberAgent-Release-Plan.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageReleasePlanCovered,
+		decision:     daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionDefaultAttachmentRetained,
+		evidence:     "release plan records current_release_gate as the migration window and retained_until_release_gate as the default attachment policy",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditNextBoundaryPostReleaseGateFlagDecision,
+		nextStep:     "use the release plan boundary to decide whether a later release introduces an explicit opt-in compatibility flag",
+	},
+	{
+		component:    "opt_in_compatibility_flag_policy",
+		document:     "docs/CyberAgent-Release-Plan.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageOptInFlagDeferred,
+		decision:     daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionOptInDeferred,
+		evidence:     "no new opt-in compatibility flag is introduced for the current release gate; AttachLLMTurnRunner and AttachTurnExecutor stay default-attached for compatibility",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditNextBoundaryPostReleaseGateFlagDecision,
+		nextStep:     "after the current release gate, evaluate whether default compatibility attachment should move behind an explicit opt-in flag",
+	},
+	{
+		component:    "post_release_gate_next_boundary",
+		document:     "docs/CyberAgent-Release-Plan.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageNextBoundaryChosen,
+		decision:     daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditDecisionAuditNextBoundary,
+		evidence:     "release/API docs are covered, so the next decision can focus on post-release-gate opt-in flag design rather than documentation readiness",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditNextBoundaryPostReleaseGateFlagDecision,
+		nextStep:     "P0.5-N224 should decide the post-release-gate opt-in compatibility flag shape or explicitly keep default attachments for the next gate",
+	},
+}
+
+var daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionTable = [...]daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionEntry{
+	{
+		component:    "release_docs_boundary_consumed",
+		stage:        daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageCurrentGateActive,
+		decision:     daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionCurrentGateStillActive,
+		evidence:     "release/API documentation now covers deprecated runtime APIs, but the current_release_gate has not been crossed in code",
+		nextBoundary: daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionNextBoundaryNextReleaseGateReassessment,
+		nextStep:     "do not narrow compatibility attachment defaults until the documented current release gate has shipped",
+	},
+	{
+		component:    "attach_engine_llm_turn_runner_default",
+		stage:        daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageDefaultAttachmentRetained,
+		decision:     daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionKeepDefaultAttachments,
+		evidence:     "agentManager.AttachEngine still attaches daemonAgentLLMTurnRunner by default when a runtime engine exists",
+		nextBoundary: daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionNextBoundaryNextReleaseGateReassessment,
+		nextStep:     "keep AttachLLMTurnRunner default-attached until a later gate explicitly introduces an opt-in migration",
+	},
+	{
+		component:    "attach_engine_turn_executor_default",
+		stage:        daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageDefaultAttachmentRetained,
+		decision:     daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionKeepDefaultAttachments,
+		evidence:     "agentManager.AttachEngine still attaches daemonAgentTurnExecutor by default when a runtime engine exists",
+		nextBoundary: daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionNextBoundaryNextReleaseGateReassessment,
+		nextStep:     "keep AttachTurnExecutor default-attached until a later gate explicitly introduces an opt-in migration",
+	},
+	{
+		component:    "runtime_engine_fallback_switch_scope",
+		stage:        daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageExistingRuntimeFallbackOnly,
+		decision:     daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionExistingRuntimeFallbackOnly,
+		evidence:     "the only current runtime switch is the whole-engine rollback switch rather than a deprecated-runtime-API compatibility gate",
+		nextBoundary: daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionNextBoundaryNextReleaseGateReassessment,
+		nextStep:     "do not add per-API compatibility configuration before the next release-gate reassessment",
+	},
+	{
+		component:    "deprecated_runtime_api_opt_in_flag_absent",
+		stage:        daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageExplicitCompatibilityFlagNotAdded,
+		decision:     daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionDoNotIntroduceFlagBeforeGate,
+		evidence:     "no dedicated opt-in flag is added for deprecated RunLLMTurn or ExecuteTurn compatibility attachments in the current gate",
+		nextBoundary: daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionNextBoundaryNextReleaseGateReassessment,
+		nextStep:     "evaluate a dedicated compatibility flag only after the current release gate and migration notice are complete",
+	},
+	{
+		component:    "next_release_gate_reassessment_boundary",
+		stage:        daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageNextReleaseGateReassessmentChosen,
+		decision:     daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionAuditNextReleaseGate,
+		evidence:     "the N224 decision keeps current defaults unchanged, so the next boundary is a later release-gate reassessment rather than an immediate config/API change",
+		nextBoundary: daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionNextBoundaryNextReleaseGateReassessment,
+		nextStep:     "P0.5-N225 should reassess deprecated runtime API opt-in compatibility only after the current release gate has completed",
+	},
+}
+
+var daemonDeprecatedRuntimeAPINextReleaseGateReassessmentTable = [...]daemonDeprecatedRuntimeAPINextReleaseGateReassessmentEntry{
+	{
+		component:    "n224_post_release_gate_decision_boundary",
+		stage:        daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageN224BoundaryConsumed,
+		decision:     daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionGateNotComplete,
+		evidence:     "N224 selected the next-release-gate reassessment boundary while preserving default deprecated runtime API compatibility attachments",
+		nextBoundary: daemonDeprecatedRuntimeAPINextReleaseGateReassessmentNextBoundaryCurrentGateCompletionEvidence,
+		nextStep:     "treat next-release-gate opt-in changes as blocked until release completion evidence is available",
+	},
+	{
+		component:    "current_release_gate_completion_precondition",
+		stage:        daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageCurrentGateCompletionNeeded,
+		decision:     daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionGateNotComplete,
+		evidence:     "the current gate still needs an explicit release-readiness evidence pass before compatibility defaults can be narrowed",
+		nextBoundary: daemonDeprecatedRuntimeAPINextReleaseGateReassessmentNextBoundaryCurrentGateCompletionEvidence,
+		nextStep:     "collect release checklist, API docs, release notes, source audit, and regression evidence before changing deprecated runtime API attachment policy",
+	},
+	{
+		component:    "llm_turn_runner_default_attachment_preserved",
+		stage:        daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageDefaultAttachmentsPreserved,
+		decision:     daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionPreserveDefaults,
+		evidence:     "AttachLLMTurnRunner remains default-attached through agentManager.AttachEngine for the current gate",
+		nextBoundary: daemonDeprecatedRuntimeAPINextReleaseGateReassessmentNextBoundaryCurrentGateCompletionEvidence,
+		nextStep:     "do not move LLMTurnRunner compatibility behind a dedicated opt-in flag until the release-readiness audit is complete",
+	},
+	{
+		component:    "turn_executor_default_attachment_preserved",
+		stage:        daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageDefaultAttachmentsPreserved,
+		decision:     daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionPreserveDefaults,
+		evidence:     "AttachTurnExecutor remains default-attached through agentManager.AttachEngine for the current gate",
+		nextBoundary: daemonDeprecatedRuntimeAPINextReleaseGateReassessmentNextBoundaryCurrentGateCompletionEvidence,
+		nextStep:     "do not move TurnExecutor compatibility behind a dedicated opt-in flag until the release-readiness audit is complete",
+	},
+	{
+		component:    "dedicated_deprecated_runtime_api_flag_not_added",
+		stage:        daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageNoDedicatedFlagBeforeGate,
+		decision:     daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionDoNotAddFlag,
+		evidence:     "no per-deprecated-runtime-API opt-in configuration is introduced before the current release gate completion evidence is audited",
+		nextBoundary: daemonDeprecatedRuntimeAPINextReleaseGateReassessmentNextBoundaryCurrentGateCompletionEvidence,
+		nextStep:     "keep using the existing whole-engine rollback switch until a later release gate deliberately changes attachment policy",
+	},
+	{
+		component:    "current_release_gate_completion_next_boundary",
+		stage:        daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageNextBoundaryChosen,
+		decision:     daemonDeprecatedRuntimeAPINextReleaseGateReassessmentDecisionAuditReleaseReadiness,
+		evidence:     "the opt-in reassessment cannot advance to a config/API change without first proving the documented current release gate is complete",
+		nextBoundary: daemonDeprecatedRuntimeAPINextReleaseGateReassessmentNextBoundaryCurrentGateCompletionEvidence,
+		nextStep:     "P0.5-N226 should gather release-readiness evidence before revisiting deprecated runtime API compatibility flags",
+	},
+}
+
+var daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceTable = [...]daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceEntry{
+	{
+		component:    "n225_next_release_gate_reassessment_boundary",
+		artifact:     "internal/interfaces/daemon/agent_runtime_compatibility.go",
+		stage:        daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageN225BoundaryConsumed,
+		decision:     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionEvidenceCollected,
+		evidence:     "N225 selected current_release_gate_completion_evidence_and_release_readiness_audit as the required precondition before any deprecated runtime API flag/config/API change",
+		nextBoundary: daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceNextBoundaryReleaseCandidateStabilization,
+		nextStep:     "treat deprecated runtime API flag reduction as blocked until the release evidence set and release-candidate state are audited together",
+	},
+	{
+		component:    "release_notes_and_api_contract_evidence",
+		artifact:     "docs/release-notes/v0.1.2.md;docs/api/v0.1.2-api-contract.md",
+		stage:        daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageReleaseDocsPresent,
+		decision:     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionEvidenceCollected,
+		evidence:     "release notes and API contract publish Deprecated status, current_release_gate migration window, replacement APIs, retained_until_release_gate default attachments, and opt-in deferral guidance",
+		nextBoundary: daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceNextBoundaryReleaseCandidateStabilization,
+		nextStep:     "keep these release/API docs as the public evidence base for the later flag reduction decision",
+	},
+	{
+		component:    "release_checklist_and_plan_evidence",
+		artifact:     "docs/CyberAgent-Release-Checklist.md;docs/CyberAgent-Release-Plan.md",
+		stage:        daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageReleaseChecklistPresent,
+		decision:     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionEvidenceCollected,
+		evidence:     "release checklist and release plan track current_release_gate, deprecated runtime API migration policy, replacement APIs, default attachment retention, and opt-in deferral",
+		nextBoundary: daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceNextBoundaryReleaseCandidateStabilization,
+		nextStep:     "use the checklist/plan as the gate artifact before allowing any opt-in or removal policy change",
+	},
+	{
+		component:    "source_audit_evidence",
+		artifact:     "agent_runtime.go;server.go",
+		stage:        daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageSourceAuditPresent,
+		decision:     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionEvidenceCollected,
+		evidence:     "source audit keeps AttachLLMTurnRunner and AttachTurnExecutor default-attached, keeps CYBERAGENT_RUNTIME as whole-engine rollback only, and does not add CYBERAGENT_RUNTIME_COMPAT or CYBERAGENT_DEPRECATED_RUNTIME_API",
+		nextBoundary: daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceNextBoundaryReleaseCandidateStabilization,
+		nextStep:     "continue rejecting source changes that narrow deprecated runtime API compatibility before the release-candidate decision",
+	},
+	{
+		component:    "regression_command_evidence",
+		artifact:     "docs/CyberAgent-TODO.md",
+		stage:        daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageRegressionEvidenceRecorded,
+		decision:     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionRegressionPassed,
+		evidence:     "focused daemon compatibility tests, full daemon/runtime tests, go test ./..., go vet ./..., frontend tests/build, cmd build, and git diff --check are recorded as the N226 local verification set",
+		nextBoundary: daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceNextBoundaryReleaseCandidateStabilization,
+		nextStep:     "rerun the same release-readiness command set after release-candidate stabilization and before any flag/default reduction",
+	},
+	{
+		component:    "working_tree_release_state",
+		artifact:     "git status --short",
+		stage:        daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageWorkingTreeNotTagReady,
+		decision:     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionReleaseNotTagReady,
+		evidence:     "the workspace still contains rolling tracked and untracked changes, so the branch is evidence-audited but not release tag-ready until diffs are reviewed, staged, and committed",
+		nextBoundary: daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceNextBoundaryReleaseCandidateStabilization,
+		nextStep:     "stabilize the release candidate and verify a clean intentional diff before deciding deprecated runtime API flag reduction",
+	},
+	{
+		component:    "default_runtime_behavior_preserved",
+		artifact:     "agent_runtime.go",
+		stage:        daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageDefaultBehaviorPreserved,
+		decision:     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionPreserveDefaults,
+		evidence:     "N226 records evidence only; runtime default behavior stays unchanged and deprecated compatibility attachments remain enabled by default through AttachEngine",
+		nextBoundary: daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceNextBoundaryReleaseCandidateStabilization,
+		nextStep:     "do not alter runtime defaults as part of this audit slice",
+	},
+	{
+		component:    "release_candidate_flag_reduction_next_boundary",
+		artifact:     "docs/CyberAgent-TODO.md",
+		stage:        daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageNextBoundaryChosen,
+		decision:     daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceDecisionAuditNextBoundary,
+		evidence:     "release evidence is now documented, but dirty working tree state means the next decision must combine release-candidate stabilization with the deprecated runtime API flag/reduction go-no-go",
+		nextBoundary: daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceNextBoundaryReleaseCandidateStabilization,
+		nextStep:     "P0.5-N227 should stabilize the release candidate and decide whether conditions are sufficient for a deprecated runtime API flag/reduction plan",
+	},
+}
+
+var daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionTable = [...]daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEntry{
+	{
+		component:    "n226_release_candidate_stabilization_boundary",
+		artifact:     "internal/interfaces/daemon/agent_runtime_compatibility.go",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageN226BoundaryConsumed,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEvidenceAccepted,
+		evidence:     "N226 selected release_candidate_stabilization_and_deprecated_runtime_api_flag_reduction_decision after collecting release-readiness evidence and preserving runtime defaults",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionNextBoundaryDiffArchive,
+		nextStep:     "treat the N226 evidence set as input, not as permission to reduce deprecated runtime API compatibility defaults",
+	},
+	{
+		component:    "release_readiness_evidence_accepted",
+		artifact:     "docs/release-notes/v0.1.2.md;docs/api/v0.1.2-api-contract.md;docs/CyberAgent-Release-Checklist.md;docs/CyberAgent-Release-Plan.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageReleaseEvidenceAccepted,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEvidenceAccepted,
+		evidence:     "release notes, API contract, checklist, and release plan already document Deprecated RunLLMTurn/ExecuteTurn status, replacements, current_release_gate, retained defaults, and opt-in deferral",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionNextBoundaryDiffArchive,
+		nextStep:     "reuse the existing release evidence when reviewing the release-candidate diff inventory",
+	},
+	{
+		component:    "release_candidate_diff_inventory_recorded",
+		artifact:     "git status --short;git diff --stat;docs/CyberAgent-TODO.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageDiffInventoryRecorded,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionInventoryRecorded,
+		evidence:     "N227 records the current rolling release-candidate diff inventory before making any deprecated runtime API flag or attachment-reduction decision",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionNextBoundaryDiffArchive,
+		nextStep:     "archive the intended diff set into a tag-readiness checklist before changing compatibility defaults",
+	},
+	{
+		component:    "dirty_working_tree_blocks_flag_reduction",
+		artifact:     "git status --short",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageWorkingTreeBlocksReduction,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionReductionBlocked,
+		evidence:     "the workspace still contains rolling tracked and untracked changes, so release-candidate stabilization is incomplete and flag/default reduction is blocked",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionNextBoundaryDiffArchive,
+		nextStep:     "review, archive, stage, and commit the intended release-candidate diff before revisiting opt-in or removal behavior",
+	},
+	{
+		component:    "llm_turn_runner_default_attachment_preserved",
+		artifact:     "agent_runtime.go",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageDefaultAttachmentsPreserved,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionPreserveDefaults,
+		evidence:     "AttachLLMTurnRunner remains default-attached through agentManager.AttachEngine; the release candidate does not move RunLLMTurn compatibility behind an opt-in flag",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionNextBoundaryDiffArchive,
+		nextStep:     "keep LLMTurnRunner compatibility defaults unchanged while release-candidate diff stabilization is pending",
+	},
+	{
+		component:    "turn_executor_default_attachment_preserved",
+		artifact:     "agent_runtime.go",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageDefaultAttachmentsPreserved,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionPreserveDefaults,
+		evidence:     "AttachTurnExecutor remains default-attached through agentManager.AttachEngine; the release candidate does not reduce ExecuteTurn compatibility by default",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionNextBoundaryDiffArchive,
+		nextStep:     "keep TurnExecutor compatibility defaults unchanged while release-candidate diff stabilization is pending",
+	},
+	{
+		component:    "dedicated_deprecated_runtime_api_flag_not_introduced",
+		artifact:     "agent_runtime.go;server.go",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageDedicatedFlagNotIntroduced,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionDoNotIntroduceFlag,
+		evidence:     "no CYBERAGENT_RUNTIME_COMPAT or CYBERAGENT_DEPRECATED_RUNTIME_API flag is introduced; CYBERAGENT_RUNTIME remains the whole-engine rollback switch only",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionNextBoundaryDiffArchive,
+		nextStep:     "defer any dedicated opt-in flag until the release-candidate diff is archived and tag-readiness is proven",
+	},
+	{
+		component:    "release_candidate_diff_archive_next_boundary",
+		artifact:     "docs/CyberAgent-TODO.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageNextArchiveBoundaryChosen,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionArchiveNextBoundary,
+		evidence:     "N227 decision keeps deprecated runtime API compatibility defaults unchanged and selects a diff archive/tag-readiness audit before any future flag reduction plan",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionNextBoundaryDiffArchive,
+		nextStep:     "P0.5-N228 should archive the release-candidate diff inventory and prove tag-readiness before revisiting deprecated runtime API opt-in or attachment reduction",
+	},
+}
+
+var daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessTable = [...]daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessEntry{
+	{
+		component:    "n227_diff_archive_boundary",
+		artifact:     "internal/interfaces/daemon/agent_runtime_compatibility.go",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageN227BoundaryConsumed,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionArchiveCreated,
+		evidence:     "N227 selected release_candidate_diff_archive_and_tag_readiness_audit because the release candidate was inventoried but not tag-ready",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessNextBoundaryStageCommit,
+		nextStep:     "use the archived diff inventory as the required review input before staging, committing, or tagging",
+	},
+	{
+		component:    "release_candidate_diff_archive_document",
+		artifact:     "docs/CyberAgent-v0.1.2-Release-Candidate-Diff-Inventory.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageArchiveDocumentCreated,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionArchiveCreated,
+		evidence:     "the N228 archive document records snapshot commands, release-candidate outcome, tag-readiness gates, tracked modified paths, untracked paths, and tracked diff stat",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessNextBoundaryStageCommit,
+		nextStep:     "keep the archive document in the intended release-candidate stage/commit set",
+	},
+	{
+		component:    "tracked_diff_inventory",
+		artifact:     "docs/CyberAgent-v0.1.2-Release-Candidate-Diff-Inventory.md;git diff --stat",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageTrackedInventoryRecorded,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionInventoryRecorded,
+		evidence:     "the archive records 48 tracked modified paths and a tracked diff stat of 48 files changed, 11521 insertions(+), 1413 deletions(-)",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessNextBoundaryStageCommit,
+		nextStep:     "review the tracked diff inventory before staging the release candidate",
+	},
+	{
+		component:    "untracked_diff_inventory",
+		artifact:     "docs/CyberAgent-v0.1.2-Release-Candidate-Diff-Inventory.md;git status --short",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageUntrackedInventoryRecorded,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionInventoryRecorded,
+		evidence:     "the archive records 32 untracked paths in the pre-archive snapshot and calls out that the archive document itself must be included in the review/stage/commit set",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessNextBoundaryStageCommit,
+		nextStep:     "review the untracked audit and adapter files before staging the release candidate",
+	},
+	{
+		component:    "tag_readiness_blocked_until_stage_commit",
+		artifact:     "docs/CyberAgent-v0.1.2-Release-Candidate-Diff-Inventory.md;git status --short",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageTagReadinessBlocked,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionTagReadinessBlocked,
+		evidence:     "tag readiness remains blocked until the intended tracked/untracked diff is reviewed, staged, committed, and followed by full release regression",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessNextBoundaryStageCommit,
+		nextStep:     "do not create a release tag or reduce deprecated runtime API compatibility defaults until the stage/commit/full-regression gate passes",
+	},
+	{
+		component:    "default_runtime_behavior_preserved",
+		artifact:     "agent_runtime.go;server.go",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageDefaultAttachmentsPreserved,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionPreserveDefaults,
+		evidence:     "N228 is an archive/tag-readiness audit only; AttachLLMTurnRunner and AttachTurnExecutor stay default-attached and no dedicated deprecated runtime API flag is added",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessNextBoundaryStageCommit,
+		nextStep:     "preserve compatibility defaults through the stage/commit/full-regression gate",
+	},
+	{
+		component:    "stage_commit_full_regression_next_boundary",
+		artifact:     "docs/CyberAgent-TODO.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageNextStageCommitGateChosen,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessDecisionStageCommitNextGate,
+		evidence:     "after archiving the diff inventory, the next boundary is an explicit stage/commit/full-regression gate rather than deprecated runtime API flag reduction",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessNextBoundaryStageCommit,
+		nextStep:     "P0.5-N229 should verify stage/commit readiness and rerun the full release regression before any compatibility-default reduction plan",
+	},
+}
+
+var daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateTable = [...]daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateEntry{
+	{
+		component:    "n228_stage_commit_full_regression_boundary",
+		artifact:     "internal/interfaces/daemon/agent_runtime_compatibility.go",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageN228BoundaryConsumed,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionArchiveAccepted,
+		evidence:     "N228 selected release_candidate_stage_commit_and_full_regression_gate after archiving the release-candidate diff inventory and preserving deprecated runtime API defaults",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateNextBoundaryManualAuthorization,
+		nextStep:     "consume the diff archive as the stage/commit review input without changing runtime compatibility defaults",
+	},
+	{
+		component:    "diff_archive_artifact_accepted",
+		artifact:     "docs/CyberAgent-v0.1.2-Release-Candidate-Diff-Inventory.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageArchiveArtifactAccepted,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionArchiveAccepted,
+		evidence:     "the diff archive records status commands, tracked/untracked inventory, tracked diff stat, tag-readiness gates, and the stage/commit/full-regression next boundary",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateNextBoundaryManualAuthorization,
+		nextStep:     "use the archive to decide the intended stage set before a human-approved commit/tag operation",
+	},
+	{
+		component:    "working_tree_stage_commit_state",
+		artifact:     "git status --short;git diff --stat",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageWorkingTreeStillDirty,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionStillNotTagReady,
+		evidence:     "after N228, git status still reports 48 tracked modified paths and 33 untracked paths, so the branch remains not tag-ready",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateNextBoundaryManualAuthorization,
+		nextStep:     "do not tag until the intended release-candidate diff is staged and committed",
+	},
+	{
+		component:    "stage_commit_tag_not_performed",
+		artifact:     "git status --short",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageStageCommitNotPerformed,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionDoNotStageCommit,
+		evidence:     "this audit does not run git add, git commit, or git tag; stage/commit/tag requires explicit user authorization and final review",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateNextBoundaryManualAuthorization,
+		nextStep:     "ask for explicit stage/commit/tag authorization if the user wants to finalize the release candidate",
+	},
+	{
+		component:    "full_release_regression_recorded",
+		artifact:     "docs/CyberAgent-TODO.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageFullRegressionRecorded,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionRegressionRecorded,
+		evidence:     "N229 records focused daemon audit, full daemon/runtime tests, go test ./..., go vet ./..., frontend tests/build, CLI build, and git diff --check as the full release regression command set",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateNextBoundaryManualAuthorization,
+		nextStep:     "rerun full release regression after staging or any final diff change",
+	},
+	{
+		component:    "default_runtime_behavior_preserved",
+		artifact:     "agent_runtime.go;server.go",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageDefaultAttachmentsPreserved,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionPreserveDefaults,
+		evidence:     "N229 does not introduce a deprecated runtime API opt-in flag and does not reduce AttachLLMTurnRunner or AttachTurnExecutor default attachment",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateNextBoundaryManualAuthorization,
+		nextStep:     "continue preserving compatibility defaults until a later explicitly authorized release/API policy change",
+	},
+	{
+		component:    "manual_stage_commit_tag_authorization_next_boundary",
+		artifact:     "docs/CyberAgent-TODO.md",
+		stage:        daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageManualAuthorizationBoundary,
+		decision:     daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateDecisionManualAuthorization,
+		evidence:     "the remaining release-candidate action is manual stage/commit/tag authorization, not a code or runtime-default change",
+		nextBoundary: daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateNextBoundaryManualAuthorization,
+		nextStep:     "P0.5-N230 should wait for explicit user approval before staging, committing, tagging, or changing deprecated runtime API defaults",
+	},
+}
+
+var daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationTable = [...]daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationEntry{
+	{
+		component:    "n229_manual_authorization_boundary",
+		artifact:     "internal/interfaces/daemon/agent_runtime_compatibility.go",
+		stage:        daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageN229BoundaryConsumed,
+		decision:     daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionWaitForUserAuthorization,
+		evidence:     "N229 selected manual_stage_commit_and_tag_authorization after full regression passed but the working tree remained dirty and no git stage/commit/tag operation was authorized",
+		nextBoundary: daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationNextBoundaryAwaitUser,
+		nextStep:     "pause release-finalization actions until the user explicitly authorizes staging, committing, tagging, or runtime compatibility default reduction",
+	},
+	{
+		component:    "explicit_user_authorization_required",
+		artifact:     "docs/CyberAgent-TODO.md",
+		stage:        daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageExplicitAuthorizationNeeded,
+		decision:     daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionWaitForUserAuthorization,
+		evidence:     "manual authorization is required before running git add, git commit, git tag, or changing deprecated runtime API default attachment behavior",
+		nextBoundary: daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationNextBoundaryAwaitUser,
+		nextStep:     "ask the user for explicit approval and scope before any repository-finalization operation",
+	},
+	{
+		component:    "git_stage_commit_tag_not_run",
+		artifact:     "git status --short",
+		stage:        daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageGitOpsNotRun,
+		decision:     daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionDoNotRunGitOps,
+		evidence:     "this gate records that no git add, git commit, or git tag command is run by the automation slice",
+		nextBoundary: daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationNextBoundaryAwaitUser,
+		nextStep:     "keep the current dirty working tree intact for user review",
+	},
+	{
+		component:    "runtime_defaults_preserved",
+		artifact:     "agent_runtime.go;server.go",
+		stage:        daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageRuntimeDefaultsPreserved,
+		decision:     daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionPreserveDefaults,
+		evidence:     "AttachLLMTurnRunner and AttachTurnExecutor remain default-attached; no dedicated deprecated runtime API opt-in flag is introduced",
+		nextBoundary: daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationNextBoundaryAwaitUser,
+		nextStep:     "preserve compatibility defaults unless the user explicitly requests a later release/API compatibility policy change",
+	},
+	{
+		component:    "deprecated_runtime_api_reduction_blocked",
+		artifact:     "docs/release-notes/v0.1.2.md;docs/api/v0.1.2-api-contract.md",
+		stage:        daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageCompatibilityReductionBlocked,
+		decision:     daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionBlockReduction,
+		evidence:     "deprecated runtime API opt-in or default attachment reduction is blocked until a separately authorized compatibility policy change updates release/API documentation",
+		nextBoundary: daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationNextBoundaryAwaitUser,
+		nextStep:     "do not couple release-candidate commit/tag authorization with a compatibility-default reduction",
+	},
+	{
+		component:    "await_user_authorization_boundary",
+		artifact:     "docs/CyberAgent-TODO.md",
+		stage:        daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageAwaitUserBoundarySelected,
+		decision:     daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationDecisionWaitForUserAuthorization,
+		evidence:     "all automated audit/regression slices are complete through N230; the remaining finalization step is waiting for explicit user authorization",
+		nextBoundary: daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationNextBoundaryAwaitUser,
+		nextStep:     "wait for the user to approve or decline git stage/commit/tag and any future deprecated runtime API compatibility policy change",
+	},
+}
+
+func daemonRuntimeCompatibilityTrampolineEntryForKind(kind daemonRuntimeCompatibilityTrampolineKind) (daemonRuntimeCompatibilityTrampolineEntry, bool) {
+	for _, entry := range daemonRuntimeCompatibilityTrampolineTable {
+		if entry.kind == kind {
+			return entry, true
+		}
+	}
+	return daemonRuntimeCompatibilityTrampolineEntry{}, false
+}
+
+func daemonRuntimeCompatibilityTrampolineEntryForEntrypoint(entrypoint string) (daemonRuntimeCompatibilityTrampolineEntry, bool) {
+	for _, entry := range daemonRuntimeCompatibilityTrampolineTable {
+		if entry.entrypoint == entrypoint {
+			return entry, true
+		}
+	}
+	return daemonRuntimeCompatibilityTrampolineEntry{}, false
+}
+
+func daemonRuntimeCompatibilityTrampolineOwnershipForKind(kind daemonRuntimeCompatibilityTrampolineKind) (daemonRuntimeCompatibilityTrampolineOwnershipEntry, bool) {
+	for _, entry := range daemonRuntimeCompatibilityTrampolineOwnershipTable {
+		if entry.kind == kind {
+			return entry, true
+		}
+	}
+	return daemonRuntimeCompatibilityTrampolineOwnershipEntry{}, false
+}
+
+func daemonRuntimeCompatibilityTrampolineOwnedByExternalEngineSeam(kind daemonRuntimeCompatibilityTrampolineKind) bool {
+	entry, ok := daemonRuntimeCompatibilityTrampolineOwnershipForKind(kind)
+	return ok && entry.owner == daemonRuntimeCompatibilityTrampolineOwnerExternalEngineSeam
+}
+
+func daemonRuntimeCompatibilityTrampolineReadyForRemoval(kind daemonRuntimeCompatibilityTrampolineKind) bool {
+	entry, ok := daemonRuntimeCompatibilityTrampolineOwnershipForKind(kind)
+	return ok && entry.stage == daemonRuntimeCompatibilityTrampolineRemovalStageCandidate
+}
+
+func daemonRuntimeCompatibilityTrampolineRuntimeAPIMarkerForKind(kind daemonRuntimeCompatibilityTrampolineKind) (daemonRuntimeCompatibilityRuntimeAPIMarker, bool) {
+	entry, ok := daemonRuntimeCompatibilityTrampolineOwnershipForKind(kind)
+	if !ok || entry.apiMarker == "" {
+		return "", false
+	}
+	return entry.apiMarker, true
+}
+
+func daemonRuntimeCompatibilityTrampolineCallerSurfaceForKind(kind daemonRuntimeCompatibilityTrampolineKind) (daemonRuntimeCompatibilityTrampolineCallerSurface, bool) {
+	entry, ok := daemonRuntimeCompatibilityTrampolineOwnershipForKind(kind)
+	if !ok || entry.callerSurface == "" {
+		return "", false
+	}
+	return entry.callerSurface, true
+}
+
+func daemonLLMTurnRunnerCompatibilityRetirementEntryForComponent(component string) (daemonLLMTurnRunnerCompatibilityRetirementEntry, bool) {
+	for _, entry := range daemonLLMTurnRunnerCompatibilityRetirementTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonLLMTurnRunnerCompatibilityRetirementEntry{}, false
+}
+
+func daemonLLMTurnRunnerCompatibilityRetirementEntriesForStage(stage daemonLLMTurnRunnerCompatibilityRetirementStage) []daemonLLMTurnRunnerCompatibilityRetirementEntry {
+	var entries []daemonLLMTurnRunnerCompatibilityRetirementEntry
+	for _, entry := range daemonLLMTurnRunnerCompatibilityRetirementTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonLLMTurnRunnerCompatibilityRetirementSelectedBoundary() (string, bool) {
+	entries := daemonLLMTurnRunnerCompatibilityRetirementEntriesForStage(daemonLLMTurnRunnerCompatibilityStageNextBoundaryChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonTurnExecutorCompatibilityRetirementEntryForComponent(component string) (daemonTurnExecutorCompatibilityRetirementEntry, bool) {
+	for _, entry := range daemonTurnExecutorCompatibilityRetirementTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonTurnExecutorCompatibilityRetirementEntry{}, false
+}
+
+func daemonTurnExecutorCompatibilityRetirementEntriesForStage(stage daemonTurnExecutorCompatibilityRetirementStage) []daemonTurnExecutorCompatibilityRetirementEntry {
+	var entries []daemonTurnExecutorCompatibilityRetirementEntry
+	for _, entry := range daemonTurnExecutorCompatibilityRetirementTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonTurnExecutorCompatibilityRetirementSelectedBoundary() (string, bool) {
+	entries := daemonTurnExecutorCompatibilityRetirementEntriesForStage(daemonTurnExecutorCompatibilityStageNextBoundaryChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementEntryForComponent(component string) (daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementEntry, bool) {
+	for _, entry := range daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementEntry{}, false
+}
+
+func daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementEntriesForStage(stage daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementStage) []daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementEntry {
+	var entries []daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementEntry
+	for _, entry := range daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementSelectedBoundary() (string, bool) {
+	entries := daemonPlannerActionExecutionTurnExecutorCompatibilityRetirementEntriesForStage(daemonPlannerActionExecutionTurnExecutorCompatibilityStageExecuteTurnBoundaryChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonExecuteTurnAPICompatibilityRetirementEntryForComponent(component string) (daemonExecuteTurnAPICompatibilityRetirementEntry, bool) {
+	for _, entry := range daemonExecuteTurnAPICompatibilityRetirementTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonExecuteTurnAPICompatibilityRetirementEntry{}, false
+}
+
+func daemonExecuteTurnAPICompatibilityRetirementEntriesForStage(stage daemonExecuteTurnAPICompatibilityRetirementStage) []daemonExecuteTurnAPICompatibilityRetirementEntry {
+	var entries []daemonExecuteTurnAPICompatibilityRetirementEntry
+	for _, entry := range daemonExecuteTurnAPICompatibilityRetirementTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonExecuteTurnAPICompatibilityRetirementSelectedBoundary() (string, bool) {
+	entries := daemonExecuteTurnAPICompatibilityRetirementEntriesForStage(daemonExecuteTurnAPICompatibilityStageDeprecatedAPIPolicyBoundaryChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonDeprecatedRuntimeAPIPolicyEntryForFamily(family daemonDeprecatedRuntimeAPIPolicyFamily) (daemonDeprecatedRuntimeAPIPolicyEntry, bool) {
+	for _, entry := range daemonDeprecatedRuntimeAPIPolicyTable {
+		if entry.family == family {
+			return entry, true
+		}
+	}
+	return daemonDeprecatedRuntimeAPIPolicyEntry{}, false
+}
+
+func daemonDeprecatedRuntimeAPIPolicyEntriesForDefaultAttachmentPolicy(policy daemonDeprecatedRuntimeAPIDefaultAttachmentPolicy) []daemonDeprecatedRuntimeAPIPolicyEntry {
+	var entries []daemonDeprecatedRuntimeAPIPolicyEntry
+	for _, entry := range daemonDeprecatedRuntimeAPIPolicyTable {
+		if entry.defaultAttachmentPolicy == policy {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonDeprecatedRuntimeAPIPolicySelectedBoundary() (string, bool) {
+	if len(daemonDeprecatedRuntimeAPIPolicyTable) == 0 || daemonDeprecatedRuntimeAPIPolicyTable[0].nextBoundary == "" {
+		return "", false
+	}
+	return daemonDeprecatedRuntimeAPIPolicyTable[0].nextBoundary, true
+}
+
+func daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditEntryForComponent(component string) (daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditEntry, bool) {
+	for _, entry := range daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditEntry{}, false
+}
+
+func daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditEntriesForStage(stage daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStage) []daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditEntry {
+	var entries []daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditEntry
+	for _, entry := range daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditSelectedBoundary() (string, bool) {
+	entries := daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditEntriesForStage(daemonDeprecatedRuntimeAPIReleaseDocsOptInAuditStageNextBoundaryChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionEntryForComponent(component string) (daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionEntry, bool) {
+	for _, entry := range daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionEntry{}, false
+}
+
+func daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionEntriesForStage(stage daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStage) []daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionEntry {
+	var entries []daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionEntry
+	for _, entry := range daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionSelectedBoundary() (string, bool) {
+	entries := daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionEntriesForStage(daemonDeprecatedRuntimeAPIPostReleaseGateOptInFlagDecisionStageNextReleaseGateReassessmentChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonDeprecatedRuntimeAPINextReleaseGateReassessmentEntryForComponent(component string) (daemonDeprecatedRuntimeAPINextReleaseGateReassessmentEntry, bool) {
+	for _, entry := range daemonDeprecatedRuntimeAPINextReleaseGateReassessmentTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonDeprecatedRuntimeAPINextReleaseGateReassessmentEntry{}, false
+}
+
+func daemonDeprecatedRuntimeAPINextReleaseGateReassessmentEntriesForStage(stage daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStage) []daemonDeprecatedRuntimeAPINextReleaseGateReassessmentEntry {
+	var entries []daemonDeprecatedRuntimeAPINextReleaseGateReassessmentEntry
+	for _, entry := range daemonDeprecatedRuntimeAPINextReleaseGateReassessmentTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonDeprecatedRuntimeAPINextReleaseGateReassessmentSelectedBoundary() (string, bool) {
+	entries := daemonDeprecatedRuntimeAPINextReleaseGateReassessmentEntriesForStage(daemonDeprecatedRuntimeAPINextReleaseGateReassessmentStageNextBoundaryChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceEntryForComponent(component string) (daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceEntry, bool) {
+	for _, entry := range daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceEntry{}, false
+}
+
+func daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceEntriesForStage(stage daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStage) []daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceEntry {
+	var entries []daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceEntry
+	for _, entry := range daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceSelectedBoundary() (string, bool) {
+	entries := daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceEntriesForStage(daemonDeprecatedRuntimeAPICurrentReleaseGateCompletionEvidenceStageNextBoundaryChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEntryForComponent(component string) (daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEntry, bool) {
+	for _, entry := range daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEntry{}, false
+}
+
+func daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEntriesForStage(stage daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStage) []daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEntry {
+	var entries []daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEntry
+	for _, entry := range daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionSelectedBoundary() (string, bool) {
+	entries := daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionEntriesForStage(daemonDeprecatedRuntimeAPIReleaseCandidateFlagReductionDecisionStageNextArchiveBoundaryChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessEntryForComponent(component string) (daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessEntry, bool) {
+	for _, entry := range daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessEntry{}, false
+}
+
+func daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessEntriesForStage(stage daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStage) []daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessEntry {
+	var entries []daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessEntry
+	for _, entry := range daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessSelectedBoundary() (string, bool) {
+	entries := daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessEntriesForStage(daemonDeprecatedRuntimeAPIReleaseCandidateDiffArchiveTagReadinessStageNextStageCommitGateChosen)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateEntryForComponent(component string) (daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateEntry, bool) {
+	for _, entry := range daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateEntry{}, false
+}
+
+func daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateEntriesForStage(stage daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStage) []daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateEntry {
+	var entries []daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateEntry
+	for _, entry := range daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateSelectedBoundary() (string, bool) {
+	entries := daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateEntriesForStage(daemonDeprecatedRuntimeAPIReleaseCandidateStageCommitFullRegressionGateStageManualAuthorizationBoundary)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationEntryForComponent(component string) (daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationEntry, bool) {
+	for _, entry := range daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationEntry{}, false
+}
+
+func daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationEntriesForStage(stage daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStage) []daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationEntry {
+	var entries []daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationEntry
+	for _, entry := range daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationSelectedBoundary() (string, bool) {
+	entries := daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationEntriesForStage(daemonDeprecatedRuntimeAPIManualStageCommitTagAuthorizationStageAwaitUserBoundarySelected)
+	if len(entries) == 0 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}

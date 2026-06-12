@@ -12,6 +12,7 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/core/planner"
 	coreruntime "github.com/H1d3rOne/cyberagent/internal/core/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	coretenant "github.com/H1d3rOne/cyberagent/internal/core/tenant"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/runs"
 )
 
@@ -24,6 +25,7 @@ type jobManagerConfig struct {
 	Build             services.BuildInfo
 	MaxConcurrentJobs int
 	Runner            webScanRunner
+	StorageResolver   coretenant.StorageResolver
 }
 
 type jobManager struct {
@@ -32,6 +34,7 @@ type jobManager struct {
 	build             services.BuildInfo
 	maxConcurrentJobs int
 	runner            webScanRunner
+	storageResolver   coretenant.StorageResolver
 	jobs              map[string]*daemonJob
 	running           int
 }
@@ -89,12 +92,14 @@ func newJobManager(cfg jobManagerConfig) *jobManager {
 		build:             cfg.Build,
 		maxConcurrentJobs: cfg.MaxConcurrentJobs,
 		runner:            cfg.Runner,
+		storageResolver:   cfg.StorageResolver,
 		jobs:              map[string]*daemonJob{},
 	}
 }
 
 func (m *jobManager) StartWebScan(ctx context.Context, req startWebScanJobRequest) (scanJobStartResponse, error) {
-	if err := contextError(ctx); err != nil {
+	tc, err := daemonTenantContext(ctx)
+	if err != nil {
 		return scanJobStartResponse{}, err
 	}
 	normalized, err := normalizeStartWebScanRequest(req)
@@ -105,8 +110,12 @@ func (m *jobManager) StartWebScan(ctx context.Context, req startWebScanJobReques
 	now := time.Now().UTC()
 	jobID := runs.NewJobID(now)
 	runID := runs.NewJobID(now)
-	runDir := filepath.Join(m.runsDir, runID)
-	runCtx, cancel := context.WithCancel(context.Background())
+	runsDir, err := m.runsDirForContext(ctx)
+	if err != nil {
+		return scanJobStartResponse{}, err
+	}
+	runDir := filepath.Join(runsDir, runID)
+	runCtx, cancel := context.WithCancel(daemonContextWithTenant(context.Background(), tc))
 	job := &daemonJob{
 		JobID:     jobID,
 		Kind:      scanWebJobKind,
@@ -148,13 +157,27 @@ func (m *jobManager) StartWebScan(ctx context.Context, req startWebScanJobReques
 		RunURL:    "/api/v1/runs/" + runID,
 	}
 
-	go m.runWebScanJob(runCtx, jobID, runID, normalized)
+	go m.runWebScanJob(runCtx, jobID, runID, runDir, normalized)
 
 	return response, nil
 }
 
+func (m *jobManager) runsDirForContext(ctx context.Context) (string, error) {
+	if m.storageResolver == nil {
+		return m.runsDir, nil
+	}
+	paths, err := m.storageResolver.ResolveStorage(ctx)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(paths.RunsDir) == "" {
+		return m.runsDir, nil
+	}
+	return paths.RunsDir, nil
+}
+
 func (m *jobManager) GetJob(ctx context.Context, jobID string) (daemonJob, error) {
-	if err := contextError(ctx); err != nil {
+	if _, err := daemonTenantContext(ctx); err != nil {
 		return daemonJob{}, err
 	}
 	jobID, err := normalizeDaemonJobID(jobID)
@@ -171,7 +194,7 @@ func (m *jobManager) GetJob(ctx context.Context, jobID string) (daemonJob, error
 }
 
 func (m *jobManager) CancelJob(ctx context.Context, jobID string) (daemonJob, error) {
-	if err := contextError(ctx); err != nil {
+	if _, err := daemonTenantContext(ctx); err != nil {
 		return daemonJob{}, err
 	}
 	jobID, err := normalizeDaemonJobID(jobID)
@@ -198,12 +221,12 @@ func (m *jobManager) CancelJob(ctx context.Context, jobID string) (daemonJob, er
 	return cloneDaemonJob(job), nil
 }
 
-func (m *jobManager) runWebScanJob(ctx context.Context, jobID, runID string, req startWebScanJobRequest) {
+func (m *jobManager) runWebScanJob(ctx context.Context, jobID, runID, runDir string, req startWebScanJobRequest) {
 	result, err := m.runner(ctx, coreruntime.WebScanRequest{
 		Target:          req.Target,
 		Scope:           req.Scope,
 		Profile:         req.Profile,
-		Out:             filepath.Join(m.runsDir, runID),
+		Out:             runDir,
 		EnabledPlugins:  cloneStrings(req.EnabledPlugins),
 		NoExternalTools: req.NoExternalTools,
 		Interactive:     false,

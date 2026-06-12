@@ -156,6 +156,27 @@ cyberagent_v0.1.0_linux_arm64.tar.gz
 ```text
 docs/release-notes/v0.1.0.md
 docs/release-notes/v0.1.1.md
+docs/release-notes/v0.1.2.md
+```
+
+## 6.0 Runtime API Compatibility Migration Window
+
+Production Agent Runtime 的旧 engine seam 在当前 release gate 只作为外部兼容入口保留：
+
+```text
+runtime.Engine.RunLLMTurn / runtime.LLMTurnRunner: Deprecated；新 bounded loop 调用方迁移到 runtime.Engine.RunAgentLoop。
+runtime.Engine.ExecuteTurn / runtime.TurnExecutor: Deprecated；AgentLoop-shaped 调用方迁移到 runtime.Engine.RunAgentLoop，单 action 执行迁移到 runtime.Engine.ExecuteAgentLoopAction。
+迁移窗口：current_release_gate。
+默认 attachment 策略：AttachLLMTurnRunner 与 AttachTurnExecutor retained_until_release_gate。
+opt-in compatibility flag：当前 release gate 不新增；是否把兼容 attachment 转为 opt-in，推迟到 current_release_gate 之后做独立决策。
+```
+
+发布边界：
+
+```text
+release notes、API contract 与 release checklist 必须同步上述 Deprecated / current_release_gate / replacement API / retained_until_release_gate / opt-in 策略。
+在上述文档发布前，不将 AttachLLMTurnRunner 或 AttachTurnExecutor 移入删除候选。
+在 release gate 后，如要新增 opt-in compatibility flag，必须作为单独小切片实现并保留默认行为迁移说明。
 ```
 
 ## 6.1 Release Notes 模板

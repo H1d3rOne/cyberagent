@@ -32,12 +32,18 @@ type LLMTurnResult struct {
 }
 
 // LLMTurnRunner executes the LLM planner/tool/replan loop for one turn.
+//
+// Deprecated: prefer AgentLoopRunner with Engine.RunAgentLoop for new bounded
+// agent-loop integrations. LLMTurnRunner remains as an active compatibility
+// seam for existing daemon LLMTurn callers until that migration gate clears.
 type LLMTurnRunner interface {
 	RunLLMTurn(ctx context.Context, req LLMTurnRequest) (LLMTurnResult, error)
 }
 
 // LLMTurnRunnerFunc adapts a function into LLMTurnRunner for tests and narrow
 // migration adapters.
+//
+// Deprecated: use AgentLoopRunnerFunc for new bounded agent-loop adapters.
 type LLMTurnRunnerFunc func(context.Context, LLMTurnRequest) (LLMTurnResult, error)
 
 func (f LLMTurnRunnerFunc) RunLLMTurn(ctx context.Context, req LLMTurnRequest) (LLMTurnResult, error) {
@@ -49,6 +55,9 @@ func (f LLMTurnRunnerFunc) RunLLMTurn(ctx context.Context, req LLMTurnRequest) (
 
 // AttachLLMTurnRunner sets the runner used by RunLLMTurn. Passing nil is a
 // supported detach operation and restores the explicit unsupported result.
+//
+// Deprecated: attach an AgentLoopRunner and call Engine.RunAgentLoop for new
+// bounded agent-loop integrations.
 func (e *Engine) AttachLLMTurnRunner(runner LLMTurnRunner) {
 	if e == nil {
 		return
@@ -59,6 +68,8 @@ func (e *Engine) AttachLLMTurnRunner(runner LLMTurnRunner) {
 }
 
 // LLMTurnRunner returns the currently attached LLM turn runner, if any.
+//
+// Deprecated: use AgentLoopRunner for new bounded agent-loop integrations.
 func (e *Engine) LLMTurnRunner() LLMTurnRunner {
 	if e == nil {
 		return nil
@@ -70,6 +81,9 @@ func (e *Engine) LLMTurnRunner() LLMTurnRunner {
 
 // RunLLMTurn dispatches an LLMTurnRequest to the attached runner. It does not
 // emit lifecycle events by itself; BeginTurn/FinishTurn own persisted state.
+//
+// Deprecated: prefer Engine.RunAgentLoop for new bounded agent-loop callers;
+// this method is retained as an active runtime API compatibility seam.
 func (e *Engine) RunLLMTurn(ctx context.Context, req LLMTurnRequest) (LLMTurnResult, error) {
 	if e == nil {
 		return missingLLMTurnRunnerResult(ErrNilEngine), ErrNilEngine

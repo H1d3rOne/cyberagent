@@ -16,7 +16,15 @@ type agentApprovalDecisionTarget struct {
 	ApprovalID string
 }
 
-func (m *agentManager) resolveAgentApprovalDecisionTarget(ctx context.Context, sessionID, prompt string, svc routerServices) (agentApprovalDecisionTarget, error) {
+func (m *agentManager) resolveAgentApprovalDecisionTarget(ctx context.Context, sessionID, prompt string, resolver daemonAgentLoopActionServiceResolver) (agentApprovalDecisionTarget, error) {
+	runService, ok := resolver.RunService()
+	if !ok {
+		return agentApprovalDecisionTarget{}, services.NewError(services.CodeUnsupported, "run service not available", nil, nil)
+	}
+	approvalService, ok := resolver.ApprovalService()
+	if !ok {
+		return agentApprovalDecisionTarget{}, services.NewError(services.CodeUnsupported, "approval service not available", nil, nil)
+	}
 	runID := agentExtractRunID(prompt)
 	approvalID := agentExtractApprovalID(prompt)
 	if runID == "" {
@@ -25,7 +33,7 @@ func (m *agentManager) resolveAgentApprovalDecisionTarget(ctx context.Context, s
 		}
 	}
 	if runID != "" {
-		approvals, err := svc.approvals.ListApprovals(ctx, runID)
+		approvals, err := approvalService.ListApprovals(ctx, runID)
 		if err != nil {
 			return agentApprovalDecisionTarget{}, err
 		}
@@ -43,13 +51,13 @@ func (m *agentManager) resolveAgentApprovalDecisionTarget(ctx context.Context, s
 		return agentApprovalDecisionTarget{RunID: runID, ApprovalID: approvalID}, nil
 	}
 
-	page, err := svc.runs.ListRuns(ctx, services.RunListRequest{Limit: 30})
+	page, err := runService.ListRuns(ctx, services.RunListRequest{Limit: 30})
 	if err != nil {
 		return agentApprovalDecisionTarget{}, err
 	}
 	var matches []agentApprovalDecisionTarget
 	for _, run := range page.Items {
-		approvals, listErr := svc.approvals.ListApprovals(ctx, run.RunID)
+		approvals, listErr := approvalService.ListApprovals(ctx, run.RunID)
 		if listErr != nil {
 			continue
 		}

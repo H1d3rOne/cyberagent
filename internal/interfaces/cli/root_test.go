@@ -10,8 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	coreconfig "github.com/H1d3rOne/cyberagent/internal/core/config"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	coreruntime "github.com/H1d3rOne/cyberagent/internal/core/runtime"
+	daemonapi "github.com/H1d3rOne/cyberagent/internal/interfaces/daemon"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/command"
 	"github.com/H1d3rOne/cyberagent/internal/runtime/state"
 	"github.com/spf13/cobra"
@@ -42,10 +44,99 @@ func TestDaemonCommandHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("daemon --help error = %v", err)
 	}
-	for _, want := range []string{"Start the local CyberAgent HTTP API daemon", "--listen", "127.0.0.1:8787", "--runs-dir", "--token-file"} {
+	for _, want := range []string{"Start the local CyberAgent HTTP API daemon", "--listen", "127.0.0.1:8787", "--runs-dir", "--token-file", "--config"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("daemon help missing %q: %q", want, out)
 		}
+	}
+}
+
+func TestApplyDaemonConfigFileUsesDefaultsAndPreservesChangedFlags(t *testing.T) {
+	base := daemonapi.Config{
+		Listen:            "127.0.0.1:5555",
+		RunsDir:           "flag-runs",
+		TokenFile:         "default-token",
+		MaxConcurrentJobs: 1,
+	}
+	got := applyDaemonConfigFile(base, coreconfig.DaemonConfig{
+		Listen:            "127.0.0.1:9999",
+		RunsDir:           "config-runs",
+		TokenFile:         "config-token",
+		MaxConcurrentJobs: 4,
+		MultiUser: coreconfig.DaemonMultiUserConfig{
+			Enabled:     coreBoolPtr(true),
+			StorageRoot: "config-multi-user",
+		},
+		Auth: coreconfig.DaemonAuthConfig{
+			WebSessions: coreconfig.DaemonWebSessionAuthConfig{
+				Enabled:                  coreBoolPtr(true),
+				CookieName:               "ca_session",
+				TTLSeconds:               3600,
+				StoragePath:              "config-auth/sessions.jsonl",
+				PrincipalResolverEnabled: coreBoolPtr(true),
+			},
+			RBAC: coreconfig.DaemonRBACConfig{
+				Enabled:            coreBoolPtr(true),
+				PolicyPath:         "config-auth/rbac.yaml",
+				AuditEnabled:       coreBoolPtr(true),
+				EnforcementEnabled: coreBoolPtr(true),
+			},
+		},
+		Audit: coreconfig.DaemonAuditConfig{
+			Enabled: coreBoolPtr(true),
+			Path:    "config-audit/events.jsonl",
+		},
+		Admin: coreconfig.DaemonAdminConfig{
+			BootstrapTokenFile:   "config-admin/bootstrap-token",
+			MembershipAPIEnabled: coreBoolPtr(true),
+		},
+		RateLimit: coreconfig.DaemonRateLimitConfig{
+			Enabled:           coreBoolPtr(true),
+			RequestsPerMinute: 240,
+			Burst:             60,
+		},
+		Hardening: coreconfig.DaemonHardeningConfig{
+			RequireLoopback: coreBoolPtr(true),
+		},
+	}, func(name string) bool {
+		return name == "listen" || name == "multi-user-storage-root"
+	})
+	if got.Listen != "127.0.0.1:5555" {
+		t.Fatalf("Listen = %q, want flag value", got.Listen)
+	}
+	if got.RunsDir != "config-runs" || got.TokenFile != "config-token" || got.MaxConcurrentJobs != 4 {
+		t.Fatalf("config defaults not applied: %#v", got)
+	}
+	if !got.MultiUser.Enabled {
+		t.Fatalf("multi-user config enabled gate not applied: %#v", got.MultiUser)
+	}
+	if got.MultiUser.StorageRoot != "" {
+		t.Fatalf("multi-user storage root should preserve changed flag value, got %#v", got.MultiUser)
+	}
+	if !got.Auth.WebSessions.Enabled ||
+		got.Auth.WebSessions.CookieName != "ca_session" ||
+		got.Auth.WebSessions.TTLSeconds != 3600 ||
+		got.Auth.WebSessions.StoragePath != "config-auth/sessions.jsonl" ||
+		!got.Auth.WebSessions.PrincipalResolverEnabled {
+		t.Fatalf("auth web_sessions config defaults not applied: %#v", got.Auth.WebSessions)
+	}
+	if !got.Auth.RBAC.Enabled ||
+		got.Auth.RBAC.PolicyPath != "config-auth/rbac.yaml" ||
+		!got.Auth.RBAC.AuditEnabled ||
+		!got.Auth.RBAC.EnforcementEnabled {
+		t.Fatalf("auth rbac config defaults not applied: %#v", got.Auth.RBAC)
+	}
+	if !got.Audit.Enabled || got.Audit.Path != "config-audit/events.jsonl" {
+		t.Fatalf("audit config defaults not applied: %#v", got.Audit)
+	}
+	if got.Admin.BootstrapTokenFile != "config-admin/bootstrap-token" || !got.Admin.MembershipAPIEnabled {
+		t.Fatalf("admin config defaults not applied: %#v", got.Admin)
+	}
+	if !got.RateLimit.Enabled || got.RateLimit.RequestsPerMinute != 240 || got.RateLimit.Burst != 60 {
+		t.Fatalf("rate limit config defaults not applied: %#v", got.RateLimit)
+	}
+	if !got.Hardening.RequireLoopback {
+		t.Fatalf("hardening config defaults not applied: %#v", got.Hardening)
 	}
 }
 
@@ -80,6 +171,10 @@ func TestDashboardLocalDaemonBootstrapLoopback(t *testing.T) {
 	if got.Message != "" {
 		t.Fatalf("unexpected message: %q", got.Message)
 	}
+}
+
+func coreBoolPtr(v bool) *bool {
+	return &v
 }
 
 func TestDashboardLocalDaemonBootstrapRejectsNonLoopback(t *testing.T) {

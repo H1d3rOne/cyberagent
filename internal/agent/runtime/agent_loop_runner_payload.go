@@ -7,6 +7,10 @@ package runtime
 type AgentLoopMode string
 
 const (
+	// AgentLoopModeDeterministicRoute executes the local deterministic routing
+	// adapter for prompts that do not require the full LLM/tool loop.
+	AgentLoopModeDeterministicRoute AgentLoopMode = "deterministic_route"
+
 	// AgentLoopModeLLMToolLoop starts with planner chat, then runs Plan → Action
 	// → StepReplan until the plan stops or reaches MaxLoops.
 	AgentLoopModeLLMToolLoop AgentLoopMode = "llm_tool_loop"
@@ -20,6 +24,11 @@ const (
 	// engine-owned outer loop runners while the action/synthesis adapters still
 	// live in daemon.
 	AgentLoopModePlannerActionReplanCycle AgentLoopMode = "planner_action_replan_cycle"
+
+	// AgentLoopModePlannerActionExecution executes one planner action through
+	// the runtime action executor contract. It is the single-action AgentLoop
+	// landing point before broader action service ownership moves out of daemon.
+	AgentLoopModePlannerActionExecution AgentLoopMode = "planner_action_execution"
 )
 
 // AgentLoopRequest is the runtime-neutral boundary for the future
@@ -37,6 +46,7 @@ type AgentLoopRequest struct {
 	MemorySummary *AgentLoopMemorySummary
 	InitialPlan   *AgentLoopPlan
 	State         AgentLoopState
+	Action        AgentLoopAction
 
 	Authorization AgentLoopAuthorization
 	ToolServices  AgentLoopToolServiceBinding
@@ -55,6 +65,7 @@ func (req AgentLoopRequest) Clone() AgentLoopRequest {
 	cloned.MemorySummary = CloneAgentLoopMemorySummary(req.MemorySummary)
 	cloned.InitialPlan = CloneAgentLoopPlan(req.InitialPlan)
 	cloned.State = req.State.Clone()
+	cloned.Action = req.Action.Clone()
 	cloned.Authorization = req.Authorization.Clone()
 	cloned.ToolServices = req.ToolServices.Clone()
 	cloned.Metadata = CloneAgentLoopMapStringAny(req.Metadata)

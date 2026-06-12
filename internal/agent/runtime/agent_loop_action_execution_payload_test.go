@@ -49,6 +49,53 @@ func TestAgentLoopActionExecutionPayloadCloneIsolatesMutableFields(t *testing.T)
 	}
 }
 
+func TestAgentLoopActionExecutionTurnBuildsPayloadAndMetadata(t *testing.T) {
+	req := AgentLoopRequest{
+		Turn: TurnContext{
+			SessionID:      "session-action",
+			TaskID:         "task-action",
+			RunID:          "run-action",
+			TurnID:         "turn-action",
+			Prompt:         "run action",
+			Origin:         "legacy-origin",
+			OperationLevel: "safe_scan",
+			Metadata:       map[string]any{"phase": "action"},
+		},
+		Language: "en",
+		Operator: "tester",
+	}
+	action := AgentLoopAction{
+		Name:      "daemon.health",
+		Arguments: map[string]any{"probe": "runtime-turn"},
+	}
+
+	turn := AgentLoopActionExecutionTurn(req, "planner_action_execution", action, "daemon.health")
+	req.Turn.Metadata["phase"] = "mutated"
+	action.Arguments["probe"] = "mutated"
+
+	if turn.Origin != "planner_action_execution" || turn.TurnIndex != 1 {
+		t.Fatalf("turn origin/index = %q/%d, want planner_action_execution/1", turn.Origin, turn.TurnIndex)
+	}
+	if turn.Metadata["phase"] != "action" ||
+		turn.Metadata[AgentLoopActionExecutionExecutorMetadataKey] != AgentLoopActionExecutionExecutorMetadataValue ||
+		turn.Metadata[AgentLoopActionExecutionKindMetadataKey] != "planner_action_execution" ||
+		turn.Metadata[AgentLoopActionExecutionOperationLevelMetadataKey] != "safe_scan" ||
+		turn.Metadata[AgentLoopActionNameMetadataKey] != "daemon.health" {
+		t.Fatalf("action execution turn metadata = %#v", turn.Metadata)
+	}
+
+	payload, ok := turn.Payload.(AgentLoopActionExecutionPayload)
+	if !ok {
+		t.Fatalf("turn payload = %T, want AgentLoopActionExecutionPayload", turn.Payload)
+	}
+	if payload.Request.Turn.Metadata["phase"] != "action" {
+		t.Fatalf("payload request shares original request metadata: %#v", payload.Request.Turn.Metadata)
+	}
+	if payload.Action.Arguments["probe"] != "runtime-turn" {
+		t.Fatalf("payload action shares original action arguments: %#v", payload.Action.Arguments)
+	}
+}
+
 func TestAgentLoopActionExecutionTurnMetadataMergesAndClones(t *testing.T) {
 	existing := map[string]any{
 		"phase": "step_replan",

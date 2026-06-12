@@ -98,176 +98,220 @@ func daemonLegacySessionMutationResultPayload[T any](result runtime.SessionMutat
 	return zero, false
 }
 
+type daemonSessionMutationHandler func(daemonSessionMutator, context.Context, runtime.SessionMutationRequest) (runtime.SessionMutationResult, error)
+
+type daemonSessionMutationDispatchEntry struct {
+	kind    runtime.SessionMutationKind
+	handler daemonSessionMutationHandler
+}
+
+var daemonSessionMutationDispatchTable = [...]daemonSessionMutationDispatchEntry{
+	{kind: runtime.SessionMutationAppendMessages, handler: daemonSessionMutator.mutateAppendMessages},
+	{kind: runtime.SessionMutationRecordUserMessage, handler: daemonSessionMutator.mutateRecordUserMessage},
+	{kind: runtime.SessionMutationRequestAuthorization, handler: daemonSessionMutator.mutateRequestAuthorization},
+	{kind: runtime.SessionMutationCapabilityBlocked, handler: daemonSessionMutator.mutateCapabilityBlocked},
+	{kind: runtime.SessionMutationControlSession, handler: daemonSessionMutator.mutateControlSession},
+	{kind: runtime.SessionMutationResolveAuthorization, handler: daemonSessionMutator.mutateResolveAuthorization},
+}
+
+func daemonSessionMutationDispatchForKind(kind runtime.SessionMutationKind) (daemonSessionMutationHandler, bool) {
+	for _, entry := range daemonSessionMutationDispatchTable {
+		if entry.kind == kind && entry.handler != nil {
+			return entry.handler, true
+		}
+	}
+	return nil, false
+}
+
+func daemonSessionMutationPayload[T agentLoopSessionMutationPayloadCloner[T]](req runtime.SessionMutationRequest, invalidPayloadError string) (T, error) {
+	payload, ok := cloneAgentLoopSessionMutationPayload[T](req.Payload)
+	if ok {
+		return payload, nil
+	}
+	var zero T
+	return zero, errors.New(invalidPayloadError)
+}
+
 func (r daemonSessionMutator) MutateSession(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
 	if r.manager == nil {
 		err := errors.New("daemon: session mutator has no manager")
 		return daemonSessionMutationErrorResult(req, err), err
 	}
 
-	switch req.Kind {
-	case runtime.SessionMutationAppendMessages:
-		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopAppendMessagesPayload](req.Payload)
-		if !ok {
-			err := errors.New("daemon: invalid append messages mutation payload")
-			return daemonSessionMutationErrorResult(req, err), err
-		}
-		sessionID := req.Turn.SessionID
-		plan := agentPlannerResponsePtrFromAgentLoopPlan(payload.Plan)
-		messages := agentMessagesFromAgentLoopMessages(payload.Messages)
-		resultPayload, mutated := r.manager.appendMessagesWithPlannerLegacyForTurn(ctx, sessionID, agentRuntimeTurnRefFromTurn(req.Turn), plan, messages...)
-		resultPayload.Mutated = mutated
-		return runtime.SessionMutationResult{
-			Status:  runtime.TurnResultFinished,
-			Reason:  "legacy daemon session append mutation executed",
-			Payload: agentLoopAppendMessagesResultPayloadFromDaemon(resultPayload),
-			Data: map[string]any{
-				"mutator":       "daemon_legacy_session",
-				"kind":          string(req.Kind),
-				"session_id":    sessionID,
-				"message_count": len(payload.Messages),
-				"planner_apply": payload.Plan != nil,
-				"mutated":       mutated,
-			},
-		}, nil
-	case runtime.SessionMutationRecordUserMessage:
-		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopRecordUserMessagePayload](req.Payload)
-		if !ok {
-			err := errors.New("daemon: invalid record user message mutation payload")
-			return daemonSessionMutationErrorResult(req, err), err
-		}
-		sessionID := req.Turn.SessionID
-		prompt := req.Turn.Prompt
-		operationLevel := req.Turn.OperationLevel
-		resultPayload, err := r.manager.recordUserMessageLegacy(sessionID, prompt, payload.Operator, payload.Language, operationLevel)
-		if err != nil {
-			return daemonSessionMutationErrorResult(req, err), err
-		}
-		resultPayload.Mutated = true
-		return runtime.SessionMutationResult{
-			Status:  runtime.TurnResultFinished,
-			Reason:  "legacy daemon user message mutation executed",
-			Payload: agentLoopRecordUserMessageResultPayloadFromDaemon(resultPayload),
-			Data: map[string]any{
-				"mutator":         "daemon_legacy_session",
-				"kind":            string(req.Kind),
-				"session_id":      sessionID,
-				"message_id":      resultPayload.UserMessage.ID,
-				"operation_level": operationLevel,
-				"mutated":         true,
-			},
-		}, nil
-	case runtime.SessionMutationRequestAuthorization:
-		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopAuthorizationRequestPayload](req.Payload)
-		if !ok {
-			err := errors.New("daemon: invalid request authorization mutation payload")
-			return daemonSessionMutationErrorResult(req, err), err
-		}
-		sessionID := req.Turn.SessionID
-		operatorPrompt := req.Turn.Prompt
-		operationLevel := req.Turn.OperationLevel
-		action := agentPlannerActionFromAgentLoopAction(payload.Action)
-		resultPayload := r.manager.requestAgentAuthorizationLegacy(sessionID, payload.Language, operatorPrompt, action, payload.ActionName, payload.RequiredLevel, payload.Policy, payload.Reason)
-		return runtime.SessionMutationResult{
-			Status:  runtime.TurnResultFinished,
-			Reason:  "legacy daemon authorization request mutation executed",
-			Payload: agentLoopRequestAuthorizationResultPayloadFromDaemon(resultPayload),
-			Data: map[string]any{
-				"mutator":          "daemon_legacy_session",
-				"kind":             string(req.Kind),
-				"session_id":       sessionID,
-				"authorization_id": resultPayload.Authorization.ID,
-				"action_name":      resultPayload.Authorization.ActionName,
-				"required_level":   resultPayload.Authorization.RequiredLevel,
-				"policy":           resultPayload.Authorization.Policy,
-				"message_id":       resultPayload.Message.ID,
-				"operation_level":  operationLevel,
-				"mutated":          resultPayload.Mutated,
-			},
-		}, nil
-	case runtime.SessionMutationCapabilityBlocked:
-		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopCapabilityBlockedPayload](req.Payload)
-		if !ok {
-			err := errors.New("daemon: invalid capability blocked mutation payload")
-			return daemonSessionMutationErrorResult(req, err), err
-		}
-		sessionID := req.Turn.SessionID
-		operationLevel := req.Turn.OperationLevel
-		resultPayload := r.manager.markAgentCapabilityBlockedLegacy(sessionID, payload.Language, payload.ActionName, payload.IntentID, payload.Reason, payload.SuggestedPrompt)
-		return runtime.SessionMutationResult{
-			Status:  runtime.TurnResultFinished,
-			Reason:  "legacy daemon capability blocked mutation executed",
-			Payload: agentLoopCapabilityBlockedResultPayloadFromDaemon(resultPayload),
-			Data: map[string]any{
-				"mutator":          "daemon_legacy_session",
-				"kind":             string(req.Kind),
-				"session_id":       sessionID,
-				"action_name":      resultPayload.ActionName,
-				"intent_id":        resultPayload.IntentID,
-				"suggested_prompt": resultPayload.SuggestedPrompt,
-				"operation_level":  operationLevel,
-				"mutated":          resultPayload.Mutated,
-			},
-		}, nil
-	case runtime.SessionMutationControlSession:
-		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopControlSessionPayload](req.Payload)
-		if !ok {
-			err := errors.New("daemon: invalid control session mutation payload")
-			return daemonSessionMutationErrorResult(req, err), err
-		}
-		sessionID := req.Turn.SessionID
-		prompt := req.Turn.Prompt
-		operationLevel := req.Turn.OperationLevel
-		resultPayload, err := r.manager.controlSessionLegacyForTurn(ctx, agentRuntimeTurnRefFromTurn(req.Turn), sessionID, payload.Action, prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, operationLevel)
-		if err != nil {
-			return daemonSessionMutationErrorResult(req, err), err
-		}
-		resultPayload.Mutated = true
-		return runtime.SessionMutationResult{
-			Status:  runtime.TurnResultFinished,
-			Reason:  "legacy daemon control session mutation executed",
-			Payload: agentLoopControlSessionResultPayloadFromDaemon(resultPayload),
-			Data: map[string]any{
-				"mutator":         "daemon_legacy_session",
-				"kind":            string(req.Kind),
-				"session_id":      sessionID,
-				"action":          payload.Action,
-				"message_id":      resultPayload.Message.ID,
-				"cancel_job_id":   resultPayload.CancelJobID,
-				"operation_level": operationLevel,
-				"mutated":         true,
-			},
-		}, nil
-	case runtime.SessionMutationResolveAuthorization:
-		payload, ok := cloneAgentLoopSessionMutationPayload[runtime.AgentLoopResolveAuthorizationPayload](req.Payload)
-		if !ok {
-			err := errors.New("daemon: invalid resolve authorization mutation payload")
-			return daemonSessionMutationErrorResult(req, err), err
-		}
-		sessionID := req.Turn.SessionID
-		operationLevel := req.Turn.OperationLevel
-		resultPayload, err := r.manager.resolveAuthorizationLegacyForTurn(ctx, agentRuntimeTurnRefFromTurn(req.Turn), sessionID, payload.Decision, payload.AuthorizationID, payload.Reason, payload.Operator, payload.Language, operationLevel, payload.OperationLevelProvided)
-		if err != nil {
-			return daemonSessionMutationErrorResult(req, err), err
-		}
-		resultPayload.Mutated = true
-		return runtime.SessionMutationResult{
-			Status:  runtime.TurnResultFinished,
-			Reason:  "legacy daemon authorization mutation executed",
-			Payload: agentLoopResolveAuthorizationResultPayloadFromDaemon(resultPayload),
-			Data: map[string]any{
-				"mutator":          "daemon_legacy_session",
-				"kind":             string(req.Kind),
-				"session_id":       sessionID,
-				"authorization_id": resultPayload.Pending.ID,
-				"decision":         payload.Decision,
-				"operation_level":  resultPayload.OperationLevel,
-				"message_id":       resultPayload.Message.ID,
-				"mutated":          true,
-			},
-		}, nil
-	default:
-		err := errors.New("daemon: unsupported session mutation kind")
+	if handler, ok := daemonSessionMutationDispatchForKind(req.Kind); ok {
+		return handler(r, ctx, req)
+	}
+
+	err := errors.New("daemon: unsupported session mutation kind")
+	return daemonSessionMutationErrorResult(req, err), err
+}
+
+func (r daemonSessionMutator) mutateAppendMessages(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+	payload, err := daemonSessionMutationPayload[runtime.AgentLoopAppendMessagesPayload](req, "daemon: invalid append messages mutation payload")
+	if err != nil {
 		return daemonSessionMutationErrorResult(req, err), err
+	}
+	sessionID := req.Turn.SessionID
+	plan := agentPlannerResponsePtrFromAgentLoopPlan(payload.Plan)
+	messages := agentMessagesFromAgentLoopMessages(payload.Messages)
+	resultPayload, mutated := r.manager.appendMessagesWithPlannerLegacyForTurn(ctx, sessionID, agentRuntimeTurnRefFromTurn(req.Turn), plan, messages...)
+	resultPayload.Mutated = mutated
+	return daemonSessionMutationFinishedResult(
+		"legacy daemon session append mutation executed",
+		agentLoopAppendMessagesResultPayloadFromDaemon(resultPayload),
+		map[string]any{
+			"mutator":       "daemon_legacy_session",
+			"kind":          string(req.Kind),
+			"session_id":    sessionID,
+			"message_count": len(payload.Messages),
+			"planner_apply": payload.Plan != nil,
+			"mutated":       mutated,
+		},
+	), nil
+}
+
+func (r daemonSessionMutator) mutateRecordUserMessage(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+	payload, err := daemonSessionMutationPayload[runtime.AgentLoopRecordUserMessagePayload](req, "daemon: invalid record user message mutation payload")
+	if err != nil {
+		return daemonSessionMutationErrorResult(req, err), err
+	}
+	sessionID := req.Turn.SessionID
+	prompt := req.Turn.Prompt
+	operationLevel := req.Turn.OperationLevel
+	resultPayload, err := r.manager.recordUserMessageLegacy(sessionID, prompt, payload.Operator, payload.Language, operationLevel)
+	if err != nil {
+		return daemonSessionMutationErrorResult(req, err), err
+	}
+	resultPayload.Mutated = true
+	return daemonSessionMutationFinishedResult(
+		"legacy daemon user message mutation executed",
+		agentLoopRecordUserMessageResultPayloadFromDaemon(resultPayload),
+		map[string]any{
+			"mutator":         "daemon_legacy_session",
+			"kind":            string(req.Kind),
+			"session_id":      sessionID,
+			"message_id":      resultPayload.UserMessage.ID,
+			"operation_level": operationLevel,
+			"mutated":         true,
+		},
+	), nil
+}
+
+func (r daemonSessionMutator) mutateRequestAuthorization(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+	payload, err := daemonSessionMutationPayload[runtime.AgentLoopAuthorizationRequestPayload](req, "daemon: invalid request authorization mutation payload")
+	if err != nil {
+		return daemonSessionMutationErrorResult(req, err), err
+	}
+	sessionID := req.Turn.SessionID
+	operatorPrompt := req.Turn.Prompt
+	operationLevel := req.Turn.OperationLevel
+	action := agentPlannerActionFromAgentLoopAction(payload.Action)
+	resultPayload := r.manager.requestAgentAuthorizationLegacy(sessionID, payload.Language, operatorPrompt, action, payload.ActionName, payload.RequiredLevel, payload.Policy, payload.Reason)
+	return daemonSessionMutationFinishedResult(
+		"legacy daemon authorization request mutation executed",
+		agentLoopRequestAuthorizationResultPayloadFromDaemon(resultPayload),
+		map[string]any{
+			"mutator":          "daemon_legacy_session",
+			"kind":             string(req.Kind),
+			"session_id":       sessionID,
+			"authorization_id": resultPayload.Authorization.ID,
+			"action_name":      resultPayload.Authorization.ActionName,
+			"required_level":   resultPayload.Authorization.RequiredLevel,
+			"policy":           resultPayload.Authorization.Policy,
+			"message_id":       resultPayload.Message.ID,
+			"operation_level":  operationLevel,
+			"mutated":          resultPayload.Mutated,
+		},
+	), nil
+}
+
+func (r daemonSessionMutator) mutateCapabilityBlocked(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+	payload, err := daemonSessionMutationPayload[runtime.AgentLoopCapabilityBlockedPayload](req, "daemon: invalid capability blocked mutation payload")
+	if err != nil {
+		return daemonSessionMutationErrorResult(req, err), err
+	}
+	sessionID := req.Turn.SessionID
+	operationLevel := req.Turn.OperationLevel
+	resultPayload := r.manager.markAgentCapabilityBlockedLegacy(sessionID, payload.Language, payload.ActionName, payload.IntentID, payload.Reason, payload.SuggestedPrompt)
+	return daemonSessionMutationFinishedResult(
+		"legacy daemon capability blocked mutation executed",
+		agentLoopCapabilityBlockedResultPayloadFromDaemon(resultPayload),
+		map[string]any{
+			"mutator":          "daemon_legacy_session",
+			"kind":             string(req.Kind),
+			"session_id":       sessionID,
+			"action_name":      resultPayload.ActionName,
+			"intent_id":        resultPayload.IntentID,
+			"suggested_prompt": resultPayload.SuggestedPrompt,
+			"operation_level":  operationLevel,
+			"mutated":          resultPayload.Mutated,
+		},
+	), nil
+}
+
+func (r daemonSessionMutator) mutateControlSession(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+	payload, err := daemonSessionMutationPayload[runtime.AgentLoopControlSessionPayload](req, "daemon: invalid control session mutation payload")
+	if err != nil {
+		return daemonSessionMutationErrorResult(req, err), err
+	}
+	sessionID := req.Turn.SessionID
+	prompt := req.Turn.Prompt
+	operationLevel := req.Turn.OperationLevel
+	resultPayload, err := r.manager.controlSessionLegacyForTurn(ctx, agentRuntimeTurnRefFromTurn(req.Turn), sessionID, payload.Action, prompt, payload.Reason, payload.RunID, payload.JobID, payload.ClearInput, payload.Operator, payload.Language, operationLevel)
+	if err != nil {
+		return daemonSessionMutationErrorResult(req, err), err
+	}
+	resultPayload.Mutated = true
+	return daemonSessionMutationFinishedResult(
+		"legacy daemon control session mutation executed",
+		agentLoopControlSessionResultPayloadFromDaemon(resultPayload),
+		map[string]any{
+			"mutator":         "daemon_legacy_session",
+			"kind":            string(req.Kind),
+			"session_id":      sessionID,
+			"action":          payload.Action,
+			"message_id":      resultPayload.Message.ID,
+			"cancel_job_id":   resultPayload.CancelJobID,
+			"operation_level": operationLevel,
+			"mutated":         true,
+		},
+	), nil
+}
+
+func (r daemonSessionMutator) mutateResolveAuthorization(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+	payload, err := daemonSessionMutationPayload[runtime.AgentLoopResolveAuthorizationPayload](req, "daemon: invalid resolve authorization mutation payload")
+	if err != nil {
+		return daemonSessionMutationErrorResult(req, err), err
+	}
+	sessionID := req.Turn.SessionID
+	operationLevel := req.Turn.OperationLevel
+	resultPayload, err := r.manager.resolveAuthorizationLegacyForTurn(ctx, agentRuntimeTurnRefFromTurn(req.Turn), sessionID, payload.Decision, payload.AuthorizationID, payload.Reason, payload.Operator, payload.Language, operationLevel, payload.OperationLevelProvided)
+	if err != nil {
+		return daemonSessionMutationErrorResult(req, err), err
+	}
+	resultPayload.Mutated = true
+	return daemonSessionMutationFinishedResult(
+		"legacy daemon authorization mutation executed",
+		agentLoopResolveAuthorizationResultPayloadFromDaemon(resultPayload),
+		map[string]any{
+			"mutator":          "daemon_legacy_session",
+			"kind":             string(req.Kind),
+			"session_id":       sessionID,
+			"authorization_id": resultPayload.Pending.ID,
+			"decision":         payload.Decision,
+			"operation_level":  resultPayload.OperationLevel,
+			"message_id":       resultPayload.Message.ID,
+			"mutated":          true,
+		},
+	), nil
+}
+
+func daemonSessionMutationFinishedResult(reason string, payload any, data map[string]any) runtime.SessionMutationResult {
+	return runtime.SessionMutationResult{
+		Status:  runtime.TurnResultFinished,
+		Reason:  reason,
+		Payload: payload,
+		Data:    runtime.CloneAgentLoopMapStringAny(data),
 	}
 }
 
@@ -291,132 +335,958 @@ func daemonSessionMutationErrorResult(req runtime.SessionMutationRequest, err er
 	}
 }
 
-func (m *agentManager) runRuntimeAppendMessagesMutation(ctx context.Context, sessionID string, plan *agentPlannerResponse, messages ...agentMessage) bool {
-	return m.runRuntimeAppendMessagesMutationWithTurn(ctx, runtime.TurnContext{
-		SessionID: sessionID,
-		Metadata: map[string]any{
-			"mutator": "session_mutation",
-			"kind":    string(runtime.SessionMutationAppendMessages),
-		},
-	}, plan, messages...)
+type daemonSessionMutationCallerPayloadExtractor[T any] func(runtime.SessionMutationResult) (T, bool)
+
+type daemonSessionMutationCallerEgress struct {
+	result    runtime.SessionMutationResult
+	handled   bool
+	resultErr error
 }
 
-func (m *agentManager) runRuntimeAppendMessagesMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, origin, operationLevel string, plan *agentPlannerResponse, messages ...agentMessage) bool {
-	return m.runRuntimeAppendMessagesMutationWithTurn(ctx, runtime.TurnContext{
-		SessionID:      sessionID,
-		TaskID:         turnRef.TaskID,
-		RunID:          turnRef.RunID,
-		TurnID:         turnRef.TurnID,
-		Prompt:         prompt,
-		Origin:         origin,
-		OperationLevel: operationLevel,
-		Metadata: map[string]any{
-			"mutator":         "session_mutation",
-			"kind":            string(runtime.SessionMutationAppendMessages),
-			"message_count":   len(messages),
-			"planner_apply":   plan != nil,
-			"operation_level": operationLevel,
-		},
-	}, plan, messages...)
+type daemonSessionMutationCallerInvalidPayloadEntry struct {
+	kind    runtime.SessionMutationKind
+	message string
 }
 
-func (m *agentManager) runRuntimeAppendMessagesMutationWithTurn(ctx context.Context, turn runtime.TurnContext, plan *agentPlannerResponse, messages ...agentMessage) bool {
-	eng := m.runtimeEngine()
-	if eng == nil || eng.SessionMutator() == nil {
-		return false
+type daemonSessionMutationCallerPolicy string
+
+const (
+	daemonSessionMutationCallerPolicyBoolOnly       daemonSessionMutationCallerPolicy = "bool_only"
+	daemonSessionMutationCallerPolicyStrictResult   daemonSessionMutationCallerPolicy = "strict_result"
+	daemonSessionMutationCallerPolicyOptionalResult daemonSessionMutationCallerPolicy = "optional_result"
+)
+
+type daemonSessionMutationCallerPolicyEntry struct {
+	kind   runtime.SessionMutationKind
+	policy daemonSessionMutationCallerPolicy
+}
+
+type daemonSessionMutationCallerFallbackReason string
+
+const (
+	daemonSessionMutationCallerFallbackEngineNotAttached  daemonSessionMutationCallerFallbackReason = "runtime_engine_not_attached"
+	daemonSessionMutationCallerFallbackMutatorNotAttached daemonSessionMutationCallerFallbackReason = "session_mutator_not_attached"
+	daemonSessionMutationCallerFallbackBlocked            daemonSessionMutationCallerFallbackReason = "blocked"
+)
+
+const daemonSessionMutationCallerFallbackOwnerLegacyCaller = "legacy_caller"
+
+type daemonSessionMutationCallerFallbackOwnershipEntry struct {
+	reason daemonSessionMutationCallerFallbackReason
+	owner  string
+}
+
+type daemonSharedCycleSessionMutationFallbackStage string
+
+const (
+	daemonSharedCycleSessionMutationFallbackStageRuntimeAppendDecisionOwned daemonSharedCycleSessionMutationFallbackStage = "runtime_append_decision_owned"
+	daemonSharedCycleSessionMutationFallbackStageDaemonMutationDispatch     daemonSharedCycleSessionMutationFallbackStage = "daemon_session_mutation_dispatch"
+	daemonSharedCycleSessionMutationFallbackStageLegacyFallbackRetained     daemonSharedCycleSessionMutationFallbackStage = "legacy_append_fallback_retained"
+	daemonSharedCycleSessionMutationFallbackStageNextBoundaryChosen         daemonSharedCycleSessionMutationFallbackStage = "attached_session_mutator_fallback_boundary_chosen"
+)
+
+const (
+	daemonSharedCycleSessionMutationFallbackDispositionRuntimeDecision        = "runtime_decision"
+	daemonSharedCycleSessionMutationFallbackDispositionDaemonDispatch         = "daemon_dispatch"
+	daemonSharedCycleSessionMutationFallbackDispositionLegacyFallbackRetained = "legacy_fallback_retained"
+	daemonSharedCycleSessionMutationFallbackDispositionAuditNextBoundary      = "audit_next_boundary"
+)
+
+const daemonSharedCycleSessionMutationFallbackNextBoundary = "shared_cycle_attached_session_mutator_fallback_retirement_readiness"
+
+type daemonSharedCycleSessionMutationFallbackEntry struct {
+	component    string
+	stage        daemonSharedCycleSessionMutationFallbackStage
+	mutationKind runtime.SessionMutationKind
+	disposition  string
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonSessionMutatorNotAttachedRetirementStage string
+
+const (
+	daemonSessionMutatorNotAttachedStageNoEngineFallbackRetained daemonSessionMutatorNotAttachedRetirementStage = "no_engine_session_mutation_legacy_fallback_retained"
+	daemonSessionMutatorNotAttachedStageMissingMutatorBlocked    daemonSessionMutatorNotAttachedRetirementStage = "attached_engine_missing_session_mutator_blocked"
+	daemonSessionMutatorNotAttachedStageDetachedResultBlocked    daemonSessionMutatorNotAttachedRetirementStage = "detached_session_mutator_result_blocked"
+	daemonSessionMutatorNotAttachedStageNextBoundaryChosen       daemonSessionMutatorNotAttachedRetirementStage = "session_mutation_blocked_or_error_boundary_chosen"
+)
+
+const (
+	daemonSessionMutatorNotAttachedDispositionLegacyFallback    = "legacy_fallback"
+	daemonSessionMutatorNotAttachedDispositionBlockedError      = "blocked_error"
+	daemonSessionMutatorNotAttachedDispositionAuditNextBoundary = "audit_next_boundary"
+)
+
+const daemonSessionMutatorNextFallbackRetirementBoundaryBlockedOrError = "session_mutation_blocked_or_error_fallback_retirement_readiness"
+
+type daemonSessionMutatorNotAttachedRetirementEntry struct {
+	component    string
+	stage        daemonSessionMutatorNotAttachedRetirementStage
+	reason       daemonSessionMutationCallerFallbackReason
+	mutationKind runtime.SessionMutationKind
+	disposition  string
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonAppendSessionMutationBlockedOrErrorRetirementStage string
+
+const (
+	daemonAppendSessionMutationBlockedOrErrorStageNoEngineFallbackRetained daemonAppendSessionMutationBlockedOrErrorRetirementStage = "no_engine_append_legacy_fallback_retained"
+	daemonAppendSessionMutationBlockedOrErrorStageBlockedResultSuppressed  daemonAppendSessionMutationBlockedOrErrorRetirementStage = "attached_session_mutator_blocked_result_blocks_legacy_append"
+	daemonAppendSessionMutationBlockedOrErrorStageHardErrorSuppressed      daemonAppendSessionMutationBlockedOrErrorRetirementStage = "attached_session_mutator_hard_error_blocks_legacy_append"
+	daemonAppendSessionMutationBlockedOrErrorStageNextBoundaryChosen       daemonAppendSessionMutationBlockedOrErrorRetirementStage = "session_mutation_optional_result_fallback_boundary_chosen"
+)
+
+const (
+	daemonAppendSessionMutationBlockedOrErrorDispositionLegacyFallback    = "legacy_fallback"
+	daemonAppendSessionMutationBlockedOrErrorDispositionBlockedError      = "blocked_error"
+	daemonAppendSessionMutationBlockedOrErrorDispositionHardError         = "hard_error"
+	daemonAppendSessionMutationBlockedOrErrorDispositionAuditNextBoundary = "audit_next_boundary"
+)
+
+const daemonAppendSessionMutationNextFallbackRetirementBoundaryOptionalResult = "session_mutation_optional_result_fallback_retirement_readiness"
+
+type daemonAppendSessionMutationBlockedOrErrorRetirementEntry struct {
+	component    string
+	stage        daemonAppendSessionMutationBlockedOrErrorRetirementStage
+	reason       daemonSessionMutationCallerFallbackReason
+	mutationKind runtime.SessionMutationKind
+	disposition  string
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonOptionalSessionMutationFallbackRetirementStage string
+
+const (
+	daemonOptionalSessionMutationFallbackStageNoEngineFallbackRetained       daemonOptionalSessionMutationFallbackRetirementStage = "no_engine_optional_result_legacy_fallback_retained"
+	daemonOptionalSessionMutationFallbackStageRequestAuthorizationSuppressed daemonOptionalSessionMutationFallbackRetirementStage = "request_authorization_attached_failure_blocks_legacy_caller"
+	daemonOptionalSessionMutationFallbackStageCapabilityBlockedSuppressed    daemonOptionalSessionMutationFallbackRetirementStage = "capability_blocked_attached_failure_blocks_legacy_caller"
+	daemonOptionalSessionMutationFallbackStageNextBoundaryChosen             daemonOptionalSessionMutationFallbackRetirementStage = "session_mutation_no_engine_fallback_boundary_chosen"
+)
+
+const (
+	daemonOptionalSessionMutationFallbackDispositionLegacyFallback    = "legacy_fallback"
+	daemonOptionalSessionMutationFallbackDispositionBlockedError      = "blocked_error"
+	daemonOptionalSessionMutationFallbackDispositionAuditNextBoundary = "audit_next_boundary"
+)
+
+const daemonOptionalSessionMutationNextFallbackRetirementBoundaryNoEngineFallback = "session_mutation_no_engine_legacy_fallback_retirement_readiness"
+
+type daemonOptionalSessionMutationFallbackRetirementEntry struct {
+	component    string
+	stage        daemonOptionalSessionMutationFallbackRetirementStage
+	reason       daemonSessionMutationCallerFallbackReason
+	mutationKind runtime.SessionMutationKind
+	disposition  string
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+type daemonNoEngineSessionMutationFallbackRetirementStage string
+
+const (
+	daemonNoEngineSessionMutationFallbackStageProductionDefaultEngineAttached daemonNoEngineSessionMutationFallbackRetirementStage = "production_default_engine_attached"
+	daemonNoEngineSessionMutationFallbackStageLegacyRuntimeOptOutRetained     daemonNoEngineSessionMutationFallbackRetirementStage = "legacy_runtime_opt_out_switch_retained"
+	daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained        daemonNoEngineSessionMutationFallbackRetirementStage = "no_engine_session_mutation_legacy_fallback_retained"
+	daemonNoEngineSessionMutationFallbackStageNextBoundaryChosen              daemonNoEngineSessionMutationFallbackRetirementStage = "manual_stage_commit_tag_authorization_boundary_chosen"
+)
+
+const (
+	daemonNoEngineSessionMutationFallbackDispositionRuntimeDefault       = "runtime_default"
+	daemonNoEngineSessionMutationFallbackDispositionRollbackSwitch       = "rollback_switch"
+	daemonNoEngineSessionMutationFallbackDispositionLegacyFallback       = "legacy_fallback"
+	daemonNoEngineSessionMutationFallbackDispositionManualGateNext       = "manual_gate_next"
+	daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization = "await_explicit_user_stage_commit_tag_authorization"
+)
+
+type daemonNoEngineSessionMutationFallbackRetirementEntry struct {
+	component    string
+	stage        daemonNoEngineSessionMutationFallbackRetirementStage
+	reason       daemonSessionMutationCallerFallbackReason
+	mutationKind runtime.SessionMutationKind
+	disposition  string
+	evidence     string
+	nextBoundary string
+	nextStep     string
+}
+
+const daemonSessionMutationCallerDefaultInvalidPayloadError = "daemon: session mutator returned invalid payload"
+
+var daemonSessionMutationCallerInvalidPayloadTable = [...]daemonSessionMutationCallerInvalidPayloadEntry{
+	{kind: runtime.SessionMutationAppendMessages, message: "daemon: append messages mutator returned invalid payload"},
+	{kind: runtime.SessionMutationRecordUserMessage, message: "daemon: record user message mutator returned invalid payload"},
+	{kind: runtime.SessionMutationRequestAuthorization, message: "daemon: request authorization mutator returned invalid payload"},
+	{kind: runtime.SessionMutationCapabilityBlocked, message: "daemon: capability blocked mutator returned invalid payload"},
+	{kind: runtime.SessionMutationControlSession, message: "daemon: control session mutator returned invalid payload"},
+	{kind: runtime.SessionMutationResolveAuthorization, message: "daemon: resolve authorization mutator returned invalid payload"},
+}
+
+var daemonSessionMutationCallerPolicyTable = [...]daemonSessionMutationCallerPolicyEntry{
+	{kind: runtime.SessionMutationAppendMessages, policy: daemonSessionMutationCallerPolicyBoolOnly},
+	{kind: runtime.SessionMutationRecordUserMessage, policy: daemonSessionMutationCallerPolicyStrictResult},
+	{kind: runtime.SessionMutationRequestAuthorization, policy: daemonSessionMutationCallerPolicyOptionalResult},
+	{kind: runtime.SessionMutationCapabilityBlocked, policy: daemonSessionMutationCallerPolicyOptionalResult},
+	{kind: runtime.SessionMutationControlSession, policy: daemonSessionMutationCallerPolicyStrictResult},
+	{kind: runtime.SessionMutationResolveAuthorization, policy: daemonSessionMutationCallerPolicyStrictResult},
+}
+
+var daemonSessionMutationCallerFallbackOwnershipTable = [...]daemonSessionMutationCallerFallbackOwnershipEntry{
+	{reason: daemonSessionMutationCallerFallbackEngineNotAttached, owner: daemonSessionMutationCallerFallbackOwnerLegacyCaller},
+	{reason: daemonSessionMutationCallerFallbackBlocked, owner: daemonSessionMutationCallerFallbackOwnerLegacyCaller},
+}
+
+var daemonSharedCycleSessionMutationFallbackTable = [...]daemonSharedCycleSessionMutationFallbackEntry{
+	{
+		component:    "runtime_replan_cycle_append_decision",
+		stage:        daemonSharedCycleSessionMutationFallbackStageRuntimeAppendDecisionOwned,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonSharedCycleSessionMutationFallbackDispositionRuntimeDecision,
+		evidence:     "planner_action_replan_cycle action/warning/synthesis placement and state egress are runtime-owned by AgentLoopReplanCycleApply*Append helpers before daemon dispatches append mutations",
+		nextBoundary: daemonSharedCycleSessionMutationFallbackNextBoundary,
+		nextStep:     "keep append placement in runtime DTO helpers while auditing the remaining daemon SessionMutation dispatch/fallback boundary",
+	},
+	{
+		component:    "shared_cycle_append_mutation_dispatch",
+		stage:        daemonSharedCycleSessionMutationFallbackStageDaemonMutationDispatch,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonSharedCycleSessionMutationFallbackDispositionDaemonDispatch,
+		evidence:     "appendAgentPlannerActionReplanCycleDecisionForTurn converts runtime append decisions to appendMessagesForTurn/appendMessagesWithPlannerForTurn, which build runtime SessionMutationAppendMessages requests",
+		nextBoundary: daemonSharedCycleSessionMutationFallbackNextBoundary,
+		nextStep:     "audit whether attached-engine SessionMutator nil/ErrSessionMutatorNotAttached should stay legacy-fallback or become blocked/error",
+	},
+	{
+		component:    "append_messages_legacy_fallback",
+		stage:        daemonSharedCycleSessionMutationFallbackStageLegacyFallbackRetained,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonSharedCycleSessionMutationFallbackDispositionLegacyFallbackRetained,
+		evidence:     "appendMessagesWithPlannerForTurn falls back to appendMessagesWithPlannerLegacyForTurn whenever runRuntimeAppendMessagesMutationForTurn is not handled; runRuntimeSessionMutation still treats no-engine, mutator-not-attached and blocked as legacy caller fallback reasons",
+		nextBoundary: daemonSharedCycleSessionMutationFallbackNextBoundary,
+		nextStep:     "split no-engine rollback fallback from attached-engine mutator missing/detached fallback before changing append behavior",
+	},
+	{
+		component:    "shared_cycle_session_mutation_next_boundary",
+		stage:        daemonSharedCycleSessionMutationFallbackStageNextBoundaryChosen,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonSharedCycleSessionMutationFallbackDispositionAuditNextBoundary,
+		evidence:     "nested dispatch fallback is source-audited and shared-cycle append placement is runtime-owned; the remaining daemon-owned edge is append SessionMutation dispatch/fallback",
+		nextBoundary: daemonSharedCycleSessionMutationFallbackNextBoundary,
+		nextStep:     "P0.5-N234 should decide whether attached-engine SessionMutator missing/detached fallback can be narrowed without breaking the explicit no-engine legacy runtime opt-out path",
+	},
+}
+
+var daemonSessionMutatorNotAttachedRetirementTable = [...]daemonSessionMutatorNotAttachedRetirementEntry{
+	{
+		component:    "no_engine_session_mutation_legacy_fallback",
+		stage:        daemonSessionMutatorNotAttachedStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		disposition:  daemonSessionMutatorNotAttachedDispositionLegacyFallback,
+		evidence:     "no-engine SessionMutation fallback remains scoped to the documented CYBERAGENT_RUNTIME legacy opt-out path, matching the AgentLoop/LLMStage no-engine fallback audits",
+		nextBoundary: daemonSessionMutatorNextFallbackRetirementBoundaryBlockedOrError,
+		nextStep:     "do not retire the no-engine legacy append/session mutation fallback until the explicit legacy runtime opt-out switch is removed",
+	},
+	{
+		component:    "attached_engine_missing_session_mutator",
+		stage:        daemonSessionMutatorNotAttachedStageMissingMutatorBlocked,
+		reason:       daemonSessionMutationCallerFallbackMutatorNotAttached,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonSessionMutatorNotAttachedDispositionBlockedError,
+		evidence:     "agentManager.AttachEngine attaches daemonSessionMutator, so a nil SessionMutator on an attached engine represents an explicit detach/miswire and now returns runtime.ErrSessionMutatorNotAttached instead of falling through to legacy append",
+		nextBoundary: daemonSessionMutatorNextFallbackRetirementBoundaryBlockedOrError,
+		nextStep:     "treat attached-engine missing SessionMutator as a blocked runtime configuration error for shared-cycle append dispatch",
+	},
+	{
+		component:    "detached_session_mutator_result",
+		stage:        daemonSessionMutatorNotAttachedStageDetachedResultBlocked,
+		reason:       daemonSessionMutationCallerFallbackMutatorNotAttached,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonSessionMutatorNotAttachedDispositionBlockedError,
+		evidence:     "ErrSessionMutatorNotAttached returned by Engine.MutateSession is normalized to blocked/error and no longer allows appendMessagesWithPlannerForTurn to execute the legacy append fallback",
+		nextBoundary: daemonSessionMutatorNextFallbackRetirementBoundaryBlockedOrError,
+		nextStep:     "continue by auditing remaining SessionMutation blocked/hard-error fallback behavior after the not-attached edge is narrowed",
+	},
+	{
+		component:    "session_mutation_next_fallback_boundary",
+		stage:        daemonSessionMutatorNotAttachedStageNextBoundaryChosen,
+		disposition:  daemonSessionMutatorNotAttachedDispositionAuditNextBoundary,
+		evidence:     "no-engine SessionMutation fallback is retained for explicit runtime opt-out; attached-engine SessionMutator nil/ErrSessionMutatorNotAttached is blocked/error and no longer writes via legacy append",
+		nextBoundary: daemonSessionMutatorNextFallbackRetirementBoundaryBlockedOrError,
+		nextStep:     "P0.5-N235 should decide whether generic blocked results or hard errors from an attached SessionMutator may still fall back to legacy callers",
+	},
+}
+
+var daemonAppendSessionMutationBlockedOrErrorRetirementTable = [...]daemonAppendSessionMutationBlockedOrErrorRetirementEntry{
+	{
+		component:    "no_engine_append_legacy_fallback",
+		stage:        daemonAppendSessionMutationBlockedOrErrorStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonAppendSessionMutationBlockedOrErrorDispositionLegacyFallback,
+		evidence:     "no-engine append fallback remains scoped to the documented CYBERAGENT_RUNTIME legacy opt-out path",
+		nextBoundary: daemonAppendSessionMutationNextFallbackRetirementBoundaryOptionalResult,
+		nextStep:     "do not retire the no-engine append fallback until the explicit legacy runtime opt-out switch is removed",
+	},
+	{
+		component:    "attached_session_mutator_blocked_result",
+		stage:        daemonAppendSessionMutationBlockedOrErrorStageBlockedResultSuppressed,
+		reason:       daemonSessionMutationCallerFallbackBlocked,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonAppendSessionMutationBlockedOrErrorDispositionBlockedError,
+		evidence:     "a blocked SessionMutationAppendMessages result from an attached SessionMutator is now treated as handled for append callers, preventing appendMessagesWithPlannerForTurn from executing legacy append fallback",
+		nextBoundary: daemonAppendSessionMutationNextFallbackRetirementBoundaryOptionalResult,
+		nextStep:     "propagate or surface blocked append diagnostics separately if a UI-facing error channel is added",
+	},
+	{
+		component:    "attached_session_mutator_hard_error",
+		stage:        daemonAppendSessionMutationBlockedOrErrorStageHardErrorSuppressed,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonAppendSessionMutationBlockedOrErrorDispositionHardError,
+		evidence:     "a non-fallback hard error from an attached SessionMutator is now treated as handled for append callers, preventing silent legacy writes after runtime mutation failure",
+		nextBoundary: daemonAppendSessionMutationNextFallbackRetirementBoundaryOptionalResult,
+		nextStep:     "continue by auditing optional-result session mutation callers whose signatures can still hide attached mutator errors by falling back to legacy callers",
+	},
+	{
+		component:    "session_mutation_next_fallback_boundary",
+		stage:        daemonAppendSessionMutationBlockedOrErrorStageNextBoundaryChosen,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonAppendSessionMutationBlockedOrErrorDispositionAuditNextBoundary,
+		evidence:     "append callers now only execute legacy append fallback when no runtime engine is attached; attached SessionMutator not-attached, blocked and hard-error egress no longer writes through legacy append",
+		nextBoundary: daemonAppendSessionMutationNextFallbackRetirementBoundaryOptionalResult,
+		nextStep:     "P0.5-N236 should decide whether request_authorization/capability_blocked optional-result callers need error-capable egress to avoid fallback after attached mutator errors",
+	},
+}
+
+var daemonOptionalSessionMutationFallbackRetirementTable = [...]daemonOptionalSessionMutationFallbackRetirementEntry{
+	{
+		component:    "request_authorization_no_engine_legacy_fallback",
+		stage:        daemonOptionalSessionMutationFallbackStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		mutationKind: runtime.SessionMutationRequestAuthorization,
+		disposition:  daemonOptionalSessionMutationFallbackDispositionLegacyFallback,
+		evidence:     "no-engine request_authorization fallback remains scoped to the documented CYBERAGENT_RUNTIME legacy opt-out path",
+		nextBoundary: daemonOptionalSessionMutationNextFallbackRetirementBoundaryNoEngineFallback,
+		nextStep:     "do not retire no-engine request_authorization fallback until the explicit legacy runtime opt-out switch is removed",
+	},
+	{
+		component:    "capability_blocked_no_engine_legacy_fallback",
+		stage:        daemonOptionalSessionMutationFallbackStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		mutationKind: runtime.SessionMutationCapabilityBlocked,
+		disposition:  daemonOptionalSessionMutationFallbackDispositionLegacyFallback,
+		evidence:     "no-engine capability_blocked fallback remains scoped to the documented CYBERAGENT_RUNTIME legacy opt-out path",
+		nextBoundary: daemonOptionalSessionMutationNextFallbackRetirementBoundaryNoEngineFallback,
+		nextStep:     "do not retire no-engine capability_blocked fallback until the explicit legacy runtime opt-out switch is removed",
+	},
+	{
+		component:    "request_authorization_attached_failure",
+		stage:        daemonOptionalSessionMutationFallbackStageRequestAuthorizationSuppressed,
+		mutationKind: runtime.SessionMutationRequestAuthorization,
+		disposition:  daemonOptionalSessionMutationFallbackDispositionBlockedError,
+		evidence:     "request_authorization optional-result callers now treat attached SessionMutator blocked, hard-error or invalid-payload egress as handled, preventing legacy authorization state writes after runtime mutation failure",
+		nextBoundary: daemonOptionalSessionMutationNextFallbackRetirementBoundaryNoEngineFallback,
+		nextStep:     "add an explicit error-capable request_authorization egress if UI-facing diagnostics are required",
+	},
+	{
+		component:    "capability_blocked_attached_failure",
+		stage:        daemonOptionalSessionMutationFallbackStageCapabilityBlockedSuppressed,
+		mutationKind: runtime.SessionMutationCapabilityBlocked,
+		disposition:  daemonOptionalSessionMutationFallbackDispositionBlockedError,
+		evidence:     "capability_blocked optional-result callers now treat attached SessionMutator blocked, hard-error or invalid-payload egress as handled, preventing legacy blocked-state writes after runtime mutation failure",
+		nextBoundary: daemonOptionalSessionMutationNextFallbackRetirementBoundaryNoEngineFallback,
+		nextStep:     "add an explicit error-capable capability_blocked egress if UI-facing diagnostics are required",
+	},
+	{
+		component:    "session_mutation_next_fallback_boundary",
+		stage:        daemonOptionalSessionMutationFallbackStageNextBoundaryChosen,
+		disposition:  daemonOptionalSessionMutationFallbackDispositionAuditNextBoundary,
+		evidence:     "append and optional-result callers no longer legacy-write after attached SessionMutator not-attached, blocked, hard-error or invalid-payload egress; remaining fallback is the no-engine legacy runtime opt-out path",
+		nextBoundary: daemonOptionalSessionMutationNextFallbackRetirementBoundaryNoEngineFallback,
+		nextStep:     "P0.5-N237 should audit whether the remaining no-engine SessionMutation legacy fallback can be retired or must stay bound to CYBERAGENT_RUNTIME",
+	},
+}
+
+var daemonNoEngineSessionMutationFallbackRetirementTable = [...]daemonNoEngineSessionMutationFallbackRetirementEntry{
+	{
+		component:    "production_default_runtime_engine",
+		stage:        daemonNoEngineSessionMutationFallbackStageProductionDefaultEngineAttached,
+		disposition:  daemonNoEngineSessionMutationFallbackDispositionRuntimeDefault,
+		evidence:     "NewServer defaults CYBERAGENT_RUNTIME to engine mode and attaches runtime.Engine before calling agentManager.AttachEngine, which wires daemonSessionMutator",
+		nextBoundary: daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization,
+		nextStep:     "keep production defaults on runtime engine; do not treat no-engine fallback as a production default path",
+	},
+	{
+		component:    "legacy_runtime_opt_out_switch",
+		stage:        daemonNoEngineSessionMutationFallbackStageLegacyRuntimeOptOutRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		disposition:  daemonNoEngineSessionMutationFallbackDispositionRollbackSwitch,
+		evidence:     "CYBERAGENT_RUNTIME=legacy/off/disabled/false/0 remains the documented whole-engine rollback switch and intentionally leaves agentManager without a runtime.Engine",
+		nextBoundary: daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization,
+		nextStep:     "do not retire no-engine SessionMutation fallback while CYBERAGENT_RUNTIME remains the whole-engine rollback switch",
+	},
+	{
+		component:    "append_messages_no_engine_legacy_fallback",
+		stage:        daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		mutationKind: runtime.SessionMutationAppendMessages,
+		disposition:  daemonNoEngineSessionMutationFallbackDispositionLegacyFallback,
+		evidence:     "append_messages legacy fallback is retained only when no runtime engine is attached; attached mutator missing, blocked and hard-error egress no longer legacy-append",
+		nextBoundary: daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization,
+		nextStep:     "keep append_messages fallback bound to the explicit legacy runtime opt-out path",
+	},
+	{
+		component:    "record_user_message_no_engine_legacy_fallback",
+		stage:        daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		mutationKind: runtime.SessionMutationRecordUserMessage,
+		disposition:  daemonNoEngineSessionMutationFallbackDispositionLegacyFallback,
+		evidence:     "record_user_message strict-result caller falls back to recordUserMessageLegacy only when no runtime engine is attached",
+		nextBoundary: daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization,
+		nextStep:     "keep record_user_message fallback bound to the explicit legacy runtime opt-out path",
+	},
+	{
+		component:    "request_authorization_no_engine_legacy_fallback",
+		stage:        daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		mutationKind: runtime.SessionMutationRequestAuthorization,
+		disposition:  daemonNoEngineSessionMutationFallbackDispositionLegacyFallback,
+		evidence:     "request_authorization optional-result legacy fallback is retained only for no-engine rollback; attached failure egress is handled and blocks legacy authorization writes",
+		nextBoundary: daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization,
+		nextStep:     "keep request_authorization fallback bound to the explicit legacy runtime opt-out path",
+	},
+	{
+		component:    "capability_blocked_no_engine_legacy_fallback",
+		stage:        daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		mutationKind: runtime.SessionMutationCapabilityBlocked,
+		disposition:  daemonNoEngineSessionMutationFallbackDispositionLegacyFallback,
+		evidence:     "capability_blocked optional-result legacy fallback is retained only for no-engine rollback; attached failure egress is handled and blocks legacy blocked-state writes",
+		nextBoundary: daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization,
+		nextStep:     "keep capability_blocked fallback bound to the explicit legacy runtime opt-out path",
+	},
+	{
+		component:    "control_session_no_engine_legacy_fallback",
+		stage:        daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		mutationKind: runtime.SessionMutationControlSession,
+		disposition:  daemonNoEngineSessionMutationFallbackDispositionLegacyFallback,
+		evidence:     "control_session strict-result caller falls back to controlSessionLegacy only when no runtime engine is attached",
+		nextBoundary: daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization,
+		nextStep:     "keep control_session fallback bound to the explicit legacy runtime opt-out path",
+	},
+	{
+		component:    "resolve_authorization_no_engine_legacy_fallback",
+		stage:        daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		reason:       daemonSessionMutationCallerFallbackEngineNotAttached,
+		mutationKind: runtime.SessionMutationResolveAuthorization,
+		disposition:  daemonNoEngineSessionMutationFallbackDispositionLegacyFallback,
+		evidence:     "resolve_authorization strict-result caller falls back to resolveAuthorizationLegacy only when no runtime engine is attached",
+		nextBoundary: daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization,
+		nextStep:     "keep resolve_authorization fallback bound to the explicit legacy runtime opt-out path",
+	},
+	{
+		component:    "session_mutation_no_engine_next_boundary",
+		stage:        daemonNoEngineSessionMutationFallbackStageNextBoundaryChosen,
+		disposition:  daemonNoEngineSessionMutationFallbackDispositionManualGateNext,
+		evidence:     "all SessionMutation caller families now retain legacy fallback only for no-engine rollback; retiring that fallback would remove the documented CYBERAGENT_RUNTIME whole-engine rollback path",
+		nextBoundary: daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization,
+		nextStep:     "return to the existing manual stage/commit/tag authorization gate before changing release state or deprecated runtime API defaults",
+	},
+}
+
+func daemonSessionMutationCallerInvalidPayloadError(kind runtime.SessionMutationKind) string {
+	for _, entry := range daemonSessionMutationCallerInvalidPayloadTable {
+		if entry.kind == kind {
+			return entry.message
+		}
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	return daemonSessionMutationCallerDefaultInvalidPayloadError
+}
+
+func daemonSessionMutationCallerPolicyForKind(kind runtime.SessionMutationKind) (daemonSessionMutationCallerPolicy, bool) {
+	for _, entry := range daemonSessionMutationCallerPolicyTable {
+		if entry.kind == kind {
+			return entry.policy, true
+		}
 	}
-	if turn.Metadata == nil {
-		turn.Metadata = map[string]any{}
+	return "", false
+}
+
+func daemonSessionMutationCallerPolicyMatches(kind runtime.SessionMutationKind, want daemonSessionMutationCallerPolicy) bool {
+	policy, ok := daemonSessionMutationCallerPolicyForKind(kind)
+	return !ok || policy == want
+}
+
+func daemonSessionMutationCallerPolicyMismatchError(kind runtime.SessionMutationKind, want daemonSessionMutationCallerPolicy) error {
+	return fmt.Errorf("daemon: session mutation caller policy mismatch for %s: expected %s", kind, want)
+}
+
+func daemonSessionMutationCallerFallbackOwnerForReason(reason daemonSessionMutationCallerFallbackReason) (string, bool) {
+	for _, entry := range daemonSessionMutationCallerFallbackOwnershipTable {
+		if entry.reason == reason {
+			return entry.owner, true
+		}
 	}
-	turn.Metadata["mutator"] = "session_mutation"
-	turn.Metadata["kind"] = string(runtime.SessionMutationAppendMessages)
-	turn.Metadata["message_count"] = len(messages)
-	turn.Metadata["planner_apply"] = plan != nil
-	if turn.OperationLevel != "" {
-		turn.Metadata["operation_level"] = turn.OperationLevel
+	return "", false
+}
+
+func daemonSessionMutationCallerFallbackOwnedByLegacyCaller(reason daemonSessionMutationCallerFallbackReason) bool {
+	owner, ok := daemonSessionMutationCallerFallbackOwnerForReason(reason)
+	return ok && owner == daemonSessionMutationCallerFallbackOwnerLegacyCaller
+}
+
+func daemonSessionMutationCallerFallbackOwnershipError(reason daemonSessionMutationCallerFallbackReason) error {
+	return fmt.Errorf("daemon: session mutation fallback ownership missing for %s", reason)
+}
+
+func daemonSharedCycleSessionMutationFallbackEntryForComponent(component string) (daemonSharedCycleSessionMutationFallbackEntry, bool) {
+	for _, entry := range daemonSharedCycleSessionMutationFallbackTable {
+		if entry.component == component {
+			return entry, true
+		}
 	}
-	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
-		Turn: turn,
-		Kind: runtime.SessionMutationAppendMessages,
-		Payload: runtime.AgentLoopAppendMessagesPayload{
-			Plan:     agentLoopPlanPtrFromAgentPlannerResponse(plan),
-			Messages: agentLoopMessagesFromAgentMessages(messages),
-		},
-		Metadata: map[string]any{
-			"mutator":       "session_mutation",
-			"kind":          string(runtime.SessionMutationAppendMessages),
-			"message_count": len(messages),
-			"planner_apply": plan != nil,
-		},
-	})
-	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
+	return daemonSharedCycleSessionMutationFallbackEntry{}, false
+}
+
+func daemonSharedCycleSessionMutationFallbackEntriesForStage(stage daemonSharedCycleSessionMutationFallbackStage) []daemonSharedCycleSessionMutationFallbackEntry {
+	var entries []daemonSharedCycleSessionMutationFallbackEntry
+	for _, entry := range daemonSharedCycleSessionMutationFallbackTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonSharedCycleSessionMutationFallbackSelectedBoundary() (string, bool) {
+	entries := daemonSharedCycleSessionMutationFallbackEntriesForStage(daemonSharedCycleSessionMutationFallbackStageNextBoundaryChosen)
+	if len(entries) != 1 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonSessionMutatorNotAttachedRetirementEntryForComponent(component string) (daemonSessionMutatorNotAttachedRetirementEntry, bool) {
+	for _, entry := range daemonSessionMutatorNotAttachedRetirementTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonSessionMutatorNotAttachedRetirementEntry{}, false
+}
+
+func daemonSessionMutatorNotAttachedRetirementEntriesForStage(stage daemonSessionMutatorNotAttachedRetirementStage) []daemonSessionMutatorNotAttachedRetirementEntry {
+	var entries []daemonSessionMutatorNotAttachedRetirementEntry
+	for _, entry := range daemonSessionMutatorNotAttachedRetirementTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonSessionMutatorNotAttachedRetirementSelectedFallbackBoundary() (string, bool) {
+	entries := daemonSessionMutatorNotAttachedRetirementEntriesForStage(daemonSessionMutatorNotAttachedStageNextBoundaryChosen)
+	if len(entries) != 1 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonSessionMutatorNotAttachedRetirementAllowsLegacyFallback(reason daemonSessionMutationCallerFallbackReason) bool {
+	for _, entry := range daemonSessionMutatorNotAttachedRetirementTable {
+		if entry.reason == reason &&
+			entry.disposition == daemonSessionMutatorNotAttachedDispositionLegacyFallback {
+			return true
+		}
+	}
+	return false
+}
+
+func daemonAppendSessionMutationBlockedOrErrorRetirementEntryForComponent(component string) (daemonAppendSessionMutationBlockedOrErrorRetirementEntry, bool) {
+	for _, entry := range daemonAppendSessionMutationBlockedOrErrorRetirementTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonAppendSessionMutationBlockedOrErrorRetirementEntry{}, false
+}
+
+func daemonAppendSessionMutationBlockedOrErrorRetirementEntriesForStage(stage daemonAppendSessionMutationBlockedOrErrorRetirementStage) []daemonAppendSessionMutationBlockedOrErrorRetirementEntry {
+	var entries []daemonAppendSessionMutationBlockedOrErrorRetirementEntry
+	for _, entry := range daemonAppendSessionMutationBlockedOrErrorRetirementTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonAppendSessionMutationBlockedOrErrorRetirementSelectedFallbackBoundary() (string, bool) {
+	entries := daemonAppendSessionMutationBlockedOrErrorRetirementEntriesForStage(daemonAppendSessionMutationBlockedOrErrorStageNextBoundaryChosen)
+	if len(entries) != 1 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonAppendSessionMutationBlockedOrErrorRetirementAllowsLegacyFallback(reason daemonSessionMutationCallerFallbackReason) bool {
+	for _, entry := range daemonAppendSessionMutationBlockedOrErrorRetirementTable {
+		if entry.reason == reason &&
+			entry.disposition == daemonAppendSessionMutationBlockedOrErrorDispositionLegacyFallback {
+			return true
+		}
+	}
+	return false
+}
+
+func daemonOptionalSessionMutationFallbackRetirementEntryForComponent(component string) (daemonOptionalSessionMutationFallbackRetirementEntry, bool) {
+	for _, entry := range daemonOptionalSessionMutationFallbackRetirementTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonOptionalSessionMutationFallbackRetirementEntry{}, false
+}
+
+func daemonOptionalSessionMutationFallbackRetirementEntriesForStage(stage daemonOptionalSessionMutationFallbackRetirementStage) []daemonOptionalSessionMutationFallbackRetirementEntry {
+	var entries []daemonOptionalSessionMutationFallbackRetirementEntry
+	for _, entry := range daemonOptionalSessionMutationFallbackRetirementTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonOptionalSessionMutationFallbackRetirementSelectedFallbackBoundary() (string, bool) {
+	entries := daemonOptionalSessionMutationFallbackRetirementEntriesForStage(daemonOptionalSessionMutationFallbackStageNextBoundaryChosen)
+	if len(entries) != 1 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonOptionalSessionMutationFallbackRetirementAllowsLegacyFallback(kind runtime.SessionMutationKind, reason daemonSessionMutationCallerFallbackReason) bool {
+	for _, entry := range daemonOptionalSessionMutationFallbackRetirementTable {
+		if entry.mutationKind == kind &&
+			entry.reason == reason &&
+			entry.disposition == daemonOptionalSessionMutationFallbackDispositionLegacyFallback {
+			return true
+		}
+	}
+	return false
+}
+
+func daemonOptionalSessionMutationFallbackRetirementBlocksLegacyFallback(kind runtime.SessionMutationKind) bool {
+	for _, entry := range daemonOptionalSessionMutationFallbackRetirementTable {
+		if entry.mutationKind == kind &&
+			entry.disposition == daemonOptionalSessionMutationFallbackDispositionBlockedError {
+			return true
+		}
+	}
+	return false
+}
+
+func daemonNoEngineSessionMutationFallbackRetirementEntryForComponent(component string) (daemonNoEngineSessionMutationFallbackRetirementEntry, bool) {
+	for _, entry := range daemonNoEngineSessionMutationFallbackRetirementTable {
+		if entry.component == component {
+			return entry, true
+		}
+	}
+	return daemonNoEngineSessionMutationFallbackRetirementEntry{}, false
+}
+
+func daemonNoEngineSessionMutationFallbackRetirementEntriesForStage(stage daemonNoEngineSessionMutationFallbackRetirementStage) []daemonNoEngineSessionMutationFallbackRetirementEntry {
+	var entries []daemonNoEngineSessionMutationFallbackRetirementEntry
+	for _, entry := range daemonNoEngineSessionMutationFallbackRetirementTable {
+		if entry.stage == stage {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func daemonNoEngineSessionMutationFallbackRetirementSelectedBoundary() (string, bool) {
+	entries := daemonNoEngineSessionMutationFallbackRetirementEntriesForStage(daemonNoEngineSessionMutationFallbackStageNextBoundaryChosen)
+	if len(entries) != 1 || entries[0].nextBoundary == "" {
+		return "", false
+	}
+	return entries[0].nextBoundary, true
+}
+
+func daemonNoEngineSessionMutationFallbackRetirementRetainsKind(kind runtime.SessionMutationKind) bool {
+	for _, entry := range daemonNoEngineSessionMutationFallbackRetirementTable {
+		if entry.mutationKind == kind &&
+			entry.reason == daemonSessionMutationCallerFallbackEngineNotAttached &&
+			entry.disposition == daemonNoEngineSessionMutationFallbackDispositionLegacyFallback {
+			return true
+		}
+	}
+	return false
+}
+
+func daemonSessionMutationCallerPreDispatchFallbackReason(eng *runtime.Engine) (daemonSessionMutationCallerFallbackReason, bool) {
+	if eng == nil {
+		return daemonSessionMutationCallerFallbackEngineNotAttached, true
+	}
+	if eng.SessionMutator() == nil {
+		return daemonSessionMutationCallerFallbackMutatorNotAttached, true
+	}
+	return "", false
+}
+
+func daemonSessionMutationCallerResultFallbackReason(result runtime.SessionMutationResult, resultErr error) (daemonSessionMutationCallerFallbackReason, bool) {
+	if errors.Is(resultErr, runtime.ErrSessionMutatorNotAttached) ||
 		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
-		return false
-	}
-	if err != nil {
-		return false
-	}
-	return result.Status != runtime.TurnResultBlocked
-}
-
-func (m *agentManager) runRuntimeRecordUserMessageMutation(ctx context.Context, sessionID, prompt, operator, language, operationLevel string) (daemonRecordUserMessageMutationResultPayload, bool, error) {
-	eng := m.runtimeEngine()
-	if eng == nil || eng.SessionMutator() == nil {
-		return daemonRecordUserMessageMutationResultPayload{}, false, nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
-		Turn: runtime.TurnContext{
-			SessionID:      sessionID,
-			Prompt:         prompt,
-			Origin:         "user",
-			OperationLevel: operationLevel,
-			Metadata: map[string]any{
-				"mutator": "session_mutation",
-				"kind":    string(runtime.SessionMutationRecordUserMessage),
-			},
-		},
-		Kind: runtime.SessionMutationRecordUserMessage,
-		Payload: runtime.AgentLoopRecordUserMessagePayload{
-			Operator: operator,
-			Language: language,
-		},
-		Metadata: map[string]any{
-			"mutator":         "session_mutation",
-			"kind":            string(runtime.SessionMutationRecordUserMessage),
-			"operation_level": operationLevel,
-		},
-	})
-	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
-		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
-		return daemonRecordUserMessageMutationResultPayload{}, false, nil
-	}
-	if err != nil {
-		return daemonRecordUserMessageMutationResultPayload{}, true, err
+		return daemonSessionMutationCallerFallbackMutatorNotAttached, true
 	}
 	if result.Status == runtime.TurnResultBlocked {
-		return daemonRecordUserMessageMutationResultPayload{}, false, nil
+		return daemonSessionMutationCallerFallbackBlocked, true
 	}
-	payload, ok := daemonRecordUserMessageMutationResultPayloadFromSessionMutationResult(result)
+	return "", false
+}
+
+func daemonSessionMutationCallerMutatorNotAttachedBlockedResult(request runtime.SessionMutationRequest, result runtime.SessionMutationResult, resultErr error) (runtime.SessionMutationResult, bool) {
+	blockedErr := error(nil)
+	if errors.Is(resultErr, runtime.ErrSessionMutatorNotAttached) {
+		blockedErr = resultErr
+	} else if errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
+		blockedErr = result.Error
+	}
+	if blockedErr == nil {
+		return runtime.SessionMutationResult{}, false
+	}
+	blocked := result
+	blocked.Status = runtime.TurnResultBlocked
+	if blocked.Reason == "" {
+		blocked.Reason = blockedErr.Error()
+	}
+	blocked.Error = blockedErr
+	data := runtime.CloneAgentLoopMapStringAny(blocked.Data)
+	if data == nil {
+		data = map[string]any{}
+	}
+	if request.Kind != "" {
+		data["kind"] = string(request.Kind)
+	}
+	if request.Turn.SessionID != "" {
+		data["session_id"] = request.Turn.SessionID
+	}
+	if request.Turn.TaskID != "" {
+		data["task_id"] = request.Turn.TaskID
+	}
+	if request.Turn.RunID != "" {
+		data["run_id"] = request.Turn.RunID
+	}
+	if request.Turn.TurnID != "" {
+		data["turn_id"] = request.Turn.TurnID
+	}
+	data["error"] = blockedErr.Error()
+	data["blocked_reason"] = string(daemonSessionMutationCallerFallbackMutatorNotAttached)
+	blocked.Data = data
+	return blocked, true
+}
+
+func daemonSessionMutationCallerResultPayload[T any](
+	egress daemonSessionMutationCallerEgress,
+	extract daemonSessionMutationCallerPayloadExtractor[T],
+	invalidPayloadError string,
+) (T, bool, error) {
+	var zero T
+	if !egress.handled {
+		return zero, false, nil
+	}
+	if egress.resultErr != nil {
+		return zero, true, egress.resultErr
+	}
+	if extract == nil {
+		return zero, true, errors.New(invalidPayloadError)
+	}
+	payload, ok := extract(egress.result)
 	if !ok {
-		return daemonRecordUserMessageMutationResultPayload{}, true, errors.New("daemon: record user message mutator returned invalid payload")
+		return zero, true, errors.New(invalidPayloadError)
 	}
 	return payload, true, nil
 }
 
-func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operationLevel string, action runtime.AgentLoopAction, actionName, requiredLevel, policy, reason string) (daemonRequestAuthorizationMutationResultPayload, bool) {
+func daemonSessionMutationCallerResultPayloadForKind[T any](
+	egress daemonSessionMutationCallerEgress,
+	kind runtime.SessionMutationKind,
+	extract daemonSessionMutationCallerPayloadExtractor[T],
+) (T, bool, error) {
+	if !daemonSessionMutationCallerPolicyMatches(kind, daemonSessionMutationCallerPolicyStrictResult) {
+		var zero T
+		return zero, true, daemonSessionMutationCallerPolicyMismatchError(kind, daemonSessionMutationCallerPolicyStrictResult)
+	}
+	return daemonSessionMutationCallerResultPayload(egress, extract, daemonSessionMutationCallerInvalidPayloadError(kind))
+}
+
+func daemonSessionMutationCallerOptionalResultPayload[T any](
+	egress daemonSessionMutationCallerEgress,
+	extract daemonSessionMutationCallerPayloadExtractor[T],
+	invalidPayloadError string,
+) (T, bool) {
+	payload, handled, err := daemonSessionMutationCallerResultPayload(egress, extract, invalidPayloadError)
+	if !handled || err != nil {
+		var zero T
+		return zero, false
+	}
+	return payload, true
+}
+
+func daemonSessionMutationCallerOptionalResultPayloadForKind[T any](
+	egress daemonSessionMutationCallerEgress,
+	kind runtime.SessionMutationKind,
+	extract daemonSessionMutationCallerPayloadExtractor[T],
+) (T, bool) {
+	var zero T
+	if !daemonSessionMutationCallerPolicyMatches(kind, daemonSessionMutationCallerPolicyOptionalResult) {
+		return zero, false
+	}
+	payload, handled, err := daemonSessionMutationCallerResultPayload(egress, extract, daemonSessionMutationCallerInvalidPayloadError(kind))
+	if handled {
+		if err != nil {
+			return zero, daemonOptionalSessionMutationFallbackRetirementBlocksLegacyFallback(kind)
+		}
+		return payload, true
+	}
+	if reason, fallback := daemonSessionMutationCallerResultFallbackReason(egress.result, egress.resultErr); fallback &&
+		!daemonOptionalSessionMutationFallbackRetirementAllowsLegacyFallback(kind, reason) {
+		return zero, daemonOptionalSessionMutationFallbackRetirementBlocksLegacyFallback(kind)
+	}
+	return zero, false
+}
+
+func daemonSessionMutationCallerHandled(egress daemonSessionMutationCallerEgress) bool {
+	return egress.handled && egress.resultErr == nil
+}
+
+func daemonSessionMutationCallerHandledForKind(egress daemonSessionMutationCallerEgress, kind runtime.SessionMutationKind) bool {
+	if !daemonSessionMutationCallerPolicyMatches(kind, daemonSessionMutationCallerPolicyBoolOnly) {
+		return false
+	}
+	if egress.handled {
+		return true
+	}
+	reason, fallback := daemonSessionMutationCallerResultFallbackReason(egress.result, egress.resultErr)
+	return fallback && !daemonAppendSessionMutationBlockedOrErrorRetirementAllowsLegacyFallback(reason)
+}
+
+func (m *agentManager) runRuntimeSessionMutation(ctx context.Context, request runtime.SessionMutationRequest) (runtime.SessionMutationResult, bool, error) {
 	eng := m.runtimeEngine()
-	if eng == nil || eng.SessionMutator() == nil {
-		return daemonRequestAuthorizationMutationResultPayload{}, false
+	if reason, ok := daemonSessionMutationCallerPreDispatchFallbackReason(eng); ok {
+		if reason == daemonSessionMutationCallerFallbackMutatorNotAttached &&
+			!daemonSessionMutatorNotAttachedRetirementAllowsLegacyFallback(reason) {
+			blocked, _ := daemonSessionMutationCallerMutatorNotAttachedBlockedResult(request, runtime.SessionMutationResult{}, runtime.ErrSessionMutatorNotAttached)
+			return blocked, true, runtime.ErrSessionMutatorNotAttached
+		}
+		if !daemonSessionMutationCallerFallbackOwnedByLegacyCaller(reason) {
+			return runtime.SessionMutationResult{}, true, daemonSessionMutationCallerFallbackOwnershipError(reason)
+		}
+		return runtime.SessionMutationResult{}, false, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	result, err := eng.MutateSession(ctx, request)
+	if blocked, ok := daemonSessionMutationCallerMutatorNotAttachedBlockedResult(request, result, err); ok {
+		return blocked, true, blocked.Error
+	}
+	if reason, ok := daemonSessionMutationCallerResultFallbackReason(result, err); ok {
+		if reason == daemonSessionMutationCallerFallbackMutatorNotAttached &&
+			!daemonSessionMutatorNotAttachedRetirementAllowsLegacyFallback(reason) {
+			if blocked, blockedOK := daemonSessionMutationCallerMutatorNotAttachedBlockedResult(request, result, err); blockedOK {
+				return blocked, true, blocked.Error
+			}
+			return result, true, daemonSessionMutationCallerFallbackOwnershipError(reason)
+		}
+		if !daemonSessionMutationCallerFallbackOwnedByLegacyCaller(reason) {
+			return result, true, daemonSessionMutationCallerFallbackOwnershipError(reason)
+		}
+		return result, false, nil
+	}
+	if err != nil {
+		return result, true, err
+	}
+	return result, true, nil
+}
+
+func (m *agentManager) runRuntimeSessionMutationCallerEgress(ctx context.Context, request runtime.SessionMutationRequest) daemonSessionMutationCallerEgress {
+	result, handled, err := m.runRuntimeSessionMutation(ctx, request)
+	return daemonSessionMutationCallerEgress{
+		result:    result,
+		handled:   handled,
+		resultErr: err,
+	}
+}
+
+func (m *agentManager) runRuntimeAppendMessagesMutation(ctx context.Context, sessionID string, plan *agentPlannerResponse, messages ...agentMessage) bool {
+	return m.runRuntimeAppendMessagesMutationWithTurn(ctx, runtime.AgentLoopAppendMessagesMutationTurn(
+		sessionID,
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		len(messages),
+		plan != nil,
+	), plan, messages...)
+}
+
+func (m *agentManager) runRuntimeAppendMessagesMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, origin, operationLevel string, plan *agentPlannerResponse, messages ...agentMessage) bool {
+	return m.runRuntimeAppendMessagesMutationWithTurn(ctx, runtime.AgentLoopAppendMessagesMutationTurn(
+		sessionID,
+		turnRef.TaskID,
+		turnRef.RunID,
+		turnRef.TurnID,
+		prompt,
+		origin,
+		operationLevel,
+		len(messages),
+		plan != nil,
+	), plan, messages...)
+}
+
+func (m *agentManager) runRuntimeAppendMessagesMutationWithTurn(ctx context.Context, turn runtime.TurnContext, plan *agentPlannerResponse, messages ...agentMessage) bool {
+	operationLevel := turn.OperationLevel
+	turn.Metadata = runtime.MergeAgentLoopMetadata(
+		turn.Metadata,
+		runtime.AgentLoopAppendMessagesMutationMetadata(len(messages), plan != nil, operationLevel),
+	)
+	requestMetadata := runtime.AgentLoopAppendMessagesMutationMetadata(len(messages), plan != nil, "")
+	request := runtime.AgentLoopAppendMessagesMutationRequest(
+		turn,
+		agentLoopPlanPtrFromAgentPlannerResponse(plan),
+		agentLoopMessagesFromAgentMessages(messages),
+		requestMetadata,
+	)
+	return daemonSessionMutationCallerHandledForKind(m.runRuntimeSessionMutationCallerEgress(ctx, request), request.Kind)
+}
+
+func (m *agentManager) runRuntimeRecordUserMessageMutation(ctx context.Context, sessionID, prompt, operator, language, operationLevel string) (daemonRecordUserMessageMutationResultPayload, bool, error) {
+	request := runtime.AgentLoopRecordUserMessageMutationRequest(
+		sessionID,
+		prompt,
+		operationLevel,
+		operator,
+		language,
+		runtime.AgentLoopRecordUserMessageMutationMetadata(operationLevel),
+	)
+	return daemonSessionMutationCallerResultPayloadForKind(
+		m.runRuntimeSessionMutationCallerEgress(ctx, request),
+		request.Kind,
+		daemonRecordUserMessageMutationResultPayloadFromSessionMutationResult,
+	)
+}
+
+func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operationLevel string, action runtime.AgentLoopAction, actionName, requiredLevel, policy, reason string) (daemonRequestAuthorizationMutationResultPayload, bool) {
 	action = cloneAgentLoopAction(action)
 	actionMetadataName := firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(action.Name))
 	requestMetadata := runtime.AgentLoopAuthorizationRequestMutationMetadata(
@@ -425,86 +1295,51 @@ func (m *agentManager) runRuntimeRequestAuthorizationMutationForTurn(ctx context
 		strings.TrimSpace(policy),
 		operationLevel,
 	)
-	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
-		Turn: runtime.TurnContext{
-			SessionID:      sessionID,
-			TaskID:         turnRef.TaskID,
-			RunID:          turnRef.RunID,
-			TurnID:         turnRef.TurnID,
-			Prompt:         operatorPrompt,
-			Origin:         string(runtime.SessionMutationRequestAuthorization),
-			OperationLevel: operationLevel,
-			Metadata:       runtime.AgentLoopSessionMutationMetadata(runtime.SessionMutationRequestAuthorization),
-		},
-		Kind: runtime.SessionMutationRequestAuthorization,
-		Payload: runtime.AgentLoopAuthorizationRequestPayload{
-			Language:      language,
-			Action:        action,
-			ActionName:    actionName,
-			RequiredLevel: requiredLevel,
-			Policy:        policy,
-			Reason:        reason,
-		},
-		Metadata: requestMetadata,
-	})
-	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
-		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
-		return daemonRequestAuthorizationMutationResultPayload{}, false
-	}
-	if err != nil || result.Status == runtime.TurnResultBlocked {
-		return daemonRequestAuthorizationMutationResultPayload{}, false
-	}
-	payload, ok := daemonRequestAuthorizationMutationResultPayloadFromSessionMutationResult(result)
-	if !ok {
-		return daemonRequestAuthorizationMutationResultPayload{}, false
-	}
-	return payload, true
+	request := runtime.AgentLoopAuthorizationRequestMutationRequest(
+		sessionID,
+		turnRef.TaskID,
+		turnRef.RunID,
+		turnRef.TurnID,
+		operatorPrompt,
+		language,
+		operationLevel,
+		action,
+		actionName,
+		requiredLevel,
+		policy,
+		reason,
+		requestMetadata,
+	)
+	return daemonSessionMutationCallerOptionalResultPayloadForKind(
+		m.runRuntimeSessionMutationCallerEgress(ctx, request),
+		request.Kind,
+		daemonRequestAuthorizationMutationResultPayloadFromSessionMutationResult,
+	)
 }
 
 func (m *agentManager) runRuntimeCapabilityBlockedMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, operatorPrompt, language, operationLevel, actionName, intentID, reason, suggestedPrompt string) (daemonCapabilityBlockedMutationResultPayload, bool) {
-	eng := m.runtimeEngine()
-	if eng == nil || eng.SessionMutator() == nil {
-		return daemonCapabilityBlockedMutationResultPayload{}, false
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	actionName = firstNonEmpty(normalizeAgentPlannerActionName(actionName), strings.TrimSpace(actionName))
 	intentID = strings.TrimSpace(intentID)
 	requestMetadata := runtime.AgentLoopCapabilityBlockedMutationMetadata(actionName, intentID, strings.TrimSpace(suggestedPrompt), operationLevel)
-	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
-		Turn: runtime.TurnContext{
-			SessionID:      sessionID,
-			TaskID:         turnRef.TaskID,
-			RunID:          turnRef.RunID,
-			TurnID:         turnRef.TurnID,
-			Prompt:         operatorPrompt,
-			Origin:         string(runtime.SessionMutationCapabilityBlocked),
-			OperationLevel: operationLevel,
-			Metadata:       runtime.CloneAgentLoopMapStringAny(requestMetadata),
-		},
-		Kind: runtime.SessionMutationCapabilityBlocked,
-		Payload: runtime.AgentLoopCapabilityBlockedPayload{
-			Language:        language,
-			ActionName:      actionName,
-			IntentID:        intentID,
-			Reason:          reason,
-			SuggestedPrompt: suggestedPrompt,
-		},
-		Metadata: requestMetadata,
-	})
-	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
-		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
-		return daemonCapabilityBlockedMutationResultPayload{}, false
-	}
-	if err != nil || result.Status == runtime.TurnResultBlocked {
-		return daemonCapabilityBlockedMutationResultPayload{}, false
-	}
-	payload, ok := daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult(result)
-	if !ok {
-		return daemonCapabilityBlockedMutationResultPayload{}, false
-	}
-	return payload, true
+	request := runtime.AgentLoopCapabilityBlockedMutationRequest(
+		sessionID,
+		turnRef.TaskID,
+		turnRef.RunID,
+		turnRef.TurnID,
+		operatorPrompt,
+		language,
+		operationLevel,
+		actionName,
+		intentID,
+		reason,
+		suggestedPrompt,
+		requestMetadata,
+	)
+	return daemonSessionMutationCallerOptionalResultPayloadForKind(
+		m.runRuntimeSessionMutationCallerEgress(ctx, request),
+		request.Kind,
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+	)
 }
 
 func (m *agentManager) runRuntimeControlSessionMutation(ctx context.Context, sessionID, action string, req agentControlRequest, operator, language, operationLevel string) (daemonControlSessionMutationResultPayload, bool, error) {
@@ -517,62 +1352,28 @@ func (m *agentManager) controlSessionMutationTurnRef(ctx context.Context, sessio
 }
 
 func (m *agentManager) runRuntimeControlSessionMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, action string, req agentControlRequest, operator, language, operationLevel string) (daemonControlSessionMutationResultPayload, bool, error) {
-	eng := m.runtimeEngine()
-	if eng == nil || eng.SessionMutator() == nil {
-		return daemonControlSessionMutationResultPayload{}, false, nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
-		Turn: runtime.TurnContext{
-			SessionID:      sessionID,
-			TaskID:         turnRef.TaskID,
-			RunID:          turnRef.RunID,
-			TurnID:         turnRef.TurnID,
-			Prompt:         req.Prompt,
-			Origin:         "operator",
-			OperationLevel: operationLevel,
-			Metadata: map[string]any{
-				"mutator": "session_mutation",
-				"kind":    string(runtime.SessionMutationControlSession),
-			},
-		},
-		Kind: runtime.SessionMutationControlSession,
-		Payload: runtime.AgentLoopControlSessionPayload{
-			Action:     action,
-			Reason:     req.Reason,
-			RunID:      req.RunID,
-			JobID:      req.JobID,
-			ClearInput: req.ClearInput,
-			Operator:   operator,
-			Language:   language,
-		},
-		Metadata: map[string]any{
-			"mutator":         "session_mutation",
-			"kind":            string(runtime.SessionMutationControlSession),
-			"action":          action,
-			"operation_level": operationLevel,
-			"clear_input":     req.ClearInput,
-			"run_id":          strings.TrimSpace(req.RunID),
-			"job_id":          strings.TrimSpace(req.JobID),
-		},
-	})
-	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
-		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
-		return daemonControlSessionMutationResultPayload{}, false, nil
-	}
-	if err != nil {
-		return daemonControlSessionMutationResultPayload{}, true, err
-	}
-	if result.Status == runtime.TurnResultBlocked {
-		return daemonControlSessionMutationResultPayload{}, false, nil
-	}
-	payload, ok := daemonControlSessionMutationResultPayloadFromSessionMutationResult(result)
-	if !ok {
-		return daemonControlSessionMutationResultPayload{}, true, errors.New("daemon: control session mutator returned invalid payload")
-	}
-	return payload, true, nil
+	requestMetadata := runtime.AgentLoopControlSessionMutationMetadata(action, operationLevel, req.ClearInput, strings.TrimSpace(req.RunID), strings.TrimSpace(req.JobID))
+	request := runtime.AgentLoopControlSessionMutationRequest(
+		sessionID,
+		turnRef.TaskID,
+		turnRef.RunID,
+		turnRef.TurnID,
+		req.Prompt,
+		operationLevel,
+		action,
+		req.Reason,
+		req.RunID,
+		req.JobID,
+		req.ClearInput,
+		operator,
+		language,
+		requestMetadata,
+	)
+	return daemonSessionMutationCallerResultPayloadForKind(
+		m.runRuntimeSessionMutationCallerEgress(ctx, request),
+		request.Kind,
+		daemonControlSessionMutationResultPayloadFromSessionMutationResult,
+	)
 }
 
 func (m *agentManager) runRuntimeResolveAuthorizationMutation(ctx context.Context, sessionID, decision string, req agentAuthorizationDecisionRequest, operator, language, operationLevel string) (daemonResolveAuthorizationMutationResultPayload, bool, error) {
@@ -585,60 +1386,29 @@ func (m *agentManager) resolveAuthorizationMutationTurnRef(ctx context.Context, 
 }
 
 func (m *agentManager) runRuntimeResolveAuthorizationMutationForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, decision string, req agentAuthorizationDecisionRequest, operator, language, operationLevel string) (daemonResolveAuthorizationMutationResultPayload, bool, error) {
-	eng := m.runtimeEngine()
-	if eng == nil || eng.SessionMutator() == nil {
-		return daemonResolveAuthorizationMutationResultPayload{}, false, nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	operationLevelProvided := strings.TrimSpace(req.OperationLevel) != ""
-	result, err := eng.MutateSession(ctx, runtime.SessionMutationRequest{
-		Turn: runtime.TurnContext{
-			SessionID:      sessionID,
-			TaskID:         turnRef.TaskID,
-			RunID:          turnRef.RunID,
-			TurnID:         turnRef.TurnID,
-			Origin:         "operator",
-			OperationLevel: operationLevel,
-			Metadata: map[string]any{
-				"mutator": "session_mutation",
-				"kind":    string(runtime.SessionMutationResolveAuthorization),
-			},
-		},
-		Kind: runtime.SessionMutationResolveAuthorization,
-		Payload: runtime.AgentLoopResolveAuthorizationPayload{
-			Decision:               decision,
-			AuthorizationID:        strings.TrimSpace(req.AuthorizationID),
-			Reason:                 strings.TrimSpace(req.Reason),
-			Operator:               operator,
-			Language:               language,
-			OperationLevelProvided: operationLevelProvided,
-		},
-		Metadata: map[string]any{
-			"mutator":                  "session_mutation",
-			"kind":                     string(runtime.SessionMutationResolveAuthorization),
-			"authorization_id":         strings.TrimSpace(req.AuthorizationID),
-			"decision":                 decision,
-			"operation_level":          operationLevel,
-			"operation_level_provided": operationLevelProvided,
-		},
-	})
-	if errors.Is(err, runtime.ErrSessionMutatorNotAttached) ||
-		errors.Is(result.Error, runtime.ErrSessionMutatorNotAttached) {
-		return daemonResolveAuthorizationMutationResultPayload{}, false, nil
-	}
-	if err != nil {
-		return daemonResolveAuthorizationMutationResultPayload{}, true, err
-	}
-	if result.Status == runtime.TurnResultBlocked {
-		return daemonResolveAuthorizationMutationResultPayload{}, false, nil
-	}
-	payload, ok := daemonResolveAuthorizationMutationResultPayloadFromSessionMutationResult(result)
-	if !ok {
-		return daemonResolveAuthorizationMutationResultPayload{}, true, errors.New("daemon: resolve authorization mutator returned invalid payload")
-	}
-	return payload, true, nil
+	authorizationID := strings.TrimSpace(req.AuthorizationID)
+	reason := strings.TrimSpace(req.Reason)
+	requestMetadata := runtime.AgentLoopResolveAuthorizationMutationMetadata(authorizationID, decision, operationLevel, operationLevelProvided)
+	request := runtime.AgentLoopResolveAuthorizationMutationRequest(
+		sessionID,
+		turnRef.TaskID,
+		turnRef.RunID,
+		turnRef.TurnID,
+		operationLevel,
+		decision,
+		authorizationID,
+		reason,
+		operator,
+		language,
+		operationLevelProvided,
+		requestMetadata,
+	)
+	return daemonSessionMutationCallerResultPayloadForKind(
+		m.runRuntimeSessionMutationCallerEgress(ctx, request),
+		request.Kind,
+		daemonResolveAuthorizationMutationResultPayloadFromSessionMutationResult,
+	)
 }
 
 func (m *agentManager) recordUserMessageLegacy(sessionID, prompt, operator, language, operationLevel string) (daemonRecordUserMessageMutationResultPayload, error) {

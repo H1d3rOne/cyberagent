@@ -60,7 +60,7 @@ func TestAgentPlannerActionReplanCycleRequestAgentLoopAdapterRoundTripClones(t *
 			LastMessageAt: &lastMessageAt,
 			UpdatedAt:     updatedAt,
 		}),
-		ToolContext: agentPlannerActionReplanCycleToolContextFromRouterServices(routerServices{jobs: jobs}),
+		ToolContext: agentPlannerActionReplanCycleToolContextFromToolServices(agentLoopToolServiceBindingFromRouterServices(routerServices{jobs: jobs})),
 		Plan: agentPlannerActionReplanCyclePlanFromPlannerResponse(&agentPlannerResponse{
 			Phase: "step_replan",
 			NextAction: &agentNextAction{
@@ -114,9 +114,9 @@ func TestAgentPlannerActionReplanCycleRequestAgentLoopAdapterRoundTripClones(t *
 	require.Equal(t, true, loopReq.Metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage])
 	require.Equal(t, []string{"msg-loop-adapter-history"}, agentLoopMessageIDs(loopReq.History))
 	require.Equal(t, []string{"msg-loop-adapter-history"}, agentLoopMessageIDs(loopReq.State.LoopHistory))
-	recoveredServices, ok := routerServicesFromAgentLoopToolServiceBinding(loopReq.ToolServices)
+	recoveredJobs, ok := agentLoopActionServiceCapabilityValue[*jobManager](loopReq.ToolServices.ActionServices, runtime.AgentLoopActionServiceJobs)
 	require.True(t, ok)
-	require.Same(t, jobs, recoveredServices.jobs)
+	require.Same(t, jobs, recoveredJobs)
 
 	req.Turn.Metadata["turn_key"] = "mutated-turn"
 	req.LLMRequest.AuthProfiles[0].Token = "mutated-llm-token"
@@ -169,7 +169,9 @@ func TestAgentPlannerActionReplanCycleRequestAgentLoopAdapterRoundTripClones(t *
 	require.Equal(t, "history content", roundTrip.State.legacyLoopHistory()[0].Content)
 	require.Equal(t, "planner_loop", roundTrip.Options.ActionAppendOrigin)
 	require.True(t, roundTrip.Options.AppendActionToolCallsBeforeEmptyMessage)
-	require.Same(t, jobs, roundTrip.ToolContext.legacyRouterServices().jobs)
+	roundTripJobs, ok := agentLoopActionServiceCapabilityValue[*jobManager](roundTrip.ToolContext.services.ActionServices, runtime.AgentLoopActionServiceJobs)
+	require.True(t, ok)
+	require.Same(t, jobs, roundTripJobs)
 
 	loopReq.Turn.Metadata["turn_key"] = "mutated-loop-turn"
 	loopReq.LLMRequest.AuthProfiles[0].Token = "mutated-loop-llm-token"
@@ -398,7 +400,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisFailureEgress(t *t
 			Name: "daemon.health",
 		}},
 	}
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -497,7 +499,7 @@ func TestAgentManagerRunAgentLLMToolLoopResultStopsAtMaxLoops(t *testing.T) {
 		Actions: []agentPlannerAction{{Name: "daemon.health", Arguments: map[string]any{"probe": "second"}}},
 	}
 
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -769,9 +771,9 @@ func TestAgentManagerRunRuntimeAgentPlannerActionReplanCycleDispatchesEngineRunn
 		require.Equal(t, true, loopReq.Metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage])
 		require.Equal(t, []string{"history-runtime-cycle"}, agentLoopMessageIDs(loopReq.History))
 		require.Equal(t, "source", loopReq.InitialPlan.Actions[0].Arguments["probe"])
-		services, ok := routerServicesFromAgentLoopToolServiceBinding(loopReq.ToolServices)
+		resolvedJobs, ok := agentLoopActionServiceCapabilityValue[*jobManager](loopReq.ToolServices.ActionServices, runtime.AgentLoopActionServiceJobs)
 		require.True(t, ok)
-		require.Same(t, jobs, services.jobs)
+		require.Same(t, jobs, resolvedJobs)
 
 		state := loopReq.State.Clone()
 		message := runtime.AgentLoopMessage{
@@ -950,7 +952,7 @@ func TestAgentManagerRunAgentLLMToolLoopCarriesRuntimeLoopDTOBetweenCycles(t *te
 	appendMutations := []runtime.SessionMutationRequest{}
 	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 
-	messages, toolCalls, err := mgr.runAgentLLMToolLoop(
+	messages, toolCalls, err := mgr.runAgentLLMToolLoopWithToolServices(
 		context.Background(),
 		sessionID,
 		agentRuntimeTurnRef{TaskID: "task-runtime-loop-dto", RunID: "run-runtime-loop-dto", TurnID: "turn-runtime-loop-dto"},
@@ -961,7 +963,7 @@ func TestAgentManagerRunAgentLLMToolLoopCarriesRuntimeLoopDTOBetweenCycles(t *te
 		sendAgentMessageRequest{Model: "gpt-runtime-loop-dto"},
 		[]agentMessage{{ID: "history-runtime-loop-dto", Role: "user", Content: "daemon health twice through runtime DTO"}},
 		&agentMemorySummary{Summary: "runtime loop memory"},
-		routerServices{},
+		testAgentLoopToolServices(),
 	)
 
 	require.NoError(t, err)
@@ -990,7 +992,7 @@ func TestDaemonAgentLoopRunnerExecutesSharedCycleFromRuntimeRequest(t *testing.T
 	finalPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "runtime request summarized"}
 
 	actionCalled := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		actionCalled = true
 		require.Equal(t, "session-loop-runner", turn.SessionID)
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
@@ -1080,6 +1082,107 @@ func TestDaemonAgentLoopRunnerExecutesSharedCycleFromRuntimeRequest(t *testing.T
 	require.Equal(t, finalPlan.Answer, loopResult.FinalPlan.Answer)
 }
 
+func TestDaemonAgentLoopRunnerExecutesPlannerActionExecutionMode(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	expectedMessage := runtime.AgentLoopMessage{
+		ID:      "msg-loop-runner-planner-action",
+		Role:    "tool",
+		Content: "planner action executed through AgentLoop mode",
+	}
+	expectedToolCall := runtime.AgentLoopToolCall{
+		ID:   "tool-loop-runner-planner-action",
+		Name: "daemon.health",
+	}
+	enabled := true
+	action := runtime.AgentLoopAction{
+		Name:      "daemon.health",
+		Arguments: map[string]any{"probe": "planner-action-mode"},
+	}
+	authorization := runtime.AgentLoopAuthorization{
+		AuthProfiles: []runtime.AgentLoopAuthProfile{{
+			ID:      "auth-planner-action-mode",
+			Token:   "secret-token",
+			Enabled: &enabled,
+		}},
+		DefaultAuthProfileID: "auth-planner-action-mode",
+	}
+	toolServices := agentLoopToolServiceBindingFromRouterServices(routerServices{})
+	req := runtime.AgentLoopPlannerActionExecutionRequest(
+		runtime.TurnContext{
+			SessionID:      "session-planner-action-mode",
+			TaskID:         "task-planner-action-mode",
+			RunID:          "run-planner-action-mode",
+			TurnID:         "turn-planner-action-mode",
+			Prompt:         "execute daemon health",
+			Origin:         daemonTurnExecutionPlannerActionExecution,
+			OperationLevel: "safe_scan",
+			Metadata:       map[string]any{"turn_key": "turn_value"},
+		},
+		"en",
+		"tester",
+		toolServices,
+		authorization,
+		action,
+		map[string]any{"request_key": "request_value"},
+	)
+
+	actionCalled := false
+	turnCalled := false
+	eng.AttachAgentLoopActionExecutor(runtime.AgentLoopActionExecutorFunc(func(ctx context.Context, got runtime.AgentLoopActionExecutorRequest) (runtime.AgentLoopActionExecutorResult, error) {
+		actionCalled = true
+		require.NotNil(t, ctx)
+		require.Equal(t, runtime.AgentLoopModePlannerActionExecution, got.Request.Mode)
+		require.Equal(t, "session-planner-action-mode", got.Request.Turn.SessionID)
+		require.Equal(t, "task-planner-action-mode", got.Request.Turn.TaskID)
+		require.Equal(t, "run-planner-action-mode", got.Request.Turn.RunID)
+		require.Equal(t, "turn-planner-action-mode", got.Request.Turn.TurnID)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, got.Request.Turn.Origin)
+		require.Equal(t, "safe_scan", got.Request.Turn.OperationLevel)
+		require.Equal(t, "turn_value", got.Request.Turn.Metadata["turn_key"])
+		require.Equal(t, "request_value", got.Request.Metadata["request_key"])
+		require.Equal(t, "en", got.Request.Language)
+		require.Equal(t, "tester", got.Request.Operator)
+		require.Equal(t, daemonToolServiceBindingKind, got.Request.ToolServices.Kind)
+		require.Equal(t, "daemon_legacy_router_services", got.Request.ToolServices.Metadata["adapter"])
+		require.Equal(t, authorization.DefaultAuthProfileID, got.Request.Authorization.DefaultAuthProfileID)
+		require.Equal(t, authorization.AuthProfiles, got.Request.Authorization.AuthProfiles)
+		require.Equal(t, action, got.Action)
+
+		return runtime.AgentLoopActionExecutorResult{
+			Status:    runtime.TurnResultFinished,
+			Reason:    "planner action mode handled",
+			Messages:  []runtime.AgentLoopMessage{expectedMessage},
+			ToolCalls: []runtime.AgentLoopToolCall{expectedToolCall},
+			Metadata:  map[string]any{"executor": "test_action_executor"},
+		}, nil
+	}))
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, _ runtime.TurnContext) (runtime.TurnResult, error) {
+		turnCalled = true
+		return runtime.TurnResult{Status: runtime.TurnResultFailed}, errors.New("turn executor should not be called for planner_action_execution AgentLoop mode")
+	}))
+
+	loopResult, err := eng.RunAgentLoop(context.Background(), req)
+
+	require.NoError(t, err)
+	require.True(t, actionCalled)
+	require.False(t, turnCalled)
+	require.Equal(t, "planner action mode handled", loopResult.StopReason)
+	require.False(t, loopResult.CapabilityBlocked)
+	require.Equal(t, []runtime.AgentLoopMessage{expectedMessage}, loopResult.Messages)
+	require.Equal(t, []runtime.AgentLoopToolCall{expectedToolCall}, loopResult.ToolCalls)
+	require.Equal(t, []runtime.AgentLoopMessage{expectedMessage}, loopResult.State.ResponseMessages)
+	require.Equal(t, []runtime.AgentLoopToolCall{expectedToolCall}, loopResult.State.ToolCalls)
+	require.Equal(t, string(runtime.AgentLoopModePlannerActionExecution), loopResult.Metadata["mode"])
+	require.Equal(t, "daemon.health", loopResult.Metadata["action_name"])
+	require.Equal(t, 1, loopResult.Metadata["message_count"])
+	require.Equal(t, 1, loopResult.Metadata["tool_call_count"])
+	require.Equal(t, string(runtime.TurnResultFinished), loopResult.Metadata["action_executor_status"])
+	require.Equal(t, "test_action_executor", loopResult.Metadata["executor"])
+}
+
 func TestDaemonAgentLoopRunnerExecutesLLMToolOuterLoopFromRuntimeRequest(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
@@ -1096,6 +1199,10 @@ func TestDaemonAgentLoopRunnerExecutesLLMToolOuterLoopFromRuntimeRequest(t *test
 			require.Equal(t, string(runtime.AgentLoopModeLLMToolLoop), loopReq.Metadata[agentPlannerActionReplanCycleMetadataParentMode])
 			require.Equal(t, "planner_loop", loopReq.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
 			require.Equal(t, true, loopReq.Metadata[agentPlannerActionReplanCycleMetadataAppendActionToolCallsBeforeEmptyMessage])
+		case runtime.AgentLoopModePlannerActionExecution:
+			require.Equal(t, "session-loop-outer", loopReq.Turn.SessionID)
+			require.Equal(t, daemonTurnExecutionPlannerActionExecution, loopReq.Turn.Origin)
+			require.Equal(t, "outer", stringFromAny(loopReq.Action.Arguments["probe"]))
 		default:
 			t.Fatalf("unexpected loop mode %s", loopReq.Mode)
 		}
@@ -1127,7 +1234,7 @@ func TestDaemonAgentLoopRunnerExecutesLLMToolOuterLoopFromRuntimeRequest(t *test
 	finalPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "outer done"}
 
 	actionCalled := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		actionCalled = true
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
 		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
@@ -1199,7 +1306,7 @@ func TestDaemonAgentLoopRunnerExecutesLLMToolOuterLoopFromRuntimeRequest(t *test
 
 	require.NoError(t, err)
 	require.True(t, actionCalled)
-	require.Equal(t, []runtime.AgentLoopMode{runtime.AgentLoopModeLLMToolLoop, runtime.AgentLoopModePlannerActionReplanCycle}, loopModes)
+	require.Equal(t, []runtime.AgentLoopMode{runtime.AgentLoopModeLLMToolLoop, runtime.AgentLoopModePlannerActionReplanCycle, runtime.AgentLoopModePlannerActionExecution}, loopModes)
 	require.Equal(t, []runtime.LLMStage{runtime.LLMStagePlannerChat, runtime.LLMStageToolSynthesis}, stageCalls)
 	require.Equal(t, runtime.AgentLoopStopReasonNoActions, loopResult.StopReason)
 	require.Equal(t, 1, loopResult.LoopCount)
@@ -1230,6 +1337,10 @@ func TestDaemonAgentLoopRunnerExecutesReplanContinuationOuterLoopFromRuntimeRequ
 		case runtime.AgentLoopModePlannerActionReplanCycle:
 			require.Equal(t, string(runtime.AgentLoopModeReplanContinuation), loopReq.Metadata[agentPlannerActionReplanCycleMetadataParentMode])
 			require.Equal(t, daemonTurnExecutionReplanActionContinuation, loopReq.Metadata[agentPlannerActionReplanCycleMetadataActionAppendOrigin])
+		case runtime.AgentLoopModePlannerActionExecution:
+			require.Equal(t, "session-loop-continuation", loopReq.Turn.SessionID)
+			require.Equal(t, daemonTurnExecutionPlannerActionExecution, loopReq.Turn.Origin)
+			require.Equal(t, "continuation", stringFromAny(loopReq.Action.Arguments["probe"]))
 		default:
 			t.Fatalf("unexpected loop mode %s", loopReq.Mode)
 		}
@@ -1260,7 +1371,7 @@ func TestDaemonAgentLoopRunnerExecutesReplanContinuationOuterLoopFromRuntimeRequ
 	finalPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "continuation done"}
 
 	actionCalled := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		actionCalled = true
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
 		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
@@ -1321,7 +1432,7 @@ func TestDaemonAgentLoopRunnerExecutesReplanContinuationOuterLoopFromRuntimeRequ
 
 	require.NoError(t, err)
 	require.True(t, actionCalled)
-	require.Equal(t, []runtime.AgentLoopMode{runtime.AgentLoopModeReplanContinuation, runtime.AgentLoopModePlannerActionReplanCycle}, loopModes)
+	require.Equal(t, []runtime.AgentLoopMode{runtime.AgentLoopModeReplanContinuation, runtime.AgentLoopModePlannerActionReplanCycle, runtime.AgentLoopModePlannerActionExecution}, loopModes)
 	require.Equal(t, []runtime.LLMStage{runtime.LLMStageToolSynthesis}, stageCalls)
 	require.Equal(t, runtime.AgentLoopStopReasonNoActions, loopResult.StopReason)
 	require.Equal(t, 1, loopResult.LoopCount)

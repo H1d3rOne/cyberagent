@@ -20,6 +20,7 @@ const (
 	CodeJobCancelled          ErrorCode = "job_cancelled"
 	CodeInternal              ErrorCode = "internal_error"
 	CodeUnsupported           ErrorCode = "unsupported"
+	CodeRateLimited           ErrorCode = "rate_limited"
 )
 
 // ServiceError is the boundary error shape shared by CLI/API adapters.

@@ -401,6 +401,13 @@ func newAgentManager(runsDir string) *agentManager {
 }
 
 func (m *agentManager) CreateSession(req createAgentSessionRequest) (createAgentSessionResponse, error) {
+	return m.CreateSessionWithContext(context.Background(), req)
+}
+
+func (m *agentManager) CreateSessionWithContext(ctx context.Context, req createAgentSessionRequest) (createAgentSessionResponse, error) {
+	if _, err := daemonTenantContext(ctx); err != nil {
+		return createAgentSessionResponse{}, err
+	}
 	now := time.Now().UTC()
 	session := &agentSession{
 		SessionID:      strings.Replace(runs.NewJobID(now), "job_", "agent_", 1),
@@ -433,7 +440,7 @@ func (m *agentManager) CreateSession(req createAgentSessionRequest) (createAgent
 }
 
 func (m *agentManager) ListSessions(ctx context.Context, limit int) (listAgentSessionsResponse, error) {
-	if err := contextError(ctx); err != nil {
+	if _, err := daemonTenantContext(ctx); err != nil {
 		return listAgentSessionsResponse{}, err
 	}
 	if limit <= 0 {
@@ -472,7 +479,7 @@ func (m *agentManager) ListSessions(ctx context.Context, limit int) (listAgentSe
 }
 
 func (m *agentManager) DeleteSession(ctx context.Context, sessionID string) (deleteAgentSessionResponse, error) {
-	if err := contextError(ctx); err != nil {
+	if _, err := daemonTenantContext(ctx); err != nil {
 		return deleteAgentSessionResponse{}, err
 	}
 	sessionID = strings.TrimSpace(sessionID)
@@ -591,7 +598,7 @@ func agentContextSummaryFromRefs(refs []agentContextRef, ids ...string) string {
 }
 
 func (m *agentManager) GetSession(ctx context.Context, sessionID string) (agentSession, error) {
-	if err := contextError(ctx); err != nil {
+	if _, err := daemonTenantContext(ctx); err != nil {
 		return agentSession{}, err
 	}
 	sessionID, err := normalizeAgentSessionID(sessionID)

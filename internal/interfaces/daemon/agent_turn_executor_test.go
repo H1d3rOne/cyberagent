@@ -3,6 +3,10 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
+	"regexp"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +17,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func attachPlannerActionExecutionActionExecutorFromTurnHandler(t *testing.T, eng *runtime.Engine, handler runtime.TurnExecutorFunc) {
+	t.Helper()
+	require.NotNil(t, eng)
+	require.NotNil(t, handler)
+	eng.AttachAgentLoopActionExecutor(runtime.AgentLoopActionExecutorFunc(func(ctx context.Context, req runtime.AgentLoopActionExecutorRequest) (runtime.AgentLoopActionExecutorResult, error) {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		action := req.Action.Clone()
+		turn := runtime.AgentLoopActionExecutionTurn(req.Request, daemonTurnExecutionPlannerActionExecution, action, normalizeAgentPlannerActionName(action.Name))
+		result, err := handler(ctx, turn)
+		payload, ok := agentLoopTurnResultPayloadFromTurnResult(result.Payload)
+		actionResult := runtime.AgentLoopActionExecutorResult{
+			Status: result.Status,
+			Reason: result.Reason,
+			Error:  result.Error,
+		}
+		if ok {
+			actionResult.Messages = payload.Messages
+			actionResult.ToolCalls = payload.ToolCalls
+			actionResult.Metadata = payload.Metadata
+		}
+		if err != nil && actionResult.Error == nil {
+			actionResult.Error = err
+		}
+		return actionResult, err
+	}))
+}
+
 func TestAgentManagerAttachEngineWiresDaemonTurnExecutor(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
@@ -21,6 +54,7 @@ func TestAgentManagerAttachEngineWiresDaemonTurnExecutor(t *testing.T) {
 	require.NotNil(t, eng.LLMTurnRunner())
 	require.NotNil(t, eng.LLMStageRunner())
 	require.NotNil(t, eng.AgentLoopRunner())
+	require.NotNil(t, eng.AgentLoopActionExecutor())
 	require.NotNil(t, eng.SessionMutator())
 
 	result, err := eng.ExecuteTurn(context.Background(), runtime.TurnContext{
@@ -40,6 +74,1535 @@ func TestAgentManagerAttachEngineWiresDaemonTurnExecutor(t *testing.T) {
 	require.Equal(t, true, result.Data["manager_attached"])
 	require.Equal(t, "session-legacy-executor", result.Data["session_id"])
 	require.Equal(t, "turn-legacy-executor", result.Data["turn_id"])
+}
+
+func TestDaemonTurnExecutionCallerInvalidPayloadTableCoversKinds(t *testing.T) {
+	wantMessages := map[string]string{
+		daemonTurnExecutionDeterministicRoute:     "daemon: deterministic route turn executor returned invalid payload",
+		daemonTurnExecutionPlannerActionExecution: "daemon: planner action execution turn executor returned invalid payload",
+	}
+	seenMessages := map[string]string{}
+
+	for _, entry := range daemonTurnExecutionCallerInvalidPayloadTable {
+		require.NotEmpty(t, entry.kind)
+		require.NotEmpty(t, entry.message)
+		require.Empty(t, seenMessages[entry.kind], "duplicate invalid payload entry for %q", entry.kind)
+		seenMessages[entry.kind] = entry.message
+		require.Equal(t, entry.message, daemonTurnExecutionCallerInvalidPayloadError(entry.kind))
+
+		payload, handled, err := agentTurnExecutionResultPayloadForKind(runtime.TurnResult{
+			Status:  runtime.TurnResultFinished,
+			Payload: "not a payload",
+		}, nil, entry.kind)
+		require.ErrorContains(t, err, entry.message)
+		require.True(t, handled)
+		require.Empty(t, payload.Messages)
+		require.Empty(t, payload.ToolCalls)
+	}
+
+	require.Equal(t, wantMessages, seenMessages)
+	require.Equal(t, daemonTurnExecutionCallerDefaultInvalidPayloadError, daemonTurnExecutionCallerInvalidPayloadError("unsupported"))
+
+	payload, handled, err := agentTurnExecutionResultPayloadForKind(runtime.TurnResult{
+		Status:  runtime.TurnResultFinished,
+		Payload: "not a payload",
+	}, nil, "unsupported")
+	require.ErrorContains(t, err, daemonTurnExecutionCallerDefaultInvalidPayloadError)
+	require.True(t, handled)
+	require.Empty(t, payload.Messages)
+	require.Empty(t, payload.ToolCalls)
+}
+
+func TestDaemonTurnExecutionCallerPolicyTableCoversKinds(t *testing.T) {
+	wantPolicies := map[string]daemonTurnExecutionCallerPolicy{
+		daemonTurnExecutionDeterministicRoute:     daemonTurnExecutionCallerPolicyStrictResult,
+		daemonTurnExecutionPlannerActionExecution: daemonTurnExecutionCallerPolicyStrictResult,
+	}
+	seenPolicies := map[string]daemonTurnExecutionCallerPolicy{}
+
+	for _, entry := range daemonTurnExecutionCallerPolicyTable {
+		require.NotEmpty(t, entry.kind)
+		require.NotEmpty(t, entry.policy)
+		require.Empty(t, seenPolicies[entry.kind], "duplicate caller policy entry for %q", entry.kind)
+		seenPolicies[entry.kind] = entry.policy
+
+		policy, ok := daemonTurnExecutionCallerPolicyForKind(entry.kind)
+		require.True(t, ok)
+		require.Equal(t, entry.policy, policy)
+		require.NotEqual(t, daemonTurnExecutionCallerDefaultInvalidPayloadError, daemonTurnExecutionCallerInvalidPayloadError(entry.kind))
+	}
+
+	require.Equal(t, wantPolicies, seenPolicies)
+	_, ok := daemonTurnExecutionCallerPolicyForKind("unsupported")
+	require.False(t, ok)
+	require.True(t, daemonTurnExecutionCallerPolicyMatches("unsupported", daemonTurnExecutionCallerPolicyStrictResult))
+
+	expected := runtime.AgentLoopTurnResultPayload{
+		Messages:  []runtime.AgentLoopMessage{{ID: "msg-turn-policy"}},
+		ToolCalls: []runtime.AgentLoopToolCall{{ID: "tool-turn-policy"}},
+	}
+	payload, handled, err := agentTurnExecutionResultPayloadForKind(runtime.TurnResult{
+		Status:  runtime.TurnResultFinished,
+		Payload: expected,
+	}, nil, daemonTurnExecutionDeterministicRoute)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, expected, payload)
+}
+
+func TestDaemonTurnExecutionCallerFallbackOwnershipTableCoversReasons(t *testing.T) {
+	wantReasons := map[daemonTurnExecutionCallerFallbackReason]string{
+		daemonTurnExecutionCallerFallbackExecutorNotAttached:   daemonTurnExecutionCallerFallbackOwnerLegacyCaller,
+		daemonTurnExecutionCallerFallbackBlocked:               daemonTurnExecutionCallerFallbackOwnerLegacyCaller,
+		daemonTurnExecutionCallerFallbackRunningWithoutPayload: daemonTurnExecutionCallerFallbackOwnerLegacyCaller,
+	}
+	seenReasons := map[daemonTurnExecutionCallerFallbackReason]string{}
+
+	for _, entry := range daemonTurnExecutionCallerFallbackOwnershipTable {
+		require.NotEmpty(t, entry.reason)
+		require.NotEmpty(t, entry.owner)
+		require.Empty(t, seenReasons[entry.reason], "duplicate fallback ownership entry for %q", entry.reason)
+		seenReasons[entry.reason] = entry.owner
+
+		owner, ok := daemonTurnExecutionCallerFallbackOwnerForReason(entry.reason)
+		require.True(t, ok)
+		require.Equal(t, entry.owner, owner)
+		require.True(t, daemonTurnExecutionCallerFallbackOwnedByLegacyCaller(entry.reason))
+	}
+
+	require.Equal(t, wantReasons, seenReasons)
+	_, ok := daemonTurnExecutionCallerFallbackOwnerForReason(daemonTurnExecutionCallerFallbackReason("unsupported"))
+	require.False(t, ok)
+	require.False(t, daemonTurnExecutionCallerFallbackOwnedByLegacyCaller(daemonTurnExecutionCallerFallbackReason("unsupported")))
+	require.ErrorContains(t, daemonTurnExecutionCallerFallbackOwnershipError(daemonTurnExecutionCallerFallbackReason("unsupported")), "fallback ownership missing")
+
+	reason, fallback := daemonTurnExecutionCallerPreDispatchFallbackReason(nil)
+	require.True(t, fallback)
+	require.Equal(t, daemonTurnExecutionCallerFallbackExecutorNotAttached, reason)
+
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	reason, fallback = daemonTurnExecutionCallerPreDispatchFallbackReason(eng)
+	require.True(t, fallback)
+	require.Equal(t, daemonTurnExecutionCallerFallbackExecutorNotAttached, reason)
+
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(context.Context, runtime.TurnContext) (runtime.TurnResult, error) {
+		return runtime.TurnResult{}, nil
+	}))
+	_, fallback = daemonTurnExecutionCallerPreDispatchFallbackReason(eng)
+	require.False(t, fallback)
+}
+
+func TestDaemonTurnExecutionCallerMigrationTableCoversInternalExecuteTurnCallers(t *testing.T) {
+	wantMigrations := map[string]daemonTurnExecutionCallerMigrationEntry{
+		daemonTurnExecutionDeterministicRoute: {
+			kind:          daemonTurnExecutionDeterministicRoute,
+			stage:         daemonTurnExecutionCallerMigrationStageAgentLoopInternal,
+			currentSeam:   "runtime.Engine.RunAgentLoop",
+			target:        "runtime-native deterministic route",
+			migrationGate: "deterministic route registry dispatch now uses runtime AgentLoopToolServiceBinding; retire TurnExecutor compatibility after response egress and legacy route adapter cleanup",
+		},
+		daemonTurnExecutionPlannerActionExecution: {
+			kind:          daemonTurnExecutionPlannerActionExecution,
+			stage:         daemonTurnExecutionCallerMigrationStageAgentLoopInternal,
+			currentSeam:   "runtime.Engine.RunAgentLoop",
+			target:        "runtime-native action execution",
+			migrationGate: "move executeAgentPlannerAction side effects and result egress runtime-side before retiring planner action TurnExecutor compatibility",
+		},
+	}
+	seenMigrations := map[string]daemonTurnExecutionCallerMigrationEntry{}
+
+	for _, entry := range daemonTurnExecutionCallerMigrationTable {
+		require.NotEmpty(t, entry.kind)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.currentSeam)
+		require.NotEmpty(t, entry.target)
+		require.NotEmpty(t, entry.migrationGate)
+		require.Empty(t, seenMigrations[entry.kind].kind, "duplicate migration entry for %q", entry.kind)
+		seenMigrations[entry.kind] = entry
+
+		got, ok := daemonTurnExecutionCallerMigrationForKind(entry.kind)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+
+		_, hasPolicy := daemonTurnExecutionCallerPolicyForKind(entry.kind)
+		require.True(t, hasPolicy)
+	}
+
+	require.Equal(t, wantMigrations, seenMigrations)
+	require.Empty(t, seenMigrations[daemonTurnExecutionReplanActionContinuation].kind)
+	_, ok := daemonTurnExecutionCallerMigrationForKind("unsupported")
+	require.False(t, ok)
+	require.False(t, daemonTurnExecutionCallerMigrationActiveTurnExecutor("unsupported"))
+	require.False(t, daemonTurnExecutionCallerMigrationActiveTurnExecutor(daemonTurnExecutionDeterministicRoute))
+	require.False(t, daemonTurnExecutionCallerMigrationActiveTurnExecutor(daemonTurnExecutionPlannerActionExecution))
+	require.False(t, daemonTurnExecutionCallerMigrationActiveTurnExecutor(daemonTurnExecutionReplanActionContinuation))
+}
+
+func TestDaemonTurnExecutionHelperOwnershipTableDocumentsRuntimeOwnedHelpers(t *testing.T) {
+	wantOwnership := map[string]daemonTurnExecutionHelperOwnershipEntry{
+		daemonTurnExecutionDeterministicRoute: {
+			kind:                 daemonTurnExecutionDeterministicRoute,
+			callerSurface:        "internal_agent_loop_caller",
+			requestHelperOwner:   daemonTurnExecutionHelperOwnerRuntime,
+			turnHelperOwner:      daemonTurnExecutionHelperOwnerRuntime,
+			payloadHelperOwner:   daemonTurnExecutionHelperOwnerRuntime,
+			remainingDaemonScope: "turn_ref_adapter_and_legacy_route_agent_loop_adapter",
+			nextMigration:        "keep deterministic route registry dispatch on runtime tool services while retiring response egress and external TurnExecutor compatibility",
+		},
+		daemonTurnExecutionPlannerActionExecution: {
+			kind:                 daemonTurnExecutionPlannerActionExecution,
+			callerSurface:        "internal_agent_loop_caller",
+			requestHelperOwner:   daemonTurnExecutionHelperOwnerRuntime,
+			turnHelperOwner:      daemonTurnExecutionHelperOwnerRuntime,
+			payloadHelperOwner:   daemonTurnExecutionHelperOwnerRuntime,
+			remainingDaemonScope: "turn_ref_adapter_legacy_action_side_effects_and_turn_executor_compatibility",
+			nextMigration:        "move executeAgentPlannerAction side effects and result egress behind runtime-native action execution; keep TurnExecutor branch as compatibility until seam retirement",
+		},
+		daemonTurnExecutionReplanActionContinuation: {
+			kind:                 daemonTurnExecutionReplanActionContinuation,
+			callerSurface:        "external_compatibility_trampoline",
+			requestHelperOwner:   daemonTurnExecutionHelperOwnerDaemonCompatibilityLayer,
+			turnHelperOwner:      daemonTurnExecutionHelperOwnerRuntime,
+			payloadHelperOwner:   daemonTurnExecutionHelperOwnerRuntime,
+			remainingDaemonScope: "legacy AgentLoop request adapter and external TurnExecutor compatibility",
+			nextMigration:        "not an internal ExecuteTurn migration candidate; remove only after compatibility seam is retired",
+		},
+	}
+	seenOwnership := map[string]daemonTurnExecutionHelperOwnershipEntry{}
+
+	for _, entry := range daemonTurnExecutionHelperOwnershipTable {
+		require.NotEmpty(t, entry.kind)
+		require.NotEmpty(t, entry.callerSurface)
+		require.NotEmpty(t, entry.requestHelperOwner)
+		require.NotEmpty(t, entry.turnHelperOwner)
+		require.NotEmpty(t, entry.payloadHelperOwner)
+		require.NotEmpty(t, entry.remainingDaemonScope)
+		require.NotEmpty(t, entry.nextMigration)
+		require.Empty(t, seenOwnership[entry.kind].kind, "duplicate helper ownership entry for %q", entry.kind)
+		seenOwnership[entry.kind] = entry
+
+		got, ok := daemonTurnExecutionHelperOwnershipForKind(entry.kind)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+
+	require.Equal(t, wantOwnership, seenOwnership)
+	require.True(t, daemonTurnExecutionInternalHelperRuntimeOwned(daemonTurnExecutionDeterministicRoute))
+	require.True(t, daemonTurnExecutionInternalHelperRuntimeOwned(daemonTurnExecutionPlannerActionExecution))
+	require.False(t, daemonTurnExecutionInternalHelperRuntimeOwned(daemonTurnExecutionReplanActionContinuation))
+	_, ok := daemonTurnExecutionHelperOwnershipForKind("unsupported")
+	require.False(t, ok)
+	require.False(t, daemonTurnExecutionInternalHelperRuntimeOwned("unsupported"))
+}
+
+func TestDaemonTurnExecutionAgentLoopMigrationPreconditions(t *testing.T) {
+	want := map[string]daemonTurnExecutionAgentLoopMigrationPreconditionEntry{
+		daemonTurnExecutionDeterministicRoute: {
+			kind:                   daemonTurnExecutionDeterministicRoute,
+			stage:                  daemonTurnExecutionAgentLoopMigrationStageAgentLoopCallerLive,
+			currentCaller:          "agentManager.runRuntimeDeterministicRouteWithToolServices -> runtime.Engine.RunAgentLoop",
+			proposedMode:           "AgentLoopModeDeterministicRoute",
+			requiredRuntimeHelpers: "AgentLoopTurnExecutionRequest, AgentLoopTurnExecutionTurnFromRequest, AgentLoopTurnResultPayload",
+			requiredAdapter:        "daemonAgentLoopRunner deterministic_route branch preserving routePromptForTurnWithToolServices parity",
+			remainingDaemonScope:   "route response egress conversion and upstream routerServices-owned non-route services; registry dispatch uses runtime AgentLoopToolServiceBinding",
+			nextStep:               "retire deterministic route TurnExecutor compatibility after route response egress and remaining legacy route adapter cleanup",
+		},
+		daemonTurnExecutionPlannerActionExecution: {
+			kind:                   daemonTurnExecutionPlannerActionExecution,
+			stage:                  daemonTurnExecutionAgentLoopMigrationStageBlockedBySideEffect,
+			currentCaller:          "agentManager.runRuntimePlannerActionExecution -> runtime.Engine.RunAgentLoop with planner_action_execution mode",
+			proposedMode:           "AgentLoopModePlannerActionExecution",
+			requiredRuntimeHelpers: "AgentLoopPlannerActionExecutionRequest, AgentLoopActionExecutorRequest, AgentLoopActionExecutorResult, AgentLoopActionExecutionTurn, AgentLoopTurnResultPayload",
+			requiredAdapter:        "daemonAgentLoopRunner planner_action_execution branch preserving Engine.ExecuteAgentLoopAction, TurnExecutor compatibility fallback and legacy executor parity",
+			remainingDaemonScope:   "executeAgentPlannerAction side effects, legacy routerServices handle unwrap, action error/result egress",
+			nextStep:               "continue runtime-native service dispatch and result egress cleanup before retiring TurnExecutor/direct legacy fallbacks",
+		},
+	}
+	seen := map[string]daemonTurnExecutionAgentLoopMigrationPreconditionEntry{}
+
+	for _, entry := range daemonTurnExecutionAgentLoopMigrationPreconditionTable {
+		require.NotEmpty(t, entry.kind)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.currentCaller)
+		require.NotEmpty(t, entry.proposedMode)
+		require.NotEmpty(t, entry.requiredRuntimeHelpers)
+		require.NotEmpty(t, entry.requiredAdapter)
+		require.NotEmpty(t, entry.remainingDaemonScope)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seen[entry.kind].kind, "duplicate AgentLoop migration precondition entry for %q", entry.kind)
+		seen[entry.kind] = entry
+
+		got, ok := daemonTurnExecutionAgentLoopMigrationPreconditionForKind(entry.kind)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+		require.True(t, daemonTurnExecutionInternalHelperRuntimeOwned(entry.kind))
+		switch entry.stage {
+		case daemonTurnExecutionAgentLoopMigrationStagePreconditionReady, daemonTurnExecutionAgentLoopMigrationStageAgentLoopCallerLive:
+			require.True(t, daemonTurnExecutionAgentLoopMigrationPreconditionReady(entry.kind))
+		default:
+			require.False(t, daemonTurnExecutionAgentLoopMigrationPreconditionReady(entry.kind))
+		}
+	}
+
+	require.Equal(t, want, seen)
+	require.True(t, daemonTurnExecutionAgentLoopMigrationPreconditionReady(daemonTurnExecutionDeterministicRoute))
+	require.False(t, daemonTurnExecutionAgentLoopMigrationPreconditionReady(daemonTurnExecutionPlannerActionExecution))
+	require.False(t, daemonTurnExecutionAgentLoopMigrationPreconditionReady(daemonTurnExecutionReplanActionContinuation))
+	_, ok := daemonTurnExecutionAgentLoopMigrationPreconditionForKind("unsupported")
+	require.False(t, ok)
+	require.False(t, daemonTurnExecutionAgentLoopMigrationPreconditionReady("unsupported"))
+}
+
+func TestDaemonTurnExecutionPlannerActionExecutionAgentLoopMigrationBlockers(t *testing.T) {
+	want := map[string]daemonTurnExecutionAgentLoopMigrationBlockerEntry{
+		"executeAgentPlannerAction side effects": {
+			kind:       daemonTurnExecutionPlannerActionExecution,
+			blocker:    "executeAgentPlannerAction side effects",
+			owner:      daemonTurnExecutionAgentLoopMigrationBlockerOwnerDaemonLegacy,
+			resolution: "move tool execution/service dispatch behind a runtime action executor boundary",
+		},
+		"legacy routerServices handle unwrap": {
+			kind:       daemonTurnExecutionPlannerActionExecution,
+			blocker:    "legacy routerServices handle unwrap",
+			owner:      daemonTurnExecutionAgentLoopMigrationBlockerOwnerDaemonLegacy,
+			resolution: "replace daemon routerServices unwrapping with a runtime AgentLoopToolServiceBinding executor contract",
+		},
+		"action request/result DTO": {
+			kind:       daemonTurnExecutionPlannerActionExecution,
+			blocker:    "action request/result DTO",
+			owner:      daemonTurnExecutionAgentLoopMigrationBlockerOwnerRuntimeDTO,
+			resolution: "runtime DTO helpers already cover request, turn payload, result payload and clone boundaries",
+		},
+	}
+	seen := map[string]daemonTurnExecutionAgentLoopMigrationBlockerEntry{}
+
+	for _, entry := range daemonTurnExecutionAgentLoopMigrationBlockerTable {
+		require.NotEmpty(t, entry.kind)
+		require.NotEmpty(t, entry.blocker)
+		require.NotEmpty(t, entry.owner)
+		require.NotEmpty(t, entry.resolution)
+		require.Empty(t, seen[entry.blocker].kind, "duplicate AgentLoop migration blocker entry for %q", entry.blocker)
+		seen[entry.blocker] = entry
+	}
+
+	require.Equal(t, want, seen)
+	require.Equal(t, len(want), len(daemonTurnExecutionAgentLoopMigrationBlockersForKind(daemonTurnExecutionPlannerActionExecution)))
+	require.True(t, daemonTurnExecutionAgentLoopMigrationBlockedByDaemonSideEffects(daemonTurnExecutionPlannerActionExecution))
+	require.False(t, daemonTurnExecutionAgentLoopMigrationBlockedByDaemonSideEffects(daemonTurnExecutionDeterministicRoute))
+	require.False(t, daemonTurnExecutionAgentLoopMigrationBlockedByDaemonSideEffects(daemonTurnExecutionReplanActionContinuation))
+	require.Empty(t, daemonTurnExecutionAgentLoopMigrationBlockersForKind("unsupported"))
+	require.False(t, daemonTurnExecutionAgentLoopMigrationBlockedByDaemonSideEffects("unsupported"))
+}
+
+func TestDaemonPlannerActionExecutionSideEffectBoundaryFromAgentLoopClonesRuntimeInputs(t *testing.T) {
+	enabled := true
+	jobs := newJobManager(jobManagerConfig{RunsDir: t.TempDir()})
+	loopReq := agentPlannerActionExecutionRequestFromRuntime(
+		"session-side-effect-boundary",
+		agentRuntimeTurnRef{TaskID: "task-side-effect-boundary", RunID: "run-side-effect-boundary", TurnID: "turn-side-effect-boundary"},
+		"request https://example.com",
+		"en",
+		"tester",
+		"safe_scan",
+		agentLoopToolServiceBindingFromRouterServices(routerServices{jobs: jobs}),
+		runtime.AgentLoopAuthorization{
+			AuthProfiles: []runtime.AgentLoopAuthProfile{{
+				ID:      "auth-1",
+				Token:   "secret-token",
+				Enabled: &enabled,
+			}},
+			DefaultAuthProfileID: "auth-1",
+		},
+	)
+	action := runtime.AgentLoopAction{
+		Name:      "http.request",
+		Arguments: map[string]any{"url": "https://example.com"},
+	}
+
+	boundary := daemonPlannerActionExecutionSideEffectBoundaryFromAgentLoop(loopReq, action)
+
+	loopReq.Authorization.AuthProfiles[0].Token = "mutated-token"
+	*loopReq.Authorization.AuthProfiles[0].Enabled = false
+	loopReq.ToolServices.Metadata["adapter"] = "mutated-adapter"
+	action.Arguments["url"] = "https://mutated.example"
+
+	require.Equal(t, "session-side-effect-boundary", boundary.sessionID)
+	require.Equal(t, "en", boundary.language)
+	require.Equal(t, "tester", boundary.operator)
+	require.Equal(t, "safe_scan", boundary.operationLevel)
+	require.Equal(t, daemonToolServiceBindingKind, boundary.toolServices.Kind)
+	require.Equal(t, "daemon_legacy_router_services", boundary.toolServices.Metadata["adapter"])
+	boundaryJobs, ok := agentLoopActionServiceCapabilityValue[*jobManager](boundary.toolServices.ActionServices, runtime.AgentLoopActionServiceJobs)
+	require.True(t, ok)
+	require.Same(t, jobs, boundaryJobs)
+	require.Equal(t, "http.request", boundary.action.Name)
+	require.Equal(t, "https://example.com", boundary.action.Arguments["url"])
+	require.Equal(t, "auth-1", boundary.authorization.DefaultAuthProfileID)
+	require.Len(t, boundary.authorization.AuthProfiles, 1)
+	require.Equal(t, "secret-token", boundary.authorization.AuthProfiles[0].Token)
+	require.NotNil(t, boundary.authorization.AuthProfiles[0].Enabled)
+	require.True(t, *boundary.authorization.AuthProfiles[0].Enabled)
+}
+
+func TestDaemonPlannerActionExecutionSideEffectBoundaryDoesNotReconstructLegacyServices(t *testing.T) {
+	loopReq := agentPlannerActionExecutionRequestFromRuntime(
+		"session-side-effect-runtime-services",
+		agentRuntimeTurnRef{TaskID: "task-runtime-services", RunID: "run-runtime-services", TurnID: "turn-runtime-services"},
+		"run runtime action",
+		"en",
+		"tester",
+		"safe_scan",
+		runtime.AgentLoopToolServiceBinding{
+			Kind:   daemonToolServiceBindingKind,
+			Handle: registryPanicActionServiceFallback{},
+			Metadata: map[string]any{
+				"adapter": "opaque-handle-panic-on-legacy-reconstruction",
+			},
+		},
+		runtime.AgentLoopAuthorization{},
+	)
+
+	boundary := daemonPlannerActionExecutionSideEffectBoundaryFromAgentLoop(loopReq, runtime.AgentLoopAction{Name: "daemon.health"})
+
+	loopReq.ToolServices.Metadata["adapter"] = "mutated"
+	require.Equal(t, daemonToolServiceBindingKind, boundary.toolServices.Kind)
+	require.Equal(t, "opaque-handle-panic-on-legacy-reconstruction", boundary.toolServices.Metadata["adapter"])
+	require.IsType(t, registryPanicActionServiceFallback{}, boundary.toolServices.Handle)
+}
+
+func TestDaemonPlannerActionExecutionExecutorSeamDispatchesLegacyPlannerAction(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	require.True(t, ok)
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		require.NotNil(t, ctx)
+		require.Equal(t, "session-executor-seam", in.SessionID)
+		require.Equal(t, "tester", in.Operator)
+		require.Equal(t, "en", in.Language)
+		require.Equal(t, "safe_scan", in.OperationLevel)
+		require.Equal(t, "ok", in.RawArgs["probe"])
+		tool := runningAgentToolCall("daemon.health", "registry.handler")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"seam": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "executor seam dispatched", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	result, err := daemonPlannerActionExecutionExecutorForManager(mgr).ExecutePlannerAction(context.Background(), daemonPlannerActionExecutionSideEffectBoundary{
+		sessionID:      "session-executor-seam",
+		language:       "en",
+		operator:       "tester",
+		operationLevel: "safe_scan",
+		action: agentPlannerAction{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "ok"},
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Equal(t, runtime.TurnResultFinished, result.Status)
+	require.Equal(t, "daemon_legacy_planner_action_executor", result.Metadata["executor"])
+	require.Len(t, result.Messages, 1)
+	require.Equal(t, "executor seam dispatched", result.Messages[0].Content)
+	require.Len(t, result.ToolCalls, 1)
+	require.Equal(t, true, result.ToolCalls[0].Result["seam"])
+}
+
+func TestDaemonPlannerActionExecutionExecutorSeamRequiresManager(t *testing.T) {
+	result, err := daemonPlannerActionExecutionExecutorForManager(nil).ExecutePlannerAction(context.Background(), daemonPlannerActionExecutionSideEffectBoundary{})
+	require.ErrorContains(t, err, "daemon: planner action execution executor has no manager")
+	require.Equal(t, runtime.TurnResultBlocked, result.Status)
+	require.ErrorIs(t, result.Error, err)
+	require.Empty(t, result.Messages)
+	require.Empty(t, result.ToolCalls)
+	require.Equal(t, "daemon_legacy_planner_action_executor", result.Metadata["executor"])
+}
+
+func TestDaemonAgentLoopActionExecutorCoversHeuristicRoute(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	require.True(t, ok)
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		require.Equal(t, "session-heuristic-seam", in.SessionID)
+		require.Equal(t, "tester", in.Operator)
+		require.Equal(t, "en", in.Language)
+		require.Equal(t, "read_only", in.OperationLevel)
+		tool := runningAgentToolCall("daemon.health", "registry.handler")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"heuristic_seam": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "heuristic seam dispatched", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	messages, calls, err := mgr.routeReadOnlySystemHeuristicActionsWithToolServices(context.Background(), "session-heuristic-seam", "daemon health", "en", "tester", "read_only", testAgentLoopToolServices())
+
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Len(t, messages, 1)
+	require.Equal(t, "heuristic seam dispatched", messages[0].Content)
+	require.Len(t, calls, 1)
+	require.Equal(t, true, calls[0].Result["heuristic_seam"])
+}
+
+func TestDaemonAgentLoopActionExecutorDispatchesLegacyPlannerAction(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	require.True(t, ok)
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		require.NotNil(t, ctx)
+		require.Equal(t, "session-runtime-action-executor", in.SessionID)
+		require.Equal(t, "tester", in.Operator)
+		require.Equal(t, "en", in.Language)
+		require.Equal(t, "safe_scan", in.OperationLevel)
+		require.Equal(t, "runtime-action-executor", in.RawArgs["probe"])
+		tool := runningAgentToolCall("daemon.health", "runtime.action.executor")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"runtime_action_executor": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "runtime action executor dispatched", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	result, err := eng.ExecuteAgentLoopAction(context.Background(), runtime.AgentLoopActionExecutorRequest{
+		Request: agentPlannerActionExecutionRequestFromRuntime(
+			"session-runtime-action-executor",
+			agentRuntimeTurnRef{TaskID: "task-runtime-action-executor", RunID: "run-runtime-action-executor", TurnID: "turn-runtime-action-executor"},
+			"run daemon health",
+			"en",
+			"tester",
+			"safe_scan",
+			agentLoopToolServiceBindingFromRouterServices(routerServices{}),
+			runtime.AgentLoopAuthorization{},
+		),
+		Action: runtime.AgentLoopAction{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "runtime-action-executor"},
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Equal(t, runtime.TurnResultFinished, result.Status)
+	require.Equal(t, "daemon_legacy_planner_action_executor", result.Metadata["executor"])
+	require.Len(t, result.Messages, 1)
+	require.Equal(t, "runtime action executor dispatched", result.Messages[0].Content)
+	require.Len(t, result.ToolCalls, 1)
+	require.Equal(t, true, result.ToolCalls[0].Result["runtime_action_executor"])
+}
+
+func TestDaemonAgentLoopActionExecutorRequiresManager(t *testing.T) {
+	result, err := daemonAgentLoopActionExecutor{}.ExecuteAgentLoopAction(context.Background(), runtime.AgentLoopActionExecutorRequest{})
+	require.ErrorContains(t, err, "daemon: agent loop action executor manager not attached")
+	require.Equal(t, runtime.TurnResultBlocked, result.Status)
+	require.ErrorIs(t, result.Error, err)
+	require.Equal(t, "daemon_legacy_planner_action_executor", result.Metadata["executor"])
+}
+
+func TestDaemonPlannerActionExecutionSideEffectBoundaryOwnershipPlanDocumentsCurrentBlockers(t *testing.T) {
+	want := map[string]daemonPlannerActionExecutionSideEffectBoundaryPlanEntry{
+		"request_turn_action_authorization_dto": {
+			boundary:     "request_turn_action_authorization_dto",
+			currentOwner: daemonPlannerActionExecutionSideEffectOwnerRuntimeDTO,
+			targetOwner:  daemonPlannerActionExecutionSideEffectOwnerRuntimeContract,
+			extractedBy:  "daemonPlannerActionExecutionSideEffectBoundaryFromAgentLoop clones AgentLoopRequest, AgentLoopAction and AgentLoopAuthorization",
+			nextStep:     "keep runtime DTOs as the AgentLoop mode input when introducing the planner action executor contract",
+		},
+		"tool_service_dispatch": {
+			boundary:     "tool_service_dispatch",
+			currentOwner: daemonPlannerActionExecutionSideEffectOwnerRuntimeContract,
+			targetOwner:  daemonPlannerActionExecutionSideEffectOwnerRuntimeContract,
+			extractedBy:  "daemon planner action executor and deterministic route now pass cloned runtime AgentLoopToolServiceBinding directly into registry dispatch without routerServices reconstruction",
+			nextStep:     "keep production dispatch on runtime tool service bindings and test coverage on direct ActionServices capabilities",
+		},
+		"tool_service_provider_compatibility_fixture": {
+			boundary:     "tool_service_provider_compatibility_fixture",
+			currentOwner: daemonPlannerActionExecutionSideEffectOwnerCompatibilityFixture,
+			targetOwner:  daemonPlannerActionExecutionSideEffectOwnerRuntimeContract,
+			extractedBy:  "historical provider/routerServices roundtrip contract is retired; production binding carries runtime AgentLoopActionServiceSet and tests assert capabilities directly",
+			nextStep:     "keep the test suite free of explicit Handle/provider roundtrip fixtures",
+		},
+		"http_auth_profile_adapter": {
+			boundary:     "http_auth_profile_adapter",
+			currentOwner: daemonPlannerActionExecutionSideEffectOwnerDaemonLegacy,
+			targetOwner:  daemonPlannerActionExecutionSideEffectOwnerRuntimeContract,
+			extractedBy:  "daemonPlannerActionExecutionSideEffectBoundaryFromAgentLoop carries AgentLoopAuthorization directly through the executor and registry dispatch signatures",
+			nextStep:     "keep legacy registry runtime auth-profile compatibility fields read-only while replacing remaining daemon-owned result egress",
+		},
+		"runtime_result_composition": {
+			boundary:     "runtime_result_composition",
+			currentOwner: daemonPlannerActionExecutionSideEffectOwnerRuntimeContract,
+			targetOwner:  daemonPlannerActionExecutionSideEffectOwnerRuntimeContract,
+			extractedBy:  "runtime.AgentLoopPlannerActionExecutionResultFromActionExecutorResult and FromTurnPayload build the AgentLoopResult envelope",
+			nextStep:     "keep planner_action_execution AgentLoop result composition runtime-owned while legacy adapters shrink",
+		},
+		"legacy_action_result_adapter": {
+			boundary:     "legacy_action_result_adapter",
+			currentOwner: daemonPlannerActionExecutionSideEffectOwnerRuntimeContract,
+			targetOwner:  daemonPlannerActionExecutionSideEffectOwnerRuntimeContract,
+			extractedBy:  "executeAgentPlannerActionResultWithToolServices and executeAgentRegistryHandlerResultWithToolServices return runtime AgentLoopActionExecutorResult directly while preserving runtime tool services; legacy routerServices-ingress wrappers are retired",
+			nextStep:     "continue shrinking tool-service dispatch adapters behind runtime-native action service interfaces",
+		},
+	}
+	seen := map[string]daemonPlannerActionExecutionSideEffectBoundaryPlanEntry{}
+
+	for _, entry := range daemonPlannerActionExecutionSideEffectBoundaryPlanTable {
+		require.NotEmpty(t, entry.boundary)
+		require.NotEmpty(t, entry.currentOwner)
+		require.NotEmpty(t, entry.targetOwner)
+		require.NotEmpty(t, entry.extractedBy)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seen[entry.boundary].boundary, "duplicate planner action side-effect boundary plan entry for %q", entry.boundary)
+		seen[entry.boundary] = entry
+	}
+
+	require.Equal(t, want, seen)
+	require.True(t, daemonPlannerActionExecutionSideEffectBoundaryPlanBlockedByDaemonLegacy())
+}
+
+func TestDaemonPlannerActionExecutorContractPreconditionDocumentsTypedServiceBindingBlockers(t *testing.T) {
+	want := map[string]daemonPlannerActionExecutorContractPreconditionEntry{
+		"action_request_dto": {
+			component:        "action_request_dto",
+			stage:            daemonPlannerActionExecutorContractStageReady,
+			currentSurface:   "AgentLoopActionExecutionRequest + AgentLoopActionExecutionTurn + AgentLoopTurnResultPayload",
+			requiredContract: "runtime action executor input can reuse existing request/action/authorization DTOs",
+			nextStep:         "keep DTO contract stable while migrating the executor dispatch surface",
+		},
+		"typed_tool_service_binding": {
+			component:        "typed_tool_service_binding",
+			stage:            daemonPlannerActionExecutorContractStageReady,
+			currentSurface:   "planner action side-effect boundary carries cloned AgentLoopToolServiceBinding; ActionServices carries runtime capability names and Handle is no longer populated from routerServices by default",
+			requiredContract: "runtime action service capability set available after retiring test-only provider compatibility fixtures",
+			nextStep:         "keep registry handlers on runtime action service capability consumers",
+		},
+		"registry_handler_service_consumers": {
+			component:        "registry_handler_service_consumers",
+			stage:            daemonPlannerActionExecutorContractStageReady,
+			currentSurface:   "builtin registry handlers consume agentRegistryHandlerRuntime.actionServiceResolver(); production registry runtime no longer exposes toolServiceProvider()/legacyRouterServices() helper methods",
+			requiredContract: "registry handlers consume runtime AgentLoopActionServiceSet capabilities without opaque Handle fallback",
+			nextStep:         "keep provider/routerServices reconstruction retired from production and test runtime paths",
+		},
+		"authorization_context": {
+			component:        "authorization_context",
+			stage:            daemonPlannerActionExecutorContractStageReady,
+			currentSurface:   "planner action execution carries runtime.AgentLoopAuthorization through executeAgentPlannerActionResultWithToolServices and executeAgentRegistryHandlerResultWithToolServices; http.request resolves credentials from agentRegistryHandlerRuntime.Authorization",
+			requiredContract: "action handlers consume AgentLoopAuthorization or a runtime auth resolver directly",
+			nextStep:         "remove legacy registry runtime auth-profile compatibility fields once all handler/test callers consume Authorization only",
+		},
+		"executor_result_egress": {
+			component:        "executor_result_egress",
+			stage:            daemonPlannerActionExecutorContractStageReady,
+			currentSurface:   "executeAgentPlannerActionResultWithToolServices and executeAgentRegistryHandlerResultWithToolServices return runtime.AgentLoopActionExecutorResult; registryHandlerOutputToActionExecutorResult builds runtime messages/tool calls directly from handler outputs",
+			requiredContract: "action executor implementation returns AgentLoopActionExecutorResult-compatible messages/tool calls without daemon-private result types",
+			nextStep:         "replace remaining daemon-private tool-service dispatch with runtime-native action service interfaces",
+		},
+	}
+	seen := map[string]daemonPlannerActionExecutorContractPreconditionEntry{}
+
+	for _, entry := range daemonPlannerActionExecutorContractPreconditionTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.currentSurface)
+		require.NotEmpty(t, entry.requiredContract)
+		require.NotEmpty(t, entry.nextStep)
+		if entry.stage == daemonPlannerActionExecutorContractStageBlocked {
+			require.NotEmpty(t, entry.blocker)
+		}
+		require.Empty(t, seen[entry.component].component, "duplicate planner action executor contract precondition for %q", entry.component)
+		seen[entry.component] = entry
+	}
+
+	require.Equal(t, want, seen)
+	require.True(t, daemonPlannerActionExecutorContractReadyForAgentLoop())
+	blockers := daemonPlannerActionExecutorContractBlockers()
+	require.Empty(t, blockers)
+}
+
+func TestDaemonPlannerActionExecutionLegacyCompatibilitySurfaceRetiredAudit(t *testing.T) {
+	want := map[string]daemonPlannerActionExecutionLegacySurfaceEntry{
+		"executeAgentPlannerAction": {
+			symbol:                  "executeAgentPlannerAction",
+			stage:                   daemonPlannerActionExecutionLegacySurfaceStageRetired,
+			allowedNonTestSurface:   "none; direct legacy message/tool-call compatibility return has been removed",
+			currentAdapter:          "daemonPlannerActionExecutionExecutor",
+			newCallerContract:       "new internal callers must use daemonPlannerActionExecutionExecutorForManager(...).ExecutePlannerAction and consume runtime.AgentLoopActionExecutorResult",
+			runtimeMigrationBlocker: "retired; direct callers/tests consume executeAgentPlannerActionResultWithToolServices or the runtime action executor contract",
+			removalGate:             "already removed after direct callers/tests moved to runtime result wrapper",
+		},
+	}
+	seen := map[string]daemonPlannerActionExecutionLegacySurfaceEntry{}
+
+	for _, entry := range daemonPlannerActionExecutionLegacySurfaceTable {
+		require.NotEmpty(t, entry.symbol)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.allowedNonTestSurface)
+		require.NotEmpty(t, entry.currentAdapter)
+		require.NotEmpty(t, entry.newCallerContract)
+		require.NotEmpty(t, entry.runtimeMigrationBlocker)
+		require.NotEmpty(t, entry.removalGate)
+		require.Empty(t, seen[entry.symbol].symbol, "duplicate planner action legacy surface entry for %q", entry.symbol)
+		seen[entry.symbol] = entry
+
+		got, ok := daemonPlannerActionExecutionLegacySurfaceForSymbol(entry.symbol)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+
+	require.Equal(t, want, seen)
+	require.False(t, daemonPlannerActionExecutionLegacySurfaceImplementationOnly("executeAgentPlannerAction"))
+	_, ok := daemonPlannerActionExecutionLegacySurfaceForSymbol("unsupported")
+	require.False(t, ok)
+	require.False(t, daemonPlannerActionExecutionLegacySurfaceImplementationOnly("unsupported"))
+	require.True(t, daemonPlannerActionExecutorContractReadyForAgentLoop())
+}
+
+func TestDaemonPlannerActionExecutionFallbackOwnershipTableCoversChain(t *testing.T) {
+	wantReasons := map[daemonPlannerActionExecutionFallbackReason]string{
+		daemonPlannerActionExecutionFallbackEngineNotAttached:    daemonPlannerActionExecutionFallbackOwnerLegacyCaller,
+		daemonPlannerActionExecutionFallbackDirectLegacyExecutor: daemonPlannerActionExecutionFallbackOwnerLegacyCaller,
+	}
+	seenReasons := map[daemonPlannerActionExecutionFallbackReason]string{}
+
+	for _, entry := range daemonPlannerActionExecutionFallbackOwnershipTable {
+		require.NotEmpty(t, entry.reason)
+		require.NotEmpty(t, entry.owner)
+		require.Empty(t, seenReasons[entry.reason], "duplicate planner action execution fallback ownership entry for %q", entry.reason)
+		seenReasons[entry.reason] = entry.owner
+
+		owner, ok := daemonPlannerActionExecutionFallbackOwnerForReason(entry.reason)
+		require.True(t, ok)
+		require.Equal(t, entry.owner, owner)
+		require.True(t, daemonPlannerActionExecutionFallbackOwnedByLegacyCaller(entry.reason))
+	}
+
+	require.Equal(t, wantReasons, seenReasons)
+	_, ok := daemonPlannerActionExecutionFallbackOwnerForReason(daemonPlannerActionExecutionFallbackReason("unsupported"))
+	require.False(t, ok)
+	require.False(t, daemonPlannerActionExecutionFallbackOwnedByLegacyCaller(daemonPlannerActionExecutionFallbackReason("unsupported")))
+	require.ErrorContains(t, daemonPlannerActionExecutionFallbackOwnershipError(daemonPlannerActionExecutionFallbackReason("unsupported")), "fallback ownership missing")
+
+	reason, fallback := daemonPlannerActionExecutionActionExecutorPreDispatchFallbackReason(nil)
+	require.True(t, fallback)
+	require.Equal(t, daemonPlannerActionExecutionFallbackEngineNotAttached, reason)
+	require.True(t, daemonPlannerActionExecutionActionExecutorMissingRetirementAllowsDirectFallback(reason))
+
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	_, fallback = daemonPlannerActionExecutionActionExecutorPreDispatchFallbackReason(eng)
+	require.False(t, fallback)
+	require.False(t, daemonPlannerActionExecutionActionExecutorMissingRetirementAllowsDirectFallback(daemonPlannerActionExecutionFallbackActionExecutorNotAttached))
+
+	eng.AttachAgentLoopActionExecutor(runtime.AgentLoopActionExecutorFunc(func(context.Context, runtime.AgentLoopActionExecutorRequest) (runtime.AgentLoopActionExecutorResult, error) {
+		return runtime.AgentLoopActionExecutorResult{}, nil
+	}))
+	_, fallback = daemonPlannerActionExecutionActionExecutorPreDispatchFallbackReason(eng)
+	require.False(t, fallback)
+
+	_, fallback = daemonPlannerActionExecutionActionExecutorResultFallbackReason(runtime.AgentLoopActionExecutorResult{}, runtime.ErrAgentLoopActionExecutorNotAttached)
+	require.False(t, fallback)
+
+	_, fallback = daemonPlannerActionExecutionActionExecutorResultFallbackReason(runtime.AgentLoopActionExecutorResult{Error: runtime.ErrAgentLoopActionExecutorNotAttached}, nil)
+	require.False(t, fallback)
+
+	blocked, ok := daemonPlannerActionExecutionActionExecutorNotAttachedBlockedResult(runtime.AgentLoopActionExecutorResult{}, runtime.ErrAgentLoopActionExecutorNotAttached)
+	require.True(t, ok)
+	require.Equal(t, runtime.TurnResultBlocked, blocked.Status)
+	require.ErrorIs(t, blocked.Error, runtime.ErrAgentLoopActionExecutorNotAttached)
+	require.Equal(t, "retired", blocked.Metadata["planner_action_execution_action_executor_fallback"])
+
+	blocked, ok = daemonPlannerActionExecutionActionExecutorNotAttachedBlockedResult(runtime.AgentLoopActionExecutorResult{Error: runtime.ErrAgentLoopActionExecutorNotAttached}, nil)
+	require.True(t, ok)
+	require.Equal(t, runtime.TurnResultBlocked, blocked.Status)
+	require.ErrorIs(t, blocked.Error, runtime.ErrAgentLoopActionExecutorNotAttached)
+
+	_, fallback = daemonPlannerActionExecutionActionExecutorResultFallbackReason(runtime.AgentLoopActionExecutorResult{Status: runtime.TurnResultFailed}, errors.New("action executor hard error"))
+	require.False(t, fallback)
+}
+
+func TestDaemonPlannerActionExecutionFallbackBoundaryCoversChain(t *testing.T) {
+	want := map[string]daemonPlannerActionExecutionFallbackBoundaryEntry{
+		daemonPlannerActionExecutionFallbackStageActionExecutor: {
+			stage:          daemonPlannerActionExecutionFallbackStageActionExecutor,
+			callerSurface:  "runAgentPlannerActionExecutionAgentLoopResult -> runRuntimePlannerActionExecutionActionExecutor",
+			runtimeSurface: "runtime.Engine.ExecuteAgentLoopAction",
+			legacyFallback: "daemonAgentLoopActionExecutor.ExecuteAgentLoopAction",
+			owner:          daemonPlannerActionExecutionFallbackOwnerLegacyCaller,
+			scope:          "planner_action_execution falls back directly to the daemon action executor only when the runtime engine is missing; attached-engine missing/detached AgentLoopActionExecutor returns blocked/error and the internal TurnExecutor compatibility hop is retired",
+		},
+		daemonPlannerActionExecutionFallbackStageDirectLegacy: {
+			stage:          daemonPlannerActionExecutionFallbackStageDirectLegacy,
+			callerSurface:  "runAgentPlannerActionExecutionAgentLoopResult -> daemonAgentLoopActionExecutor.ExecuteAgentLoopAction",
+			runtimeSurface: "daemonAgentLoopActionExecutor",
+			legacyFallback: "daemonPlannerActionExecutionExecutor.ExecutePlannerAction",
+			owner:          daemonPlannerActionExecutionFallbackOwnerLegacyCaller,
+			scope:          "final compatibility executor preserves daemon registry dispatch side effects after the runtime action executor declines handling",
+		},
+	}
+	seen := map[string]daemonPlannerActionExecutionFallbackBoundaryEntry{}
+
+	for _, entry := range daemonPlannerActionExecutionFallbackBoundaryTable {
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.callerSurface)
+		require.NotEmpty(t, entry.runtimeSurface)
+		require.NotEmpty(t, entry.legacyFallback)
+		require.Equal(t, daemonPlannerActionExecutionFallbackOwnerLegacyCaller, entry.owner)
+		require.NotEmpty(t, entry.scope)
+		require.Empty(t, seen[entry.stage].stage, "duplicate planner action execution fallback boundary entry for %q", entry.stage)
+		seen[entry.stage] = entry
+
+		got, ok := daemonPlannerActionExecutionFallbackBoundaryForStage(entry.stage)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+
+	require.Equal(t, want, seen)
+	actionExecutor, ok := daemonPlannerActionExecutionFallbackBoundaryForStage(daemonPlannerActionExecutionFallbackStageActionExecutor)
+	require.True(t, ok)
+	require.Equal(t, "daemonAgentLoopActionExecutor.ExecuteAgentLoopAction", actionExecutor.legacyFallback)
+	require.Contains(t, actionExecutor.scope, "only when the runtime engine is missing")
+	require.Contains(t, actionExecutor.scope, "attached-engine missing/detached AgentLoopActionExecutor returns blocked/error")
+	require.Contains(t, actionExecutor.scope, "TurnExecutor compatibility hop is retired")
+
+	_, ok = daemonPlannerActionExecutionFallbackBoundaryForStage("unsupported")
+	require.False(t, ok)
+}
+
+func TestDaemonPlannerActionExecutionRuntimeActionServiceOwnershipAuditCoversRegistryDispatch(t *testing.T) {
+	data, err := os.ReadFile("agent_registry_handlers.go")
+	require.NoError(t, err)
+	managerCallPattern := regexp.MustCompile(`rt\.Manager\.(handleAgent[A-Za-z0-9]+)\(`)
+	actualMethods := map[string]bool{}
+	for _, match := range managerCallPattern.FindAllStringSubmatch(string(data), -1) {
+		actualMethods[match[1]] = true
+	}
+
+	seenComponents := map[string]bool{}
+	seenActions := map[string]string{}
+	coveredMethods := map[string]bool{}
+	for _, entry := range daemonPlannerActionExecutionRuntimeActionServiceOwnershipTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.actions)
+		require.NotEmpty(t, entry.managerMethods)
+		require.NotEmpty(t, entry.currentOwner)
+		require.NotEmpty(t, entry.currentSurface)
+		require.NotEmpty(t, entry.targetCapabilities)
+		require.NotEmpty(t, entry.evidence)
+		require.NotEmpty(t, entry.nextStep)
+		require.False(t, seenComponents[entry.component], "duplicate runtime action service ownership component %q", entry.component)
+		seenComponents[entry.component] = true
+
+		got, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+
+		for _, action := range entry.actions {
+			require.NotEmpty(t, action)
+			require.Empty(t, seenActions[action], "action %q appears in both %q and %q", action, seenActions[action], entry.component)
+			seenActions[action] = entry.component
+		}
+		for _, method := range entry.managerMethods {
+			require.NotEmpty(t, method)
+			if entry.stage == daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached {
+				continue
+			}
+			require.False(t, coveredMethods[method], "duplicate manager method ownership for %q", method)
+			coveredMethods[method] = true
+		}
+	}
+
+	require.Equal(t, sortedStringKeys(actualMethods), sortedStringKeys(coveredMethods))
+	require.Equal(t, map[string]bool{
+		"scan_registry_handler":                  true,
+		"health_plugins_runs_registry_handlers":  true,
+		"schedule_registry_handlers":             true,
+		"web_search_registry_handler":            true,
+		"run_context_approval_registry_handlers": true,
+		"workspace_registry_handlers":            true,
+		"network_request_registry_handlers":      true,
+		"port_scan_registry_handler":             true,
+	}, seenComponents)
+	require.Empty(t, daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntriesForStage(daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityOwned))
+	require.Len(t, daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntriesForStage(daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached), 8)
+	require.Empty(t, daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntriesForStage(daemonPlannerActionExecutionRuntimeActionServiceStageSelectedNextCapability))
+	require.Empty(t, daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntriesForStage(daemonPlannerActionExecutionRuntimeActionServiceStageDaemonManagerOwned))
+	require.Empty(t, daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntriesForStage("unsupported"))
+
+	_, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipSelectedNextCapability()
+	require.False(t, ok)
+
+	health, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent("health_plugins_runs_registry_handlers")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, health.stage)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, health.currentOwner)
+	require.Equal(t, []runtime.AgentLoopActionServiceCapability{runtime.AgentLoopActionServiceDaemonStatusAction}, health.targetCapabilities)
+	require.Contains(t, health.actions, "daemon.health")
+	require.Contains(t, health.actions, "plugins.list")
+	require.Contains(t, health.actions, "runs.list")
+	require.Contains(t, health.managerMethods, "handleAgentHealth")
+	require.Contains(t, health.currentSurface, "DaemonStatus()")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentHealth(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentPlugins(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentRuns(")
+
+	scan, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent("scan_registry_handler")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, scan.stage)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, scan.currentOwner)
+	require.Equal(t, []runtime.AgentLoopActionServiceCapability{runtime.AgentLoopActionServiceWebScan}, scan.targetCapabilities)
+	require.Contains(t, scan.actions, "scan.web.safe")
+	require.Contains(t, scan.managerMethods, "handleAgentScan")
+	require.Contains(t, scan.currentSurface, "WebScan()")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentScan(")
+
+	schedule, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent("schedule_registry_handlers")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, schedule.stage)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, schedule.currentOwner)
+	require.Equal(t, []runtime.AgentLoopActionServiceCapability{runtime.AgentLoopActionServiceScheduleAction}, schedule.targetCapabilities)
+	require.Contains(t, schedule.actions, "schedule.create")
+	require.Contains(t, schedule.actions, "schedule.delete")
+	require.Contains(t, schedule.managerMethods, "handleAgentScheduleCreate")
+	require.Contains(t, schedule.currentSurface, "ScheduleAction()")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentScheduleCreate(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentScheduleList(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentScheduleDelete(")
+
+	runContext, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent("run_context_approval_registry_handlers")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, runContext.stage)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, runContext.currentOwner)
+	require.Equal(t, []runtime.AgentLoopActionServiceCapability{runtime.AgentLoopActionServiceRunContextApproval}, runContext.targetCapabilities)
+	require.Contains(t, runContext.actions, "runs.context")
+	require.Contains(t, runContext.actions, "runs.approvals.approve")
+	require.Contains(t, runContext.managerMethods, "handleAgentRunContextTool")
+	require.Contains(t, runContext.currentSurface, "RunContextApproval()")
+	require.Contains(t, runContext.nextStep, "TurnExecutor compatibility fallback retirement")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentRunContextTool(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentReportDraft(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentApprovals(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentRunContextAnalysis(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentResumeApproved(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentApprovalDecision(")
+
+	workspace, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent("workspace_registry_handlers")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, workspace.stage)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, workspace.currentOwner)
+	require.Equal(t, []runtime.AgentLoopActionServiceCapability{runtime.AgentLoopActionServiceWorkspace}, workspace.targetCapabilities)
+	require.Contains(t, workspace.actions, "workspace.files.apply")
+	require.Contains(t, workspace.actions, "workspace.search")
+	require.Contains(t, workspace.managerMethods, "handleAgentCommand")
+	require.Contains(t, workspace.managerMethods, "handleAgentWorkspaceWrite")
+	require.Contains(t, workspace.currentSurface, "Workspace()")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentCommand(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentWorkspace")
+
+	network, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent("network_request_registry_handlers")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, network.stage)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, network.currentOwner)
+	require.Equal(t, []runtime.AgentLoopActionServiceCapability{runtime.AgentLoopActionServiceNetworkRequest}, network.targetCapabilities)
+	require.Contains(t, network.actions, "http.request")
+	require.Contains(t, network.actions, "web.fetch")
+	require.Contains(t, network.managerMethods, "handleAgentHTTPRequest")
+	require.Contains(t, network.managerMethods, "handleAgentWebFetch")
+	require.Contains(t, network.currentSurface, "NetworkRequest()")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentHTTPRequest(")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentWebFetch(")
+
+	webSearch, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent("web_search_registry_handler")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, webSearch.stage)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, webSearch.currentOwner)
+	require.Equal(t, []runtime.AgentLoopActionServiceCapability{runtime.AgentLoopActionServiceWebSearch}, webSearch.targetCapabilities)
+	require.Contains(t, webSearch.actions, "web.search")
+	require.Contains(t, webSearch.managerMethods, "handleAgentWebSearch")
+	require.Contains(t, webSearch.currentSurface, "WebSearch()")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentWebSearch(")
+
+	portScan, ok := daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent("port_scan_registry_handler")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, portScan.stage)
+	require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, portScan.currentOwner)
+	require.Equal(t, []runtime.AgentLoopActionServiceCapability{runtime.AgentLoopActionServicePortScanner}, portScan.targetCapabilities)
+	require.Contains(t, portScan.actions, "ports.scan.safe")
+	require.Contains(t, portScan.managerMethods, "handleAgentPortScan")
+	require.Contains(t, portScan.currentSurface, "PortScanner()")
+	require.NotContains(t, string(data), "rt.Manager.handleAgentPortScan(")
+
+	_, ok = daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntryForComponent("unsupported")
+	require.False(t, ok)
+}
+
+func TestDaemonPlannerActionExecutionRegistryAdapterCompletionAuditSelectsNextFallbackBoundary(t *testing.T) {
+	data, err := os.ReadFile("agent_registry_handlers.go")
+	require.NoError(t, err)
+	require.Empty(t, regexp.MustCompile(`rt\.Manager\.handleAgent[A-Za-z0-9]+\(`).FindAllString(string(data), -1))
+
+	wantStages := map[string]daemonPlannerActionExecutionRegistryAdapterCompletionStage{
+		"runtime_action_service_ownership_completion":    daemonPlannerActionExecutionRegistryAdapterCompletionStageAdaptersComplete,
+		"registry_handler_direct_manager_source_audit":   daemonPlannerActionExecutionRegistryAdapterCompletionStageSourceAuditClear,
+		"planner_action_executor_next_fallback_boundary": daemonPlannerActionExecutionRegistryAdapterCompletionStageFallbackBoundaryChosen,
+	}
+	seenStages := map[string]daemonPlannerActionExecutionRegistryAdapterCompletionStage{}
+	for _, entry := range daemonPlannerActionExecutionRegistryAdapterCompletionTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.evidence)
+		require.Equal(t, daemonPlannerActionExecutionNextFallbackRetirementBoundaryTurnExecutorCompatibility, entry.nextBoundary)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seenStages[entry.component], "duplicate registry adapter completion entry for %q", entry.component)
+		seenStages[entry.component] = entry.stage
+
+		got, ok := daemonPlannerActionExecutionRegistryAdapterCompletionEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+	require.Equal(t, wantStages, seenStages)
+	require.Len(t, daemonPlannerActionExecutionRegistryAdapterCompletionEntriesForStage(daemonPlannerActionExecutionRegistryAdapterCompletionStageAdaptersComplete), 1)
+	require.Len(t, daemonPlannerActionExecutionRegistryAdapterCompletionEntriesForStage(daemonPlannerActionExecutionRegistryAdapterCompletionStageSourceAuditClear), 1)
+	require.Len(t, daemonPlannerActionExecutionRegistryAdapterCompletionEntriesForStage(daemonPlannerActionExecutionRegistryAdapterCompletionStageFallbackBoundaryChosen), 1)
+	require.Empty(t, daemonPlannerActionExecutionRegistryAdapterCompletionEntriesForStage("unsupported"))
+
+	selectedBoundary, ok := daemonPlannerActionExecutionRegistryAdapterCompletionSelectedFallbackBoundary()
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionNextFallbackRetirementBoundaryTurnExecutorCompatibility, selectedBoundary)
+
+	for _, entry := range daemonPlannerActionExecutionRuntimeActionServiceOwnershipTable {
+		require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, entry.stage)
+		require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, entry.currentOwner)
+	}
+	require.Len(t, daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntriesForStage(daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached), 8)
+	require.Empty(t, daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntriesForStage(daemonPlannerActionExecutionRuntimeActionServiceStageSelectedNextCapability))
+	require.Empty(t, daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntriesForStage(daemonPlannerActionExecutionRuntimeActionServiceStageDaemonManagerOwned))
+	_, ok = daemonPlannerActionExecutionRuntimeActionServiceOwnershipSelectedNextCapability()
+	require.False(t, ok)
+
+	actionExecutor, ok := daemonPlannerActionExecutionFallbackBoundaryForStage(daemonPlannerActionExecutionFallbackStageActionExecutor)
+	require.True(t, ok)
+	require.Equal(t, "daemonAgentLoopActionExecutor.ExecuteAgentLoopAction", actionExecutor.legacyFallback)
+	require.Contains(t, actionExecutor.scope, "TurnExecutor compatibility hop is retired")
+	nextBoundary, ok := daemonPlannerActionExecutionRegistryAdapterCompletionEntryForComponent("planner_action_executor_next_fallback_boundary")
+	require.True(t, ok)
+	require.Contains(t, nextBoundary.nextStep, "P0.5-N212")
+}
+
+func TestDaemonPlannerActionExecutionTurnCompatibilityRetirementAuditSelectsDirectLegacyBoundary(t *testing.T) {
+	data, err := os.ReadFile("agent_turn_executor.go")
+	require.NoError(t, err)
+	source := string(data)
+	require.NotContains(t, source, "func (m *agentManager) runRuntimePlannerActionExecutionTurn")
+	require.NotContains(t, source, "agentPlannerActionExecutionTurnResultPayload")
+	require.NotContains(t, source, "agentPlannerActionExecutionTurnContextFromRequest")
+
+	agentLoopBranch := regexp.MustCompile(`(?s)func \(m \*agentManager\) runAgentPlannerActionExecutionAgentLoopResult\(.*?\n}\n`)
+	branch := agentLoopBranch.FindString(source)
+	require.NotEmpty(t, branch)
+	require.NotContains(t, branch, "runRuntimePlannerActionExecutionTurn")
+	require.Contains(t, branch, "daemonAgentLoopActionExecutor{manager: m}.ExecuteAgentLoopAction")
+	require.Contains(t, source, "func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn")
+
+	wantStages := map[string]daemonPlannerActionExecutionTurnCompatibilityRetirementStage{
+		"planner_action_execution_agent_loop_fallback":                  daemonPlannerActionExecutionTurnCompatibilityRetirementStageInternalFallbackRetired,
+		"planner_action_execution_external_turn_executor_compatibility": daemonPlannerActionExecutionTurnCompatibilityRetirementStageExternalCompatibility,
+		"planner_action_execution_next_fallback_boundary":               daemonPlannerActionExecutionTurnCompatibilityRetirementStageNextBoundaryChosen,
+	}
+	seenStages := map[string]daemonPlannerActionExecutionTurnCompatibilityRetirementStage{}
+	for _, entry := range daemonPlannerActionExecutionTurnCompatibilityRetirementTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.evidence)
+		require.Equal(t, daemonPlannerActionExecutionNextFallbackRetirementBoundaryDirectLegacyExecutor, entry.nextBoundary)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seenStages[entry.component], "duplicate turn compatibility retirement entry for %q", entry.component)
+		seenStages[entry.component] = entry.stage
+
+		got, ok := daemonPlannerActionExecutionTurnCompatibilityRetirementEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+	require.Equal(t, wantStages, seenStages)
+	require.Len(t, daemonPlannerActionExecutionTurnCompatibilityRetirementEntriesForStage(daemonPlannerActionExecutionTurnCompatibilityRetirementStageInternalFallbackRetired), 1)
+	require.Len(t, daemonPlannerActionExecutionTurnCompatibilityRetirementEntriesForStage(daemonPlannerActionExecutionTurnCompatibilityRetirementStageExternalCompatibility), 1)
+	require.Len(t, daemonPlannerActionExecutionTurnCompatibilityRetirementEntriesForStage(daemonPlannerActionExecutionTurnCompatibilityRetirementStageNextBoundaryChosen), 1)
+	require.Empty(t, daemonPlannerActionExecutionTurnCompatibilityRetirementEntriesForStage("unsupported"))
+
+	selectedBoundary, ok := daemonPlannerActionExecutionTurnCompatibilityRetirementSelectedFallbackBoundary()
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionNextFallbackRetirementBoundaryDirectLegacyExecutor, selectedBoundary)
+
+	actionExecutor, ok := daemonPlannerActionExecutionFallbackBoundaryForStage(daemonPlannerActionExecutionFallbackStageActionExecutor)
+	require.True(t, ok)
+	require.Equal(t, "daemonAgentLoopActionExecutor.ExecuteAgentLoopAction", actionExecutor.legacyFallback)
+	require.Contains(t, actionExecutor.scope, "internal TurnExecutor compatibility hop is retired")
+	require.Len(t, daemonPlannerActionExecutionFallbackBoundaryTable, 2)
+	_, ok = daemonPlannerActionExecutionFallbackBoundaryForStage("turn_executor")
+	require.False(t, ok)
+}
+
+func TestDaemonPlannerActionExecutionDirectLegacyRetirementAuditScopesExecutorEntrypoint(t *testing.T) {
+	promptData, err := os.ReadFile("agent_prompt_dispatch.go")
+	require.NoError(t, err)
+	promptSource := string(promptData)
+	require.NotContains(t, promptSource, "daemonPlannerActionExecutionExecutorForManager(")
+	require.Contains(t, promptSource, "daemonAgentLoopActionExecutor{manager: m}.ExecuteAgentLoopAction")
+
+	turnData, err := os.ReadFile("agent_turn_executor.go")
+	require.NoError(t, err)
+	turnSource := string(turnData)
+	start := strings.Index(turnSource, "func (e daemonAgentTurnExecutor) executePlannerActionExecutionTurn")
+	require.NotEqual(t, -1, start)
+	end := strings.Index(turnSource[start:], "\nfunc (m *agentManager) runRuntimePlannerActionExecution")
+	require.NotEqual(t, -1, end)
+	plannerTurnBranch := turnSource[start : start+end]
+	require.NotContains(t, plannerTurnBranch, "daemonPlannerActionExecutionExecutorForManager(")
+	require.Contains(t, plannerTurnBranch, "daemonAgentLoopActionExecutor{manager: e.manager}.ExecuteAgentLoopAction")
+
+	actionExecutorData, err := os.ReadFile("agent_action_executor.go")
+	require.NoError(t, err)
+	actionExecutorSource := string(actionExecutorData)
+	require.Equal(t, 1, strings.Count(actionExecutorSource, "daemonPlannerActionExecutionExecutorForManager(executor.manager).ExecutePlannerAction"))
+	require.Contains(t, actionExecutorSource, "func (executor daemonAgentLoopActionExecutor) ExecuteAgentLoopAction")
+
+	wantStages := map[string]daemonPlannerActionExecutionDirectLegacyRetirementStage{
+		"primary_agent_loop_runtime_action_executor":      daemonPlannerActionExecutionDirectLegacyRetirementStageRuntimeActionExecutorPrimary,
+		"direct_legacy_executor_call_surface":             daemonPlannerActionExecutionDirectLegacyRetirementStageDirectExecutorSurfaceScoped,
+		"registry_action_side_effect_ownership":           daemonPlannerActionExecutionDirectLegacyRetirementStageRuntimeActionServicesCovered,
+		"no_engine_agent_loop_direct_fallback":            daemonPlannerActionExecutionDirectLegacyRetirementStageCompatibilityFallbackRetained,
+		"planner_action_execution_next_fallback_boundary": daemonPlannerActionExecutionDirectLegacyRetirementStageNextBoundaryChosen,
+	}
+	seenStages := map[string]daemonPlannerActionExecutionDirectLegacyRetirementStage{}
+	for _, entry := range daemonPlannerActionExecutionDirectLegacyRetirementTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.evidence)
+		require.Equal(t, daemonPlannerActionExecutionNextFallbackRetirementBoundaryNoEngineDirectLegacy, entry.nextBoundary)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seenStages[entry.component], "duplicate direct legacy retirement entry for %q", entry.component)
+		seenStages[entry.component] = entry.stage
+
+		got, ok := daemonPlannerActionExecutionDirectLegacyRetirementEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+	require.Equal(t, wantStages, seenStages)
+	require.Len(t, daemonPlannerActionExecutionDirectLegacyRetirementEntriesForStage(daemonPlannerActionExecutionDirectLegacyRetirementStageRuntimeActionExecutorPrimary), 1)
+	require.Len(t, daemonPlannerActionExecutionDirectLegacyRetirementEntriesForStage(daemonPlannerActionExecutionDirectLegacyRetirementStageDirectExecutorSurfaceScoped), 1)
+	require.Len(t, daemonPlannerActionExecutionDirectLegacyRetirementEntriesForStage(daemonPlannerActionExecutionDirectLegacyRetirementStageRuntimeActionServicesCovered), 1)
+	require.Len(t, daemonPlannerActionExecutionDirectLegacyRetirementEntriesForStage(daemonPlannerActionExecutionDirectLegacyRetirementStageCompatibilityFallbackRetained), 1)
+	require.Len(t, daemonPlannerActionExecutionDirectLegacyRetirementEntriesForStage(daemonPlannerActionExecutionDirectLegacyRetirementStageNextBoundaryChosen), 1)
+	require.Empty(t, daemonPlannerActionExecutionDirectLegacyRetirementEntriesForStage("unsupported"))
+	require.True(t, daemonPlannerActionExecutionDirectLegacyRetirementReadyForSingleExecutorEntrypoint())
+
+	selectedBoundary, ok := daemonPlannerActionExecutionDirectLegacyRetirementSelectedFallbackBoundary()
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionNextFallbackRetirementBoundaryNoEngineDirectLegacy, selectedBoundary)
+
+	for _, entry := range daemonPlannerActionExecutionRuntimeActionServiceOwnershipTable {
+		require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached, entry.stage)
+		require.Equal(t, daemonPlannerActionExecutionRuntimeActionServiceOwnerRuntimeCapability, entry.currentOwner)
+	}
+	require.Len(t, daemonPlannerActionExecutionRuntimeActionServiceOwnershipEntriesForStage(daemonPlannerActionExecutionRuntimeActionServiceStageRuntimeCapabilityAdapterAttached), 8)
+
+	fallback, ok := daemonPlannerActionExecutionDirectLegacyRetirementEntryForComponent("no_engine_agent_loop_direct_fallback")
+	require.True(t, ok)
+	require.Contains(t, fallback.evidence, "only when the runtime engine is missing")
+	require.Contains(t, fallback.nextStep, "P0.5-N215")
+}
+
+func TestDaemonPlannerActionExecutionActionExecutorMissingRetirementAuditNarrowsFallback(t *testing.T) {
+	wantStages := map[string]daemonPlannerActionExecutionActionExecutorMissingRetirementStage{
+		"no_engine_agent_loop_direct_fallback":            daemonPlannerActionExecutionActionExecutorMissingRetirementStageNoEngineFallbackRetained,
+		"attached_engine_missing_action_executor":         daemonPlannerActionExecutionActionExecutorMissingRetirementStageMissingExecutorBlocked,
+		"detached_action_executor_result":                 daemonPlannerActionExecutionActionExecutorMissingRetirementStageDetachedResultBlocked,
+		"planner_action_execution_next_fallback_boundary": daemonPlannerActionExecutionActionExecutorMissingRetirementStageNextBoundaryChosen,
+	}
+	seenStages := map[string]daemonPlannerActionExecutionActionExecutorMissingRetirementStage{}
+	for _, entry := range daemonPlannerActionExecutionActionExecutorMissingRetirementTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.disposition)
+		require.NotEmpty(t, entry.evidence)
+		require.Equal(t, daemonPlannerActionExecutionNextFallbackRetirementBoundaryNoEngineDirectLegacy, entry.nextBoundary)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seenStages[entry.component], "duplicate missing action executor retirement entry for %q", entry.component)
+		seenStages[entry.component] = entry.stage
+
+		got, ok := daemonPlannerActionExecutionActionExecutorMissingRetirementEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+	require.Equal(t, wantStages, seenStages)
+	require.Len(t, daemonPlannerActionExecutionActionExecutorMissingRetirementEntriesForStage(daemonPlannerActionExecutionActionExecutorMissingRetirementStageNoEngineFallbackRetained), 1)
+	require.Len(t, daemonPlannerActionExecutionActionExecutorMissingRetirementEntriesForStage(daemonPlannerActionExecutionActionExecutorMissingRetirementStageMissingExecutorBlocked), 1)
+	require.Len(t, daemonPlannerActionExecutionActionExecutorMissingRetirementEntriesForStage(daemonPlannerActionExecutionActionExecutorMissingRetirementStageDetachedResultBlocked), 1)
+	require.Len(t, daemonPlannerActionExecutionActionExecutorMissingRetirementEntriesForStage(daemonPlannerActionExecutionActionExecutorMissingRetirementStageNextBoundaryChosen), 1)
+	require.Empty(t, daemonPlannerActionExecutionActionExecutorMissingRetirementEntriesForStage("unsupported"))
+
+	selectedBoundary, ok := daemonPlannerActionExecutionActionExecutorMissingRetirementSelectedFallbackBoundary()
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionNextFallbackRetirementBoundaryNoEngineDirectLegacy, selectedBoundary)
+
+	require.True(t, daemonPlannerActionExecutionActionExecutorMissingRetirementAllowsDirectFallback(daemonPlannerActionExecutionFallbackEngineNotAttached))
+	require.False(t, daemonPlannerActionExecutionActionExecutorMissingRetirementAllowsDirectFallback(daemonPlannerActionExecutionFallbackActionExecutorNotAttached))
+
+	missing, ok := daemonPlannerActionExecutionActionExecutorMissingRetirementEntryForComponent("attached_engine_missing_action_executor")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionActionExecutorMissingRetirementDispositionBlockedError, missing.disposition)
+	require.Contains(t, missing.evidence, "runtime.ErrAgentLoopActionExecutorNotAttached")
+
+	detached, ok := daemonPlannerActionExecutionActionExecutorMissingRetirementEntryForComponent("detached_action_executor_result")
+	require.True(t, ok)
+	require.Equal(t, daemonPlannerActionExecutionActionExecutorMissingRetirementDispositionBlockedError, detached.disposition)
+	require.Contains(t, detached.evidence, "no longer falls through")
+}
+
+func sortedStringKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func TestDaemonPlannerActionExecutorServiceContractMigrationLandingPoint(t *testing.T) {
+	want := map[string]daemonPlannerActionExecutorServiceContractMigrationEntry{
+		"runtime_action_executor_seam": {
+			component:      "runtime_action_executor_seam",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "runtime.AgentLoopActionExecutor / Engine.ExecuteAgentLoopAction",
+			targetSurface:  "planner_action_execution dispatches one action through the runtime action executor contract",
+			evidence:       "runtime executor request/result use AgentLoopRequest, AgentLoopAction, AgentLoopMessage and AgentLoopToolCall DTOs with clone isolation",
+			nextStep:       "keep the seam stable while remaining typed service, authorization and result egress blockers move behind runtime contracts",
+		},
+		"runtime_action_service_capability_set": {
+			component:      "runtime_action_service_capability_set",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "runtime.AgentLoopActionServiceSet names version/plugins/runs/approvals/jobs/agent/scan_manager/schedules/providers/workspace/network_request/port_scanner/web_search/web_scan/schedule_action/daemon_status_action/run_context_approval_action capabilities, and AgentLoopToolServiceBinding carries ActionServices as the default service surface",
+			targetSurface:  "planner_action_execution resolves action services through runtime capability names instead of opaque Handle/provider fixtures",
+			evidence:       "agentLoopToolServiceBindingFromRouterServices populates shared ActionServices without Handle, registry dispatch attaches workspace/network request/port scanner/web search/web scan/schedule/daemon status/run-context approval action capability adapters, and agentRegistryHandlerRuntime.actionServiceResolver reads the runtime capability set directly",
+			nextStep:       "keep action-service capability consumers as the compatibility fixtures shrink",
+		},
+		"daemon_legacy_executor_adapter": {
+			component:      "daemon_legacy_executor_adapter",
+			stage:          daemonPlannerActionExecutorServiceContractStageDaemonAdapterAttached,
+			currentSurface: "runRuntimePlannerActionExecution calls Engine.RunAgentLoop planner_action_execution mode; side-effect boundary carries runtime AgentLoopToolServiceBinding and daemon legacy executor forwards that binding directly to registry dispatch",
+			targetSurface:  "planner_action_execution runner can execute through runtime-native action services without TurnExecutor/direct legacy fallbacks",
+			evidence:       "primary caller dispatches an AgentLoopRequest carrying mode/action/toolServices; boundary clones the runtime binding and executeAgentPlannerActionResultWithToolServices preserves custom binding metadata through handler runtime",
+			nextStep:       "retire TurnExecutor/direct legacy fallbacks after remaining compatibility callers move to AgentLoopRunner",
+		},
+		"runtime_action_result_composition": {
+			component:      "runtime_action_result_composition",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "runtime.AgentLoopPlannerActionExecutionResultFromActionExecutorResult / FromTurnPayload",
+			targetSurface:  "planner_action_execution runner result egress envelope is runtime-owned for action executor and TurnExecutor fallback paths",
+			evidence:       "runner branch now delegates ActionExecutorResult/TurnPayload to runtime helpers that stamp mode/action/count/status/error metadata and clone DTOs",
+			nextStep:       "continue shrinking daemon legacy result conversion before retiring direct legacy executor fallback",
+		},
+		"legacy_result_adapter_centralized": {
+			component:      "legacy_result_adapter_centralized",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "daemonAgentLoopActionExecutor is the scoped compatibility entrypoint and daemonPlannerActionExecutionExecutor returns runtime.AgentLoopActionExecutorResult behind that adapter",
+			targetSurface:  "planner_action_execution callers no longer receive daemon-private agentMessage/agentToolCall result types",
+			evidence:       "daemon AgentLoop action executor is the only production caller of daemonPlannerActionExecutionExecutor; TurnExecutor compatibility and heuristic route enter through daemonAgentLoopActionExecutor.ExecuteAgentLoopAction",
+			nextStep:       "keep direct executor access implementation-only while auditing missing ActionExecutor compatibility fallback",
+		},
+		"registry_handler_runtime_authorization_context": {
+			component:      "registry_handler_runtime_authorization_context",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "agentRegistryHandlerRuntime carries runtime.AgentLoopAuthorization and http.request resolves credentials through agentResolveAgentLoopAuthProfileHeaders",
+			targetSurface:  "registry handlers consume runtime authorization context instead of daemon HTTP auth-profile slices",
+			evidence:       "focused http.request registry handler test passes runtime-only auth profile while legacy AuthProfiles contains a conflicting profile",
+			nextStep:       "remove legacy registry runtime auth-profile compatibility fields once all handler/test callers consume Authorization only",
+		},
+		"tool_service_provider_contract_test_fixture": {
+			component:      "tool_service_provider_contract_test_fixture",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "historical typed-provider contract table, explicit Handle fallback helpers and ActionServices-to-routerServices test roundtrip helpers are retired",
+			targetSurface:  "runtime action executor receives runtime action services instead of daemon routerServices/provider bundles",
+			evidence:       "daemonActionServiceSetFromRouterServices maps routerServices fields to runtime capability names; source-audit test rejects provider contract names and provider metadata in production daemon files",
+			nextStep:       "keep tests asserting runtime ActionServices capabilities directly as the legacy compatibility fixture stays retired",
+		},
+		"registry_handler_action_service_first_batch": {
+			component:      "registry_handler_action_service_first_batch",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "daemon.health, plugins.list and runs.list call daemonStatusActionServiceFromRegistryRuntime() and resolve runtime AgentLoopActionServiceDaemonStatusAction without Handle fallback; the daemon adapter receives the runtime resolver so VersionService/PluginService/RunService still load through ActionServices",
+			targetSurface:  "daemon.health/plugins.list/runs.list consume runtime daemon status action service capability without direct rt.Manager.handleAgentHealth/Plugins/Runs calls",
+			evidence:       "focused daemon status registry handler test uses ActionServices with a fake daemon status capability and no Manager, while source audit rejects direct status manager calls in agent_registry_handlers.go",
+			nextStep:       "keep daemon status capability adapter covered while registry action-service adapter completion is audited",
+		},
+		"registry_handler_action_service_schedule_batch": {
+			component:      "registry_handler_action_service_schedule_batch",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "schedule.create, schedule.list and schedule.delete call scheduleActionServiceFromRegistryRuntime() and resolve runtime AgentLoopActionServiceScheduleAction without Handle fallback; the daemon adapter receives the runtime resolver so ScheduleManager reads/writes still load through ActionServices",
+			targetSurface:  "schedule.* consumes runtime schedule action service capability without direct rt.Manager.handleAgentSchedule* calls",
+			evidence:       "focused schedule registry handler test uses ActionServices with a fake schedule action capability and no Manager, while source audit rejects direct schedule manager calls in agent_registry_handlers.go",
+			nextStep:       "keep schedule action capability adapter covered while registry action-service adapter completion is audited",
+		},
+		"registry_handler_action_service_web_search_batch": {
+			component:      "registry_handler_action_service_web_search_batch",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "web.search calls webSearchActionServiceFromRegistryRuntime() and resolves runtime AgentLoopActionServiceWebSearch without Handle fallback; the daemon adapter receives the runtime resolver so ProviderStore config still loads through ActionServices",
+			targetSurface:  "web.search consumes runtime web search action service capability without direct rt.Manager.handleAgentWebSearch calls",
+			evidence:       "focused web search registry handler test uses ActionServices with a fake web search capability and no Manager, while source audit rejects direct web search manager calls in agent_registry_handlers.go",
+			nextStep:       "keep web search capability adapter covered while registry action-service adapter completion is audited",
+		},
+		"registry_handler_action_service_scan_batch": {
+			component:      "registry_handler_action_service_scan_batch",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "scan.web.safe calls webScanActionServiceFromRegistryRuntime() and resolves runtime AgentLoopActionServiceWebScan without Handle fallback; the daemon adapter receives the runtime resolver so JobManager scan creation still loads through ActionServices",
+			targetSurface:  "scan.web.safe consumes runtime web scan action service capability without direct rt.Manager.handleAgentScan calls",
+			evidence:       "focused web scan registry handler test uses ActionServices with a fake web scan capability and no Manager, while source audit rejects direct scan manager calls in agent_registry_handlers.go",
+			nextStep:       "keep web scan capability adapter covered while registry action-service adapter completion is audited",
+		},
+		"registry_handler_action_service_run_context_approval_batch": {
+			component:      "registry_handler_action_service_run_context_approval_batch",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "runs.context, reports.draft, runs.approvals.list, runs.resume_approved and runs.approvals.approve/deny call runContextApprovalActionServiceFromRegistryRuntime() and resolve runtime AgentLoopActionServiceRunContextApproval without Handle fallback; the daemon adapter receives the runtime resolver so RunService/ApprovalService reads/writes still load through ActionServices",
+			targetSurface:  "run-context/approval registry handlers consume runtime run-context approval action service capability without direct rt.Manager.handleAgentRunContext*/handleAgentReportDraft/handleAgentApprovals/handleAgentResumeApproved/handleAgentApprovalDecision calls",
+			evidence:       "focused run-context/approval registry handler test uses ActionServices with a fake run-context approval capability and no Manager, while source audit rejects direct run-context/approval manager calls in agent_registry_handlers.go",
+			nextStep:       "audit registry action-service adapter completion before selecting the next planner action executor fallback retirement boundary",
+		},
+		"registry_handler_action_service_workspace_batch": {
+			component:      "registry_handler_action_service_workspace_batch",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "workspace.command, workspace.files.* and workspace.search call workspaceActionServiceFromRegistryRuntime() and resolve runtime AgentLoopActionServiceWorkspace without Handle fallback",
+			targetSurface:  "workspace registry handlers consume runtime workspace action service capability without direct rt.Manager.handleAgentCommand/handleAgentWorkspace* calls",
+			evidence:       "focused workspace registry handler test uses ActionServices with a fake workspace capability and no Manager, while source audit rejects direct workspace manager calls in agent_registry_handlers.go",
+			nextStep:       "keep workspace capability adapter covered while network request and port-scan side-effect groups are migrated",
+		},
+		"registry_handler_action_service_network_request_batch": {
+			component:      "registry_handler_action_service_network_request_batch",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "http.request and web.fetch call networkRequestActionServiceFromRegistryRuntime() and resolve runtime AgentLoopActionServiceNetworkRequest without Handle fallback",
+			targetSurface:  "network request registry handlers consume runtime network request action service capability without direct rt.Manager.handleAgentHTTPRequest/handleAgentWebFetch calls",
+			evidence:       "focused network request registry handler test uses ActionServices with a fake network request capability and no Manager, while source audit rejects direct network manager calls in agent_registry_handlers.go",
+			nextStep:       "keep network request capability adapter covered while the port-scan side-effect group is migrated",
+		},
+		"registry_handler_action_service_port_scan_batch": {
+			component:      "registry_handler_action_service_port_scan_batch",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "ports.scan.safe calls portScannerActionServiceFromRegistryRuntime() and resolves runtime AgentLoopActionServicePortScanner without Handle fallback",
+			targetSurface:  "port scan registry handler consumes runtime port scanner action service capability without direct rt.Manager.handleAgentPortScan calls",
+			evidence:       "focused port scanner registry handler test uses ActionServices with a fake port scanner capability and no Manager, while source audit rejects direct port scan manager calls in agent_registry_handlers.go",
+			nextStep:       "keep port scanner capability adapter covered while remaining registry runtime capability consumers are evaluated for narrower adapters",
+		},
+		"authorization_context": {
+			component:      "authorization_context",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "daemonPlannerActionExecutionSideEffectBoundary, executeAgentPlannerActionResultWithToolServices and executeAgentRegistryHandlerResultWithToolServices pass runtime.AgentLoopAuthorization end-to-end",
+			targetSurface:  "runtime action executor consumes AgentLoopAuthorization or a typed runtime auth resolver directly",
+			evidence:       "agentResolveAgentLoopAuthProfileHeaders consumes runtime profiles directly; executor and registry dispatch signatures accept AgentLoopAuthorization instead of []agentHTTPAuthProfile/default profile fields",
+			nextStep:       "remove legacy registry runtime auth-profile compatibility fields after handler compatibility coverage is retired",
+		},
+		"registry_handler_service_consumers": {
+			component:      "registry_handler_service_consumers",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "all builtin registry handlers call agentRegistryHandlerRuntime.actionServiceResolver(); production resolver consumes runtime ActionServices only",
+			targetSurface:  "registry handlers consume runtime action service capabilities without opaque Handle fallback",
+			evidence:       "focused tests cover first/schedule/web.search/scan/run-context/approval/workspace/network request/port scanner runtime capability batches with Handle fallbacks that panic on provider accessors, plus web.search adapter dispatch with no Manager",
+			nextStep:       "keep provider/routerServices reconstruction retired from production and test runtime paths",
+		},
+		"registry_handler_runtime_fallback_surface": {
+			component:      "registry_handler_runtime_fallback_surface",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "agentRegistryHandlerRuntime production surface exposes actionServiceResolver()/authorizationContext() only; toolServiceProvider()/legacyRouterServices() registry runtime helpers have been removed",
+			targetSurface:  "builtin registry handlers cannot call provider/routerServices reconstruction helpers directly",
+			evidence:       "source-audit test scans production registry dispatch/handler files and rejects agentRegistryHandlerRuntime toolServiceProvider()/legacyRouterServices() helper definitions or calls",
+			nextStep:       "keep production registry runtime and tests free of provider/routerServices reconstruction helpers",
+		},
+		"tool_service_binding_handle_default_surface": {
+			component:      "tool_service_binding_handle_default_surface",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "agentLoopToolServiceBindingFromRouterServices emits ActionServices-only bindings with nil Handle; explicit Handle reconstruction support has been retired from binding roundtrip helpers",
+			targetSurface:  "primary daemon callers do not rely on AgentLoopToolServiceBinding.Handle to carry service providers",
+			evidence:       "binding tests assert nil Handle and direct ActionServices capabilities while Handle-only bindings are rejected by registry runtime and do not expose runtime capabilities",
+			nextStep:       "keep direct ActionServices capability assertions on loop runner and turn executor boundaries",
+		},
+		"runtime_tool_service_direct_dispatch": {
+			component:      "runtime_tool_service_direct_dispatch",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "executeAgentPlannerActionResultWithToolServices, executeAgentRegistryHandlerResultWithToolServices, executeAgentPlannerActionsWithToolServices, routePromptWithToolServices, routePromptForTurnWithToolServices, routePromptWithRuntimeDeterministicRouteWithToolServices, ControlSessionWithToolServices, DecideAgentAuthorizationWithToolServices, SendMessageWithToolServices, runAgentSendMessageTurnWithToolServices, handleAgentActiveRunContinueForTurnWithToolServices, agentLLMToolLoopRequestFromLegacyWithToolServices, agentReplanActionContinuationRequestFromLegacyWithToolServices and agentPlannerActionReplanCycleToolContextFromToolServices preserve runtime AgentLoopToolServiceBinding across planner action, deterministic/heuristic route, control/auth/send turn, active-run continue and LLM/replan request dispatch",
+			targetSurface:  "production planner action, deterministic route, control/auth continuation, send-message lifecycle and send-turn paths dispatch downstream runtime helpers without reconstructing daemon routerServices from runtime bindings",
+			evidence:       "focused tests assert custom runtime binding metadata survives through daemon legacy executor and deterministic route AgentLoop paths; source audit rejects retired legacy routerServices ingress wrappers and legacyRouterServicesFromAgentLoopToolServiceBinding calls in production dispatch files",
+			nextStep:       "keep direct runtime ActionServices capability checks covering loop runner and turn executor boundaries",
+		},
+		"registry_runtime_action_services_only": {
+			component:      "registry_runtime_action_services_only",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "agentRegistryHandlerRuntime.actionServiceResolver delegates to an ActionServices-only resolver and no longer unwraps AgentLoopToolServiceBinding.Handle",
+			targetSurface:  "production registry runtime cannot recover daemon provider/routerServices through opaque Handle fallback",
+			evidence:       "focused registry runtime test asserts Handle-only binding is rejected by actionServiceResolver and direct capability checks show no runtime ActionServices capability is present",
+			nextStep:       "keep Handle/provider/routerServices fallback retired",
+		},
+		"tool_service_binding_provider_reconstruction_test_only": {
+			component:      "tool_service_binding_provider_reconstruction_test_only",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "provider/routerServices reconstruction helpers for AgentLoopToolServiceBinding are retired from both production and test runtime paths",
+			targetSurface:  "production runtime files cannot reconstruct daemon provider/routerServices from runtime tool service bindings",
+			evidence:       "source-audit test scans all non-test daemon files and rejects routerServicesFromAgentLoopToolServiceBinding, agentLoopActionServiceResolverFromAgentLoopToolServiceBinding, provider-from-Handle and provider/routerServices reconstruction helper definitions; focused tests assert ActionServices capabilities directly",
+			nextStep:       "keep helper-free test coverage while future callers migrate away from daemon-private routerServices entirely",
+		},
+		"legacy_result_egress": {
+			component:      "legacy_result_egress",
+			stage:          daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded,
+			currentSurface: "executeAgentPlannerActionResultWithToolServices and executeAgentRegistryHandlerResultWithToolServices produce runtime.AgentLoopActionExecutorResult directly for all current callers; legacy routerServices-ingress wrappers are retired",
+			targetSurface:  "action executor implementation returns runtime result DTOs without daemon-private egress types",
+			evidence:       "registryHandlerOutputToActionExecutorResult builds runtime AgentLoopMessage/AgentLoopToolCall DTOs directly and no longer calls registryHandlerOutputToMessages; legacy handler output types are adapted as compatibility inputs",
+			nextStep:       "replace remaining daemon-private tool-service dispatch with runtime-native action service interfaces",
+		},
+	}
+	seen := map[string]daemonPlannerActionExecutorServiceContractMigrationEntry{}
+
+	for _, entry := range daemonPlannerActionExecutorServiceContractMigrationTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.currentSurface)
+		require.NotEmpty(t, entry.targetSurface)
+		require.NotEmpty(t, entry.evidence)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seen[entry.component].component, "duplicate planner action executor service contract entry for %q", entry.component)
+		seen[entry.component] = entry
+	}
+
+	require.Equal(t, want, seen)
+	require.True(t, daemonPlannerActionExecutorServiceContractHasRuntimeSeam())
+	require.False(t, daemonPlannerActionExecutorServiceContractReadyForAgentLoop())
+	require.Len(t, daemonPlannerActionExecutorServiceContractMigrationEntriesForStage(daemonPlannerActionExecutorServiceContractStageRuntimeContractLanded), 22)
+	require.Empty(t, daemonPlannerActionExecutorServiceContractMigrationEntriesForStage(daemonPlannerActionExecutorServiceContractStageDaemonAdapterPending))
+	require.Len(t, daemonPlannerActionExecutorServiceContractMigrationEntriesForStage(daemonPlannerActionExecutorServiceContractStageDaemonAdapterAttached), 1)
+	require.Empty(t, daemonPlannerActionExecutorServiceContractMigrationEntriesForStage(daemonPlannerActionExecutorServiceContractStageBlockedByLegacyBinding))
+	require.Empty(t, daemonPlannerActionExecutorServiceContractMigrationEntriesForStage("unsupported"))
+}
+
+func TestDaemonAgentLoopRunnerCompletionAuditCoversEngineOwnedModes(t *testing.T) {
+	wantModes := map[runtime.AgentLoopMode]bool{
+		runtime.AgentLoopModeDeterministicRoute:       true,
+		runtime.AgentLoopModeLLMToolLoop:              true,
+		runtime.AgentLoopModeReplanContinuation:       true,
+		runtime.AgentLoopModePlannerActionReplanCycle: true,
+		runtime.AgentLoopModePlannerActionExecution:   true,
+	}
+	seenModes := map[runtime.AgentLoopMode]bool{}
+
+	for _, entry := range daemonAgentLoopRunnerCompletionAuditTable {
+		require.NotEmpty(t, entry.mode)
+		require.NotEmpty(t, entry.runnerBranch)
+		require.NotEmpty(t, entry.appendPersistOwner)
+		require.NotEmpty(t, entry.toolSynthesisOwner)
+		require.NotEmpty(t, entry.actionExecutionOwner)
+		require.NotEmpty(t, entry.fallbackOwner)
+		require.NotEmpty(t, entry.currentSurface)
+		require.NotEmpty(t, entry.nextRuntimeSeam)
+		require.False(t, seenModes[entry.mode], "duplicate loop runner completion audit entry for %q", entry.mode)
+		seenModes[entry.mode] = true
+	}
+
+	require.Equal(t, wantModes, seenModes)
+	require.Equal(t, daemonAgentLoopRunnerCompletionNextRuntimeSeamManualStageCommitTagGate, daemonAgentLoopRunnerCompletionAuditNextRuntimeSeam())
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamSharedCycleAppendPersist))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamToolSynthesisFallback))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamAgentLoopDirectFallback))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamActionExecutionFallback))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamActionServiceOwnership))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamNestedReplanCycleDispatch))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamSessionMutationFallback))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamAttachedSessionMutator))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamSessionMutationBlocked))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamSessionMutationOptionalResult))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamSessionMutationNoEngineFallback))
+	require.Len(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam(daemonAgentLoopRunnerCompletionNextRuntimeSeamManualStageCommitTagGate), len(wantModes))
+	require.Empty(t, daemonAgentLoopRunnerCompletionAuditEntriesForNextRuntimeSeam("unsupported"))
+
+	cycle, ok := daemonAgentLoopRunnerCompletionAuditEntryForMode(runtime.AgentLoopModePlannerActionReplanCycle)
+	require.True(t, ok)
+	require.Equal(t, daemonAgentLoopRunnerCompletionOwnerRuntimeSeamWithFallback, cycle.appendPersistOwner)
+	require.Equal(t, daemonAgentLoopRunnerCompletionOwnerRuntimeSeamWithFallback, cycle.toolSynthesisOwner)
+	require.Equal(t, daemonAgentLoopRunnerCompletionOwnerRuntimeSeamWithFallback, cycle.actionExecutionOwner)
+	require.Equal(t, daemonAgentLoopRunnerCompletionOwnerDaemonAdapter, cycle.fallbackOwner)
+	require.Equal(t, daemonAgentLoopRunnerCompletionNextRuntimeSeamManualStageCommitTagGate, cycle.nextRuntimeSeam)
+	require.Contains(t, cycle.currentSurface, "runRuntimeAgentLoopResult")
+	require.Contains(t, cycle.currentSurface, "SessionMutation")
+
+	action, ok := daemonAgentLoopRunnerCompletionAuditEntryForMode(runtime.AgentLoopModePlannerActionExecution)
+	require.True(t, ok)
+	require.Equal(t, daemonAgentLoopRunnerCompletionOwnerNotApplicable, action.appendPersistOwner)
+	require.Equal(t, daemonAgentLoopRunnerCompletionOwnerRuntimeSeamWithFallback, action.actionExecutionOwner)
+	require.Equal(t, daemonAgentLoopRunnerCompletionOwnerDaemonAdapter, action.fallbackOwner)
+
+	deterministic, ok := daemonAgentLoopRunnerCompletionAuditEntryForMode(runtime.AgentLoopModeDeterministicRoute)
+	require.True(t, ok)
+	require.Equal(t, daemonAgentLoopRunnerCompletionOwnerDaemonAdapter, deterministic.actionExecutionOwner)
+	require.Equal(t, daemonAgentLoopRunnerCompletionOwnerDaemonAdapterViaRuntimeDTO, deterministic.appendPersistOwner)
+
+	_, ok = daemonAgentLoopRunnerCompletionAuditEntryForMode("unsupported")
+	require.False(t, ok)
+}
+
+func TestDaemonTurnExecutionCallerAuditTablesStayAligned(t *testing.T) {
+	wantKinds := map[string]bool{
+		daemonTurnExecutionDeterministicRoute:     true,
+		daemonTurnExecutionPlannerActionExecution: true,
+	}
+	invalidPayloadKinds := map[string]bool{}
+	policyKinds := map[string]bool{}
+	migrationKinds := map[string]bool{}
+	helperInternalKinds := map[string]bool{}
+	helperCompatibilityKinds := map[string]bool{}
+
+	for _, entry := range daemonTurnExecutionCallerInvalidPayloadTable {
+		invalidPayloadKinds[entry.kind] = true
+	}
+	for _, entry := range daemonTurnExecutionCallerPolicyTable {
+		policyKinds[entry.kind] = true
+	}
+	for _, entry := range daemonTurnExecutionCallerMigrationTable {
+		migrationKinds[entry.kind] = true
+	}
+	for _, entry := range daemonTurnExecutionHelperOwnershipTable {
+		if entry.callerSurface == "internal_execute_turn_caller" {
+			helperInternalKinds[entry.kind] = true
+		}
+		if entry.callerSurface == "internal_agent_loop_caller" {
+			helperInternalKinds[entry.kind] = true
+		}
+		if entry.callerSurface == "external_compatibility_trampoline" {
+			helperCompatibilityKinds[entry.kind] = true
+		}
+	}
+
+	require.Equal(t, wantKinds, invalidPayloadKinds)
+	require.Equal(t, wantKinds, policyKinds)
+	require.Equal(t, wantKinds, migrationKinds)
+	require.Equal(t, wantKinds, helperInternalKinds)
+	require.Equal(t, map[string]bool{daemonTurnExecutionReplanActionContinuation: true}, helperCompatibilityKinds)
+	require.False(t, invalidPayloadKinds[daemonTurnExecutionReplanActionContinuation])
+	require.False(t, policyKinds[daemonTurnExecutionReplanActionContinuation])
+	require.False(t, migrationKinds[daemonTurnExecutionReplanActionContinuation])
 }
 
 func attachRecordingSessionMutator(t *testing.T, eng *runtime.Engine, mgr *agentManager, records *[]runtime.SessionMutationRequest) {
@@ -90,7 +1653,7 @@ func TestAgentManagerDeterministicRoutePlanOnlyAppendUsesTurnRef(t *testing.T) {
 		RunID:  "run-deterministic-plan-only",
 		TurnID: "turn-deterministic-plan-only",
 	}
-	messages, toolCalls, err := mgr.routePromptWithRuntimeDeterministicRoute(
+	messages, toolCalls, err := mgr.routePromptWithRuntimeDeterministicRouteWithToolServices(
 		context.Background(),
 		sessionID,
 		turnRef,
@@ -98,7 +1661,7 @@ func TestAgentManagerDeterministicRoutePlanOnlyAppendUsesTurnRef(t *testing.T) {
 		"en",
 		"operator-1",
 		"safe_scan",
-		routerServices{},
+		testAgentLoopToolServices(),
 	)
 
 	require.NoError(t, err)
@@ -174,14 +1737,14 @@ func TestAgentManagerControlSessionJobCancelAppendUsesExternalTurnRef(t *testing
 	appendMutations := []runtime.SessionMutationRequest{}
 	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 
-	_, err = mgr.ControlSession(context.Background(), sessionID, agentControlRequest{
+	_, err = mgr.ControlSessionWithToolServices(context.Background(), sessionID, agentControlRequest{
 		Action:         "cancel",
 		Operator:       "operator-1",
 		Language:       "en",
 		OperationLevel: "safe_scan",
 		Prompt:         "cancel the running daemon job",
 		JobID:          jobID,
-	}, routerServices{jobs: jobs})
+	}, agentLoopToolServiceBindingFromRouterServices(routerServices{jobs: jobs}))
 
 	require.NoError(t, err)
 	require.True(t, cancelled)
@@ -268,14 +1831,14 @@ func TestAgentManagerDecideAgentAuthorizationApprovedActionAppendUsesExternalTur
 	appendMutations := []runtime.SessionMutationRequest{}
 	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 
-	resp, err := mgr.DecideAgentAuthorization(context.Background(), sessionID, agentAuthorizationDecisionRequest{
+	resp, err := mgr.DecideAgentAuthorizationWithToolServices(context.Background(), sessionID, agentAuthorizationDecisionRequest{
 		Action:          "approve",
 		AuthorizationID: "auth-external-authorization",
 		Operator:        "operator-1",
 		Language:        "en",
 		OperationLevel:  "read_only",
 		SkipSynthesis:   true,
-	}, routerServices{})
+	}, agentLoopToolServiceBindingFromRouterServices(routerServices{}))
 
 	require.NoError(t, err)
 	require.NotNil(t, resp.ApprovalState)
@@ -363,7 +1926,7 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 	}
 
 	turnExecutions := []runtime.TurnContext{}
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		kind, _ := turn.Metadata["kind"].(string)
 		switch kind {
 		case daemonTurnExecutionPlannerActionExecution:
@@ -400,24 +1963,34 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 	}))
 
 	loopExecutions := []runtime.AgentLoopRequest{}
-	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+	baseRunner := daemonAgentLoopRunner{manager: mgr}
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(ctx context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 		loopExecutions = append(loopExecutions, req)
-		require.Equal(t, runtime.AgentLoopModeReplanContinuation, req.Mode)
-		require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(synthesisPlan), req.InitialPlan)
-		return runtime.AgentLoopResult{}, nil
+		switch req.Mode {
+		case runtime.AgentLoopModePlannerActionExecution:
+			require.Equal(t, daemonTurnExecutionPlannerActionExecution, req.Turn.Origin)
+			require.Equal(t, "daemon.health", req.Action.Name)
+			return baseRunner.RunAgentLoop(ctx, req)
+		case runtime.AgentLoopModeReplanContinuation:
+			require.Equal(t, agentLoopPlanPtrFromAgentPlannerResponse(synthesisPlan), req.InitialPlan)
+			return runtime.AgentLoopResult{}, nil
+		default:
+			t.Fatalf("unexpected loop mode %s", req.Mode)
+			return runtime.AgentLoopResult{}, nil
+		}
 	}))
 
 	appendMutations := []runtime.SessionMutationRequest{}
 	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 
-	resp, err := mgr.DecideAgentAuthorization(context.Background(), sessionID, agentAuthorizationDecisionRequest{
+	resp, err := mgr.DecideAgentAuthorizationWithToolServices(context.Background(), sessionID, agentAuthorizationDecisionRequest{
 		Action:          "approve",
 		AuthorizationID: "auth-external-authorization-flow",
 		Operator:        "operator-1",
 		Language:        "en",
 		OperationLevel:  "read_only",
 		Provider:        "ollama",
-	}, routerServices{})
+	}, agentLoopToolServiceBindingFromRouterServices(routerServices{}))
 
 	require.NoError(t, err)
 	require.NotNil(t, resp.ApprovalState)
@@ -425,7 +1998,7 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 
 	expectedTurnID := "turn_auth-external-authorization-flow"
 	require.Len(t, turnExecutions, 1)
-	require.Len(t, loopExecutions, 1)
+	require.Len(t, loopExecutions, 2)
 	require.Len(t, llmStages, 1)
 	require.Len(t, appendMutations, 2)
 	for _, turn := range turnExecutions {
@@ -436,6 +2009,8 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 		require.Equal(t, "run daemon health and summarize after approval", turn.Prompt)
 		require.Equal(t, "read_only", turn.OperationLevel)
 	}
+	require.Equal(t, runtime.AgentLoopModePlannerActionExecution, loopExecutions[0].Mode)
+	require.Equal(t, runtime.AgentLoopModeReplanContinuation, loopExecutions[1].Mode)
 	for _, loopReq := range loopExecutions {
 		require.Equal(t, sessionID, loopReq.Turn.SessionID)
 		require.Equal(t, "task-external-authorization-flow", loopReq.Turn.TaskID)
@@ -443,8 +2018,16 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 		require.Equal(t, expectedTurnID, loopReq.Turn.TurnID)
 		require.Equal(t, "run daemon health and summarize after approval", loopReq.Turn.Prompt)
 		require.Equal(t, "read_only", loopReq.Turn.OperationLevel)
-		require.Equal(t, daemonTurnExecutionReplanActionContinuation, loopReq.Turn.Origin)
-		require.Equal(t, daemonTurnExecutionReplanActionContinuation, loopReq.Turn.Metadata["kind"])
+		switch loopReq.Mode {
+		case runtime.AgentLoopModePlannerActionExecution:
+			require.Equal(t, daemonTurnExecutionPlannerActionExecution, loopReq.Turn.Origin)
+			require.Equal(t, "daemon.health", loopReq.Action.Name)
+		case runtime.AgentLoopModeReplanContinuation:
+			require.Equal(t, daemonTurnExecutionReplanActionContinuation, loopReq.Turn.Origin)
+			require.Equal(t, daemonTurnExecutionReplanActionContinuation, loopReq.Turn.Metadata["kind"])
+		default:
+			t.Fatalf("unexpected recorded loop mode %s", loopReq.Mode)
+		}
 	}
 	require.Equal(t, daemonTurnExecutionPlannerActionExecution, turnExecutions[0].Metadata["kind"])
 
@@ -469,7 +2052,7 @@ func TestAgentManagerDecideAgentAuthorizationApprovedFlowThreadsExternalTurnRefT
 	}
 }
 
-func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testing.T) {
+func TestAgentManagerRunRuntimeDeterministicRouteDispatchesAgentLoopRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
@@ -477,37 +2060,28 @@ func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testi
 	expectedMessage := agentMessage{ID: "msg-route", Role: "tool", Content: "routed"}
 	expectedToolCall := agentToolCall{ID: "tool-route", Name: "daemon.health"}
 	called := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, payload runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 		called = true
-		require.Equal(t, "session-route-executor", turn.SessionID)
-		require.Equal(t, "task-route-executor", turn.TaskID)
-		require.Equal(t, "run-route-executor", turn.RunID)
-		require.Equal(t, "turn-route-executor", turn.TurnID)
-		require.Equal(t, "daemon health", turn.Prompt)
-		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
-		require.Equal(t, "read_only", turn.OperationLevel)
-		require.Equal(t, "turn_execution", turn.Metadata["executor"])
-		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Metadata["kind"])
-
-		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
-		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, runtime.AgentLoopModeDeterministicRoute, payload.Mode)
 		require.Equal(t, "session-route-executor", payload.Turn.SessionID)
+		require.Equal(t, "task-route-executor", payload.Turn.TaskID)
+		require.Equal(t, "run-route-executor", payload.Turn.RunID)
+		require.Equal(t, "turn-route-executor", payload.Turn.TurnID)
 		require.Equal(t, "daemon health", payload.Turn.Prompt)
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, payload.Turn.Origin)
 		require.Equal(t, "en", payload.Language)
 		require.Equal(t, "operator-1", payload.Operator)
 		require.Equal(t, "read_only", payload.Turn.OperationLevel)
+		require.Equal(t, "turn_execution", payload.Turn.Metadata["executor"])
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, payload.Turn.Metadata["kind"])
 
-		return runtime.TurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
-				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
-				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
-			},
+		return runtime.AgentLoopResult{
+			Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+			ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 		}, nil
 	}))
 
-	result, handled, err := mgr.runRuntimeDeterministicRoute(
+	result, handled, err := mgr.runRuntimeDeterministicRouteWithToolServices(
 		context.Background(),
 		"session-route-executor",
 		agentRuntimeTurnRef{TaskID: "task-route-executor", RunID: "run-route-executor", TurnID: "turn-route-executor"},
@@ -515,7 +2089,7 @@ func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testi
 		"en",
 		"operator-1",
 		"read_only",
-		routerServices{},
+		testAgentLoopToolServices(),
 	)
 
 	require.NoError(t, err)
@@ -525,7 +2099,53 @@ func TestAgentManagerRunRuntimeDeterministicRouteDispatchesTurnExecutor(t *testi
 	require.Equal(t, agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}), result.ToolCalls)
 }
 
-func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
+func TestAgentManagerTurnExecutionCallerInvalidPayloadAudit(t *testing.T) {
+	t.Run("deterministic route compatibility request payload", func(t *testing.T) {
+		mgr := newAgentManager(t.TempDir())
+		result, err := daemonAgentTurnExecutor{manager: mgr}.ExecuteTurn(nil, runtime.TurnContext{
+			SessionID:      "session-route-invalid-payload",
+			TaskID:         "task-route-invalid-payload",
+			RunID:          "run-route-invalid-payload",
+			TurnID:         "turn-route-invalid-payload",
+			Prompt:         "daemon health",
+			Origin:         daemonTurnExecutionDeterministicRoute,
+			OperationLevel: "read_only",
+			Payload:        "not a request",
+			Metadata: map[string]any{
+				"kind": daemonTurnExecutionDeterministicRoute,
+			},
+		})
+
+		require.ErrorContains(t, err, "daemon: invalid deterministic route turn payload")
+		require.Equal(t, runtime.TurnResultFailed, result.Status)
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, result.Data["kind"])
+		require.Equal(t, "session-route-invalid-payload", result.Data["session_id"])
+	})
+
+	t.Run("planner action execution compatibility request payload", func(t *testing.T) {
+		mgr := newAgentManager(t.TempDir())
+		result, err := daemonAgentTurnExecutor{manager: mgr}.ExecuteTurn(nil, runtime.TurnContext{
+			SessionID:      "session-action-invalid-payload",
+			TaskID:         "task-action-invalid-payload",
+			RunID:          "run-action-invalid-payload",
+			TurnID:         "turn-action-invalid-payload",
+			Prompt:         "daemon health",
+			Origin:         daemonTurnExecutionPlannerActionExecution,
+			OperationLevel: "read_only",
+			Payload:        "not an action execution payload",
+			Metadata: map[string]any{
+				"kind": daemonTurnExecutionPlannerActionExecution,
+			},
+		})
+
+		require.ErrorContains(t, err, "daemon: invalid planner action execution turn payload")
+		require.Equal(t, runtime.TurnResultFailed, result.Status)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, result.Data["kind"])
+		require.Equal(t, "session-action-invalid-payload", result.Data["session_id"])
+	})
+}
+
+func TestAgentManagerSendMessageNoLLMRouteUsesAgentLoopRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
@@ -543,38 +2163,30 @@ func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
 	expectedToolCall := agentToolCall{ID: "tool-send-route", Name: "daemon.health"}
 
 	called := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, payload runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 		called = true
-		require.Equal(t, sessionID, turn.SessionID)
-		require.NotEmpty(t, turn.TaskID)
-		require.NotEmpty(t, turn.RunID)
-		require.NotEmpty(t, turn.TurnID)
-		require.Equal(t, "daemon health", turn.Prompt)
-		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
-		require.Equal(t, "read_only", turn.OperationLevel)
-
-		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
-		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, runtime.AgentLoopModeDeterministicRoute, payload.Mode)
 		require.Equal(t, sessionID, payload.Turn.SessionID)
+		require.NotEmpty(t, payload.Turn.TaskID)
+		require.NotEmpty(t, payload.Turn.RunID)
+		require.NotEmpty(t, payload.Turn.TurnID)
 		require.Equal(t, "daemon health", payload.Turn.Prompt)
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, payload.Turn.Origin)
+		require.Equal(t, "read_only", payload.Turn.OperationLevel)
 		require.Equal(t, "operator-1", payload.Operator)
 
-		return runtime.TurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
-				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
-				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
-			},
+		return runtime.AgentLoopResult{
+			Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+			ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 		}, nil
 	}))
 
-	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
+	resp, err := mgr.SendMessageWithToolServices(context.Background(), sessionID, sendAgentMessageRequest{
 		Message:        "daemon health",
 		Operator:       "operator-1",
 		Language:       "en",
 		OperationLevel: "read_only",
-	}, routerServices{})
+	}, agentLoopToolServiceBindingFromRouterServices(routerServices{}))
 
 	require.NoError(t, err)
 	require.True(t, called)
@@ -604,7 +2216,7 @@ func TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor(t *testing.T) {
 	require.Equal(t, expectedMessage.ID, payload.Messages[0].ID)
 }
 
-func TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor(t *testing.T) {
+func TestAgentManagerSendMessageActiveRunContinueUsesAgentLoopRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
@@ -657,35 +2269,27 @@ func TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor(t *testing.T) 
 
 	routeCalled := false
 	runtimeRunID := ""
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, payload runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
 		routeCalled = true
-		require.Equal(t, sessionID, turn.SessionID)
-		require.Equal(t, "task-active-run-continue", turn.TaskID)
-		require.NotEmpty(t, turn.RunID)
-		require.NotEmpty(t, turn.TurnID)
-		runtimeRunID = turn.RunID
-		require.Contains(t, turn.Prompt, "读取运行 "+runID)
-		require.Contains(t, turn.Prompt, "events")
-		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
-		require.Equal(t, "read_only", turn.OperationLevel)
-		require.Equal(t, "turn_execution", turn.Metadata["executor"])
-		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Metadata["kind"])
-
-		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
-		require.True(t, ok, "payload type = %T", turn.Payload)
+		require.Equal(t, runtime.AgentLoopModeDeterministicRoute, payload.Mode)
 		require.Equal(t, sessionID, payload.Turn.SessionID)
-		require.Equal(t, turn.Prompt, payload.Turn.Prompt)
+		require.Equal(t, "task-active-run-continue", payload.Turn.TaskID)
+		require.NotEmpty(t, payload.Turn.RunID)
+		require.NotEmpty(t, payload.Turn.TurnID)
+		runtimeRunID = payload.Turn.RunID
+		require.Contains(t, payload.Turn.Prompt, "读取运行 "+runID)
+		require.Contains(t, payload.Turn.Prompt, "events")
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, payload.Turn.Origin)
+		require.Equal(t, "read_only", payload.Turn.OperationLevel)
+		require.Equal(t, "turn_execution", payload.Turn.Metadata["executor"])
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, payload.Turn.Metadata["kind"])
 		require.Equal(t, "en", payload.Language)
 		require.Equal(t, "operator-1", payload.Operator)
 		require.Equal(t, "read_only", payload.Turn.OperationLevel)
 
-		return runtime.TurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
-				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
-				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
-			},
+		return runtime.AgentLoopResult{
+			Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
+			ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
 		}, nil
 	}))
 
@@ -725,7 +2329,7 @@ func TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor(t *testing.T) 
 	require.Equal(t, expectedMessage.ID, payload.Messages[0].ID)
 }
 
-func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
+func TestAgentManagerSendMessageLLMFallbackRouteUsesAgentLoopRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
@@ -742,40 +2346,32 @@ func TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor(t *testing.T) {
 
 	llmErr := errors.New("provider down")
 	llmCalled := false
-	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
-		llmCalled = true
-		require.Equal(t, sessionID, req.Turn.SessionID)
-		require.Equal(t, "hello fallback route", req.Turn.Prompt)
-		return runtime.AgentLoopResult{StopReason: llmErr.Error()}, llmErr
-	}))
-
 	expectedMessage := agentMessage{ID: "msg-llm-fallback-route", Role: "agent", Content: "fallback routed through executor"}
 	expectedToolCall := agentToolCall{ID: "tool-llm-fallback-route", Name: "daemon.health"}
 	routeCalled := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
-		routeCalled = true
-		require.Equal(t, sessionID, turn.SessionID)
-		require.NotEmpty(t, turn.TaskID)
-		require.NotEmpty(t, turn.RunID)
-		require.NotEmpty(t, turn.TurnID)
-		require.Equal(t, "hello fallback route", turn.Prompt)
-		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
-		require.Equal(t, "read_only", turn.OperationLevel)
-
-		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
-		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, sessionID, payload.Turn.SessionID)
-		require.Equal(t, "hello fallback route", payload.Turn.Prompt)
-		require.Equal(t, "operator-1", payload.Operator)
-
-		return runtime.TurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.Equal(t, "hello fallback route", req.Turn.Prompt)
+		switch req.Mode {
+		case runtime.AgentLoopModeLLMToolLoop:
+			llmCalled = true
+			return runtime.AgentLoopResult{StopReason: llmErr.Error()}, llmErr
+		case runtime.AgentLoopModeDeterministicRoute:
+			routeCalled = true
+			require.NotEmpty(t, req.Turn.TaskID)
+			require.NotEmpty(t, req.Turn.RunID)
+			require.NotEmpty(t, req.Turn.TurnID)
+			require.Equal(t, daemonTurnExecutionDeterministicRoute, req.Turn.Origin)
+			require.Equal(t, "read_only", req.Turn.OperationLevel)
+			require.Equal(t, "operator-1", req.Operator)
+			return runtime.AgentLoopResult{
 				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
 				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
-			},
-		}, nil
+			}, nil
+		default:
+			t.Fatalf("unexpected loop mode %s", req.Mode)
+		}
+		return runtime.AgentLoopResult{}, nil
 	}))
 
 	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
@@ -942,7 +2538,7 @@ func TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations(t *
 	require.Equal(t, "authorization_required", got.NextAction.Type)
 }
 
-func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
+func TestAgentManagerSendMessageRouteBeforeLLMUsesAgentLoopRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
@@ -960,36 +2556,30 @@ func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
 	require.True(t, agentShouldRouteBeforeLLMSynthesis(prompt))
 
 	llmCalled := false
-	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, _ runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
-		llmCalled = true
-		return runtime.AgentLoopResult{StopReason: "llm should not run"}, errors.New("llm should not run")
-	}))
-
-	expectedMessage := agentMessage{ID: "msg-route-before-llm", Role: "tool", Content: "route-before-llm through executor"}
+	expectedMessage := agentMessage{ID: "msg-route-before-llm", Role: "tool", Content: "route-before-llm through runner"}
 	routeCalled := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
-		routeCalled = true
-		require.Equal(t, sessionID, turn.SessionID)
-		require.NotEmpty(t, turn.TaskID)
-		require.NotEmpty(t, turn.RunID)
-		require.NotEmpty(t, turn.TurnID)
-		require.Equal(t, prompt, turn.Prompt)
-		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
-		require.Equal(t, "read_only", turn.OperationLevel)
-
-		payload, ok := turn.Payload.(runtime.AgentLoopRequest)
-		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, sessionID, payload.Turn.SessionID)
-		require.Equal(t, prompt, payload.Turn.Prompt)
-		require.Equal(t, "operator-1", payload.Operator)
-
-		return runtime.TurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, payload runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+		switch payload.Mode {
+		case runtime.AgentLoopModeDeterministicRoute:
+			routeCalled = true
+			require.Equal(t, sessionID, payload.Turn.SessionID)
+			require.NotEmpty(t, payload.Turn.TaskID)
+			require.NotEmpty(t, payload.Turn.RunID)
+			require.NotEmpty(t, payload.Turn.TurnID)
+			require.Equal(t, prompt, payload.Turn.Prompt)
+			require.Equal(t, daemonTurnExecutionDeterministicRoute, payload.Turn.Origin)
+			require.Equal(t, "read_only", payload.Turn.OperationLevel)
+			require.Equal(t, "operator-1", payload.Operator)
+			return runtime.AgentLoopResult{
 				Messages: agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
-			},
-		}, nil
+			}, nil
+		case runtime.AgentLoopModeLLMToolLoop:
+			llmCalled = true
+			return runtime.AgentLoopResult{StopReason: "llm should not run"}, errors.New("llm should not run")
+		default:
+			t.Fatalf("unexpected loop mode %s", payload.Mode)
+		}
+		return runtime.AgentLoopResult{}, nil
 	}))
 
 	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
@@ -1035,7 +2625,7 @@ func TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor(t *testing.T) {
 	require.Equal(t, "step", payload.Messages[0].Phase)
 }
 
-func TestAgentManagerRunRuntimeLLMToolLoopDispatchesAgentLoopRunner(t *testing.T) {
+func TestAgentManagerRunRuntimeLLMToolLoopAgentLoopDispatchesAgentLoopRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
@@ -1079,9 +2669,9 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesAgentLoopRunner(t *testing.T
 		require.Equal(t, "memory", payload.MemorySummary.Summary)
 		require.NotNil(t, payload.MemorySummary.LastMessageAt)
 		require.Equal(t, lastMessageAt, *payload.MemorySummary.LastMessageAt)
-		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.ToolServices)
+		payloadJobs, ok := agentLoopActionServiceCapabilityValue[*jobManager](payload.ToolServices.ActionServices, runtime.AgentLoopActionServiceJobs)
 		require.True(t, ok)
-		require.Same(t, jobs, payloadServices.jobs)
+		require.Same(t, jobs, payloadJobs)
 
 		payload.History[0].Content = "mutated payload history"
 		payload.Turn.Metadata["runner"] = "mutated payload runner"
@@ -1096,8 +2686,7 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesAgentLoopRunner(t *testing.T
 		}, nil
 	}))
 
-	messages, toolCalls, err := mgr.runRuntimeLLMToolLoop(
-		context.Background(),
+	loopReq := agentLLMToolLoopRequestFromLegacyWithToolServices(
 		"session-llm-runner",
 		agentRuntimeTurnRef{TaskID: "task-llm-runner", RunID: "run-llm-runner", TurnID: "turn-llm-runner"},
 		"plan safely",
@@ -1107,8 +2696,9 @@ func TestAgentManagerRunRuntimeLLMToolLoopDispatchesAgentLoopRunner(t *testing.T
 		sendAgentMessageRequest{Model: "gpt-test", AuthProfiles: authProfiles},
 		history,
 		memorySummary,
-		routerServices{jobs: jobs},
+		agentLoopToolServiceBindingFromRouterServices(routerServices{jobs: jobs}),
 	)
+	messages, toolCalls, err := mgr.runRuntimeLLMToolLoopAgentLoop(context.Background(), loopReq)
 
 	require.NoError(t, err)
 	require.True(t, called)
@@ -1372,7 +2962,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleSynthesisUsesCycleState(t *
 	require.Equal(t, "next", resultPlan.actions()[0].Arguments["probe"])
 }
 
-func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesAgentLoopRunner(t *testing.T) {
+func TestAgentManagerRunRuntimeReplanActionContinuationAgentLoopDispatchesAgentLoopRunner(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
@@ -1418,8 +3008,7 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesAgentLoopRunner
 		}, nil
 	}))
 
-	messages, toolCalls := mgr.runRuntimeReplanActionContinuation(
-		context.Background(),
+	loopReq := agentReplanActionContinuationRequestFromLegacyWithToolServices(
 		"session-replan-continuation",
 		agentRuntimeTurnRef{TaskID: "task-replan-continuation", RunID: "run-replan-continuation", TurnID: "turn-replan-continuation"},
 		"continue daemon health",
@@ -1429,10 +3018,11 @@ func TestAgentManagerRunRuntimeReplanActionContinuationDispatchesAgentLoopRunner
 		sendAgentMessageRequest{Model: "gpt-continuation"},
 		[]agentMessage{{ID: "history-1", Role: "agent", Content: "previous step"}},
 		&agentMemorySummary{Summary: "memory"},
-		routerServices{},
+		testAgentLoopToolServices(),
 		expectedPlan,
 		2,
 	)
+	messages, toolCalls := mgr.runRuntimeReplanActionContinuationAgentLoop(context.Background(), loopReq)
 
 	require.True(t, called)
 	require.Equal(t, agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}), messages)
@@ -1480,63 +3070,58 @@ func TestDaemonAgentTurnExecutorReplanContinuationReturnsEgressPayload(t *testin
 	require.Equal(t, 0, result.Data["tool_call_count"])
 }
 
-func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *testing.T) {
+func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesActionExecutor(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
 
-	expectedMessage := agentMessage{ID: "msg-planner-action", Role: "tool", Content: "executed through executor"}
-	expectedToolCall := agentToolCall{ID: "tool-planner-action", Name: "daemon.health"}
+	expectedMessage := runtime.AgentLoopMessage{ID: "msg-planner-action-executor", Role: "tool", Content: "executed through action executor"}
+	expectedToolCall := runtime.AgentLoopToolCall{ID: "tool-planner-action-executor", Name: "daemon.health"}
 	authProfiles := []agentHTTPAuthProfile{{
-		ID:      "auth-default",
+		ID:      "auth-action-executor",
 		Type:    "bearer",
 		BaseURL: "https://sandbox.example",
 		Token:   "token",
 	}}
 	action := agentPlannerAction{
 		Name:      "daemon.health",
-		Arguments: map[string]any{"probe": "approved-action"},
+		Arguments: map[string]any{"probe": "runtime-action-executor"},
 	}
 	runtimeAction := agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action)
-	called := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
-		called = true
-		require.Equal(t, "session-planner-action", turn.SessionID)
-		require.Equal(t, "task-planner-action", turn.TaskID)
-		require.Equal(t, "run-planner-action", turn.RunID)
-		require.Equal(t, "turn-planner-action", turn.TurnID)
-		require.Equal(t, "approved daemon health", turn.Prompt)
-		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
-		require.Equal(t, "safe_scan", turn.OperationLevel)
-		require.Equal(t, "turn_execution", turn.Metadata["executor"])
-		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Metadata["kind"])
-		require.Equal(t, "safe_scan", turn.Metadata["operation_level"])
-		require.Equal(t, "daemon.health", turn.Metadata["action_name"])
+	actionCalled := false
+	turnCalled := false
+	eng.AttachAgentLoopActionExecutor(runtime.AgentLoopActionExecutorFunc(func(ctx context.Context, req runtime.AgentLoopActionExecutorRequest) (runtime.AgentLoopActionExecutorResult, error) {
+		actionCalled = true
+		require.NotNil(t, ctx)
+		require.Equal(t, "session-planner-action-executor", req.Request.Turn.SessionID)
+		require.Equal(t, "task-planner-action-executor", req.Request.Turn.TaskID)
+		require.Equal(t, "run-planner-action-executor", req.Request.Turn.RunID)
+		require.Equal(t, "turn-planner-action-executor", req.Request.Turn.TurnID)
+		require.Equal(t, "approved daemon health", req.Request.Turn.Prompt)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, req.Request.Turn.Origin)
+		require.Equal(t, "safe_scan", req.Request.Turn.OperationLevel)
+		require.Equal(t, "en", req.Request.Language)
+		require.Equal(t, "tester", req.Request.Operator)
+		require.Equal(t, runtimeAction, req.Action)
+		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), req.Request.Authorization.AuthProfiles)
+		require.Equal(t, "auth-action-executor", req.Request.Authorization.DefaultAuthProfileID)
 
-		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
-		require.True(t, ok, "payload type = %T", turn.Payload)
-		require.Equal(t, "session-planner-action", payload.Request.Turn.SessionID)
-		require.Equal(t, "en", payload.Request.Language)
-		require.Equal(t, "tester", payload.Request.Operator)
-		require.Equal(t, "safe_scan", payload.Request.Turn.OperationLevel)
-		require.Equal(t, runtimeAction, payload.Action)
-		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), payload.Request.Authorization.AuthProfiles)
-		require.Equal(t, "auth-default", payload.Request.Authorization.DefaultAuthProfileID)
-
-		return runtime.TurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
-				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
-				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}),
-			},
+		return runtime.AgentLoopActionExecutorResult{
+			Status:    runtime.TurnResultFinished,
+			Reason:    "done",
+			Messages:  []runtime.AgentLoopMessage{expectedMessage},
+			ToolCalls: []runtime.AgentLoopToolCall{expectedToolCall},
 		}, nil
+	}))
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, _ runtime.TurnContext) (runtime.TurnResult, error) {
+		turnCalled = true
+		return runtime.TurnResult{Status: runtime.TurnResultFailed}, errors.New("turn executor should not be called when action executor is attached")
 	}))
 
 	messages, toolCalls, err := mgr.runRuntimePlannerActionExecution(
 		context.Background(),
-		"session-planner-action",
-		agentRuntimeTurnRef{TaskID: "task-planner-action", RunID: "run-planner-action", TurnID: "turn-planner-action"},
+		"session-planner-action-executor",
+		agentRuntimeTurnRef{TaskID: "task-planner-action-executor", RunID: "run-planner-action-executor", TurnID: "turn-planner-action-executor"},
 		"approved daemon health",
 		"en",
 		"tester",
@@ -1545,14 +3130,430 @@ func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesTurnExecutor(t *t
 		runtimeAction,
 		runtime.AgentLoopAuthorization{
 			AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles),
-			DefaultAuthProfileID: "auth-default",
+			DefaultAuthProfileID: "auth-action-executor",
 		},
 	)
 
 	require.NoError(t, err)
-	require.True(t, called)
-	require.Equal(t, agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}), messages)
-	require.Equal(t, agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{expectedToolCall}), toolCalls)
+	require.True(t, actionCalled)
+	require.False(t, turnCalled)
+	require.Equal(t, []runtime.AgentLoopMessage{expectedMessage}, messages)
+	require.Equal(t, []runtime.AgentLoopToolCall{expectedToolCall}, toolCalls)
+}
+
+func TestAgentManagerRunRuntimePlannerActionExecutionActionExecutorFallbackBoundary(t *testing.T) {
+	loopReq := agentPlannerActionExecutionRequestFromRuntime(
+		"session-action-executor-fallback",
+		agentRuntimeTurnRef{TaskID: "task-action-executor-fallback", RunID: "run-action-executor-fallback", TurnID: "turn-action-executor-fallback"},
+		"daemon health",
+		"en",
+		"tester",
+		"read_only",
+		runtime.AgentLoopToolServiceBinding{},
+		runtime.AgentLoopAuthorization{},
+	)
+	action := runtime.AgentLoopAction{Name: "daemon.health"}
+
+	t.Run("nil_engine", func(t *testing.T) {
+		mgr := newAgentManager(t.TempDir())
+		result, handled, err := mgr.runRuntimePlannerActionExecutionActionExecutor(context.Background(), loopReq, action)
+		require.NoError(t, err)
+		require.False(t, handled)
+		require.Empty(t, result.Messages)
+	})
+
+	t.Run("missing_executor", func(t *testing.T) {
+		eng := runtime.NewEngine(runtime.NewMemStore())
+		mgr := newAgentManager(t.TempDir())
+		mgr.AttachEngine(eng)
+		eng.AttachAgentLoopActionExecutor(nil)
+
+		result, handled, err := mgr.runRuntimePlannerActionExecutionActionExecutor(context.Background(), loopReq, action)
+		require.ErrorIs(t, err, runtime.ErrAgentLoopActionExecutorNotAttached)
+		require.True(t, handled)
+		require.Equal(t, runtime.TurnResultBlocked, result.Status)
+		require.ErrorIs(t, result.Error, runtime.ErrAgentLoopActionExecutorNotAttached)
+		require.Equal(t, "retired", result.Metadata["planner_action_execution_action_executor_fallback"])
+		require.Empty(t, result.Messages)
+	})
+
+	t.Run("not_attached_error", func(t *testing.T) {
+		eng := runtime.NewEngine(runtime.NewMemStore())
+		mgr := newAgentManager(t.TempDir())
+		mgr.AttachEngine(eng)
+		eng.AttachAgentLoopActionExecutor(runtime.AgentLoopActionExecutorFunc(func(context.Context, runtime.AgentLoopActionExecutorRequest) (runtime.AgentLoopActionExecutorResult, error) {
+			return runtime.AgentLoopActionExecutorResult{Status: runtime.TurnResultBlocked}, runtime.ErrAgentLoopActionExecutorNotAttached
+		}))
+
+		result, handled, err := mgr.runRuntimePlannerActionExecutionActionExecutor(context.Background(), loopReq, action)
+		require.ErrorIs(t, err, runtime.ErrAgentLoopActionExecutorNotAttached)
+		require.True(t, handled)
+		require.Equal(t, runtime.TurnResultBlocked, result.Status)
+		require.ErrorIs(t, result.Error, runtime.ErrAgentLoopActionExecutorNotAttached)
+		require.Equal(t, "retired", result.Metadata["planner_action_execution_action_executor_fallback"])
+		require.Empty(t, result.Messages)
+	})
+
+	t.Run("not_attached_result_error", func(t *testing.T) {
+		eng := runtime.NewEngine(runtime.NewMemStore())
+		mgr := newAgentManager(t.TempDir())
+		mgr.AttachEngine(eng)
+		eng.AttachAgentLoopActionExecutor(runtime.AgentLoopActionExecutorFunc(func(context.Context, runtime.AgentLoopActionExecutorRequest) (runtime.AgentLoopActionExecutorResult, error) {
+			return runtime.AgentLoopActionExecutorResult{Status: runtime.TurnResultBlocked, Error: runtime.ErrAgentLoopActionExecutorNotAttached}, nil
+		}))
+
+		result, handled, err := mgr.runRuntimePlannerActionExecutionActionExecutor(context.Background(), loopReq, action)
+		require.NoError(t, err)
+		require.True(t, handled)
+		require.Equal(t, runtime.TurnResultBlocked, result.Status)
+		require.ErrorIs(t, result.Error, runtime.ErrAgentLoopActionExecutorNotAttached)
+		require.Equal(t, "retired", result.Metadata["planner_action_execution_action_executor_fallback"])
+		require.Empty(t, result.Messages)
+	})
+
+	t.Run("hard_error_does_not_fallback", func(t *testing.T) {
+		eng := runtime.NewEngine(runtime.NewMemStore())
+		mgr := newAgentManager(t.TempDir())
+		mgr.AttachEngine(eng)
+		wantErr := errors.New("action executor hard error")
+		eng.AttachAgentLoopActionExecutor(runtime.AgentLoopActionExecutorFunc(func(context.Context, runtime.AgentLoopActionExecutorRequest) (runtime.AgentLoopActionExecutorResult, error) {
+			return runtime.AgentLoopActionExecutorResult{Status: runtime.TurnResultFailed, Reason: "failed"}, wantErr
+		}))
+
+		result, handled, err := mgr.runRuntimePlannerActionExecutionActionExecutor(context.Background(), loopReq, action)
+		require.ErrorIs(t, err, wantErr)
+		require.True(t, handled)
+		require.Equal(t, runtime.TurnResultFailed, result.Status)
+	})
+}
+
+func TestAgentManagerRunRuntimePlannerActionExecutionDispatchesAgentLoopRunner(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	expectedMessage := runtime.AgentLoopMessage{ID: "msg-planner-action-loop-runner", Role: "tool", Content: "executed through AgentLoop runner"}
+	expectedToolCall := runtime.AgentLoopToolCall{ID: "tool-planner-action-loop-runner", Name: "daemon.health"}
+	authProfiles := []agentHTTPAuthProfile{{
+		ID:    "auth-action-loop-runner",
+		Type:  "bearer",
+		Token: "token",
+	}}
+	action := runtime.AgentLoopAction{
+		Name:      "daemon.health",
+		Arguments: map[string]any{"probe": "planner-action-loop-runner"},
+	}
+
+	loopCalled := false
+	actionExecutorCalled := false
+	turnCalled := false
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(ctx context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+		loopCalled = true
+		require.NotNil(t, ctx)
+		require.Equal(t, runtime.AgentLoopModePlannerActionExecution, req.Mode)
+		require.Equal(t, "session-planner-action-loop-runner", req.Turn.SessionID)
+		require.Equal(t, "task-planner-action-loop-runner", req.Turn.TaskID)
+		require.Equal(t, "run-planner-action-loop-runner", req.Turn.RunID)
+		require.Equal(t, "turn-planner-action-loop-runner", req.Turn.TurnID)
+		require.Equal(t, "approved daemon health through loop runner", req.Turn.Prompt)
+		require.Equal(t, daemonTurnExecutionPlannerActionExecution, req.Turn.Origin)
+		require.Equal(t, "safe_scan", req.Turn.OperationLevel)
+		require.Equal(t, "en", req.Language)
+		require.Equal(t, "tester", req.Operator)
+		require.Equal(t, action, req.Action)
+		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), req.Authorization.AuthProfiles)
+		require.Equal(t, "auth-action-loop-runner", req.Authorization.DefaultAuthProfileID)
+		return runtime.AgentLoopResult{
+			State: runtime.AgentLoopState{
+				ResponseMessages: []runtime.AgentLoopMessage{expectedMessage},
+				ToolCalls:        []runtime.AgentLoopToolCall{expectedToolCall},
+			},
+			Messages:   []runtime.AgentLoopMessage{expectedMessage},
+			ToolCalls:  []runtime.AgentLoopToolCall{expectedToolCall},
+			StopReason: "planner action loop runner handled",
+		}, nil
+	}))
+	eng.AttachAgentLoopActionExecutor(runtime.AgentLoopActionExecutorFunc(func(_ context.Context, _ runtime.AgentLoopActionExecutorRequest) (runtime.AgentLoopActionExecutorResult, error) {
+		actionExecutorCalled = true
+		return runtime.AgentLoopActionExecutorResult{Status: runtime.TurnResultFailed}, errors.New("action executor should not be called when AgentLoop runner handles planner action")
+	}))
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, _ runtime.TurnContext) (runtime.TurnResult, error) {
+		turnCalled = true
+		return runtime.TurnResult{Status: runtime.TurnResultFailed}, errors.New("turn executor should not be called when AgentLoop runner handles planner action")
+	}))
+
+	messages, toolCalls, err := mgr.runRuntimePlannerActionExecution(
+		context.Background(),
+		"session-planner-action-loop-runner",
+		agentRuntimeTurnRef{TaskID: "task-planner-action-loop-runner", RunID: "run-planner-action-loop-runner", TurnID: "turn-planner-action-loop-runner"},
+		"approved daemon health through loop runner",
+		"en",
+		"tester",
+		"safe_scan",
+		agentLoopToolServiceBindingFromRouterServices(routerServices{}),
+		action,
+		runtime.AgentLoopAuthorization{
+			AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles),
+			DefaultAuthProfileID: "auth-action-loop-runner",
+		},
+	)
+
+	require.NoError(t, err)
+	require.True(t, loopCalled)
+	require.False(t, actionExecutorCalled)
+	require.False(t, turnCalled)
+	require.Equal(t, []runtime.AgentLoopMessage{expectedMessage}, messages)
+	require.Equal(t, []runtime.AgentLoopToolCall{expectedToolCall}, toolCalls)
+}
+
+func TestAgentManagerRunRuntimePlannerActionExecutionNoEngineKeepsDirectLegacyFallback(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	require.True(t, ok)
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	legacyCalled := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		legacyCalled = true
+		require.NotNil(t, ctx)
+		require.Equal(t, "session-no-engine-direct-legacy", in.SessionID)
+		require.Equal(t, "tester", in.Operator)
+		tool := runningAgentToolCall("daemon.health", "no-engine-direct-legacy")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"no_engine_direct_legacy_fallback": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "no-engine direct legacy fallback executed", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	messages, toolCalls, err := mgr.runRuntimePlannerActionExecution(
+		context.Background(),
+		"session-no-engine-direct-legacy",
+		agentRuntimeTurnRef{TaskID: "task-no-engine-direct-legacy", RunID: "run-no-engine-direct-legacy", TurnID: "turn-no-engine-direct-legacy"},
+		"approved daemon health",
+		"en",
+		"tester",
+		"read_only",
+		agentLoopToolServiceBindingFromRouterServices(routerServices{}),
+		runtime.AgentLoopAction{Name: "daemon.health", Arguments: map[string]any{"probe": "no-engine-direct-legacy"}},
+		runtime.AgentLoopAuthorization{},
+	)
+
+	require.NoError(t, err)
+	require.True(t, legacyCalled)
+	require.Len(t, messages, 1)
+	require.Equal(t, "no-engine direct legacy fallback executed", messages[0].Content)
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, true, toolCalls[0].Result["no_engine_direct_legacy_fallback"])
+}
+
+func TestAgentManagerRunRuntimePlannerActionExecutionMissingActionExecutorBlocksWithoutTurnExecutorFallback(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+	eng.AttachAgentLoopActionExecutor(nil)
+
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	require.True(t, ok)
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	turnCalled := false
+	legacyCalled := false
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(context.Context, runtime.TurnContext) (runtime.TurnResult, error) {
+		turnCalled = true
+		return runtime.TurnResult{Status: runtime.TurnResultFailed}, errors.New("planner action execution should not invoke TurnExecutor when action executor is missing")
+	}))
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		legacyCalled = true
+		require.NotNil(t, ctx)
+		require.Equal(t, "session-missing-action-direct-legacy", in.SessionID)
+		require.Equal(t, "tester", in.Operator)
+		tool := runningAgentToolCall("daemon.health", "missing-action-direct-legacy")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"direct_legacy_fallback": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "direct legacy fallback executed", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	messages, toolCalls, err := mgr.runRuntimePlannerActionExecution(
+		context.Background(),
+		"session-missing-action-direct-legacy",
+		agentRuntimeTurnRef{TaskID: "task-missing-action-direct-legacy", RunID: "run-missing-action-direct-legacy", TurnID: "turn-missing-action-direct-legacy"},
+		"approved daemon health",
+		"en",
+		"tester",
+		"read_only",
+		agentLoopToolServiceBindingFromRouterServices(routerServices{}),
+		runtime.AgentLoopAction{Name: "daemon.health", Arguments: map[string]any{"probe": "missing-action-direct-legacy"}},
+		runtime.AgentLoopAuthorization{},
+	)
+
+	require.ErrorIs(t, err, runtime.ErrAgentLoopActionExecutorNotAttached)
+	require.False(t, turnCalled)
+	require.False(t, legacyCalled)
+	require.Empty(t, messages)
+	require.Empty(t, toolCalls)
+}
+
+func TestAgentManagerRunRuntimePlannerActionExecutionActionExecutorNotAttachedBlocksWithoutDirectLegacyFallback(t *testing.T) {
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr := newAgentManager(t.TempDir())
+	mgr.AttachEngine(eng)
+
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	require.True(t, ok)
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	action := runtime.AgentLoopAction{
+		Name:      "daemon.health",
+		Arguments: map[string]any{"probe": "action-not-attached-direct-legacy"},
+	}
+	actionCalled := false
+	turnCalled := false
+	legacyCalled := false
+	eng.AttachAgentLoopActionExecutor(runtime.AgentLoopActionExecutorFunc(func(context.Context, runtime.AgentLoopActionExecutorRequest) (runtime.AgentLoopActionExecutorResult, error) {
+		actionCalled = true
+		return runtime.AgentLoopActionExecutorResult{Status: runtime.TurnResultBlocked}, runtime.ErrAgentLoopActionExecutorNotAttached
+	}))
+	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(context.Context, runtime.TurnContext) (runtime.TurnResult, error) {
+		turnCalled = true
+		return runtime.TurnResult{Status: runtime.TurnResultFailed}, errors.New("planner action execution should not invoke TurnExecutor when action executor returns ErrAgentLoopActionExecutorNotAttached")
+	}))
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		legacyCalled = true
+		require.NotNil(t, ctx)
+		require.Equal(t, "session-action-not-attached-direct-legacy", in.SessionID)
+		require.Equal(t, "tester", in.Operator)
+		tool := runningAgentToolCall("daemon.health", "action-not-attached-direct-legacy")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"direct_legacy_fallback": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "direct legacy fallback executed after action executor not attached", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	messages, toolCalls, err := mgr.runRuntimePlannerActionExecution(
+		context.Background(),
+		"session-action-not-attached-direct-legacy",
+		agentRuntimeTurnRef{TaskID: "task-action-not-attached-direct-legacy", RunID: "run-action-not-attached-direct-legacy", TurnID: "turn-action-not-attached-direct-legacy"},
+		"approved daemon health",
+		"en",
+		"tester",
+		"read_only",
+		agentLoopToolServiceBindingFromRouterServices(routerServices{}),
+		action,
+		runtime.AgentLoopAuthorization{},
+	)
+
+	require.ErrorIs(t, err, runtime.ErrAgentLoopActionExecutorNotAttached)
+	require.True(t, actionCalled)
+	require.False(t, turnCalled)
+	require.False(t, legacyCalled)
+	require.Empty(t, messages)
+	require.Empty(t, toolCalls)
+}
+
+func TestAgentTurnExecutionResultPayloadHandlesDispatchStates(t *testing.T) {
+	expected := runtime.AgentLoopTurnResultPayload{
+		Messages: []runtime.AgentLoopMessage{{
+			ID:      "msg-turn-result-shared",
+			Role:    "tool",
+			Content: "handled",
+			ToolCalls: []runtime.AgentLoopToolCall{{
+				ID:       "tool-message-turn-result-shared",
+				Name:     "daemon.health",
+				Metadata: map[string]any{"phase": "message"},
+			}},
+		}},
+		ToolCalls: []runtime.AgentLoopToolCall{{
+			ID:       "tool-turn-result-shared",
+			Name:     "daemon.health",
+			Result:   map[string]any{"ok": true},
+			Metadata: map[string]any{"phase": "top"},
+		}},
+		Metadata: map[string]any{"source": "shared"},
+	}
+
+	payload, handled, err := agentTurnExecutionResultPayload(runtime.TurnResult{
+		Status:  runtime.TurnResultFinished,
+		Payload: expected,
+	}, nil, "daemon: shared invalid payload")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, expected, payload)
+	expected.Messages[0].ToolCalls[0].Metadata["phase"] = "mutated-message"
+	expected.ToolCalls[0].Result["ok"] = false
+	expected.ToolCalls[0].Metadata["phase"] = "mutated-top"
+	expected.Metadata["source"] = "mutated"
+	require.Equal(t, "message", payload.Messages[0].ToolCalls[0].Metadata["phase"])
+	require.Equal(t, true, payload.ToolCalls[0].Result["ok"])
+	require.Equal(t, "top", payload.ToolCalls[0].Metadata["phase"])
+	require.Equal(t, "shared", payload.Metadata["source"])
+
+	pointerPayload := payload
+	payload, handled, err = agentTurnExecutionResultPayload(runtime.TurnResult{
+		Status:  runtime.TurnResultFinished,
+		Payload: &pointerPayload,
+	}, nil, "daemon: shared invalid payload")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, "shared", payload.Metadata["source"])
+
+	missingErr := runtime.ErrTurnExecutorNotAttached
+	for _, tc := range []struct {
+		name      string
+		result    runtime.TurnResult
+		resultErr error
+		reason    daemonTurnExecutionCallerFallbackReason
+	}{
+		{name: "returned_missing_executor", resultErr: missingErr, reason: daemonTurnExecutionCallerFallbackExecutorNotAttached},
+		{name: "embedded_missing_executor", result: runtime.TurnResult{Error: missingErr}, reason: daemonTurnExecutionCallerFallbackExecutorNotAttached},
+		{name: "blocked", result: runtime.TurnResult{Status: runtime.TurnResultBlocked, Payload: pointerPayload}, reason: daemonTurnExecutionCallerFallbackBlocked},
+		{name: "running_without_payload", result: runtime.TurnResult{Status: runtime.TurnResultRunning}, reason: daemonTurnExecutionCallerFallbackRunningWithoutPayload},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reason, ok := daemonTurnExecutionCallerFallbackReasonForResult(tc.result, tc.resultErr)
+			require.True(t, ok)
+			require.Equal(t, tc.reason, reason)
+			require.True(t, daemonTurnExecutionCallerFallbackOwnedByLegacyCaller(reason))
+
+			payload, handled, err := agentTurnExecutionResultPayload(tc.result, tc.resultErr, "daemon: shared invalid payload")
+			require.NoError(t, err)
+			require.False(t, handled)
+			require.Empty(t, payload.Messages)
+			require.Empty(t, payload.ToolCalls)
+		})
+	}
+
+	_, fallback := daemonTurnExecutionCallerFallbackReasonForResult(runtime.TurnResult{
+		Status:  runtime.TurnResultFinished,
+		Payload: pointerPayload,
+	}, nil)
+	require.False(t, fallback)
+
+	boom := errors.New("executor failed")
+	payload, handled, err = agentTurnExecutionResultPayload(runtime.TurnResult{
+		Status: runtime.TurnResultFailed,
+	}, boom, "daemon: shared invalid payload")
+	require.ErrorIs(t, err, boom)
+	require.True(t, handled)
+	require.Empty(t, payload.Messages)
+
+	payload, handled, err = agentTurnExecutionResultPayload(runtime.TurnResult{
+		Status:  runtime.TurnResultFinished,
+		Payload: "not a payload",
+	}, nil, "daemon: custom turn executor returned invalid payload")
+	require.ErrorContains(t, err, "custom turn executor returned invalid payload")
+	require.True(t, handled)
+	require.Empty(t, payload.Messages)
 }
 
 func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleRequest(t *testing.T) {
@@ -1595,7 +3596,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 			AuthProfiles:         cycleAuthProfiles,
 			DefaultAuthProfileID: "auth-cycle-action-exec",
 		},
-		ToolContext: agentPlannerActionReplanCycleToolContextFromRouterServices(routerServices{jobs: jobs}),
+		ToolContext: agentPlannerActionReplanCycleToolContextFromToolServices(agentLoopToolServiceBindingFromRouterServices(routerServices{jobs: jobs})),
 		Plan:        cyclePlan,
 	}
 
@@ -1616,7 +3617,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 	}
 
 	called := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		called = true
 		require.Equal(t, "session-cycle-action-exec", turn.SessionID)
 		require.Equal(t, "task-cycle-action-exec", turn.TaskID)
@@ -1640,9 +3641,9 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleActionExecutionUsesCycleReq
 		require.Equal(t, "token-cycle-action-exec", payload.Request.Authorization.AuthProfiles[0].Token)
 		require.NotNil(t, payload.Request.Authorization.AuthProfiles[0].Enabled)
 		require.True(t, *payload.Request.Authorization.AuthProfiles[0].Enabled)
-		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Request.ToolServices)
+		payloadJobs, ok := agentLoopActionServiceCapabilityValue[*jobManager](payload.Request.ToolServices.ActionServices, runtime.AgentLoopActionServiceJobs)
 		require.True(t, ok)
-		require.Same(t, jobs, payloadServices.jobs)
+		require.Same(t, jobs, payloadJobs)
 
 		payload.Action.Arguments["probe"] = "mutated-payload-action"
 		payload.Request.Authorization.AuthProfiles[0].Token = "mutated-payload-token"
@@ -1709,7 +3710,7 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 		Arguments: map[string]any{"probe": "planner-loop"},
 	}
 	called := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		called = true
 		require.Equal(t, "session-planner-loop-action", turn.SessionID)
 		require.Equal(t, "task-planner-loop-action", turn.TaskID)
@@ -1739,7 +3740,7 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 		}, nil
 	}))
 
-	messages, toolCalls, authorizationRequired := mgr.executeAgentPlannerActions(
+	messages, toolCalls, authorizationRequired := mgr.executeAgentPlannerActionsWithToolServices(
 		context.Background(),
 		"session-planner-loop-action",
 		agentRuntimeTurnRef{TaskID: "task-planner-loop-action", RunID: "run-planner-loop-action", TurnID: "turn-planner-loop-action"},
@@ -1747,7 +3748,7 @@ func TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTu
 		"en",
 		"tester",
 		"read_only",
-		routerServices{},
+		testAgentLoopToolServices(),
 		&agentPlannerResponse{Actions: []agentPlannerAction{action}},
 		nil,
 		"",
@@ -2432,7 +4433,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *t
 	cyclePlan.item.ToolCalls = nil
 
 	actionCalled := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		actionCalled = true
 		require.Equal(t, "session-cycle-action-snapshot", turn.SessionID)
 		require.Equal(t, daemonTurnExecutionPlannerActionExecution, turn.Origin)
@@ -2477,7 +4478,7 @@ func TestAgentManagerRunAgentPlannerActionReplanCycleExecutesActionSnapshot(t *t
 		Operator:      "tester",
 		LLMRequest:    runtime.AgentLoopLLMRequest{Model: "gpt-cycle-action-snapshot"},
 		Authorization: runtime.AgentLoopAuthorization{},
-		ToolContext:   agentPlannerActionReplanCycleToolContextFromRouterServices(routerServices{}),
+		ToolContext:   agentPlannerActionReplanCycleToolContextFromToolServices(agentLoopToolServiceBindingFromRouterServices(routerServices{})),
 		Plan:          cyclePlan,
 		State: agentPlannerActionReplanCycleStateFromLegacy(
 			[]agentMessage{{ID: "msg-cycle-action-snapshot-plan", Role: "agent", Content: "plan"}},
@@ -2515,7 +4516,7 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 	sessionID := created.Session.SessionID
 
 	jobs := newJobManager(jobManagerConfig{RunsDir: t.TempDir()})
-	toolServices := routerServices{jobs: jobs}
+	toolServices := agentLoopToolServiceBindingFromRouterServices(routerServices{jobs: jobs})
 	planMessage := agentMessage{ID: "msg-planner-cycle-plan", Role: "agent", Content: "planning daemon health", Phase: "plan"}
 	planTool := agentToolCall{ID: "tool-planner-cycle-plan", Name: "LLM chat"}
 	actionTool := agentToolCall{ID: "tool-planner-cycle-action", Name: "daemon.health"}
@@ -2547,7 +4548,7 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 	finalPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "health summarized"}
 
 	turnExecutions := []runtime.TurnContext{}
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		turnExecutions = append(turnExecutions, turn)
 		require.Equal(t, sessionID, turn.SessionID)
 		require.Equal(t, "task-planner-cycle", turn.TaskID)
@@ -2568,9 +4569,9 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 		require.Equal(t, "planner-cycle", stringFromAny(payload.Action.Arguments["probe"]))
 		require.Equal(t, agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles), payload.Request.Authorization.AuthProfiles)
 		require.Equal(t, "auth-planner-cycle", payload.Request.Authorization.DefaultAuthProfileID)
-		payloadServices, ok := routerServicesFromAgentLoopToolServiceBinding(payload.Request.ToolServices)
+		payloadJobs, ok := agentLoopActionServiceCapabilityValue[*jobManager](payload.Request.ToolServices.ActionServices, runtime.AgentLoopActionServiceJobs)
 		require.True(t, ok)
-		require.Same(t, jobs, payloadServices.jobs)
+		require.Same(t, jobs, payloadJobs)
 
 		return runtime.TurnResult{
 			Status: runtime.TurnResultFinished,
@@ -2626,7 +4627,7 @@ func TestAgentManagerRunAgentLLMToolLoopDispatchesSharedReplanCycle(t *testing.T
 	appendMutations := []runtime.SessionMutationRequest{}
 	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 
-	messages, toolCalls, err := mgr.runAgentLLMToolLoop(
+	messages, toolCalls, err := mgr.runAgentLLMToolLoopWithToolServices(
 		context.Background(),
 		sessionID,
 		agentRuntimeTurnRef{TaskID: "task-planner-cycle", RunID: "run-planner-cycle", TurnID: "turn-planner-cycle"},
@@ -2736,7 +4737,7 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 	finalPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "done"}
 
 	actionProbes := []string{}
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		probe := stringFromAny(payload.Action.Arguments["probe"])
@@ -2821,7 +4822,7 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 	appendMutations := []runtime.SessionMutationRequest{}
 	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 
-	messages, toolCalls, err := mgr.runAgentLLMToolLoop(
+	messages, toolCalls, err := mgr.runAgentLLMToolLoopWithToolServices(
 		context.Background(),
 		sessionID,
 		agentRuntimeTurnRef{TaskID: "task-cycle-handle", RunID: "run-cycle-handle", TurnID: "turn-cycle-handle"},
@@ -2832,7 +4833,7 @@ func TestAgentManagerRunAgentLLMToolLoopKeepsCyclePlanHandleBetweenAutoContinueS
 		sendAgentMessageRequest{Model: "gpt-cycle-handle"},
 		[]agentMessage{{ID: "history-cycle-handle", Role: "user", Content: "daemon health twice"}},
 		&agentMemorySummary{Summary: "memory"},
-		routerServices{},
+		testAgentLoopToolServices(),
 	)
 
 	require.NoError(t, err)
@@ -2919,7 +4920,7 @@ func TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoC
 	finalPlan := &agentPlannerResponse{Phase: "final_answer", Answer: "done"}
 
 	actionProbes := []string{}
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
 		probe := stringFromAny(payload.Action.Arguments["probe"])
@@ -2993,7 +4994,7 @@ func TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoC
 	appendMutations := []runtime.SessionMutationRequest{}
 	attachRecordingSessionMutator(t, eng, mgr, &appendMutations)
 
-	messages, toolCalls := mgr.runAgentReplanActionContinuation(
+	messages, toolCalls := mgr.runAgentReplanActionContinuationWithToolServices(
 		context.Background(),
 		sessionID,
 		agentRuntimeTurnRef{TaskID: "task-continuation-state", RunID: "run-continuation-state", TurnID: "turn-continuation-state"},
@@ -3004,7 +5005,7 @@ func TestAgentManagerRunAgentReplanActionContinuationKeepsCycleStateBetweenAutoC
 		sendAgentMessageRequest{Model: "gpt-continuation-state"},
 		[]agentMessage{{ID: "history-continuation-state", Role: "agent", Content: "previous step"}},
 		&agentMemorySummary{Summary: "memory"},
-		routerServices{},
+		testAgentLoopToolServices(),
 		initialPlan,
 		3,
 	)
@@ -3136,7 +5137,7 @@ func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStag
 		}, nil
 	}))
 
-	messages, toolCalls := mgr.runAgentReplanActionContinuation(
+	messages, toolCalls := mgr.runAgentReplanActionContinuationWithToolServices(
 		context.Background(),
 		sessionID,
 		agentRuntimeTurnRef{TaskID: "task-continuation", RunID: "run-continuation", TurnID: "turn-continuation"},
@@ -3147,7 +5148,7 @@ func TestAgentManagerRunAgentReplanActionContinuationDispatchesToolSynthesisStag
 		sendAgentMessageRequest{Model: "gpt-continuation"},
 		[]agentMessage{{ID: "history-1", Role: "agent", Content: "previous step"}},
 		&agentMemorySummary{Summary: "memory"},
-		routerServices{},
+		testAgentLoopToolServices(),
 		&agentPlannerResponse{
 			Phase: "step_replan",
 			NextAction: &agentNextAction{

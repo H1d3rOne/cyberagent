@@ -28,3 +28,30 @@ func AgentLoopTurnExecutionMetadata(metadata map[string]any, kind, operationLeve
 	}
 	return MergeAgentLoopMetadata(append([]map[string]any{metadata, base}, metadataMaps...)...)
 }
+
+// AgentLoopTurnExecutionTurnFromRequest builds a TurnContext for turn
+// execution callers whose payload is the surrounding AgentLoopRequest.
+func AgentLoopTurnExecutionTurnFromRequest(req AgentLoopRequest, kind string, metadataMaps ...map[string]any) TurnContext {
+	return AgentLoopTurnExecutionTurnWithPayload(req, kind, req.Clone(), metadataMaps...)
+}
+
+// AgentLoopTurnExecutionBoundaryFromRequest builds a TurnContext for
+// turn-execution loop boundaries without replacing the request turn payload.
+func AgentLoopTurnExecutionBoundaryFromRequest(req AgentLoopRequest, kind string, metadataMaps ...map[string]any) TurnContext {
+	return AgentLoopTurnExecutionTurnWithPayload(req, kind, req.Turn.Payload, metadataMaps...)
+}
+
+// AgentLoopTurnExecutionTurnWithPayload builds a TurnContext for turn
+// execution callers while keeping payload ownership explicit. The returned turn
+// clones request turn metadata, stamps turn-execution metadata, sets the origin
+// to kind, and normalizes an empty turn index to 1.
+func AgentLoopTurnExecutionTurnWithPayload(req AgentLoopRequest, kind string, payload any, metadataMaps ...map[string]any) TurnContext {
+	turn := CloneAgentLoopTurnContext(req.Turn)
+	turn.Origin = kind
+	if turn.TurnIndex == 0 {
+		turn.TurnIndex = 1
+	}
+	turn.Payload = payload
+	turn.Metadata = AgentLoopTurnExecutionMetadata(turn.Metadata, kind, turn.OperationLevel, metadataMaps...)
+	return turn
+}

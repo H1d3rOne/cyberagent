@@ -34,6 +34,17 @@ func CloneAgentLoopActionExecutionPayload(payload AgentLoopActionExecutionPayloa
 	return payload.Clone()
 }
 
+// AgentLoopActionExecutionTurn builds the runtime-neutral TurnContext for a
+// planner action execution caller.
+func AgentLoopActionExecutionTurn(req AgentLoopRequest, kind string, action AgentLoopAction, actionName string) TurnContext {
+	return AgentLoopTurnExecutionTurnWithPayload(req, kind, AgentLoopActionExecutionPayload{
+		Request: req.Clone(),
+		Action:  action.Clone(),
+	}, map[string]any{
+		AgentLoopActionNameMetadataKey: actionName,
+	})
+}
+
 // AgentLoopActionExecutionTurnMetadata clones existing turn metadata and stamps
 // the runtime-neutral action execution fields used by daemon turn executors.
 func AgentLoopActionExecutionTurnMetadata(metadata map[string]any, kind, operationLevel, actionName string) map[string]any {

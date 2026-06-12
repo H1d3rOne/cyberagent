@@ -207,29 +207,29 @@ func TestAgentManagerSendMessageResponseMergeRouteBeforeLLMSynthesis(t *testing.
 		ToolCalls: []agentToolCall{routeTool},
 	}
 	routeCalled := false
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
-		routeCalled = true
-		require.Equal(t, sessionID, turn.SessionID)
-		require.NotEmpty(t, turn.TaskID)
-		require.NotEmpty(t, turn.RunID)
-		require.NotEmpty(t, turn.TurnID)
-		require.Equal(t, prompt, turn.Prompt)
-		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
-		require.Equal(t, "read_only", turn.OperationLevel)
-		return runtime.TurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
+	llmOuterLoopCalled := false
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+		switch req.Mode {
+		case runtime.AgentLoopModeDeterministicRoute:
+			routeCalled = true
+			require.Equal(t, sessionID, req.Turn.SessionID)
+			require.NotEmpty(t, req.Turn.TaskID)
+			require.NotEmpty(t, req.Turn.RunID)
+			require.NotEmpty(t, req.Turn.TurnID)
+			require.Equal(t, prompt, req.Turn.Prompt)
+			require.Equal(t, daemonTurnExecutionDeterministicRoute, req.Turn.Origin)
+			require.Equal(t, "read_only", req.Turn.OperationLevel)
+			return runtime.AgentLoopResult{
 				Messages:  agentLoopMessagesFromAgentMessages([]agentMessage{routeMessage}),
 				ToolCalls: agentLoopToolCallItemsFromAgentToolCalls([]agentToolCall{routeTool}),
-			},
-		}, nil
-	}))
-
-	agentLoopCalled := false
-	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, _ runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
-		agentLoopCalled = true
-		return runtime.AgentLoopResult{StopReason: "agent loop should not run"}, nil
+			}, nil
+		case runtime.AgentLoopModeLLMToolLoop:
+			llmOuterLoopCalled = true
+			return runtime.AgentLoopResult{StopReason: "agent loop should not run"}, nil
+		default:
+			t.Fatalf("unexpected loop mode %s", req.Mode)
+		}
+		return runtime.AgentLoopResult{}, nil
 	}))
 
 	synthesisTool := agentToolCall{ID: "tool-route-before-synthesis-merge", Name: "LLM synthesis", Status: contracts.StatusSucceeded}
@@ -271,7 +271,7 @@ func TestAgentManagerSendMessageResponseMergeRouteBeforeLLMSynthesis(t *testing.
 
 	require.NoError(t, err)
 	require.True(t, routeCalled)
-	require.False(t, agentLoopCalled)
+	require.False(t, llmOuterLoopCalled)
 	require.True(t, synthesisCalled)
 	require.Len(t, resp.Messages, 3)
 	require.Equal(t, "user", resp.Messages[0].Role)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	agentruntime "github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
 )
 
@@ -691,6 +692,67 @@ func agentResolveHTTPAuthProfileHeaders(profiles []agentHTTPAuthProfile, request
 	return headers, usage, nil
 }
 
+func agentResolveAgentLoopAuthProfileHeaders(authorization agentruntime.AgentLoopAuthorization, requestedID, targetURL string) (map[string]string, *agentHTTPAuthProfileUsage, error) {
+	authorization = authorization.Clone()
+	requestedID = strings.TrimSpace(requestedID)
+	defaultID := strings.TrimSpace(authorization.DefaultAuthProfileID)
+	explicit := requestedID != ""
+	profileID := requestedID
+	if profileID == "" {
+		profileID = defaultID
+	}
+	if profileID == "" || len(authorization.AuthProfiles) == 0 {
+		return nil, nil, nil
+	}
+
+	profile, ok := agentFindAgentLoopAuthProfile(authorization.AuthProfiles, profileID)
+	if !ok {
+		if explicit {
+			return nil, nil, services.NewError(services.CodeBadRequest, "http.request auth profile was not found", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		return nil, nil, nil
+	}
+	if !agentLoopAuthProfileEnabled(profile) {
+		if explicit {
+			return nil, nil, services.NewError(services.CodePolicyDenied, "http.request auth profile is disabled", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		return nil, nil, nil
+	}
+	if !explicit && strings.TrimSpace(profile.BaseURL) == "" {
+		// Default auth profiles must be host-scoped to avoid accidentally
+		// attaching credentials to an unrelated URL selected by the model.
+		return nil, nil, nil
+	}
+	matches, host := agentLoopAuthProfileMatchesTarget(profile, targetURL)
+	if !matches {
+		if explicit {
+			return nil, nil, services.NewError(
+				services.CodePolicyDenied,
+				"http.request auth profile does not match the request host",
+				map[string]any{"auth_profile_id": firstNonEmpty(profile.ID, profile.Name), "base_url": profile.BaseURL, "url": targetURL},
+				nil,
+			)
+		}
+		return nil, nil, nil
+	}
+	headers, err := agentLoopAuthProfileHeaders(profile)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(headers) == 0 {
+		return nil, nil, nil
+	}
+	usage := &agentHTTPAuthProfileUsage{
+		ID:      strings.TrimSpace(profile.ID),
+		Name:    strings.TrimSpace(profile.Name),
+		Type:    normalizeAgentHTTPAuthProfileType(profile.Type),
+		BaseURL: strings.TrimSpace(profile.BaseURL),
+		Host:    host,
+		Applied: true,
+	}
+	return headers, usage, nil
+}
+
 func agentFindHTTPAuthProfile(profiles []agentHTTPAuthProfile, id string) (agentHTTPAuthProfile, bool) {
 	id = strings.ToLower(strings.TrimSpace(id))
 	for _, profile := range profiles {
@@ -699,6 +761,16 @@ func agentFindHTTPAuthProfile(profiles []agentHTTPAuthProfile, id string) (agent
 		}
 	}
 	return agentHTTPAuthProfile{}, false
+}
+
+func agentFindAgentLoopAuthProfile(profiles []agentruntime.AgentLoopAuthProfile, id string) (agentruntime.AgentLoopAuthProfile, bool) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	for _, profile := range profiles {
+		if strings.ToLower(strings.TrimSpace(profile.ID)) == id || strings.ToLower(strings.TrimSpace(profile.Name)) == id {
+			return profile, true
+		}
+	}
+	return agentruntime.AgentLoopAuthProfile{}, false
 }
 
 func agentHTTPAuthProfileMatchesTarget(profile agentHTTPAuthProfile, targetURL string) (bool, string) {
@@ -729,7 +801,90 @@ func agentHTTPAuthProfileMatchesTarget(profile agentHTTPAuthProfile, targetURL s
 	return true, targetHost
 }
 
+func agentLoopAuthProfileEnabled(profile agentruntime.AgentLoopAuthProfile) bool {
+	return profile.Enabled == nil || *profile.Enabled
+}
+
+func agentLoopAuthProfileMatchesTarget(profile agentruntime.AgentLoopAuthProfile, targetURL string) (bool, string) {
+	parsedTarget, err := url.Parse(strings.TrimSpace(targetURL))
+	if err != nil || parsedTarget == nil || parsedTarget.Host == "" {
+		return false, ""
+	}
+	targetHost := strings.ToLower(parsedTarget.Hostname())
+	if strings.TrimSpace(profile.BaseURL) == "" {
+		return true, targetHost
+	}
+	base := strings.TrimSpace(profile.BaseURL)
+	if !strings.Contains(base, "://") {
+		base = "https://" + base
+	}
+	parsedBase, err := url.Parse(base)
+	if err != nil || parsedBase == nil || parsedBase.Host == "" {
+		return false, targetHost
+	}
+	baseHost := strings.ToLower(parsedBase.Hostname())
+	if baseHost == "" || baseHost != targetHost {
+		return false, targetHost
+	}
+	basePort := parsedBase.Port()
+	if basePort != "" && basePort != parsedTarget.Port() {
+		return false, targetHost
+	}
+	return true, targetHost
+}
+
 func agentHTTPAuthProfileHeaders(profile agentHTTPAuthProfile) (map[string]string, error) {
+	headers := map[string]string{}
+	profileID := firstNonEmpty(profile.ID, profile.Name)
+	switch normalizeAgentHTTPAuthProfileType(profile.Type) {
+	case "bearer":
+		token := strings.TrimSpace(profile.Token)
+		if token == "" {
+			token = strings.TrimSpace(profile.HeaderValue)
+		}
+		if token == "" {
+			return nil, services.NewError(services.CodeBadRequest, "bearer auth profile requires token", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers["Authorization"] = "Bearer " + token
+	case "basic":
+		username := strings.TrimSpace(profile.Username)
+		if username == "" {
+			return nil, services.NewError(services.CodeBadRequest, "basic auth profile requires username", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+profile.Password))
+	case "api_key":
+		headerName := firstNonEmpty(profile.HeaderName, "X-API-Key")
+		value := firstNonEmpty(profile.HeaderValue, profile.Token)
+		if value == "" {
+			return nil, services.NewError(services.CodeBadRequest, "api_key auth profile requires header_value or token", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers[headerName] = value
+	case "cookie":
+		cookie := strings.TrimSpace(profile.Cookie)
+		if cookie == "" {
+			cookie = strings.TrimSpace(profile.HeaderValue)
+		}
+		if cookie == "" {
+			return nil, services.NewError(services.CodeBadRequest, "cookie auth profile requires cookie", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers["Cookie"] = cookie
+	case "custom":
+		headerName := strings.TrimSpace(profile.HeaderName)
+		value := strings.TrimSpace(profile.HeaderValue)
+		if headerName == "" || value == "" {
+			return nil, services.NewError(services.CodeBadRequest, "custom auth profile requires header_name and header_value", map[string]any{"auth_profile_id": profileID}, nil)
+		}
+		headers[headerName] = value
+	}
+	for key, value := range headers {
+		if strings.ContainsAny(key, "\r\n:") || strings.ContainsAny(value, "\r\n") {
+			return nil, services.NewError(services.CodeBadRequest, "auth profile contains an invalid header", map[string]any{"auth_profile_id": profileID, "header": key}, nil)
+		}
+	}
+	return headers, nil
+}
+
+func agentLoopAuthProfileHeaders(profile agentruntime.AgentLoopAuthProfile) (map[string]string, error) {
 	headers := map[string]string{}
 	profileID := firstNonEmpty(profile.ID, profile.Name)
 	switch normalizeAgentHTTPAuthProfileType(profile.Type) {

@@ -202,7 +202,7 @@ func TestAgentManagerExecuteAgentPlannerActionListThreadsActionQueueMetadata(t *
 	mgr.AttachEngine(eng)
 
 	executed := 0
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
 		executed++
 		payload, ok := turn.Payload.(runtime.AgentLoopActionExecutionPayload)
 		require.True(t, ok, "payload type = %T", turn.Payload)
@@ -281,7 +281,7 @@ func TestAgentManagerExecutePlannerActionBatchErrorFallbackUsesRuntimeResultHelp
 	mgr := newAgentManager(t.TempDir())
 	mgr.AttachEngine(eng)
 
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, _ runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, _ runtime.TurnContext) (runtime.TurnResult, error) {
 		err := services.NewError(services.CodeUnsupported, "unsupported action", map[string]any{
 			"action":  "service-detail-action",
 			"target":  "https://example.com",
@@ -334,7 +334,7 @@ func TestAgentManagerExecutePlannerActionBatchStopsAtGateBeforeFollowingActions(
 	mgr.AttachEngine(eng)
 
 	executed := 0
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, _ runtime.TurnContext) (runtime.TurnResult, error) {
+	attachPlannerActionExecutionActionExecutorFromTurnHandler(t, eng, runtime.TurnExecutorFunc(func(_ context.Context, _ runtime.TurnContext) (runtime.TurnResult, error) {
 		executed++
 		return runtime.TurnResult{Status: runtime.TurnResultFinished}, nil
 	}))

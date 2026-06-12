@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/agent/llm"
 	agentruntime "github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	coretenant "github.com/H1d3rOne/cyberagent/internal/core/tenant"
 	"github.com/H1d3rOne/cyberagent/internal/interfaces/web"
 	runtimesqlite "github.com/H1d3rOne/cyberagent/internal/runtime/state/sqlite"
 )
@@ -22,47 +24,82 @@ type Server struct {
 	token        string
 	handler      http.Handler
 	scheduler    *scheduleManager
+	auditSink    daemonAuditSink
 	runtimeStore interface{ Close() error }
 }
 
 // NewServer creates a configured local daemon server and ensures a bearer token exists.
 func NewServer(cfg Config) (*Server, error) {
 	cfg = cfg.Normalize()
-	token, err := loadOrCreateToken(cfg.TokenFile)
+	storagePaths, storageResolver, err := daemonLocalStoragePathsFromConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
+	auditSink, err := newDaemonAuditSink(cfg.Audit)
+	if err != nil {
+		return nil, err
+	}
+	token, err := loadOrCreateToken(cfg.TokenFile)
+	if err != nil {
+		_ = auditSink.Close()
+		return nil, err
+	}
+	adminBootstrap := loadAdminBootstrapState(cfg.Admin)
 	version := services.NewVersionService(cfg.Build)
-	runs := services.NewRunService(cfg.RunsDir)
+	runs := services.NewRunService(storagePaths.RunsDir)
 	jobs := newJobManager(jobManagerConfig{
-		RunsDir:           cfg.RunsDir,
+		RunsDir:           storagePaths.RunsDir,
 		Build:             cfg.Build,
 		MaxConcurrentJobs: cfg.MaxConcurrentJobs,
+		StorageResolver:   storageResolver,
 	})
 	scanManager := web.NewScanManager(func(name string, cfg llm.ProviderConfig) llm.Provider {
 		return buildAgentLLMProvider(name, cfg)
 	})
-	scheduler := newScheduleManager(cfg.RunsDir)
-	providers := newProviderStore("")
+	scheduler := newScheduleManager(storagePaths.RunsDir)
+	providers := newProviderStoreWithStorageResolver(storagePaths.ProviderStorePath, storageResolver)
+	var webSessionStore coretenant.SessionStore = coretenant.DisabledSessionStore{}
+	if cfg.Auth.WebSessions.Enabled {
+		webSessionStore = coretenant.NewMemorySessionStore()
+	}
+	var membershipStore coretenant.MembershipStore = coretenant.DisabledMembershipStore{}
+	if cfg.Auth.RBAC.Enabled || cfg.Admin.MembershipAPIEnabled {
+		membershipStore = coretenant.NewMemoryMembershipStore()
+	}
+	rbacPolicy, err := newDaemonRBACPolicyFromConfig(cfg.Auth.RBAC)
+	if err != nil {
+		_ = auditSink.Close()
+		return nil, err
+	}
 
 	svc := routerServices{
-		version:     version,
-		plugins:     services.NewPluginService(),
-		runs:        runs,
-		approvals:   services.NewApprovalService(cfg.RunsDir),
-		jobs:        jobs,
-		scanManager: scanManager,
-		schedules:   scheduler,
-		providers:   providers,
+		version:         version,
+		plugins:         services.NewPluginService(),
+		runs:            runs,
+		approvals:       services.NewApprovalService(storagePaths.RunsDir),
+		jobs:            jobs,
+		scanManager:     scanManager,
+		schedules:       scheduler,
+		providers:       providers,
+		admin:           adminBootstrap,
+		adminConfig:     cfg.Admin,
+		auth:            cfg.Auth,
+		sessionStore:    webSessionStore,
+		membershipStore: membershipStore,
+		rbacPolicy:      rbacPolicy,
+		auditSink:       auditSink,
+		rateLimit:       cfg.RateLimit,
+		hardening:       cfg.Hardening,
 	}
 	if svc.agent == nil {
-		svc.agent = newAgentManager(cfg.RunsDir)
+		svc.agent = newAgentManager(storagePaths.RunsDir)
 	}
 	svc.agent.AttachProviderStore(providers)
 	var runtimeStore interface{ Close() error }
 	if agentRuntimeEngineEnabledFromEnv(os.Getenv("CYBERAGENT_RUNTIME")) {
-		store, err := runtimesqlite.Open(agentRuntimeSQLitePath(cfg.RunsDir))
+		store, err := runtimesqlite.Open(storagePaths.RuntimeDBPath)
 		if err != nil {
+			_ = auditSink.Close()
 			return nil, err
 		}
 		runtimeStore = store
@@ -70,6 +107,7 @@ func NewServer(cfg Config) (*Server, error) {
 		svc.agent.AttachEngine(engine)
 		if _, err := engine.RecoverInterruptedRuns(context.Background()); err != nil {
 			_ = runtimeStore.Close()
+			_ = auditSink.Close()
 			return nil, err
 		}
 	}
@@ -77,7 +115,7 @@ func NewServer(cfg Config) (*Server, error) {
 		SendAgentPrompt: func(ctx context.Context, s scheduleSpec) (string, error) {
 			sessionID := strings.TrimSpace(s.SessionID)
 			if sessionID == "" {
-				created, err := svc.agent.CreateSession(createAgentSessionRequest{
+				created, err := svc.agent.CreateSessionWithContext(ctx, createAgentSessionRequest{
 					Operator: s.Operator,
 					Language: s.Language,
 				})
@@ -103,12 +141,36 @@ func NewServer(cfg Config) (*Server, error) {
 			return resp.Messages[len(resp.Messages)-1].ID, nil
 		},
 	})
+	if err := auditSink.Record(context.Background(), daemonAuditEvent{
+		Type:    "daemon.startup",
+		Outcome: "ready",
+		Details: map[string]any{
+			"listen":                     cfg.Listen,
+			"multi_user_enabled":         cfg.MultiUser.Enabled,
+			"auth_web_sessions_enabled":  cfg.Auth.WebSessions.Enabled,
+			"auth_rbac_enabled":          cfg.Auth.RBAC.Enabled,
+			"auth_rbac_audit_enabled":    cfg.Auth.RBAC.AuditEnabled,
+			"auth_rbac_enforcement":      cfg.Auth.RBAC.EnforcementEnabled,
+			"rate_limit_enabled":         cfg.RateLimit.Enabled,
+			"hardening_require_loopback": cfg.Hardening.RequireLoopback,
+			"admin_bootstrap_configured": adminBootstrap.Configured,
+			"admin_bootstrap_ready":      adminBootstrap.Ready,
+			"admin_membership_api":       cfg.Admin.MembershipAPIEnabled,
+		},
+	}); err != nil {
+		if runtimeStore != nil {
+			_ = runtimeStore.Close()
+		}
+		_ = auditSink.Close()
+		return nil, err
+	}
 
 	return &Server{
 		cfg:          cfg,
 		token:        token,
 		handler:      newRouter(svc, token),
 		scheduler:    scheduler,
+		auditSink:    auditSink,
 		runtimeStore: runtimeStore,
 	}, nil
 }
@@ -137,12 +199,19 @@ func agentRuntimeEngineEnabledFromEnv(value string) bool {
 // long-running daemon processes; tests that only use Handler may call it
 // explicitly because the SQLite runtime store is opened by default.
 func (s *Server) Close() error {
-	if s == nil || s.runtimeStore == nil {
+	if s == nil {
 		return nil
 	}
-	err := s.runtimeStore.Close()
-	s.runtimeStore = nil
-	return err
+	var closeErr error
+	if s.runtimeStore != nil {
+		closeErr = errors.Join(closeErr, s.runtimeStore.Close())
+		s.runtimeStore = nil
+	}
+	if s.auditSink != nil {
+		closeErr = errors.Join(closeErr, s.auditSink.Close())
+		s.auditSink = nil
+	}
+	return closeErr
 }
 
 // Handler returns the daemon HTTP handler for tests and embedding.
@@ -162,6 +231,19 @@ func (s *Server) TokenFile() string {
 
 // ListenAndServe runs the daemon until the context is cancelled or the server fails.
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	ln, err := net.Listen("tcp", s.cfg.Listen)
+	if err != nil {
+		_ = s.Close()
+		return err
+	}
+	return s.Serve(ctx, ln)
+}
+
+// Serve runs the daemon on a caller-owned listener until the context is
+// cancelled or the server fails. It is intended for embedded hosts (dashboard,
+// desktop/Wails shells, tests) that need to bind an ephemeral loopback port and
+// surface the concrete URL to a WebView without changing daemon API behavior.
+func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	defer s.Close()
 	if ctx == nil {
 		ctx = context.Background()
@@ -182,7 +264,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		err := httpServer.ListenAndServe()
+		err := httpServer.Serve(ln)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}

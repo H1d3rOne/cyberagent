@@ -11,6 +11,9 @@ type daemonAgentLLMTurnRunner struct {
 	manager *agentManager
 }
 
+// RunLLMTurn is the daemon implementation behind the deprecated
+// runtime.Engine.RunLLMTurn compatibility seam. New bounded loop callers
+// should use daemonAgentLoopRunner via runtime.Engine.RunAgentLoop.
 func (r daemonAgentLLMTurnRunner) RunLLMTurn(ctx context.Context, req runtime.LLMTurnRequest) (runtime.LLMTurnResult, error) {
 	if r.manager == nil {
 		err := errors.New("daemon: llm turn runner has no manager")
@@ -67,10 +70,6 @@ func daemonLLMTurnErrorResult(req runtime.LLMTurnRequest, err error) runtime.LLM
 	}
 }
 
-func (m *agentManager) runRuntimeLLMToolLoop(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
-	return m.runRuntimeLLMToolLoopAgentLoop(ctx, agentLLMToolLoopRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc))
-}
-
 func (m *agentManager) runRuntimeLLMToolLoopAgentLoop(ctx context.Context, loopReq runtime.AgentLoopRequest) ([]runtime.AgentLoopMessage, []runtime.AgentLoopToolCall, error) {
 	loopReq = normalizeAgentLLMToolLoopRequest(loopReq)
 	turn := agentLLMToolLoopTurnContextFromRequest(loopReq)
@@ -79,7 +78,7 @@ func (m *agentManager) runRuntimeLLMToolLoopAgentLoop(ctx context.Context, loopR
 	return runtime.CloneAgentLoopMessages(loopResult.Messages), runtime.CloneAgentLoopToolCalls(loopResult.ToolCalls), err
 }
 
-func agentLLMToolLoopRequestFromLegacy(sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, svc routerServices) runtime.AgentLoopRequest {
+func agentLLMToolLoopRequestFromLegacyWithToolServices(sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, req sendAgentMessageRequest, history []agentMessage, memorySummary *agentMemorySummary, toolServices runtime.AgentLoopToolServiceBinding) runtime.AgentLoopRequest {
 	loopHistory := agentLoopMessagesFromAgentMessages(history)
 	turn := agentPlannerActionReplanCycleTurnContext(sessionID, turnRef, prompt, req.Origin, operationLevel)
 	turn.Metadata = map[string]any{
@@ -99,7 +98,7 @@ func agentLLMToolLoopRequestFromLegacy(sessionID string, turnRef agentRuntimeTur
 			LoopHistory: runtime.CloneAgentLoopMessages(loopHistory),
 		},
 		Authorization: agentPlannerActionReplanCycleAuthorizationFromMessageRequest(req),
-		ToolServices:  agentLoopToolServiceBindingFromRouterServices(svc),
+		ToolServices:  toolServices.Clone(),
 		MaxLoops:      reqMaxAgentReplans(req),
 		Metadata: agentPlannerActionReplanCycleMetadataFromOptions(agentPlannerActionReplanCycleOptions{
 			ActionAppendOrigin:                      "planner_loop",
@@ -137,15 +136,5 @@ func agentMemorySummaryPtrFromAgentLoopMemorySummary(summary *runtime.AgentLoopM
 }
 
 func agentLoopTurnResultPayloadFromLLMTurnResult(payload any) (runtime.AgentLoopTurnResultPayload, bool) {
-	switch value := payload.(type) {
-	case runtime.AgentLoopTurnResultPayload:
-		return value.Clone(), true
-	case *runtime.AgentLoopTurnResultPayload:
-		if value == nil {
-			return runtime.AgentLoopTurnResultPayload{}, false
-		}
-		return value.Clone(), true
-	default:
-		return runtime.AgentLoopTurnResultPayload{}, false
-	}
+	return agentLoopTurnResultPayloadFromTurnResult(payload)
 }

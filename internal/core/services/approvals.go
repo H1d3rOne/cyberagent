@@ -45,7 +45,7 @@ type ResumeApprovedResult struct {
 
 // ListApprovals lists approval requests for a run.
 func (s ApprovalService) ListApprovals(ctx context.Context, runIDOrPath string) ([]contracts.HITLRequest, error) {
-	if err := ctxErr(ctx); err != nil {
+	if _, err := tenantContextForServiceEntry(ctx); err != nil {
 		return nil, err
 	}
 	layout, err := s.runs.openLayout(runIDOrPath)
@@ -81,7 +81,7 @@ func (s ApprovalService) EditArgs(ctx context.Context, req ApprovalDecisionReque
 
 // ResumeApproved resumes approved steps in an existing run workspace.
 func (s ApprovalService) ResumeApproved(ctx context.Context, req ResumeApprovedRequest) (ResumeApprovedResult, error) {
-	if err := ctxErr(ctx); err != nil {
+	if _, err := tenantContextForServiceEntry(ctx); err != nil {
 		return ResumeApprovedResult{}, err
 	}
 	layout, err := s.runs.openLayout(req.RunIDOrPath)
@@ -109,7 +109,7 @@ func (s ApprovalService) ResumeApproved(ctx context.Context, req ResumeApprovedR
 }
 
 func (s ApprovalService) resolve(ctx context.Context, req ApprovalDecisionRequest, decision approvalruntime.Decision) (contracts.HITLRequest, error) {
-	if err := ctxErr(ctx); err != nil {
+	if _, err := tenantContextForServiceEntry(ctx); err != nil {
 		return contracts.HITLRequest{}, err
 	}
 	if strings.TrimSpace(req.ApprovalIDOrStepID) == "" {

@@ -8,6 +8,9 @@ const AgentCockpitPage = lazy(() =>
 const DashboardPage = lazy(() => import('./pages/dashboard').then((module) => ({ default: module.DashboardPage })))
 const SkillsPage = lazy(() => import('./pages/skills').then((module) => ({ default: module.SkillsPage })))
 const McpPage = lazy(() => import('./pages/mcp').then((module) => ({ default: module.McpPage })))
+const OpsObservabilityPage = lazy(() =>
+  import('./pages/ops-observability').then((module) => ({ default: module.OpsObservabilityPage })),
+)
 const NewScanPage = lazy(() => import('./pages/new-scan').then((module) => ({ default: module.NewScanPage })))
 const ScanDetailPage = lazy(() =>
   import('./pages/scan-detail').then((module) => ({ default: module.ScanDetailPage })),
@@ -46,7 +49,7 @@ export default function App() {
         <Route path="/agent" element={routeElement(<AgentCockpitPage />)} />
         <Route path="/skills" element={routeElement(<SkillsPage />)} />
         <Route path="/mcp" element={routeElement(<McpPage />)} />
-        <Route path="/ops" element={routeElement(<DashboardPage />)} />
+        <Route path="/ops" element={routeElement(<OpsObservabilityPage />)} />
         <Route path="/tasks" element={routeElement(<NewScanPage />)} />
         <Route path="/scan/new" element={routeElement(<NewScanPage />)} />
         <Route path="/scan/:id" element={routeElement(<ScanDetailPage />)} />

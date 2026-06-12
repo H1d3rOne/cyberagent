@@ -215,6 +215,111 @@ func TestStorePersistsAcrossOpenAndCreatesForwardTables(t *testing.T) {
 	}
 }
 
+func TestStoreAuditSchemaReportsVersionTablesAndIndexes(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "runtime.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	audit, err := store.AuditSchema(context.Background())
+	if err != nil {
+		t.Fatalf("AuditSchema() error = %v", err)
+	}
+	if audit.Path != store.Path() {
+		t.Fatalf("AuditSchema().Path = %q, want %q", audit.Path, store.Path())
+	}
+	if audit.UserVersion != CurrentSchemaVersion || audit.ExpectedVersion != CurrentSchemaVersion {
+		t.Fatalf("AuditSchema() versions = user:%d expected:%d, want %d", audit.UserVersion, audit.ExpectedVersion, CurrentSchemaVersion)
+	}
+	if len(audit.MissingTables) != 0 {
+		t.Fatalf("AuditSchema().MissingTables = %#v, want empty", audit.MissingTables)
+	}
+	if len(audit.MissingIndexes) != 0 {
+		t.Fatalf("AuditSchema().MissingIndexes = %#v, want empty", audit.MissingIndexes)
+	}
+	for _, table := range runtimeSchemaTables {
+		if !containsString(audit.Tables, table) {
+			t.Fatalf("AuditSchema().Tables missing %q: %#v", table, audit.Tables)
+		}
+	}
+	for _, index := range runtimeSchemaIndexes {
+		if !containsString(audit.Indexes, index) {
+			t.Fatalf("AuditSchema().Indexes missing %q: %#v", index, audit.Indexes)
+		}
+	}
+}
+
+func TestStoreOpenSetsUserVersionOnExistingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime.db")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 0`); err != nil {
+		_ = db.Close()
+		t.Fatalf("reset user_version error = %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("raw db Close() error = %v", err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(reopen) error = %v", err)
+	}
+	defer reopened.Close()
+	audit, err := reopened.AuditSchema(context.Background())
+	if err != nil {
+		t.Fatalf("AuditSchema(reopen) error = %v", err)
+	}
+	if audit.UserVersion != CurrentSchemaVersion {
+		t.Fatalf("AuditSchema(reopen).UserVersion = %d, want %d", audit.UserVersion, CurrentSchemaVersion)
+	}
+}
+
+func TestStoreAuditSchemaReportsMissingObjects(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create partial schema error = %v", err)
+	}
+
+	store := &Store{db: db, path: path}
+	audit, err := store.AuditSchema(context.Background())
+	if err != nil {
+		t.Fatalf("AuditSchema(partial) error = %v", err)
+	}
+	if !containsString(audit.Tables, "sessions") {
+		t.Fatalf("AuditSchema(partial).Tables missing sessions: %#v", audit.Tables)
+	}
+	if containsString(audit.MissingTables, "sessions") {
+		t.Fatalf("AuditSchema(partial).MissingTables unexpectedly includes sessions: %#v", audit.MissingTables)
+	}
+	for _, table := range []string{"tasks", "runs", "turns", "events", "approvals", "schedules", "memories"} {
+		if !containsString(audit.MissingTables, table) {
+			t.Fatalf("AuditSchema(partial).MissingTables missing %q: %#v", table, audit.MissingTables)
+		}
+	}
+	for _, index := range runtimeSchemaIndexes {
+		if !containsString(audit.MissingIndexes, index) {
+			t.Fatalf("AuditSchema(partial).MissingIndexes missing %q: %#v", index, audit.MissingIndexes)
+		}
+	}
+}
+
 func TestEngineSeedsEventSeqFromSQLiteStore(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "runtime.db"))
 	if err != nil {
@@ -396,6 +501,15 @@ func sqliteTableExists(t *testing.T, db *sql.DB, table string) bool {
 		return false
 	}
 	t.Fatalf("query sqlite_master for %s: %v", table, err)
+	return false
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
 	return false
 }
 

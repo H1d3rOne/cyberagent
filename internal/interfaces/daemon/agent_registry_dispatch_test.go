@@ -2,12 +2,16 @@ package daemon
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/agent/toolregistry"
+	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
+	coreruntime "github.com/H1d3rOne/cyberagent/internal/core/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	"github.com/H1d3rOne/cyberagent/internal/interfaces/web"
 )
 
 func TestRegistryHandlerDispatch(t *testing.T) {
@@ -37,21 +41,119 @@ func TestRegistryHandlerDispatch(t *testing.T) {
 		}, nil
 	}
 
-	messages, calls, err := mgr.executeAgentPlannerAction(context.Background(), "agent_registry_dispatch", "en", "tester", "safe_scan", routerServices{}, agentPlannerAction{
+	result, err := mgr.executeAgentPlannerActionResultWithToolServices(context.Background(), "agent_registry_dispatch", "en", "tester", "safe_scan", testAgentLoopToolServices(), agentPlannerAction{
 		Name:      "daemon.health",
 		Arguments: map[string]any{"probe": "ok"},
-	}, nil, "")
+	}, runtime.AgentLoopAuthorization{})
 	if err != nil {
-		t.Fatalf("executeAgentPlannerAction() error = %v", err)
+		t.Fatalf("executeAgentPlannerActionResultWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("registry handler was not called")
 	}
-	if len(messages) != 1 || messages[0].Content != "registry handler dispatched" {
-		t.Fatalf("unexpected messages: %#v", messages)
+	if result.Status != runtime.TurnResultFinished {
+		t.Fatalf("result Status = %q, want %q", result.Status, runtime.TurnResultFinished)
 	}
-	if len(calls) != 1 || calls[0].Result["dispatched"] != true {
-		t.Fatalf("unexpected tool calls: %#v", calls)
+	if len(result.Messages) != 1 || result.Messages[0].Content != "registry handler dispatched" {
+		t.Fatalf("unexpected runtime messages: %#v", result.Messages)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].Result["dispatched"] != true {
+		t.Fatalf("unexpected runtime tool calls: %#v", result.ToolCalls)
+	}
+}
+
+func TestExecuteAgentPlannerActionResultReturnsRuntimeExecutorDTO(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	if !ok {
+		t.Fatal("daemon.health missing from registry")
+	}
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		tool := runningAgentToolCall("daemon.health", "registry.handler")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"runtime_result": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "runtime executor result dispatched", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	result, err := mgr.executeAgentPlannerActionResultWithToolServices(context.Background(), "agent_registry_dispatch_result", "en", "tester", "safe_scan", testAgentLoopToolServices(), agentPlannerAction{
+		Name:      "daemon.health",
+		Arguments: map[string]any{"probe": "ok"},
+	}, runtime.AgentLoopAuthorization{})
+	if err != nil {
+		t.Fatalf("executeAgentPlannerActionResultWithToolServices() error = %v", err)
+	}
+	if result.Status != runtime.TurnResultFinished {
+		t.Fatalf("result Status = %q, want %q", result.Status, runtime.TurnResultFinished)
+	}
+	if result.Metadata["executor"] != "daemon_legacy_planner_action_executor" {
+		t.Fatalf("result Metadata executor = %#v", result.Metadata["executor"])
+	}
+	if len(result.Messages) != 1 || result.Messages[0].Content != "runtime executor result dispatched" {
+		t.Fatalf("unexpected runtime messages: %#v", result.Messages)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].Result["runtime_result"] != true {
+		t.Fatalf("unexpected runtime tool calls: %#v", result.ToolCalls)
+	}
+}
+
+func TestRegistryHandlerOutputToActionExecutorResultBuildsRuntimeNativeDTO(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+
+	legacyTool := runningAgentToolCall("daemon.health", "registry.handler")
+	legacyTool = finishAgentToolCall(legacyTool, nil)
+	legacyTool.Result = map[string]any{"legacy": true}
+	legacyResult, err := mgr.registryHandlerOutputToActionExecutorResult("en", "daemon.health", agentRegistryHandlerResult{
+		Messages:  []agentMessage{mgr.message("en", "tool", "legacy handler output", []agentToolCall{legacyTool}, nil)},
+		ToolCalls: []agentToolCall{legacyTool},
+	})
+	if err != nil {
+		t.Fatalf("registryHandlerOutputToActionExecutorResult(legacy) error = %v", err)
+	}
+	if legacyResult.Status != runtime.TurnResultFinished || legacyResult.Metadata["executor"] != "daemon_legacy_planner_action_executor" {
+		t.Fatalf("unexpected legacy runtime result envelope: %#v", legacyResult)
+	}
+	if len(legacyResult.Messages) != 1 || legacyResult.Messages[0].Content != "legacy handler output" {
+		t.Fatalf("unexpected legacy runtime messages: %#v", legacyResult.Messages)
+	}
+	if len(legacyResult.ToolCalls) != 1 || legacyResult.ToolCalls[0].Result["legacy"] != true {
+		t.Fatalf("unexpected legacy runtime tool calls: %#v", legacyResult.ToolCalls)
+	}
+
+	runtimeTool := runtime.AgentLoopToolCall{
+		ID:     "tool-runtime-registry-output",
+		Name:   "daemon.health",
+		Status: contracts.StatusSucceeded,
+		Result: map[string]any{"runtime": true},
+	}
+	runtimeResult, err := mgr.registryHandlerOutputToActionExecutorResult("en", "daemon.health", runtimeTool)
+	if err != nil {
+		t.Fatalf("registryHandlerOutputToActionExecutorResult(runtime tool) error = %v", err)
+	}
+	runtimeTool.Result["runtime"] = false
+	if len(runtimeResult.ToolCalls) != 1 || runtimeResult.ToolCalls[0].ID != "tool-runtime-registry-output" || runtimeResult.ToolCalls[0].Result["runtime"] != true {
+		t.Fatalf("runtime tool call was not preserved as runtime-native output: %#v", runtimeResult.ToolCalls)
+	}
+	if len(runtimeResult.Messages) != 1 || runtimeResult.Messages[0].Content != "Tool executed through registry handler." || len(runtimeResult.Messages[0].ToolCalls) != 1 || runtimeResult.Messages[0].ToolCalls[0].ID != "tool-runtime-registry-output" {
+		t.Fatalf("unexpected runtime tool message: %#v", runtimeResult.Messages)
+	}
+
+	mapOutput := map[string]any{"wrapped": true}
+	defaultResult, err := mgr.registryHandlerOutputToActionExecutorResult("en", "custom.registry.output", mapOutput)
+	if err != nil {
+		t.Fatalf("registryHandlerOutputToActionExecutorResult(default) error = %v", err)
+	}
+	mapOutput["wrapped"] = false
+	if len(defaultResult.ToolCalls) != 1 || defaultResult.ToolCalls[0].Name != "custom.registry.output" || defaultResult.ToolCalls[0].Result["wrapped"] != true {
+		t.Fatalf("default handler output was not wrapped into a runtime tool call: %#v", defaultResult.ToolCalls)
+	}
+	if len(defaultResult.Messages) != 1 || len(defaultResult.Messages[0].ToolCalls) != 1 || defaultResult.Messages[0].ToolCalls[0].Name != "custom.registry.output" {
+		t.Fatalf("default handler output message missing runtime tool call: %#v", defaultResult.Messages)
 	}
 }
 
@@ -64,6 +166,10 @@ func TestRegistryHandlerRuntimeUsesToolServiceBinding(t *testing.T) {
 		Token:   "secret-token",
 		Enabled: &enabled,
 	}}
+	authorization := runtime.AgentLoopAuthorization{
+		AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(authProfiles),
+		DefaultAuthProfileID: "auth-registry-binding",
+	}
 
 	called := false
 	spec := &toolregistry.ToolSpec{
@@ -81,15 +187,23 @@ func TestRegistryHandlerRuntimeUsesToolServiceBinding(t *testing.T) {
 			if binding.Metadata["adapter"] != "daemon_legacy_router_services" {
 				t.Fatalf("binding Metadata = %#v", binding.Metadata)
 			}
-			recovered, ok := routerServicesFromAgentLoopToolServiceBinding(binding)
+			boundJobs, ok := agentLoopActionServiceCapabilityValue[*jobManager](binding.ActionServices, runtime.AgentLoopActionServiceJobs)
 			if !ok {
-				t.Fatal("routerServicesFromAgentLoopToolServiceBinding() ok = false")
+				t.Fatal("binding ActionServices jobs capability missing")
 			}
-			if recovered.jobs != jobs {
-				t.Fatalf("recovered jobs = %p, want %p", recovered.jobs, jobs)
+			if boundJobs != jobs {
+				t.Fatalf("binding ActionServices jobs = %p, want %p", boundJobs, jobs)
 			}
-			if rt.legacyRouterServices().jobs != jobs {
-				t.Fatalf("legacyRouterServices jobs = %p, want %p", rt.legacyRouterServices().jobs, jobs)
+			resolver, ok := rt.actionServiceResolver()
+			if !ok {
+				t.Fatal("actionServiceResolver() ok = false")
+			}
+			jobManager, ok := resolver.JobManager()
+			if !ok {
+				t.Fatal("resolver.JobManager() ok = false")
+			}
+			if jobManager != jobs {
+				t.Fatalf("resolver JobManager = %p, want %p", jobManager, jobs)
 			}
 			if len(rt.AuthProfiles) != 1 || rt.AuthProfiles[0].Token != "secret-token" {
 				t.Fatalf("unexpected auth profiles: %#v", rt.AuthProfiles)
@@ -97,23 +211,651 @@ func TestRegistryHandlerRuntimeUsesToolServiceBinding(t *testing.T) {
 			if rt.DefaultAuthProfileID != "auth-registry-binding" {
 				t.Fatalf("DefaultAuthProfileID = %q", rt.DefaultAuthProfileID)
 			}
+			if len(rt.Authorization.AuthProfiles) != 1 || rt.Authorization.AuthProfiles[0].Token != "secret-token" {
+				t.Fatalf("unexpected runtime authorization: %#v", rt.Authorization)
+			}
+			if rt.Authorization.DefaultAuthProfileID != "auth-registry-binding" {
+				t.Fatalf("Authorization DefaultAuthProfileID = %q", rt.Authorization.DefaultAuthProfileID)
+			}
 			rt.AuthProfiles[0].Token = "mutated-token"
+			if rt.AuthProfiles[0].Enabled == nil || !*rt.AuthProfiles[0].Enabled {
+				t.Fatalf("compat auth profile Enabled lost before mutation: %#v", rt.AuthProfiles[0].Enabled)
+			}
+			*rt.AuthProfiles[0].Enabled = false
+			rt.Authorization.AuthProfiles[0].Token = "mutated-runtime-token"
+			if rt.Authorization.AuthProfiles[0].Enabled == nil || !*rt.Authorization.AuthProfiles[0].Enabled {
+				t.Fatalf("runtime auth profile Enabled lost before mutation: %#v", rt.Authorization.AuthProfiles[0].Enabled)
+			}
+			*rt.Authorization.AuthProfiles[0].Enabled = false
 			return map[string]any{"binding": true}, nil
 		},
 	}
 
-	messages, calls, err := mgr.executeAgentRegistryHandler(context.Background(), "registry_binding", "en", "tester", "read_only", routerServices{jobs: jobs}, spec, map[string]any{"probe": "ok"}, authProfiles, "auth-registry-binding")
+	result, err := mgr.executeAgentRegistryHandlerResultWithToolServices(context.Background(), "registry_binding", "en", "tester", "read_only", agentLoopToolServiceBindingFromRouterServices(routerServices{jobs: jobs}), spec, map[string]any{"probe": "ok"}, authorization)
 	if err != nil {
-		t.Fatalf("executeAgentRegistryHandler() error = %v", err)
+		t.Fatalf("executeAgentRegistryHandlerResultWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("registry handler was not called")
 	}
-	if len(messages) != 1 || len(calls) != 1 || calls[0].Result["binding"] != true {
-		t.Fatalf("unexpected registry output: messages=%#v calls=%#v", messages, calls)
+	if len(result.Messages) != 1 || len(result.ToolCalls) != 1 || result.ToolCalls[0].Result["binding"] != true {
+		t.Fatalf("unexpected registry output: messages=%#v calls=%#v", result.Messages, result.ToolCalls)
 	}
 	if authProfiles[0].Token != "secret-token" {
 		t.Fatalf("auth profile token was mutated to %q", authProfiles[0].Token)
+	}
+	if authProfiles[0].Enabled == nil || !*authProfiles[0].Enabled {
+		t.Fatalf("auth profile Enabled was mutated: %#v", authProfiles[0].Enabled)
+	}
+	if authorization.AuthProfiles[0].Token != "secret-token" {
+		t.Fatalf("runtime authorization token was mutated to %q", authorization.AuthProfiles[0].Token)
+	}
+	if authorization.AuthProfiles[0].Enabled == nil || !*authorization.AuthProfiles[0].Enabled {
+		t.Fatalf("runtime authorization Enabled was mutated: %#v", authorization.AuthProfiles[0].Enabled)
+	}
+}
+
+func TestDaemonPlannerActionExecutionExecutorPassesRuntimeToolServicesWithoutReconstruction(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	if !ok {
+		t.Fatal("daemon.health missing from registry")
+	}
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	binding := runtime.AgentLoopToolServiceBinding{
+		Kind: "runtime-direct-planner-action-services",
+		ActionServices: runtime.AgentLoopActionServiceSet{
+			Capabilities: map[runtime.AgentLoopActionServiceCapability]any{
+				runtime.AgentLoopActionServiceVersion: services.NewVersionService(services.BuildInfo{Name: "N182", Version: "vN182"}),
+			},
+			Metadata: map[string]any{"action_service_marker": "n182"},
+		},
+		Metadata: map[string]any{"binding_marker": "n182-direct"},
+	}
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+		if !ok {
+			t.Fatalf("runtime type = %T, want agentRegistryHandlerRuntime", in.Runtime)
+		}
+		if rt.Services.Kind != binding.Kind {
+			t.Fatalf("runtime tool service Kind = %q, want %q", rt.Services.Kind, binding.Kind)
+		}
+		if got := rt.Services.Metadata["binding_marker"]; got != "n182-direct" {
+			t.Fatalf("runtime tool service metadata marker = %#v, want n182-direct", got)
+		}
+		if got := rt.Services.ActionServices.Metadata["action_service_marker"]; got != "n182" {
+			t.Fatalf("runtime action service metadata marker = %#v, want n182", got)
+		}
+		tool := runningAgentToolCall("daemon.health", "registry.handler")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"direct_tool_services": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "direct runtime tool services dispatched", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	result, err := daemonPlannerActionExecutionExecutorForManager(mgr).ExecutePlannerAction(context.Background(), daemonPlannerActionExecutionSideEffectBoundary{
+		sessionID:      "executor_runtime_tool_services",
+		language:       "en",
+		operator:       "tester",
+		operationLevel: "read_only",
+		toolServices:   binding,
+		action: agentPlannerAction{
+			Name: "daemon.health",
+		},
+		authorization: runtime.AgentLoopAuthorization{},
+	})
+	if err != nil {
+		t.Fatalf("ExecutePlannerAction() error = %v", err)
+	}
+	if !called {
+		t.Fatal("registry handler was not called")
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].Result["direct_tool_services"] != true {
+		t.Fatalf("unexpected runtime result tool calls: %#v", result.ToolCalls)
+	}
+}
+
+func TestDeterministicRouteAgentLoopPassesRuntimeToolServicesWithoutReconstruction(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("daemon.health")
+	if !ok {
+		t.Fatal("daemon.health missing from registry")
+	}
+	oldHandler := spec.Handler
+	defer func() { spec.Handler = oldHandler }()
+
+	binding := runtime.AgentLoopToolServiceBinding{
+		Kind: "runtime-direct-deterministic-route-services",
+		ActionServices: runtime.AgentLoopActionServiceSet{
+			Capabilities: map[runtime.AgentLoopActionServiceCapability]any{
+				runtime.AgentLoopActionServiceVersion: services.NewVersionService(services.BuildInfo{Name: "N182Route", Version: "vN182Route"}),
+			},
+			Metadata: map[string]any{"action_service_marker": "n182-route"},
+		},
+		Metadata: map[string]any{"binding_marker": "n182-route-direct"},
+	}
+
+	called := false
+	spec.Handler = func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
+		called = true
+		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+		if !ok {
+			t.Fatalf("runtime type = %T, want agentRegistryHandlerRuntime", in.Runtime)
+		}
+		if rt.Services.Kind != binding.Kind {
+			t.Fatalf("runtime tool service Kind = %q, want %q", rt.Services.Kind, binding.Kind)
+		}
+		if got := rt.Services.Metadata["binding_marker"]; got != "n182-route-direct" {
+			t.Fatalf("runtime tool service metadata marker = %#v, want n182-route-direct", got)
+		}
+		if got := rt.Services.ActionServices.Metadata["action_service_marker"]; got != "n182-route" {
+			t.Fatalf("runtime action service metadata marker = %#v, want n182-route", got)
+		}
+		tool := runningAgentToolCall("daemon.health", "registry.handler")
+		tool = finishAgentToolCall(tool, nil)
+		tool.Result = map[string]any{"direct_route_tool_services": true}
+		return agentRegistryHandlerResult{
+			Messages:  []agentMessage{mgr.message("en", "tool", "direct route runtime tool services dispatched", []agentToolCall{tool}, nil)},
+			ToolCalls: []agentToolCall{tool},
+		}, nil
+	}
+
+	result, err := mgr.runAgentDeterministicRouteAgentLoopResult(context.Background(), runtime.AgentLoopRequest{
+		Mode: runtime.AgentLoopModeDeterministicRoute,
+		Turn: runtime.TurnContext{
+			SessionID:      "deterministic_route_runtime_tool_services",
+			TaskID:         "task-n182-route",
+			RunID:          "run-n182-route",
+			TurnID:         "turn-n182-route",
+			Prompt:         "daemon health",
+			OperationLevel: "read_only",
+		},
+		Language:     "en",
+		Operator:     "tester",
+		ToolServices: binding,
+	})
+	if err != nil {
+		t.Fatalf("runAgentDeterministicRouteAgentLoopResult() error = %v", err)
+	}
+	if !called {
+		t.Fatal("registry handler was not called")
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].Result["direct_route_tool_services"] != true {
+		t.Fatalf("unexpected route runtime tool calls: %#v", result.ToolCalls)
+	}
+	if result.StopReason != "deterministic_route_executed" {
+		t.Fatalf("StopReason = %q, want deterministic_route_executed", result.StopReason)
+	}
+}
+
+func TestRuntimeToolServiceDispatchProductionSurfaceDoesNotReconstructRouterServices(t *testing.T) {
+	for _, file := range []string{"agent_prompt_dispatch.go", "agent_registry_dispatch.go", "agent_turn_executor.go"} {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		if strings.Contains(string(data), "legacyRouterServicesFromAgentLoopToolServiceBinding(") {
+			t.Fatalf("%s must not reconstruct routerServices from runtime tool service bindings in production dispatch paths", file)
+		}
+	}
+}
+
+func TestRegistryHandlerRuntimeProductionSurfaceDoesNotExposeLegacyServiceFallbackHelpers(t *testing.T) {
+	for _, file := range []string{"agent_registry_dispatch.go", "agent_registry_handlers.go"} {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		src := string(data)
+		for _, forbidden := range []string{
+			"func (rt agentRegistryHandlerRuntime) legacyRouterServices()",
+			"func (rt agentRegistryHandlerRuntime) toolServiceProvider()",
+			"rt.legacyRouterServices()",
+			"rt.toolServiceProvider()",
+			"agentLoopActionServiceResolverFromAgentLoopToolServiceBinding(rt.Services)",
+			"agentLoopToolServiceProviderFromHandle(",
+		} {
+			if strings.Contains(src, forbidden) {
+				t.Fatalf("%s still exposes/uses legacy registry runtime fallback %q", file, forbidden)
+			}
+		}
+	}
+}
+
+func TestRegistryHandlerRuntimeActionServiceResolverRequiresRuntimeCapabilities(t *testing.T) {
+	binding := runtime.AgentLoopToolServiceBinding{
+		Kind:     daemonToolServiceBindingKind,
+		Handle:   registryPanicActionServiceFallback{},
+		Metadata: map[string]any{},
+	}
+
+	if _, ok := (agentRegistryHandlerRuntime{Services: binding}).actionServiceResolver(); ok {
+		t.Fatal("agentRegistryHandlerRuntime.actionServiceResolver() used opaque Handle fallback; want runtime ActionServices only")
+	}
+	if _, ok := agentLoopActionServiceCapabilityValue[*jobManager](binding.ActionServices, runtime.AgentLoopActionServiceJobs); ok {
+		t.Fatal("Handle-only binding unexpectedly exposed runtime ActionServices jobs capability")
+	}
+}
+
+func TestAgentLoopAuthProfileResolverUsesRuntimeAuthorization(t *testing.T) {
+	enabled := true
+	authorization := runtime.AgentLoopAuthorization{
+		DefaultAuthProfileID: "runtime-default",
+		AuthProfiles: []runtime.AgentLoopAuthProfile{{
+			ID:          "runtime-default",
+			Name:        "Runtime Default",
+			Type:        "api_key",
+			BaseURL:     "https://api.runtime-auth.example",
+			HeaderName:  "X-Runtime-Auth",
+			HeaderValue: "runtime-secret",
+			Enabled:     &enabled,
+		}},
+	}
+
+	headers, usage, err := agentResolveAgentLoopAuthProfileHeaders(authorization, "", "https://api.runtime-auth.example/v1")
+	if err != nil {
+		t.Fatalf("agentResolveAgentLoopAuthProfileHeaders() error = %v", err)
+	}
+	if headers["X-Runtime-Auth"] != "runtime-secret" {
+		t.Fatalf("resolved headers = %#v", headers)
+	}
+	if usage == nil || usage.ID != "runtime-default" || usage.Host != "api.runtime-auth.example" || !usage.Applied {
+		t.Fatalf("usage = %#v", usage)
+	}
+	if !enabled {
+		t.Fatal("resolver mutated source runtime authorization Enabled pointer")
+	}
+
+	authorization.AuthProfiles[0].HeaderValue = "mutated-secret"
+	if headers["X-Runtime-Auth"] != "runtime-secret" {
+		t.Fatalf("resolved headers share runtime authorization storage: %#v", headers)
+	}
+}
+
+func TestRegistryHandlerHTTPRequestUsesRuntimeAuthorizationContext(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	spec, ok := toolRegistry().Lookup("http.request")
+	if !ok {
+		t.Fatal("http.request missing from registry")
+	}
+	enabled := true
+	_, err := spec.Handler(context.Background(), toolregistry.HandlerInput{
+		SessionID:      "registry_runtime_authorization_context",
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "advanced",
+		RawArgs: map[string]any{
+			"url":             "https://runtime-auth.example/api",
+			"method":          "TRACE",
+			"auth_profile_id": "runtime-profile",
+		},
+		Runtime: agentRegistryHandlerRuntime{
+			Manager: mgr,
+			Services: agentLoopToolServiceBindingWithNetworkRequestActionService(
+				testAgentLoopToolServices(),
+				daemonNetworkRequestActionServiceForManager(mgr),
+			),
+			Authorization: runtime.AgentLoopAuthorization{
+				DefaultAuthProfileID: "runtime-profile",
+				AuthProfiles: []runtime.AgentLoopAuthProfile{{
+					ID:      "runtime-profile",
+					Type:    "bearer",
+					BaseURL: "https://runtime-auth.example",
+					Token:   "runtime-token",
+					Enabled: &enabled,
+				}},
+			},
+			AuthProfiles: []agentHTTPAuthProfile{{
+				ID:      "legacy-profile",
+				Type:    "bearer",
+				BaseURL: "https://runtime-auth.example",
+				Token:   "legacy-token",
+			}},
+			DefaultAuthProfileID: "legacy-profile",
+		},
+	})
+	if err == nil {
+		t.Fatal("http.request Handler() error = nil, want invalid-method error after auth resolution")
+	}
+	if !strings.Contains(err.Error(), "http.request allows only") {
+		t.Fatalf("http.request Handler() error = %v, want invalid-method error after runtime auth resolution", err)
+	}
+	if strings.Contains(err.Error(), "auth profile") {
+		t.Fatalf("http.request Handler() used legacy auth profile fields: %v", err)
+	}
+}
+
+type registryPanicActionServiceFallback struct{}
+
+func (registryPanicActionServiceFallback) VersionService() services.VersionService {
+	panic("opaque Handle fallback requested VersionService")
+}
+
+func (registryPanicActionServiceFallback) PluginService() services.PluginService {
+	panic("opaque Handle fallback requested PluginService")
+}
+
+func (registryPanicActionServiceFallback) RunService() services.RunService {
+	panic("opaque Handle fallback requested RunService")
+}
+
+func (registryPanicActionServiceFallback) ApprovalService() services.ApprovalService {
+	panic("opaque Handle fallback requested ApprovalService")
+}
+
+func (registryPanicActionServiceFallback) JobManager() *jobManager {
+	panic("opaque Handle fallback requested JobManager")
+}
+
+func (registryPanicActionServiceFallback) AgentManager() *agentManager {
+	panic("opaque Handle fallback requested AgentManager")
+}
+
+func (registryPanicActionServiceFallback) ScanManager() *web.ScanManager {
+	panic("opaque Handle fallback requested ScanManager")
+}
+
+func (registryPanicActionServiceFallback) ScheduleManager() *scheduleManager {
+	panic("opaque Handle fallback requested ScheduleManager")
+}
+
+func (registryPanicActionServiceFallback) ProviderStore() web.ProviderStore {
+	panic("opaque Handle fallback requested ProviderStore")
+}
+
+func TestRegistryHandlerFirstBatchUsesRuntimeActionServiceCapabilities(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	svc := routerServices{
+		version: services.NewVersionService(services.BuildInfo{Name: "N175", Version: "vN175"}),
+		plugins: services.NewPluginService(
+			t.TempDir(),
+		),
+		runs: services.NewRunService(t.TempDir()),
+	}
+	runtimeBinding := runtime.AgentLoopToolServiceBinding{
+		Kind:           daemonToolServiceBindingKind,
+		Handle:         registryPanicActionServiceFallback{},
+		ActionServices: daemonActionServiceSetFromRouterServices(svc),
+		Metadata: map[string]any{
+			"action_service_contract": runtime.AgentLoopActionServiceContractName,
+		},
+	}
+	runtimeBinding.ActionServices.Capabilities[runtime.AgentLoopActionServiceDaemonStatusAction] = daemonStatusActionServiceForManager(mgr)
+
+	for _, name := range []string{"daemon.health", "plugins.list", "runs.list"} {
+		t.Run(name, func(t *testing.T) {
+			spec, ok := toolRegistry().Lookup(name)
+			if !ok {
+				t.Fatalf("%s missing from registry", name)
+			}
+			output, err := spec.Handler(context.Background(), toolregistry.HandlerInput{
+				SessionID:      "registry_runtime_action_services_first_batch",
+				Operator:       "tester",
+				Language:       "en",
+				OperationLevel: "read_only",
+				RawArgs:        map[string]any{},
+				Runtime: agentRegistryHandlerRuntime{
+					Services: runtimeBinding,
+				},
+			})
+			if err != nil {
+				t.Fatalf("%s Handler() error = %v", name, err)
+			}
+			result, ok := output.(agentRegistryHandlerResult)
+			if !ok {
+				t.Fatalf("%s output type = %T, want agentRegistryHandlerResult", name, output)
+			}
+			if len(result.Messages) == 0 || len(result.ToolCalls) == 0 {
+				t.Fatalf("%s returned empty result: %#v", name, result)
+			}
+		})
+	}
+}
+
+func TestRegistryHandlerScheduleBatchUsesRuntimeActionServiceCapabilities(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	schedules := newScheduleManager(t.TempDir())
+	svc := routerServices{schedules: schedules}
+	runtimeBinding := runtime.AgentLoopToolServiceBinding{
+		Kind:           daemonToolServiceBindingKind,
+		Handle:         registryPanicActionServiceFallback{},
+		ActionServices: daemonActionServiceSetFromRouterServices(svc),
+		Metadata: map[string]any{
+			"action_service_contract": runtime.AgentLoopActionServiceContractName,
+		},
+	}
+	runtimeBinding.ActionServices.Capabilities[runtime.AgentLoopActionServiceScheduleAction] = daemonScheduleActionServiceForManager(mgr)
+	input := func(args map[string]any) toolregistry.HandlerInput {
+		return toolregistry.HandlerInput{
+			SessionID:      "registry_runtime_action_services_schedule_batch",
+			Operator:       "tester",
+			Language:       "en",
+			OperationLevel: "read_only",
+			RawArgs:        args,
+			Runtime: agentRegistryHandlerRuntime{
+				Services: runtimeBinding,
+			},
+		}
+	}
+	runHandler := func(name string, args map[string]any) agentRegistryHandlerResult {
+		t.Helper()
+		spec, ok := toolRegistry().Lookup(name)
+		if !ok {
+			t.Fatalf("%s missing from registry", name)
+		}
+		output, err := spec.Handler(context.Background(), input(args))
+		if err != nil {
+			t.Fatalf("%s Handler() error = %v", name, err)
+		}
+		result, ok := output.(agentRegistryHandlerResult)
+		if !ok {
+			t.Fatalf("%s output type = %T, want agentRegistryHandlerResult", name, output)
+		}
+		if len(result.Messages) == 0 || len(result.ToolCalls) == 0 {
+			t.Fatalf("%s returned empty result: %#v", name, result)
+		}
+		return result
+	}
+
+	created := runHandler("schedule.create", map[string]any{
+		"cron":   "*/7 * * * *",
+		"prompt": "daemon health",
+		"name":   "runtime-action-services-schedule",
+	})
+	createdID, _ := created.ToolCalls[0].Result["id"].(string)
+	if strings.TrimSpace(createdID) == "" {
+		t.Fatalf("schedule.create id missing: %#v", created.ToolCalls[0].Result)
+	}
+	listed := runHandler("schedule.list", map[string]any{})
+	if count, _ := listed.ToolCalls[0].Result["count"].(int); count == 0 {
+		t.Fatalf("schedule.list count = %v, want >0", listed.ToolCalls[0].Result["count"])
+	}
+	deleted := runHandler("schedule.delete", map[string]any{"id": createdID})
+	if deleted.ToolCalls[0].Result["deleted"] != true {
+		t.Fatalf("schedule.delete result = %#v", deleted.ToolCalls[0].Result)
+	}
+}
+
+func TestRegistryHandlerWebSearchUsesRuntimeActionServiceCapabilities(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	providers := newProviderStore(t.TempDir() + "/providers.json")
+	runtimeBinding := runtime.AgentLoopToolServiceBinding{
+		Kind:   daemonToolServiceBindingKind,
+		Handle: registryPanicActionServiceFallback{},
+		ActionServices: runtime.AgentLoopActionServiceSet{
+			Capabilities: map[runtime.AgentLoopActionServiceCapability]any{
+				runtime.AgentLoopActionServiceProviders: providers,
+				runtime.AgentLoopActionServiceWebSearch: daemonWebSearchActionServiceForManager(mgr),
+			},
+			Metadata: map[string]any{
+				"contract": runtime.AgentLoopActionServiceContractName,
+			},
+		},
+		Metadata: map[string]any{
+			"action_service_contract": runtime.AgentLoopActionServiceContractName,
+		},
+	}
+	spec, ok := toolRegistry().Lookup("web.search")
+	if !ok {
+		t.Fatal("web.search missing from registry")
+	}
+	output, err := spec.Handler(context.Background(), toolregistry.HandlerInput{
+		SessionID:      "registry_runtime_action_services_web_search_batch",
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "read_only",
+		RawArgs:        map[string]any{"query": "runtime action services web search"},
+		Runtime: agentRegistryHandlerRuntime{
+			Manager:  mgr,
+			Services: runtimeBinding,
+		},
+	})
+	if err != nil {
+		t.Fatalf("web.search Handler() error = %v", err)
+	}
+	result, ok := output.(agentRegistryHandlerResult)
+	if !ok {
+		t.Fatalf("web.search output type = %T, want agentRegistryHandlerResult", output)
+	}
+	if len(result.Messages) == 0 || len(result.ToolCalls) == 0 {
+		t.Fatalf("web.search returned empty result: %#v", result)
+	}
+	if result.ToolCalls[0].Error == nil || !strings.Contains(result.ToolCalls[0].Error.Message, "web.search not configured") {
+		t.Fatalf("web.search error = %#v, want not configured via runtime ProviderStore capability", result.ToolCalls[0].Error)
+	}
+}
+
+func TestRegistryHandlerScanBatchUsesRuntimeActionServiceCapabilities(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	jobs := newJobManager(jobManagerConfig{
+		RunsDir: t.TempDir(),
+		Runner: func(ctx context.Context, req coreruntime.WebScanRequest) (coreruntime.WebScanResult, error) {
+			return coreruntime.WebScanResult{}, nil
+		},
+	})
+	runtimeBinding := runtime.AgentLoopToolServiceBinding{
+		Kind:   daemonToolServiceBindingKind,
+		Handle: registryPanicActionServiceFallback{},
+		ActionServices: runtime.AgentLoopActionServiceSet{
+			Capabilities: map[runtime.AgentLoopActionServiceCapability]any{
+				runtime.AgentLoopActionServiceJobs:    jobs,
+				runtime.AgentLoopActionServiceWebScan: daemonWebScanActionServiceForManager(mgr),
+			},
+			Metadata: map[string]any{
+				"contract": runtime.AgentLoopActionServiceContractName,
+			},
+		},
+		Metadata: map[string]any{
+			"action_service_contract": runtime.AgentLoopActionServiceContractName,
+		},
+	}
+	spec, ok := toolRegistry().Lookup("scan.web.safe")
+	if !ok {
+		t.Fatal("scan.web.safe missing from registry")
+	}
+	output, err := spec.Handler(context.Background(), toolregistry.HandlerInput{
+		SessionID:      "registry_runtime_action_services_scan_batch",
+		Operator:       "tester",
+		Language:       "en",
+		OperationLevel: "safe_scan",
+		RawArgs: map[string]any{
+			"target": "http://127.0.0.1",
+			"scope":  "http://127.0.0.1",
+		},
+		Runtime: agentRegistryHandlerRuntime{
+			Services: runtimeBinding,
+		},
+	})
+	if err != nil {
+		t.Fatalf("scan.web.safe Handler() error = %v", err)
+	}
+	result, ok := output.(agentRegistryHandlerResult)
+	if !ok {
+		t.Fatalf("scan.web.safe output type = %T, want agentRegistryHandlerResult", output)
+	}
+	if len(result.Messages) == 0 || len(result.ToolCalls) == 0 {
+		t.Fatalf("scan.web.safe returned empty result: %#v", result)
+	}
+	if result.ToolCalls[0].Result["job_id"] == "" || result.ToolCalls[0].Result["run_id"] == "" {
+		t.Fatalf("scan.web.safe result missing job/run ids via runtime JobManager capability: %#v", result.ToolCalls[0].Result)
+	}
+}
+
+func TestRegistryHandlerRunContextApprovalBatchUsesRuntimeActionServiceCapabilities(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	runsDir := t.TempDir()
+	approvals := services.NewApprovalService(runsDir)
+	runtimeBinding := runtime.AgentLoopToolServiceBinding{
+		Kind:   daemonToolServiceBindingKind,
+		Handle: registryPanicActionServiceFallback{},
+		ActionServices: runtime.AgentLoopActionServiceSet{
+			Capabilities: map[runtime.AgentLoopActionServiceCapability]any{
+				runtime.AgentLoopActionServiceRunContextApproval: daemonRunContextApprovalActionServiceForManager(mgr),
+				runtime.AgentLoopActionServiceRuns:               services.NewRunService(runsDir),
+				runtime.AgentLoopActionServiceApprovals:          approvals,
+			},
+			Metadata: map[string]any{
+				"contract": runtime.AgentLoopActionServiceContractName,
+			},
+		},
+		Metadata: map[string]any{
+			"action_service_contract": runtime.AgentLoopActionServiceContractName,
+		},
+	}
+	input := func(args map[string]any) toolregistry.HandlerInput {
+		return toolregistry.HandlerInput{
+			SessionID:      "registry_runtime_action_services_run_context_approval_batch",
+			Operator:       "tester",
+			Language:       "en",
+			OperationLevel: "read_only",
+			RawArgs:        args,
+			Runtime: agentRegistryHandlerRuntime{
+				Services: runtimeBinding,
+			},
+		}
+	}
+	runHandler := func(name string, args map[string]any) agentRegistryHandlerResult {
+		t.Helper()
+		spec, ok := toolRegistry().Lookup(name)
+		if !ok {
+			t.Fatalf("%s missing from registry", name)
+		}
+		output, err := spec.Handler(context.Background(), input(args))
+		if err != nil {
+			t.Fatalf("%s Handler() error = %v", name, err)
+		}
+		result, ok := output.(agentRegistryHandlerResult)
+		if !ok {
+			t.Fatalf("%s output type = %T, want agentRegistryHandlerResult", name, output)
+		}
+		if len(result.Messages) == 0 {
+			t.Fatalf("%s returned no messages: %#v", name, result)
+		}
+		return result
+	}
+
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "runs.context", args: map[string]any{"run_id": "run_missing", "context": "events"}},
+		{name: "reports.draft", args: map[string]any{"run_id": "run_missing"}},
+		{name: "runs.approvals.list", args: map[string]any{}},
+		{name: "runs.approvals.list", args: map[string]any{"run_id": "run_missing"}},
+		{name: "runs.resume_approved", args: map[string]any{"run_id": "run_missing"}},
+		{name: "runs.approvals.approve", args: map[string]any{"run_id": "run_missing", "approval_id": "approval_missing"}},
+		{name: "runs.approvals.deny", args: map[string]any{"run_id": "run_missing", "approval_id": "approval_missing"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runHandler(tc.name, tc.args)
+		})
 	}
 }
 
@@ -152,15 +894,18 @@ func TestRegistryBuiltinMissingHandlerFailsWithoutLegacyFallback(t *testing.T) {
 	defer func() { spec.Handler = oldHandler }()
 	spec.Handler = nil
 
-	_, _, err := mgr.executeAgentPlannerAction(context.Background(), "agent_registry_dispatch_no_fallback", "en", "tester", "read_only", routerServices{}, agentPlannerAction{
+	result, err := mgr.executeAgentPlannerActionResultWithToolServices(context.Background(), "agent_registry_dispatch_no_fallback", "en", "tester", "read_only", testAgentLoopToolServices(), agentPlannerAction{
 		Name:      "workspace.files.list",
 		Arguments: map[string]any{"path": "."},
-	}, nil, "")
+	}, runtime.AgentLoopAuthorization{})
 	if err == nil {
-		t.Fatal("executeAgentPlannerAction() error = nil, want missing handler error")
+		t.Fatal("executeAgentPlannerActionResultWithToolServices() error = nil, want missing handler error")
 	}
 	if got := services.ErrorCodeOf(err); got != services.CodeInternal {
 		t.Fatalf("ErrorCodeOf(err) = %q, want %q (err=%v)", got, services.CodeInternal, err)
+	}
+	if result.Status != runtime.TurnResultFailed {
+		t.Fatalf("result Status = %q, want %q", result.Status, runtime.TurnResultFailed)
 	}
 }
 
@@ -185,9 +930,9 @@ func TestRoutePromptReadOnlySystemUsesHeuristicRegistryDispatch(t *testing.T) {
 		}, nil
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_registry", "daemon health", "en", "tester", "read_only", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_registry", "daemon health", "en", "tester", "read_only", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch through the registry handler")
@@ -241,9 +986,9 @@ func TestRoutePromptGenericWorkspaceUsesHeuristicRegistryDispatch(t *testing.T) 
 		t.Fatalf("generic workspace action path = %q, want .", got)
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_workspace_generic", "workspace", "zh", "tester", "read_only", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_workspace_generic", "workspace", "zh", "tester", "read_only", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch generic workspace through the registry handler")
@@ -334,9 +1079,9 @@ func TestRoutePromptScheduleUsesHeuristicRegistryDispatch(t *testing.T) {
 				t.Fatalf("schedule prompt should produce %s action: %#v", tt.tool, actions)
 			}
 
-			messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_schedule_"+tt.name, tt.prompt, "zh", "tester", tt.level, routerServices{})
+			messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_schedule_"+tt.name, tt.prompt, "zh", "tester", tt.level, testAgentLoopToolServices())
 			if err != nil {
-				t.Fatalf("routePrompt() error = %v", err)
+				t.Fatalf("routePromptWithToolServices() error = %v", err)
 			}
 			if !called {
 				t.Fatalf("routePrompt did not dispatch %s through the registry handler", tt.tool)
@@ -390,9 +1135,9 @@ func TestRoutePromptScheduleRegistryDispatchPreservesOperationGate(t *testing.T)
 		t.Fatalf("read_only unexpectedly satisfies required level %q", requiredLevel)
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_schedule_gate", prompt, "zh", "tester", "read_only", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_schedule_gate", prompt, "zh", "tester", "read_only", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if called {
 		t.Fatal("schedule registry handler was called despite insufficient operation level")
@@ -435,9 +1180,9 @@ func TestRoutePromptSafeHTTPUsesHeuristicRegistryDispatch(t *testing.T) {
 		}, nil
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_http_registry", "获取 https://example.com/api 的响应头和状态码", "zh", "tester", "safe_scan", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_http_registry", "获取 https://example.com/api 的响应头和状态码", "zh", "tester", "safe_scan", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch safe http.request through the registry handler")
@@ -500,9 +1245,9 @@ func TestRoutePromptAdvancedHTTPUsesHeuristicRegistryDispatch(t *testing.T) {
 		t.Fatal("POST http.request with url should be inside the advanced HTTP registry route slice")
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_http_advanced_registry", "POST https://example.com/api", "zh", "tester", "advanced", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_http_advanced_registry", "POST https://example.com/api", "zh", "tester", "advanced", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch advanced http.request through the registry handler")
@@ -550,9 +1295,9 @@ func TestRoutePromptAdvancedHTTPRegistryDispatchPreservesOperationGate(t *testin
 		t.Fatalf("safe_scan unexpectedly satisfies required level %q", requiredLevel)
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_http_advanced_gate", prompt, "zh", "tester", "safe_scan", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_http_advanced_gate", prompt, "zh", "tester", "safe_scan", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if called {
 		t.Fatal("advanced http registry handler was called despite insufficient operation level")
@@ -595,9 +1340,9 @@ func TestRoutePromptSafePortScanUsesHeuristicRegistryDispatch(t *testing.T) {
 		}, nil
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_port_registry", "扫描 example.com 开放端口 ports=80,443", "zh", "tester", "safe_scan", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_port_registry", "扫描 example.com 开放端口 ports=80,443", "zh", "tester", "safe_scan", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch ports.scan.safe through the registry handler")
@@ -649,9 +1394,9 @@ func TestRoutePromptSafeScanUsesHeuristicRegistryDispatch(t *testing.T) {
 		}, nil
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_scan_registry", "对 https://example.com 做安全扫描 scope=https://example.com", "zh", "tester", "safe_scan", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_scan_registry", "对 https://example.com 做安全扫描 scope=https://example.com", "zh", "tester", "safe_scan", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch scan.web.safe through the registry handler")
@@ -711,9 +1456,9 @@ func TestRoutePromptWorkspaceDiffUsesHeuristicRegistryDispatch(t *testing.T) {
 		t.Fatalf("diff prompt should produce workspace.files.diff action before patch: %#v", actions)
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_diff_registry", "预览修改文件 notes.md old: hello new: world", "zh", "tester", "workspace_write", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_diff_registry", "预览修改文件 notes.md old: hello new: world", "zh", "tester", "workspace_write", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch workspace.files.diff through the registry handler")
@@ -768,9 +1513,9 @@ func TestRoutePromptWorkspaceRebaseUsesHeuristicRegistryDispatch(t *testing.T) {
 		}, nil
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_rebase_registry", "重新生成 change_id: change_20260605_notes old: current text new: updated text", "zh", "tester", "workspace_write", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_rebase_registry", "重新生成 change_id: change_20260605_notes old: current text new: updated text", "zh", "tester", "workspace_write", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch workspace.files.rebase through the registry handler")
@@ -899,9 +1644,9 @@ func TestRoutePromptWorkspaceMutationUsesHeuristicRegistryDispatch(t *testing.T)
 				t.Fatalf("workspace mutation prompt should produce %s action: %#v", tt.tool, actions)
 			}
 
-			messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_workspace_mutation_"+tt.name, tt.prompt, "zh", "tester", "workspace_write", routerServices{})
+			messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_workspace_mutation_"+tt.name, tt.prompt, "zh", "tester", "workspace_write", testAgentLoopToolServices())
 			if err != nil {
-				t.Fatalf("routePrompt() error = %v", err)
+				t.Fatalf("routePromptWithToolServices() error = %v", err)
 			}
 			if !called {
 				t.Fatalf("routePrompt did not dispatch %s through the registry handler", tt.tool)
@@ -958,9 +1703,9 @@ func TestRoutePromptWorkspaceMutationRegistryDispatchPreservesOperationGate(t *t
 		t.Fatalf("read_only unexpectedly satisfies required level %q", requiredLevel)
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_workspace_mutation_gate", prompt, "zh", "tester", "read_only", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_workspace_mutation_gate", prompt, "zh", "tester", "read_only", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if called {
 		t.Fatal("workspace mutation registry handler was called despite insufficient operation level")
@@ -1033,9 +1778,9 @@ func TestRoutePromptApprovalDecisionUsesHeuristicRegistryDispatch(t *testing.T) 
 				t.Fatalf("approval prompt should produce %s action: %#v", tt.tool, actions)
 			}
 
-			messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_approval_"+tt.name, tt.prompt, "zh", "tester", "approval_ops", routerServices{})
+			messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_approval_"+tt.name, tt.prompt, "zh", "tester", "approval_ops", testAgentLoopToolServices())
 			if err != nil {
-				t.Fatalf("routePrompt() error = %v", err)
+				t.Fatalf("routePromptWithToolServices() error = %v", err)
 			}
 			if !called {
 				t.Fatalf("routePrompt did not dispatch %s through the registry handler", tt.tool)
@@ -1088,9 +1833,9 @@ func TestRoutePromptResumeApprovedUsesHeuristicRegistryDispatch(t *testing.T) {
 		t.Fatalf("resume-approved prompt should produce runs.resume_approved action: %#v", actions)
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_resume_approved", "resume-approved run_abc", "zh", "tester", "approval_ops", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_resume_approved", "resume-approved run_abc", "zh", "tester", "approval_ops", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch runs.resume_approved through the registry handler")
@@ -1141,9 +1886,9 @@ func TestRoutePromptApprovalOperationRegistryDispatchPreservesOperationGate(t *t
 				t.Fatalf("read_only unexpectedly satisfies required level %q", requiredLevel)
 			}
 
-			messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_approval_gate_"+tt.name, tt.prompt, "zh", "tester", "read_only", routerServices{})
+			messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_approval_gate_"+tt.name, tt.prompt, "zh", "tester", "read_only", testAgentLoopToolServices())
 			if err != nil {
-				t.Fatalf("routePrompt() error = %v", err)
+				t.Fatalf("routePromptWithToolServices() error = %v", err)
 			}
 			if len(calls) != 0 {
 				t.Fatalf("operation gate should not return tool calls: %#v", calls)
@@ -1206,9 +1951,9 @@ func TestRoutePromptReportDraftUsesHeuristicRegistryDispatch(t *testing.T) {
 		}, nil
 	}
 
-	messages, calls, err := mgr.routePrompt(context.Background(), "agent_route_report_registry", "生成报告草稿 run_report_registry", "zh", "tester", "workspace_write", routerServices{})
+	messages, calls, err := mgr.routePromptWithToolServices(context.Background(), "agent_route_report_registry", "生成报告草稿 run_report_registry", "zh", "tester", "workspace_write", testAgentLoopToolServices())
 	if err != nil {
-		t.Fatalf("routePrompt() error = %v", err)
+		t.Fatalf("routePromptWithToolServices() error = %v", err)
 	}
 	if !called {
 		t.Fatal("routePrompt did not dispatch reports.draft through the registry handler")

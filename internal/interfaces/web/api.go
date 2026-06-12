@@ -25,9 +25,33 @@ type ProviderProfile struct {
 
 // ProviderConfig is the persisted set of providers plus the active selection.
 type ProviderConfig struct {
-	Providers []ProviderProfile `json:"providers"`
-	ActiveID  string            `json:"active_id"`
-	WebSearch *WebSearchConfig  `json:"web_search,omitempty"`
+	Providers            []ProviderProfile `json:"providers"`
+	ActiveID             string            `json:"active_id"`
+	WebSearch            *WebSearchConfig  `json:"web_search,omitempty"`
+	AuthProfiles         []APIAuthProfile  `json:"auth_profiles,omitempty"`
+	DefaultAuthProfileID string            `json:"default_auth_profile_id,omitempty"`
+}
+
+// ProviderProfileResponse is the browser-facing provider profile. Secrets stay
+// server-side; the UI only receives whether a secret is configured.
+type ProviderProfileResponse struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	Model            string `json:"model"`
+	BaseURL          string `json:"base_url"`
+	Instructions     string `json:"instructions"`
+	MaxTurns         int    `json:"max_turns"`
+	APIKeyConfigured bool   `json:"api_key_configured"`
+}
+
+// ProviderConfigResponse is the browser-facing provider configuration.
+type ProviderConfigResponse struct {
+	Providers            []ProviderProfileResponse `json:"providers"`
+	ActiveID             string                    `json:"active_id"`
+	WebSearch            *WebSearchConfigResponse  `json:"web_search,omitempty"`
+	AuthProfiles         []APIAuthProfileResponse  `json:"auth_profiles,omitempty"`
+	DefaultAuthProfileID string                    `json:"default_auth_profile_id,omitempty"`
 }
 
 // WebSearchConfig is the persisted web-search backend used by the agent's
@@ -40,10 +64,62 @@ type WebSearchConfig struct {
 	MaxResults int    `json:"max_results,omitempty"`
 }
 
+// WebSearchConfigResponse is the browser-facing web-search configuration.
+type WebSearchConfigResponse struct {
+	Provider         string `json:"provider,omitempty"`
+	BaseURL          string `json:"base_url,omitempty"`
+	MaxResults       int    `json:"max_results,omitempty"`
+	APIKeyConfigured bool   `json:"api_key_configured"`
+}
+
+// APIAuthProfile is a persisted HTTP/API authorization profile for agent
+// tools such as http.request. Secret fields stay server-side for browser
+// responses.
+type APIAuthProfile struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Type        string `json:"type,omitempty"`
+	BaseURL     string `json:"base_url,omitempty"`
+	Token       string `json:"token,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Password    string `json:"password,omitempty"`
+	HeaderName  string `json:"header_name,omitempty"`
+	HeaderValue string `json:"header_value,omitempty"`
+	Cookie      string `json:"cookie,omitempty"`
+	Enabled     *bool  `json:"enabled,omitempty"`
+}
+
+// APIAuthProfileResponse is the browser-facing auth profile. It intentionally
+// omits raw token/password/header/cookie values and only reports configured
+// state.
+type APIAuthProfileResponse struct {
+	ID                    string `json:"id"`
+	Name                  string `json:"name,omitempty"`
+	Type                  string `json:"type,omitempty"`
+	BaseURL               string `json:"base_url,omitempty"`
+	Username              string `json:"username,omitempty"`
+	HeaderName            string `json:"header_name,omitempty"`
+	Enabled               bool   `json:"enabled"`
+	SecretConfigured      bool   `json:"secret_configured"`
+	TokenConfigured       bool   `json:"token_configured"`
+	PasswordConfigured    bool   `json:"password_configured"`
+	HeaderValueConfigured bool   `json:"header_value_configured"`
+	CookieConfigured      bool   `json:"cookie_configured"`
+}
+
 // ProviderStore persists provider configurations.
 type ProviderStore interface {
 	Load() (ProviderConfig, error)
 	Save(ProviderConfig) error
+}
+
+// ContextProviderStore is an optional extension for daemon-backed stores that
+// need to observe request-scoped tenant/workspace context without changing the
+// stable ProviderStore contract used by the local dashboard.
+type ContextProviderStore interface {
+	ProviderStore
+	LoadContext(context.Context) (ProviderConfig, error)
+	SaveContext(context.Context, ProviderConfig) error
 }
 
 type APIServer struct {
@@ -244,26 +320,325 @@ func (s *APIServer) handleProviderProfiles(w http.ResponseWriter, r *http.Reques
 	}
 	switch r.Method {
 	case http.MethodGet:
-		cfg, err := s.providers.Load()
+		cfg, err := loadProviderConfig(r.Context(), s.providers)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, cfg)
+		writeJSON(w, http.StatusOK, providerConfigResponse(cfg))
 	case http.MethodPut:
-		var cfg ProviderConfig
-		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-			http.Error(w, "invalid body", http.StatusBadRequest)
-			return
-		}
-		if err := s.providers.Save(cfg); err != nil {
+		existing, err := loadProviderConfig(r.Context(), s.providers)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, cfg)
+		cfg, err := decodeProviderConfigUpdate(r, existing)
+		if err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		if err := saveProviderConfig(r.Context(), s.providers, cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, providerConfigResponse(cfg))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func decodeProviderConfigUpdate(r *http.Request, existing ProviderConfig) (ProviderConfig, error) {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return ProviderConfig{}, err
+	}
+	cfg := cloneProviderConfigForUpdate(existing)
+	if value, ok := raw["providers"]; ok {
+		var providers []ProviderProfile
+		if err := json.Unmarshal(value, &providers); err != nil {
+			return ProviderConfig{}, err
+		}
+		cfg.Providers = mergeProviderSecrets(existing.Providers, providers)
+	}
+	if value, ok := raw["active_id"]; ok {
+		if err := json.Unmarshal(value, &cfg.ActiveID); err != nil {
+			return ProviderConfig{}, err
+		}
+	}
+	if value, ok := raw["web_search"]; ok {
+		if isJSONNull(value) {
+			cfg.WebSearch = nil
+		} else {
+			var webSearch WebSearchConfig
+			if err := json.Unmarshal(value, &webSearch); err != nil {
+				return ProviderConfig{}, err
+			}
+			cfg.WebSearch = mergeWebSearchSecret(existing.WebSearch, &webSearch)
+		}
+	}
+	if value, ok := raw["auth_profiles"]; ok {
+		var profiles []APIAuthProfile
+		if err := json.Unmarshal(value, &profiles); err != nil {
+			return ProviderConfig{}, err
+		}
+		cfg.AuthProfiles = mergeAPIAuthProfileSecrets(existing.AuthProfiles, profiles)
+	}
+	if value, ok := raw["default_auth_profile_id"]; ok {
+		if err := json.Unmarshal(value, &cfg.DefaultAuthProfileID); err != nil {
+			return ProviderConfig{}, err
+		}
+	}
+	return cfg, nil
+}
+
+func isJSONNull(value json.RawMessage) bool {
+	return strings.EqualFold(strings.TrimSpace(string(value)), "null")
+}
+
+func cloneProviderConfigForUpdate(cfg ProviderConfig) ProviderConfig {
+	clone := cfg
+	if cfg.Providers != nil {
+		clone.Providers = append([]ProviderProfile(nil), cfg.Providers...)
+	}
+	if cfg.WebSearch != nil {
+		webSearch := *cfg.WebSearch
+		clone.WebSearch = &webSearch
+	}
+	if cfg.AuthProfiles != nil {
+		clone.AuthProfiles = cloneAPIAuthProfiles(cfg.AuthProfiles)
+	}
+	return clone
+}
+
+func loadProviderConfig(ctx context.Context, store ProviderStore) (ProviderConfig, error) {
+	if scoped, ok := store.(ContextProviderStore); ok {
+		return scoped.LoadContext(ctx)
+	}
+	return store.Load()
+}
+
+func saveProviderConfig(ctx context.Context, store ProviderStore, cfg ProviderConfig) error {
+	if scoped, ok := store.(ContextProviderStore); ok {
+		return scoped.SaveContext(ctx, cfg)
+	}
+	return store.Save(cfg)
+}
+
+func providerConfigResponse(cfg ProviderConfig) ProviderConfigResponse {
+	providers := make([]ProviderProfileResponse, 0, len(cfg.Providers))
+	for _, profile := range cfg.Providers {
+		providers = append(providers, ProviderProfileResponse{
+			ID:               profile.ID,
+			Name:             profile.Name,
+			Type:             profile.Type,
+			Model:            profile.Model,
+			BaseURL:          profile.BaseURL,
+			Instructions:     profile.Instructions,
+			MaxTurns:         profile.MaxTurns,
+			APIKeyConfigured: strings.TrimSpace(profile.APIKey) != "",
+		})
+	}
+	resp := ProviderConfigResponse{
+		Providers:            providers,
+		ActiveID:             cfg.ActiveID,
+		AuthProfiles:         apiAuthProfileResponses(cfg.AuthProfiles),
+		DefaultAuthProfileID: cfg.DefaultAuthProfileID,
+	}
+	if cfg.WebSearch != nil {
+		resp.WebSearch = &WebSearchConfigResponse{
+			Provider:         cfg.WebSearch.Provider,
+			BaseURL:          cfg.WebSearch.BaseURL,
+			MaxResults:       cfg.WebSearch.MaxResults,
+			APIKeyConfigured: strings.TrimSpace(cfg.WebSearch.APIKey) != "",
+		}
+	}
+	return resp
+}
+
+func mergeProviderConfigSecrets(ctx context.Context, store ProviderStore, incoming ProviderConfig) (ProviderConfig, error) {
+	existing, err := loadProviderConfig(ctx, store)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	incoming.Providers = mergeProviderSecrets(existing.Providers, incoming.Providers)
+	incoming.AuthProfiles = mergeAPIAuthProfileSecrets(existing.AuthProfiles, incoming.AuthProfiles)
+	incoming.WebSearch = mergeWebSearchSecret(existing.WebSearch, incoming.WebSearch)
+	return incoming, nil
+}
+
+func mergeProviderSecrets(existingProfiles, incomingProfiles []ProviderProfile) []ProviderProfile {
+	if incomingProfiles == nil {
+		return []ProviderProfile{}
+	}
+	existingByID := make(map[string]ProviderProfile, len(existingProfiles))
+	for _, profile := range existingProfiles {
+		if strings.TrimSpace(profile.ID) == "" {
+			continue
+		}
+		existingByID[profile.ID] = profile
+	}
+	out := append([]ProviderProfile(nil), incomingProfiles...)
+	for i := range out {
+		profile := &out[i]
+		if strings.TrimSpace(profile.APIKey) != "" {
+			continue
+		}
+		existingProfile, ok := existingByID[profile.ID]
+		if !ok || !sameProviderSecretScope(existingProfile, *profile) {
+			continue
+		}
+		profile.APIKey = existingProfile.APIKey
+	}
+	return out
+}
+
+func mergeWebSearchSecret(existing, incoming *WebSearchConfig) *WebSearchConfig {
+	if incoming == nil {
+		return nil
+	}
+	webSearch := *incoming
+	if strings.TrimSpace(webSearch.APIKey) == "" && existing != nil && sameWebSearchSecretScope(*existing, webSearch) {
+		webSearch.APIKey = existing.APIKey
+	}
+	return &webSearch
+}
+
+func mergeAPIAuthProfileSecrets(existingProfiles, incomingProfiles []APIAuthProfile) []APIAuthProfile {
+	if incomingProfiles == nil {
+		return nil
+	}
+	existingByID := make(map[string]APIAuthProfile, len(existingProfiles))
+	for _, profile := range existingProfiles {
+		if strings.TrimSpace(profile.ID) == "" {
+			continue
+		}
+		existingByID[profile.ID] = profile
+	}
+	out := cloneAPIAuthProfiles(incomingProfiles)
+	for i := range out {
+		profile := &out[i]
+		existingProfile, ok := existingByID[profile.ID]
+		if !ok || !sameAPIAuthProfileSecretScope(existingProfile, *profile) {
+			continue
+		}
+		if strings.TrimSpace(profile.Token) == "" {
+			profile.Token = existingProfile.Token
+		}
+		if strings.TrimSpace(profile.Password) == "" {
+			profile.Password = existingProfile.Password
+		}
+		if strings.TrimSpace(profile.HeaderValue) == "" {
+			profile.HeaderValue = existingProfile.HeaderValue
+		}
+		if strings.TrimSpace(profile.Cookie) == "" {
+			profile.Cookie = existingProfile.Cookie
+		}
+	}
+	return out
+}
+
+func sameProviderSecretScope(existing ProviderProfile, incoming ProviderProfile) bool {
+	if strings.TrimSpace(existing.APIKey) == "" {
+		return false
+	}
+	existingType := strings.TrimSpace(strings.ToLower(existing.Type))
+	incomingType := strings.TrimSpace(strings.ToLower(incoming.Type))
+	return existingType == "" || incomingType == "" || existingType == incomingType
+}
+
+func sameWebSearchSecretScope(existing WebSearchConfig, incoming WebSearchConfig) bool {
+	if strings.TrimSpace(existing.APIKey) == "" {
+		return false
+	}
+	existingProvider := strings.TrimSpace(strings.ToLower(existing.Provider))
+	incomingProvider := strings.TrimSpace(strings.ToLower(incoming.Provider))
+	return existingProvider != "" && existingProvider == incomingProvider
+}
+
+func apiAuthProfileResponses(profiles []APIAuthProfile) []APIAuthProfileResponse {
+	if len(profiles) == 0 {
+		return nil
+	}
+	out := make([]APIAuthProfileResponse, 0, len(profiles))
+	for _, profile := range profiles {
+		enabled := true
+		if profile.Enabled != nil {
+			enabled = *profile.Enabled
+		}
+		tokenConfigured := strings.TrimSpace(profile.Token) != ""
+		passwordConfigured := strings.TrimSpace(profile.Password) != ""
+		headerValueConfigured := strings.TrimSpace(profile.HeaderValue) != ""
+		cookieConfigured := strings.TrimSpace(profile.Cookie) != ""
+		out = append(out, APIAuthProfileResponse{
+			ID:                    profile.ID,
+			Name:                  profile.Name,
+			Type:                  profile.Type,
+			BaseURL:               profile.BaseURL,
+			Username:              profile.Username,
+			HeaderName:            profile.HeaderName,
+			Enabled:               enabled,
+			SecretConfigured:      apiAuthProfileSecretConfigured(profile),
+			TokenConfigured:       tokenConfigured,
+			PasswordConfigured:    passwordConfigured,
+			HeaderValueConfigured: headerValueConfigured,
+			CookieConfigured:      cookieConfigured,
+		})
+	}
+	return out
+}
+
+func apiAuthProfileSecretConfigured(profile APIAuthProfile) bool {
+	switch normalizeAPIAuthProfileType(profile.Type) {
+	case "basic":
+		return strings.TrimSpace(profile.Password) != ""
+	case "api_key":
+		return strings.TrimSpace(profile.HeaderValue) != "" || strings.TrimSpace(profile.Token) != ""
+	case "cookie":
+		return strings.TrimSpace(profile.Cookie) != "" || strings.TrimSpace(profile.HeaderValue) != ""
+	case "custom":
+		return strings.TrimSpace(profile.HeaderValue) != ""
+	default:
+		return strings.TrimSpace(profile.Token) != "" || strings.TrimSpace(profile.HeaderValue) != ""
+	}
+}
+
+func sameAPIAuthProfileSecretScope(existing APIAuthProfile, incoming APIAuthProfile) bool {
+	if !apiAuthProfileSecretConfigured(existing) {
+		return false
+	}
+	existingType := normalizeAPIAuthProfileType(existing.Type)
+	incomingType := normalizeAPIAuthProfileType(incoming.Type)
+	return existingType == incomingType
+}
+
+func normalizeAPIAuthProfileType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "basic":
+		return "basic"
+	case "api_key", "apikey", "api-key":
+		return "api_key"
+	case "cookie":
+		return "cookie"
+	case "custom", "header":
+		return "custom"
+	default:
+		return "bearer"
+	}
+}
+
+func cloneAPIAuthProfiles(profiles []APIAuthProfile) []APIAuthProfile {
+	if profiles == nil {
+		return nil
+	}
+	out := make([]APIAuthProfile, len(profiles))
+	for i, profile := range profiles {
+		out[i] = profile
+		if profile.Enabled != nil {
+			enabled := *profile.Enabled
+			out[i].Enabled = &enabled
+		}
+	}
+	return out
 }
 
 func (s *APIServer) handleProviderTest(w http.ResponseWriter, r *http.Request) {

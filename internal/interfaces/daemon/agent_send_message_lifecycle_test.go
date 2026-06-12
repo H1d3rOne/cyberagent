@@ -31,28 +31,25 @@ func TestAgentManagerSendMessageRunsInsideRuntimeTurnLifecycle(t *testing.T) {
 		Phase:   "final_answer",
 		Content: "turn lifecycle completed",
 	}
-	eng.AttachTurnExecutor(runtime.TurnExecutorFunc(func(_ context.Context, turn runtime.TurnContext) (runtime.TurnResult, error) {
-		require.Equal(t, sessionID, turn.SessionID)
-		require.NotEmpty(t, turn.TaskID)
-		require.NotEmpty(t, turn.RunID)
-		require.NotEmpty(t, turn.TurnID)
-		require.Equal(t, "daemon health", turn.Prompt)
-		require.Equal(t, daemonTurnExecutionDeterministicRoute, turn.Origin)
-		return runtime.TurnResult{
-			Status: runtime.TurnResultFinished,
-			Reason: "done",
-			Payload: runtime.AgentLoopTurnResultPayload{
-				Messages: agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
-			},
+	eng.AttachAgentLoopRunner(runtime.AgentLoopRunnerFunc(func(_ context.Context, req runtime.AgentLoopRequest) (runtime.AgentLoopResult, error) {
+		require.Equal(t, runtime.AgentLoopModeDeterministicRoute, req.Mode)
+		require.Equal(t, sessionID, req.Turn.SessionID)
+		require.NotEmpty(t, req.Turn.TaskID)
+		require.NotEmpty(t, req.Turn.RunID)
+		require.NotEmpty(t, req.Turn.TurnID)
+		require.Equal(t, "daemon health", req.Turn.Prompt)
+		require.Equal(t, daemonTurnExecutionDeterministicRoute, req.Turn.Origin)
+		return runtime.AgentLoopResult{
+			Messages: agentLoopMessagesFromAgentMessages([]agentMessage{expectedMessage}),
 		}, nil
 	}))
 
-	resp, err := mgr.SendMessage(context.Background(), sessionID, sendAgentMessageRequest{
+	resp, err := mgr.SendMessageWithToolServices(context.Background(), sessionID, sendAgentMessageRequest{
 		Message:        "daemon health",
 		Operator:       "operator-1",
 		Language:       "en",
 		OperationLevel: "read_only",
-	}, routerServices{})
+	}, agentLoopToolServiceBindingFromRouterServices(routerServices{}))
 
 	require.NoError(t, err)
 	require.Len(t, resp.Messages, 2)

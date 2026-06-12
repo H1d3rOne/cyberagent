@@ -63,6 +63,58 @@ func TestNewServerCreatesTokenFileAndNormalizesDefaults(t *testing.T) {
 	}
 }
 
+func TestServerServeSupportsEmbeddedEphemeralLoopbackListener(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "config", "token")
+	server, err := NewServer(Config{RunsDir: t.TempDir(), TokenFile: tokenFile})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		_ = server.Close()
+		t.Fatalf("listen ephemeral loopback: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Serve(ctx, ln)
+	}()
+
+	token, err := os.ReadFile(tokenFile)
+	if err != nil {
+		cancel()
+		t.Fatalf("read token file: %v", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+ln.Addr().String()+"/api/v1/healthz", nil)
+	if err != nil {
+		cancel()
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		cancel()
+		t.Fatalf("embedded health request: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		cancel()
+		t.Fatalf("health status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Serve() after cancel error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Serve() did not stop after context cancellation")
+	}
+}
+
 func TestAgentRuntimeEngineEnabledFromEnv(t *testing.T) {
 	tests := []struct {
 		name  string

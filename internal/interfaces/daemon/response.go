@@ -69,6 +69,8 @@ func statusForCode(code services.ErrorCode) int {
 		return 499
 	case services.CodeUnsupported:
 		return http.StatusNotImplemented
+	case services.CodeRateLimited:
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusInternalServerError
 	}

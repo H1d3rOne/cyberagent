@@ -46,6 +46,9 @@
 33. CyberAgent-v0.1.6-Plan.md
 34. CyberAgent-v0.1.7-Plan.md
 35. CyberAgent-v0.1.8-Plan.md
+36. CyberAgent-Desktop-Wails-Spike.md
+37. CyberAgent-Local-Daemon-Stability.md
+38. CyberAgent-Web-Multi-User-Platform.md
 ```
 
 ---
@@ -91,6 +94,9 @@
 | `CyberAgent-v0.1.7-Plan.md` | v0.1.7 Agent Workspace 计划 |
 | `CyberAgent-v0.1.8-Plan.md` | v0.1.8 Command Execution 计划 |
 | `CyberAgent-Agent-Cockpit-Smoke-Test.md` | Agent Cockpit 本地浏览器 smoke test：会话、聊天、Inspector 页签、能力目录、工作区和 daemon 在线验证 |
+| `CyberAgent-Desktop-Wails-Spike.md` | Desktop / Wails 技术 spike：daemon 嵌入、runtime contract、WebView bootstrap、权限/日志/更新边界 |
+| `CyberAgent-Local-Daemon-Stability.md` | Local API / Daemon 稳定化记录：配置、token、runtime DB migration 与兼容策略滚动证据 |
+| `CyberAgent-Web-Multi-User-Platform.md` | Web 多用户平台 architecture/design slice：auth/session/tenant/workspace/API/storage/audit 边界与最小迁移计划 |
 
 ---
 

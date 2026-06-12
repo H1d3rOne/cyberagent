@@ -1,6 +1,11 @@
 package runtime
 
+import "strings"
+
 const (
+	// AgentLoopActionBatchDefaultMaxActions is the default upper bound applied to
+	// one planner action batch.
+	AgentLoopActionBatchDefaultMaxActions = 6
 	// AgentLoopActionQueueIDMetadataKey stores the queue identifier shared by all
 	// tool calls produced from one planner action batch.
 	AgentLoopActionQueueIDMetadataKey = "action_queue_id"
@@ -13,6 +18,9 @@ const (
 	// AgentLoopActionBatchTruncatedMetadataKey records whether a batch was bounded.
 	AgentLoopActionBatchTruncatedMetadataKey = "truncated"
 )
+
+// AgentLoopActionQueueIDGenerator produces a queue ID for non-empty action batches.
+type AgentLoopActionQueueIDGenerator func() string
 
 // AgentLoopPreparedActionBatch is the side-effect-free setup for bounded
 // planner action execution. It clones the action slice, applies the batch limit,
@@ -55,6 +63,23 @@ func PrepareAgentLoopActionBatch(actions []AgentLoopAction, queueID string, maxA
 	return AgentLoopPreparedActionBatch{QueueID: queueID, Actions: clonedActions, Result: result}
 }
 
+// PrepareAgentLoopActionBatchWithGeneratedQueueID prepares a planner action
+// batch using runtime-owned defaults. Queue IDs are generated only for non-empty
+// action batches.
+func PrepareAgentLoopActionBatchWithGeneratedQueueID(actions []AgentLoopAction, newQueueID AgentLoopActionQueueIDGenerator) AgentLoopPreparedActionBatch {
+	queueID := ""
+	if len(actions) > 0 && newQueueID != nil {
+		queueID = newQueueID()
+	}
+	return PrepareAgentLoopActionBatch(actions, queueID, AgentLoopActionBatchDefaultMaxActions)
+}
+
+// AgentLoopActionQueueIDFromJobID converts a run/job ID into the queue ID shape
+// used by planner action batches.
+func AgentLoopActionQueueIDFromJobID(jobID string) string {
+	return strings.Replace(jobID, "job_", "queue_", 1)
+}
+
 // AgentLoopActionBatchMetadata builds the batch-level queue metadata shared by
 // action batch results.
 func AgentLoopActionBatchMetadata(queueID string, count int, truncated bool) map[string]any {
@@ -74,6 +99,16 @@ func AgentLoopActionQueueMetadata(queueID string, index, count int, actionName s
 		AgentLoopActionCountMetadataKey:   count,
 		AgentLoopActionNameMetadataKey:    actionName,
 	}
+}
+
+// AppendAgentLoopActionBatchActionResultWithQueueMetadata stamps runtime-owned
+// action queue metadata onto top-level tool calls and message-embedded tool
+// calls before appending one action result to a batch accumulator.
+func AppendAgentLoopActionBatchActionResultWithQueueMetadata(result *AgentLoopActionBatchResult, preparedBatch AgentLoopPreparedActionBatch, actionIndex int, actionName string, messages []AgentLoopMessage, toolCalls []AgentLoopToolCall) {
+	actionMetadata := AgentLoopActionQueueMetadata(preparedBatch.QueueID, actionIndex, len(preparedBatch.Actions), actionName)
+	toolCalls = AgentLoopToolCallsWithMetadata(toolCalls, actionMetadata)
+	messages = AgentLoopMessagesWithToolMetadata(messages, actionMetadata)
+	AppendAgentLoopActionBatchActionResult(result, actionIndex, messages, toolCalls)
 }
 
 // MergeAgentLoopMetadata clones and merges metadata maps from left to right.

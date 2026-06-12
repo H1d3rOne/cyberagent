@@ -5,10 +5,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
 )
 
-func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID, language, operator, operationLevel string, svc routerServices, action agentPlannerAction, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) executeAgentPlannerActionResultWithToolServices(ctx context.Context, sessionID, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, action agentPlannerAction, authorization runtime.AgentLoopAuthorization) (runtime.AgentLoopActionExecutorResult, error) {
 	name := normalizeAgentPlannerActionName(action.Name)
 	args := action.Arguments
 	if args == nil {
@@ -17,55 +18,21 @@ func (m *agentManager) executeAgentPlannerAction(ctx context.Context, sessionID,
 
 	if spec, ok := toolRegistry().Lookup(name); ok {
 		if spec.Handler == nil {
-			return nil, nil, services.NewError(services.CodeInternal, "planner action handler is not configured", map[string]any{"action": name}, nil)
+			err := services.NewError(services.CodeInternal, "planner action handler is not configured", map[string]any{"action": name}, nil)
+			return daemonPlannerActionExecutionResultFromRuntime(nil, nil, err), err
 		}
-		return m.executeAgentRegistryHandler(ctx, sessionID, language, operator, operationLevel, svc, spec, args, authProfiles, defaultAuthProfileID)
+		return m.executeAgentRegistryHandlerResultWithToolServices(ctx, sessionID, language, operator, operationLevel, toolServices, spec, args, authorization)
 	}
 
-	return nil, nil, services.NewError(services.CodeUnsupported, "unsupported planner action", map[string]any{"action": action.Name, "normalized_action": name}, nil)
+	err := services.NewError(services.CodeUnsupported, "unsupported planner action", map[string]any{"action": action.Name, "normalized_action": name}, nil)
+	return daemonPlannerActionExecutionResultFromRuntime(nil, nil, err), err
 }
 
-func (m *agentManager) routeReadOnlySystemHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentReadOnlySystemRouteAction, "read-only/system registry route slice")
+func (m *agentManager) routeReadOnlySystemHeuristicActionsWithToolServices(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding) ([]agentMessage, []agentToolCall, error) {
+	return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 }
 
-func (m *agentManager) routeSafeHTTPHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentSafeHTTPRouteAction, "safe HTTP registry route slice")
-}
-
-func (m *agentManager) routeAdvancedHTTPHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentAdvancedHTTPRouteAction, "advanced HTTP registry route slice")
-}
-
-func (m *agentManager) routeSafePortScanHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentSafePortScanRouteAction, "safe port scan registry route slice")
-}
-
-func (m *agentManager) routeSafeScanHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentSafeScanRouteAction, "safe scan registry route slice")
-}
-
-func (m *agentManager) routeWorkspaceStagedChangeHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentWorkspaceStagedChangeRouteAction, "workspace staged-change registry route slice")
-}
-
-func (m *agentManager) routeWorkspaceMutationHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentWorkspaceMutationRouteAction, "workspace mutation registry route slice")
-}
-
-func (m *agentManager) routeApprovalOperationHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentApprovalOperationRouteAction, "approval operation registry route slice")
-}
-
-func (m *agentManager) routeReportDraftHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentReportDraftRouteAction, "report draft registry route slice")
-}
-
-func (m *agentManager) routeScheduleHeuristicActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	return m.routeHeuristicRegistryActions(ctx, sessionID, prompt, language, operator, operationLevel, svc, nil, "", agentScheduleRouteAction, "schedule registry route slice")
-}
-
-func (m *agentManager) routeHeuristicRegistryActions(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices, authProfiles []agentHTTPAuthProfile, defaultAuthProfileID string, allowed func(string, map[string]any) bool, sliceName string) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) routeHeuristicRegistryActionsWithToolServices(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding, authorization runtime.AgentLoopAuthorization, allowed func(string, map[string]any) bool, sliceName string) ([]agentMessage, []agentToolCall, error) {
 	actions := agentHeuristicActionsFromPrompt(prompt)
 	if len(actions) == 0 {
 		return []agentMessage{m.message(language, "agent", agentExplain(language), nil, nil)}, nil, nil
@@ -84,7 +51,22 @@ func (m *agentManager) routeHeuristicRegistryActions(ctx context.Context, sessio
 		if allowed == nil || !allowed(actionName, action.Arguments) {
 			return nil, nil, services.NewError(services.CodeUnsupported, "heuristic action is outside the "+sliceName, map[string]any{"action": action.Name, "normalized_action": actionName}, nil)
 		}
-		actionMessages, actionToolCalls, err := m.executeAgentPlannerAction(ctx, sessionID, language, operator, operationLevel, svc, action, authProfiles, defaultAuthProfileID)
+		loopReq := agentPlannerActionExecutionRequestFromRuntime(
+			sessionID,
+			agentRuntimeTurnRef{},
+			prompt,
+			language,
+			operator,
+			operationLevel,
+			toolServices,
+			authorization,
+		)
+		loopReq.Mode = runtime.AgentLoopModePlannerActionExecution
+		loopReq.Action = agentPlannerActionReplanCyclePlanActionFromAgentPlannerAction(action)
+		actionResult, err := daemonAgentLoopActionExecutor{manager: m}.ExecuteAgentLoopAction(ctx, runtime.AgentLoopActionExecutorRequest{
+			Request: loopReq,
+			Action:  loopReq.Action,
+		})
 		if err != nil {
 			tool := failedAgentToolCall(firstNonEmpty(actionName, "agent.action"), err)
 			tool.Result = map[string]any{"action": actionName}
@@ -92,6 +74,8 @@ func (m *agentManager) routeHeuristicRegistryActions(ctx context.Context, sessio
 			toolCalls = append(toolCalls, tool)
 			return messages, toolCalls, nil
 		}
+		actionMessages := agentMessagesFromAgentLoopMessages(actionResult.Messages)
+		actionToolCalls := agentLoopToolCallItemsToAgentToolCalls(actionResult.ToolCalls)
 		messages = append(messages, actionMessages...)
 		toolCalls = append(toolCalls, actionToolCalls...)
 	}
@@ -291,11 +275,11 @@ func agentScheduleRouteAction(actionName string, _ map[string]any) bool {
 	}
 }
 
-func (m *agentManager) routePrompt(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, svc routerServices) (messages []agentMessage, toolCalls []agentToolCall, err error) {
-	return m.routePromptForTurn(ctx, sessionID, agentRuntimeTurnRef{}, prompt, language, operator, operationLevel, svc)
+func (m *agentManager) routePromptWithToolServices(ctx context.Context, sessionID, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding) (messages []agentMessage, toolCalls []agentToolCall, err error) {
+	return m.routePromptForTurnWithToolServices(ctx, sessionID, agentRuntimeTurnRef{}, prompt, language, operator, operationLevel, toolServices)
 }
 
-func (m *agentManager) routePromptForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, svc routerServices) (messages []agentMessage, toolCalls []agentToolCall, err error) {
+func (m *agentManager) routePromptForTurnWithToolServices(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, prompt, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding) (messages []agentMessage, toolCalls []agentToolCall, err error) {
 	routeMetadataSource := "deterministic_route/direct_handler"
 	defer func() {
 		if err == nil {
@@ -316,28 +300,28 @@ func (m *agentManager) routePromptForTurn(ctx context.Context, sessionID string,
 	switch {
 	case agentIsScheduleCreateIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeScheduleHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentScheduleRouteAction, "schedule registry route slice")
 	case agentIsScheduleListIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeScheduleHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentScheduleRouteAction, "schedule registry route slice")
 	case agentIsScheduleDeleteIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeScheduleHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentScheduleRouteAction, "schedule registry route slice")
 	case agentIsResumeApprovedIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeApprovalOperationHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentApprovalOperationRouteAction, "approval operation registry route slice")
 	case agentIsApprovalDecisionIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeApprovalOperationHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentApprovalOperationRouteAction, "approval operation registry route slice")
 	case agentIsReportDraftIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReportDraftHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReportDraftRouteAction, "report draft registry route slice")
 	case agentIsRunContextAnalysisIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	case agentIsPortScanIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeSafePortScanHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentSafePortScanRouteAction, "safe port scan registry route slice")
 	case agentHasCapabilityGapIntent(prompt):
 		plan := agentCapabilityGapPlannerFromPrompt(prompt, "", language)
 		if plan != nil {
@@ -349,13 +333,13 @@ func (m *agentManager) routePromptForTurn(ctx context.Context, sessionID string,
 		return []agentMessage{m.message(language, "agent", agentExplain(language), nil, nil)}, nil, nil
 	case agentIsScanIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeSafeScanHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentSafeScanRouteAction, "safe scan registry route slice")
 	case agentIsCommandIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	case agentIsWorkspaceDiffIntent(prompt) || agentIsWorkspaceRebaseIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeWorkspaceStagedChangeHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentWorkspaceStagedChangeRouteAction, "workspace staged-change registry route slice")
 	case agentIsWorkspaceWriteIntent(prompt) ||
 		agentIsWorkspacePatchIntent(prompt) ||
 		agentIsWorkspaceApplyIntent(prompt) ||
@@ -367,38 +351,38 @@ func (m *agentManager) routePromptForTurn(ctx context.Context, sessionID string,
 		agentIsWorkspaceCopyIntent(prompt) ||
 		agentIsWorkspaceMkdirIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeWorkspaceMutationHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentWorkspaceMutationRouteAction, "workspace mutation registry route slice")
 	case agentIsApprovalIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	case agentIsHealthIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	case agentIsPluginIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	case agentIsRunIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	case agentIsHTTPRequestIntent(prompt) || agentIsAPIFunctionalTestIntent(prompt):
 		if agentHTTPMethodIsSafe(agentExtractHTTPMethod(prompt)) {
 			routeMetadataSource = "deterministic_route/registry_dispatch"
-			return m.routeSafeHTTPHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+			return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentSafeHTTPRouteAction, "safe HTTP registry route slice")
 		}
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeAdvancedHTTPHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentAdvancedHTTPRouteAction, "advanced HTTP registry route slice")
 	case agentIsWorkspaceSearchIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	case agentIsWorkspaceTreeIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	case agentIsWorkspaceReadIntent(prompt) || agentIsWorkspaceListIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	case agentIsWorkspaceIntent(prompt):
 		routeMetadataSource = "deterministic_route/registry_dispatch"
-		return m.routeReadOnlySystemHeuristicActions(ctx, sessionID, prompt, language, operator, operationLevel, svc)
+		return m.routeHeuristicRegistryActionsWithToolServices(ctx, sessionID, prompt, language, operator, operationLevel, toolServices, runtime.AgentLoopAuthorization{}, agentReadOnlySystemRouteAction, "read-only/system registry route slice")
 	default:
 		_ = operator
 		return []agentMessage{m.message(language, "agent", agentExplain(language), nil, nil)}, nil, nil

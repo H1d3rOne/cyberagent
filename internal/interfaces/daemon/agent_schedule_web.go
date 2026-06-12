@@ -12,10 +12,12 @@ import (
 
 	"github.com/H1d3rOne/cyberagent/internal/agent/search"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	"github.com/H1d3rOne/cyberagent/internal/interfaces/web"
 )
 
-func (m *agentManager) handleAgentScheduleCreate(sessionID, language, operator string, svc routerServices, args map[string]any) ([]agentMessage, []agentToolCall, error) {
-	if svc.schedules == nil {
+func (m *agentManager) handleAgentScheduleCreate(ctx context.Context, sessionID, language, operator string, resolver daemonAgentLoopActionServiceResolver, args map[string]any) ([]agentMessage, []agentToolCall, error) {
+	schedules, ok := resolver.ScheduleManager()
+	if !ok {
 		return nil, nil, services.NewError(services.CodeUnsupported, "scheduler not available", nil, nil)
 	}
 	tool := runningAgentToolCall("POST /api/v1/schedules", "from_agent")
@@ -94,7 +96,7 @@ func (m *agentManager) handleAgentScheduleCreate(sessionID, language, operator s
 		spec.Name = agentText(language, "定时提示词", "scheduled prompt")
 	}
 
-	created, err := svc.schedules.Create(spec)
+	created, err := schedules.CreateWithContext(ctx, spec)
 	tool = finishAgentToolCall(tool, err)
 	if err != nil {
 		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
@@ -121,12 +123,13 @@ func (m *agentManager) handleAgentScheduleCreate(sessionID, language, operator s
 	return []agentMessage{m.message(language, "tool", content, []agentToolCall{tool}, links)}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentScheduleList(language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
-	if svc.schedules == nil {
+func (m *agentManager) handleAgentScheduleList(ctx context.Context, language string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
+	schedules, ok := resolver.ScheduleManager()
+	if !ok {
 		return nil, nil, services.NewError(services.CodeUnsupported, "scheduler not available", nil, nil)
 	}
 	tool := runningAgentToolCall("GET /api/v1/schedules", "")
-	items := svc.schedules.List()
+	items := schedules.ListWithContext(ctx)
 	tool = finishAgentToolCall(tool, nil)
 	tool.Result = map[string]any{"count": len(items)}
 
@@ -160,8 +163,9 @@ func (m *agentManager) handleAgentScheduleList(language string, svc routerServic
 	return []agentMessage{m.message(language, "tool", content, []agentToolCall{tool}, links)}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentScheduleDelete(language string, svc routerServices, args map[string]any) ([]agentMessage, []agentToolCall, error) {
-	if svc.schedules == nil {
+func (m *agentManager) handleAgentScheduleDelete(ctx context.Context, language string, resolver daemonAgentLoopActionServiceResolver, args map[string]any) ([]agentMessage, []agentToolCall, error) {
+	schedules, ok := resolver.ScheduleManager()
+	if !ok {
 		return nil, nil, services.NewError(services.CodeUnsupported, "scheduler not available", nil, nil)
 	}
 	id := strings.TrimSpace(firstNonEmpty(
@@ -176,7 +180,7 @@ func (m *agentManager) handleAgentScheduleDelete(language string, svc routerServ
 		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
 		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
 	}
-	err := svc.schedules.Delete(id)
+	err := schedules.DeleteWithContext(ctx, id)
 	tool = finishAgentToolCall(tool, err)
 	if err != nil {
 		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
@@ -188,11 +192,20 @@ func (m *agentManager) handleAgentScheduleDelete(language string, svc routerServ
 	return []agentMessage{m.message(language, "tool", content, []agentToolCall{tool}, links)}, []agentToolCall{tool}, nil
 }
 
-func agentLoadWebSearchConfig(svc routerServices) (search.Config, bool, error) {
-	if svc.providers == nil {
+func agentLoadWebSearchConfig(ctx context.Context, resolver daemonAgentLoopActionServiceResolver) (search.Config, bool, error) {
+	providers, ok := resolver.ProviderStore()
+	if !ok {
 		return search.Config{}, false, nil
 	}
-	cfg, err := svc.providers.Load()
+	var (
+		cfg web.ProviderConfig
+		err error
+	)
+	if scoped, ok := providers.(web.ContextProviderStore); ok {
+		cfg, err = scoped.LoadContext(ctx)
+	} else {
+		cfg, err = providers.Load()
+	}
 	if err != nil {
 		return search.Config{}, false, err
 	}
@@ -207,7 +220,7 @@ func agentLoadWebSearchConfig(svc routerServices) (search.Config, bool, error) {
 	}, true, nil
 }
 
-func (m *agentManager) handleAgentWebSearch(ctx context.Context, language string, svc routerServices, args map[string]any) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentWebSearch(ctx context.Context, language string, resolver daemonAgentLoopActionServiceResolver, args map[string]any) ([]agentMessage, []agentToolCall, error) {
 	query := strings.TrimSpace(firstNonEmpty(
 		stringFromAny(args["query"]),
 		stringFromAny(args["q"]),
@@ -220,7 +233,7 @@ func (m *agentManager) handleAgentWebSearch(ctx context.Context, language string
 		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
 		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
 	}
-	cfg, ok, loadErr := agentLoadWebSearchConfig(svc)
+	cfg, ok, loadErr := agentLoadWebSearchConfig(ctx, resolver)
 	if loadErr != nil {
 		tool = finishAgentToolCall(tool, loadErr)
 		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(loadErr), Message: loadErr.Error()}
@@ -232,7 +245,7 @@ func (m *agentManager) handleAgentWebSearch(ctx context.Context, language string
 		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
 		return []agentMessage{m.message(language, "tool", err.Error(), []agentToolCall{tool}, nil)}, []agentToolCall{tool}, nil
 	}
-	provider, err := search.NewFromConfig(cfg)
+	searchProvider, err := search.NewFromConfig(cfg)
 	if err != nil {
 		if errors.Is(err, search.ErrNotConfigured) {
 			err = services.NewError(services.CodeBadRequest, "web.search not configured; open Settings → Web Search and set a provider + api key", map[string]any{"action": "web.search"}, err)
@@ -262,7 +275,7 @@ func (m *agentManager) handleAgentWebSearch(ctx context.Context, language string
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	result, err := provider.Search(reqCtx, search.Query{
+	result, err := searchProvider.Search(reqCtx, search.Query{
 		Query:      query,
 		MaxResults: max,
 		Locale:     stringFromAny(args["locale"]),

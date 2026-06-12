@@ -188,6 +188,40 @@ snapshot 生成 darwin/linux amd64/arm64 产物和 checksums.txt。
 
 ---
 
+## 7.1 Deprecated Runtime API Compatibility Gate
+
+发布前必须确认 runtime engine 旧 seam 的迁移公告已经同步到 release/API 文档。
+
+当前策略：
+
+```text
+runtime.Engine.RunLLMTurn / runtime.LLMTurnRunner: Deprecated；替代 runtime.Engine.RunAgentLoop。
+runtime.Engine.ExecuteTurn / runtime.TurnExecutor: Deprecated；替代 runtime.Engine.RunAgentLoop 或 runtime.Engine.ExecuteAgentLoopAction。
+迁移窗口：current_release_gate。
+默认 attachment：AttachLLMTurnRunner 与 AttachTurnExecutor retained_until_release_gate。
+opt-in：当前 release gate 不新增 opt-in compatibility flag；release gate 后再评估是否转为显式 opt-in。
+```
+
+建议命令：
+
+```bash
+rg -n "RunLLMTurn|ExecuteTurn|Deprecated|current_release_gate|RunAgentLoop|ExecuteAgentLoopAction|AttachLLMTurnRunner|AttachTurnExecutor|retained_until_release_gate|opt-in" \
+  docs/release-notes docs/api docs/CyberAgent-Release-Checklist.md docs/CyberAgent-Release-Plan.md
+
+go test -count=1 ./internal/interfaces/daemon -run 'TestDaemonDeprecatedRuntimeAPIReleaseDocs'
+```
+
+验收：
+
+```text
+release notes 与 API contract 均包含 RunLLMTurn、ExecuteTurn、Deprecated、current_release_gate、RunAgentLoop、ExecuteAgentLoopAction。
+AttachLLMTurnRunner / AttachTurnExecutor 默认兼容 attachment 明确 retained_until_release_gate。
+当前 release gate 不要求新增 opt-in compatibility flag。
+如后续要将默认兼容 attachment 改为 opt-in，必须先更新 release notes/API contract 并补迁移窗口说明。
+```
+
+---
+
 ## 8. Tag 与远程发布
 
 创建本地 tag：

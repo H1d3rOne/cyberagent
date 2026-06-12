@@ -1,11 +1,16 @@
+import { useEffect, useMemo, useState } from 'react'
 import { Bot, CheckCircle2, Clock, Loader2, MessageSquare, ShieldCheck, Sparkles, Wrench } from 'lucide-react'
 import { GlassAlert, GlassCard, StatusPill } from '@/components/glass'
 import { Button } from '@/components/ui/button'
 import { text, type Language } from '@/lib/console'
 import { cn } from '@/lib/utils'
-import type { AgentCockpitState, AgentTurnView, OptimisticMessage } from '@/agent/state/store'
+import type { AgentCockpitState, AgentTurnView, OptimisticMessage, TimelineEventView } from '@/agent/state/store'
 import { commandFromToolCall, formatTime, messageText, parseCommandSummary, roleLabel, safeJson, statusLabel, statusPillClass, toolDotClass } from '@/agent/utils'
 import { OutputBlock } from './shared'
+import { buildEventLookup, nextTimelineLimit, windowTimelineItems } from './timeline-windowing'
+
+const TURN_INITIAL_LIMIT = 30
+const TURN_LOAD_STEP = 30
 
 export function TurnTimeline({
   state,
@@ -24,6 +29,27 @@ export function TurnTimeline({
   onExecutePrompt: (prompt: string) => void
   onCreateSession: () => void
 }) {
+  const [turnLimit, setTurnLimit] = useState(TURN_INITIAL_LIMIT)
+  const sessionId = state.session?.session_id || state.activeSessionId
+  const turns = state.turns
+  const selectedTurnIndex = state.selectedTurnId ? turns.findIndex((turn) => turn.id === state.selectedTurnId) : -1
+  const runningTurnIndex = turns.findIndex((turn) => turn.status === 'running')
+  const focusedTurnIndex = selectedTurnIndex >= 0 ? selectedTurnIndex : runningTurnIndex >= 0 ? runningTurnIndex : undefined
+  const eventById = useMemo(() => buildEventLookup(state.events), [state.events])
+  const turnWindow = useMemo(
+    () => windowTimelineItems(turns, {
+      initialLimit: turnLimit,
+      step: TURN_LOAD_STEP,
+      focusIndex: focusedTurnIndex,
+      anchor: 'tail',
+    }),
+    [focusedTurnIndex, turnLimit, turns],
+  )
+
+  useEffect(() => {
+    setTurnLimit(TURN_INITIAL_LIMIT)
+  }, [sessionId])
+
   if (!state.session && !state.loadingSession) {
     return <EmptyAgentState language={language} onCreate={onCreateSession} />
   }
@@ -35,15 +61,23 @@ export function TurnTimeline({
     )
   }
 
-  const turns = state.turns
   return (
     <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-end px-0">
       <div className="space-y-4">
-        {turns.map((turn) => (
+        {turnWindow.canShowMoreBefore && (
+          <TimelineWindowNotice
+            hidden={turnWindow.hiddenBefore}
+            label={text(language, '已隐藏更早 Turn', 'earlier turns hidden')}
+            action={text(language, '显示更早 Turn', 'Show earlier turns')}
+            onClick={() => setTurnLimit((current) => nextTimelineLimit(current, turnWindow.total, TURN_LOAD_STEP))}
+          />
+        )}
+        {turnWindow.items.map((turn) => (
           <TurnGroup
             key={turn.id}
             turn={turn}
             state={state}
+            eventById={eventById}
             language={language}
             disabled={Boolean(disabled)}
             onSelectTool={onSelectTool}
@@ -51,6 +85,14 @@ export function TurnTimeline({
             onExecutePrompt={onExecutePrompt}
           />
         ))}
+        {turnWindow.canShowMoreAfter && (
+          <TimelineWindowNotice
+            hidden={turnWindow.hiddenAfter}
+            label={text(language, '已隐藏较新 Turn', 'newer turns hidden')}
+            action={text(language, '显示更多 Turn', 'Show more turns')}
+            onClick={() => setTurnLimit((current) => nextTimelineLimit(current, turnWindow.total, TURN_LOAD_STEP))}
+          />
+        )}
         {state.optimisticMessages.map((message) => (
           <OptimisticBubble key={message.id} message={message} language={language} />
         ))}
@@ -63,6 +105,20 @@ export function TurnTimeline({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function TimelineWindowNotice({ hidden, label, action, onClick }: { hidden: number; label: string; action: string; onClick: () => void }) {
+  return (
+    <div className="flex justify-center">
+      <button
+        type="button"
+        onClick={onClick}
+        className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition hover:border-primary/30 hover:text-foreground"
+      >
+        {hidden} {label} · {action}
+      </button>
     </div>
   )
 }
@@ -90,6 +146,7 @@ function EmptyAgentState({ language, onCreate }: { language: Language; onCreate:
 function TurnGroup({
   turn,
   state,
+  eventById,
   language,
   disabled,
   onSelectTool,
@@ -98,6 +155,7 @@ function TurnGroup({
 }: {
   turn: AgentTurnView
   state: AgentCockpitState
+  eventById: ReadonlyMap<string, TimelineEventView>
   language: Language
   disabled: boolean
   onSelectTool: (toolCallId: string) => void
@@ -106,8 +164,9 @@ function TurnGroup({
 }) {
   const tools = state.session ? turn.toolCallIds.map((id) => findTool(state, id)).filter(Boolean) : []
   const todos = state.session ? turn.todoIds.map((id) => state.session?.todos?.find((todo) => todo.id === id)).filter(Boolean) : []
-  const memoryEvents = state.events.filter((event) => turn.eventIds.includes(event.id) && event.type === 'memory_compacted')
-  const approvalEvents = state.events.filter((event) => turn.eventIds.includes(event.id) && (event.type === 'approval_required' || event.type === 'approval_resolved'))
+  const turnEvents = turn.eventIds.map((id) => eventById.get(id)).filter((event): event is TimelineEventView => Boolean(event))
+  const memoryEvents = turnEvents.filter((event) => event.type === 'memory_compacted')
+  const approvalEvents = turnEvents.filter((event) => event.type === 'approval_required' || event.type === 'approval_resolved')
 
   return (
     <GlassCard as="section" variant="panel" className="relative p-2.5 shadow-[0_18px_50px_rgba(0,0,0,.16)] sm:p-3">

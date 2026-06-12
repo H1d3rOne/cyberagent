@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Activity,
@@ -26,9 +26,17 @@ import type { ApprovalRequest, Artifact, Finding, ScanDetail, UIEvent } from '@/
 import { text, useConsole } from '@/lib/console'
 import { cn } from '@/lib/utils'
 import { hostLabel, severityTone, statusLabel, statusTone } from '@/lib/view'
+import { nextTimelineLimit, windowTimelineItems } from '@/agent/components/timeline-windowing'
 
 type AuditFilter = 'all' | 'error' | 'warning' | 'finding' | 'artifact' | 'approval'
 type EvidenceView = 'overview' | 'findings' | 'artifacts' | 'approvals' | 'report'
+
+const SCAN_EVENT_INITIAL_LIMIT = 300
+const SCAN_EVENT_LOAD_STEP = 300
+const STEP_GROUP_INITIAL_LIMIT = 120
+const STEP_GROUP_LOAD_STEP = 120
+const STEP_DETAIL_EVENT_INITIAL_LIMIT = 200
+const STEP_DETAIL_EVENT_LOAD_STEP = 200
 
 export function ScanDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -44,6 +52,8 @@ export function ScanDetailPage() {
   const [auditSearch, setAuditSearch] = useState('')
   const [auditFilter, setAuditFilter] = useState<AuditFilter>('all')
   const [evidenceView, setEvidenceView] = useState<EvidenceView>('overview')
+  const [eventLimit, setEventLimit] = useState(SCAN_EVENT_INITIAL_LIMIT)
+  const [stepGroupLimit, setStepGroupLimit] = useState(STEP_GROUP_INITIAL_LIMIT)
   const eventsEndRef = useRef<HTMLDivElement>(null)
   const eventRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const focusStep = searchParams.get('step') || ''
@@ -135,6 +145,58 @@ export function ScanDetailPage() {
     setAuditFilter(filter)
   }
 
+  useEffect(() => {
+    setEventLimit(SCAN_EVENT_INITIAL_LIMIT)
+    setStepGroupLimit(STEP_GROUP_INITIAL_LIMIT)
+    eventRefs.current = {}
+  }, [id, auditFilter, auditSearch, focusStep])
+
+  const allEvents = useMemo(() => (scan ? [...scan.events, ...liveEvents] : liveEvents), [liveEvents, scan])
+  const stepGroups = useMemo(() => buildStepGroups(allEvents, scan), [allEvents, scan])
+  const evidenceSummary = useMemo(() => (scan ? buildRunEvidenceSummary(scan, stepGroups) : null), [scan, stepGroups])
+  const selectedStepGroup = useMemo(
+    () => (focusStep ? stepGroups.find((group) => group.stepID === focusStep) || null : null),
+    [focusStep, stepGroups],
+  )
+  const visibleStepGroups = useMemo(
+    () => stepGroups.filter((group) => stepGroupMatchesAudit(group, auditSearch, auditFilter)),
+    [auditFilter, auditSearch, stepGroups],
+  )
+  const visibleEvents = useMemo(
+    () => allEvents.filter((event) => eventMatchesAudit(event, auditSearch, auditFilter)),
+    [allEvents, auditFilter, auditSearch],
+  )
+  const auditActive = auditSearch.trim().length > 0 || auditFilter !== 'all'
+  const auditFilterOptions = useMemo(() => buildAuditFilterOptions(language), [language])
+  const focusEvents = useMemo(
+    () => (focusStep ? allEvents.filter((event) => eventMatchesStep(event, focusStep)) : []),
+    [allEvents, focusStep],
+  )
+  const focusApprovals = useMemo(
+    () => (focusStep ? (scan?.approvals || []).filter((approval) => approval.step_id === focusStep) : []),
+    [focusStep, scan?.approvals],
+  )
+  const focusedEventIndex = focusStep ? visibleEvents.findIndex((event) => eventMatchesStep(event, focusStep)) : -1
+  const focusedStepGroupIndex = focusStep ? visibleStepGroups.findIndex((group) => group.stepID === focusStep) : -1
+  const eventWindow = useMemo(
+    () => windowTimelineItems(visibleEvents, {
+      initialLimit: eventLimit,
+      step: SCAN_EVENT_LOAD_STEP,
+      focusIndex: focusedEventIndex >= 0 ? focusedEventIndex : undefined,
+      anchor: 'tail',
+    }),
+    [eventLimit, focusedEventIndex, visibleEvents],
+  )
+  const stepGroupWindow = useMemo(
+    () => windowTimelineItems(visibleStepGroups, {
+      initialLimit: stepGroupLimit,
+      step: STEP_GROUP_LOAD_STEP,
+      focusIndex: focusedStepGroupIndex >= 0 ? focusedStepGroupIndex : undefined,
+      anchor: 'head',
+    }),
+    [focusedStepGroupIndex, stepGroupLimit, visibleStepGroups],
+  )
+
   const handleExportEvidence = (format: 'md' | 'json') => {
     if (!scan || !evidenceSummary) return
     exportRunEvidence(scan, evidenceSummary, stepGroups, format)
@@ -148,16 +210,6 @@ export function ScanDetailPage() {
     )
   }
 
-  const allEvents = scan ? [...scan.events, ...liveEvents] : liveEvents
-  const stepGroups = buildStepGroups(allEvents, scan)
-  const evidenceSummary = scan ? buildRunEvidenceSummary(scan, stepGroups) : null
-  const selectedStepGroup = focusStep ? stepGroups.find((group) => group.stepID === focusStep) || null : null
-  const visibleStepGroups = stepGroups.filter((group) => stepGroupMatchesAudit(group, auditSearch, auditFilter))
-  const visibleEvents = allEvents.filter((event) => eventMatchesAudit(event, auditSearch, auditFilter))
-  const auditActive = auditSearch.trim().length > 0 || auditFilter !== 'all'
-  const auditFilterOptions = buildAuditFilterOptions(language)
-  const focusEvents = focusStep ? allEvents.filter((event) => eventMatchesStep(event, focusStep)) : []
-  const focusApprovals = focusStep ? (scan?.approvals || []).filter((approval) => approval.step_id === focusStep) : []
   const isRunning = scan?.status === 'running'
   const isInteractive = scan?.interactive
   const isWaiting = scan?.waiting
@@ -328,11 +380,19 @@ export function ScanDetailPage() {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <SectionTitle icon={Activity} className="mb-0">{text(language, '执行链', 'Execution Chain')}</SectionTitle>
             <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 font-mono text-[10px] text-muted-foreground">
-              {visibleStepGroups.length}/{stepGroups.length} steps
+              {stepGroupWindow.visibleCount}/{visibleStepGroups.length} visible · {stepGroups.length} total
             </span>
           </div>
+          {stepGroupWindow.canShowMoreBefore && (
+            <TimelineLoadMore
+              hidden={stepGroupWindow.hiddenBefore}
+              label={text(language, '个更早步骤已隐藏', 'earlier steps hidden')}
+              action={text(language, '显示更早步骤', 'Show earlier steps')}
+              onClick={() => setStepGroupLimit((current) => nextTimelineLimit(current, stepGroupWindow.total, STEP_GROUP_LOAD_STEP))}
+            />
+          )}
           <div className="grid gap-2 lg:grid-cols-2">
-            {visibleStepGroups.map((group) => (
+            {stepGroupWindow.items.map((group) => (
               <StepChainCard
                 key={group.stepID}
                 group={group}
@@ -346,20 +406,40 @@ export function ScanDetailPage() {
               </div>
             )}
           </div>
+          {stepGroupWindow.canShowMoreAfter && (
+            <TimelineLoadMore
+              hidden={stepGroupWindow.hiddenAfter}
+              label={text(language, '个后续步骤已隐藏', 'newer steps hidden')}
+              action={text(language, '显示更多步骤', 'Show more steps')}
+              onClick={() => setStepGroupLimit((current) => nextTimelineLimit(current, stepGroupWindow.total, STEP_GROUP_LOAD_STEP))}
+              className="mt-3"
+            />
+          )}
         </section>
       )}
 
       <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
         <section className="flex max-h-[600px] flex-col rounded-[1.5rem] border border-white/[0.08] bg-white/[0.03]">
-          <div className="border-b border-white/10 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
             <SectionTitle icon={Activity} className="mb-0">{t('events')}</SectionTitle>
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 font-mono text-[10px] text-muted-foreground">
+              {eventWindow.visibleCount}/{visibleEvents.length} visible · {allEvents.length} total
+            </span>
           </div>
           <div className="flex-1 space-y-1 overflow-y-auto p-3">
-            {visibleEvents.map((ev, i) => {
+            {eventWindow.canShowMoreBefore && (
+              <TimelineLoadMore
+                hidden={eventWindow.hiddenBefore}
+                label={text(language, '条更早事件已隐藏', 'earlier events hidden')}
+                action={text(language, '显示更早事件', 'Show earlier events')}
+                onClick={() => setEventLimit((current) => nextTimelineLimit(current, eventWindow.total, SCAN_EVENT_LOAD_STEP))}
+              />
+            )}
+            {eventWindow.items.map((ev, i) => {
               const focused = !!focusStep && eventMatchesStep(ev, focusStep)
               return (
                 <EventRow
-                  key={`${ev.timestamp}-${i}`}
+                  key={`${ev.timestamp}-${eventWindow.hiddenBefore + i}`}
                   event={ev}
                   focused={focused}
                   refCallback={(node) => {
@@ -368,6 +448,14 @@ export function ScanDetailPage() {
                 />
               )
             })}
+            {eventWindow.canShowMoreAfter && (
+              <TimelineLoadMore
+                hidden={eventWindow.hiddenAfter}
+                label={text(language, '条后续事件已隐藏', 'newer events hidden')}
+                action={text(language, '显示更多事件', 'Show more events')}
+                onClick={() => setEventLimit((current) => nextTimelineLimit(current, eventWindow.total, SCAN_EVENT_LOAD_STEP))}
+              />
+            )}
             {!visibleEvents.length && (
               <div className="grid min-h-[200px] place-items-center text-sm text-muted-foreground">
                 {allEvents.length
@@ -493,6 +581,32 @@ function StatCard({ label, value }: { label: string; value: string }) {
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="mt-1 truncate font-mono text-sm">{value}</div>
+    </div>
+  )
+}
+
+function TimelineLoadMore({
+  hidden,
+  label,
+  action,
+  onClick,
+  className,
+}: {
+  hidden: number
+  label: string
+  action: string
+  onClick: () => void
+  className?: string
+}) {
+  return (
+    <div className={cn('flex justify-center', className)}>
+      <button
+        type="button"
+        onClick={onClick}
+        className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition hover:border-primary/30 hover:text-foreground"
+      >
+        {hidden} {label} · {action}
+      </button>
     </div>
   )
 }
@@ -1104,13 +1218,26 @@ function ChainMetric({ label, value, tone = 'muted' }: { label: string; value: n
 }
 
 function StepDetailDrawer({ group, language, onClose }: { group: StepGroup; language: 'zh' | 'en'; onClose: () => void }) {
+  const [eventLimit, setEventLimit] = useState(STEP_DETAIL_EVENT_INITIAL_LIMIT)
   const failed = group.events.some(isErrorEvent)
   const pendingApproval = group.approvals.some((approval) => approval.status === 'pending')
+  const eventWindow = useMemo(
+    () => windowTimelineItems(group.events, {
+      initialLimit: eventLimit,
+      step: STEP_DETAIL_EVENT_LOAD_STEP,
+      anchor: 'tail',
+    }),
+    [eventLimit, group.events],
+  )
   const tone = failed
     ? 'border-red-400/25 bg-red-500/10 text-red-100'
     : pendingApproval
       ? 'border-amber-400/25 bg-amber-400/10 text-amber-100'
       : 'border-primary/20 bg-primary/10 text-primary'
+
+  useEffect(() => {
+    setEventLimit(STEP_DETAIL_EVENT_INITIAL_LIMIT)
+  }, [group.stepID])
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-3 backdrop-blur-sm sm:items-center">
@@ -1128,7 +1255,7 @@ function StepDetailDrawer({ group, language, onClose }: { group: StepGroup; lang
                   {failed ? text(language, '异常步骤', 'Error step') : pendingApproval ? text(language, '等待审批', 'Approval required') : text(language, '执行步骤', 'Execution step')}
                 </span>
                 <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 font-mono text-[10px] text-muted-foreground">
-                  {group.events.length} events
+                  {eventWindow.visibleCount}/{group.events.length} events
                 </span>
               </div>
               <h2 className="mt-3 truncate font-mono text-base font-semibold text-foreground">{group.stepID}</h2>
@@ -1157,9 +1284,25 @@ function StepDetailDrawer({ group, language, onClose }: { group: StepGroup; lang
           <section className="min-w-0 space-y-3">
             <StepPanelTitle icon={Activity}>{text(language, '事件流', 'Event stream')}</StepPanelTitle>
             <div className="space-y-2">
-              {group.events.map((event, index) => (
-                <EventRow key={`${event.timestamp}-${index}`} event={event} />
+              {eventWindow.canShowMoreBefore && (
+                <TimelineLoadMore
+                  hidden={eventWindow.hiddenBefore}
+                  label={text(language, '条更早事件已隐藏', 'earlier events hidden')}
+                  action={text(language, '显示更早事件', 'Show earlier events')}
+                  onClick={() => setEventLimit((current) => nextTimelineLimit(current, eventWindow.total, STEP_DETAIL_EVENT_LOAD_STEP))}
+                />
+              )}
+              {eventWindow.items.map((event, index) => (
+                <EventRow key={`${event.timestamp}-${eventWindow.hiddenBefore + index}`} event={event} />
               ))}
+              {eventWindow.canShowMoreAfter && (
+                <TimelineLoadMore
+                  hidden={eventWindow.hiddenAfter}
+                  label={text(language, '条后续事件已隐藏', 'newer events hidden')}
+                  action={text(language, '显示更多事件', 'Show more events')}
+                  onClick={() => setEventLimit((current) => nextTimelineLimit(current, eventWindow.total, STEP_DETAIL_EVENT_LOAD_STEP))}
+                />
+              )}
               {!group.events.length && <StepEmpty>{text(language, '该 step 暂无事件', 'No events for this step')}</StepEmpty>}
             </div>
           </section>

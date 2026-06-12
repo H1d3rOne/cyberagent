@@ -1,3 +1,7 @@
+import { defaultConsoleSession, normalizeConsoleSession, type ConsoleSessionSettings } from './session'
+
+export type { ConsoleSessionAuthMethod, ConsoleSessionMode, ConsoleSessionSettings } from './session'
+
 const SETTINGS_KEY = 'cyberagent_console_settings'
 const RECENT_JOBS_KEY = 'cyberagent_recent_jobs'
 
@@ -18,6 +22,7 @@ export interface AgentProviderProfile {
   type: AgentProviderType
   model: string
   apiKey: string
+  apiKeyConfigured: boolean
   baseUrl: string
   instructions: string
   maxTurns: number
@@ -35,6 +40,7 @@ export interface AgentProviderSettings {
 export interface WebSearchConfig {
   provider: string
   apiKey: string
+  apiKeyConfigured: boolean
   baseUrl: string
   maxResults: number
 }
@@ -42,6 +48,7 @@ export interface WebSearchConfig {
 export const defaultWebSearchConfig: WebSearchConfig = {
   provider: 'disabled',
   apiKey: '',
+  apiKeyConfigured: false,
   baseUrl: '',
   maxResults: 5,
 }
@@ -49,9 +56,11 @@ export const defaultWebSearchConfig: WebSearchConfig = {
 function normalizeWebSearchConfig(value: unknown): WebSearchConfig {
   const item = (value && typeof value === 'object' ? value : {}) as Partial<WebSearchConfig> & Record<string, unknown>
   const parsedMaxResults = Number(item.maxResults ?? item.max_results)
+  const apiKey = stringOrDefault(item.apiKey ?? item.api_key, '')
   return {
     provider: stringOrDefault(item.provider, defaultWebSearchConfig.provider),
-    apiKey: stringOrDefault(item.apiKey ?? item.api_key, ''),
+    apiKey,
+    apiKeyConfigured: booleanOrDefault(item.apiKeyConfigured ?? item.api_key_configured, false) || Boolean(apiKey.trim()),
     baseUrl: stringOrDefault(item.baseUrl ?? item.base_url, ''),
     maxResults: Number.isFinite(parsedMaxResults) ? Math.min(10, Math.max(1, Math.round(parsedMaxResults))) : defaultWebSearchConfig.maxResults,
   }
@@ -119,6 +128,11 @@ export interface ApiAuthProfile {
   headerValue: string
   cookie: string
   enabled: boolean
+  secretConfigured: boolean
+  tokenConfigured: boolean
+  passwordConfigured: boolean
+  headerValueConfigured: boolean
+  cookieConfigured: boolean
 }
 
 export interface ConsoleSettings {
@@ -134,6 +148,7 @@ export interface ConsoleSettings {
   defaultApiAuthProfileId: string
   scanDraft: ScanDraft
   autoContinueLimit: number
+  session: ConsoleSessionSettings
 }
 
 export interface LocalDaemonBootstrap {
@@ -142,6 +157,57 @@ export interface LocalDaemonBootstrap {
   token?: string
   token_file?: string
   message?: string
+}
+
+export interface IdentityPrincipal {
+  subject_id: string
+  display_name: string
+  auth_method: string
+  roles: string[]
+}
+
+export interface IdentityTenant {
+  id: string
+  label: string
+  mode: string
+  selected: boolean
+}
+
+export interface IdentityWorkspace {
+  id: string
+  tenant_id: string
+  label: string
+  mode: string
+  selected: boolean
+}
+
+export interface IdentitySession {
+  mode: string
+  authenticated: boolean
+  login_required: boolean
+  auth_method: string
+}
+
+export interface IdentityMeResponse {
+  principal: IdentityPrincipal
+  tenant: IdentityTenant
+  workspace: IdentityWorkspace
+  session: IdentitySession
+}
+
+export interface IdentityTenantsResponse {
+  tenants: IdentityTenant[]
+  selected: IdentityTenant
+}
+
+export interface IdentityWorkspacesResponse {
+  workspaces: IdentityWorkspace[]
+  selected: IdentityWorkspace
+}
+
+export interface IdentityWorkspaceSelectResponse {
+  workspace: IdentityWorkspace
+  selected: IdentityWorkspace
 }
 
 export const defaultAgentProvider: AgentProviderSettings = {
@@ -159,6 +225,7 @@ export const defaultAgentProviderProfile: AgentProviderProfile = {
   type: 'openai',
   model: 'gpt-4o',
   apiKey: '',
+  apiKeyConfigured: false,
   baseUrl: '',
   instructions: '',
   maxTurns: 50,
@@ -183,6 +250,11 @@ export const defaultApiAuthProfile: ApiAuthProfile = {
   headerValue: '',
   cookie: '',
   enabled: true,
+  secretConfigured: false,
+  tokenConfigured: false,
+  passwordConfigured: false,
+  headerValueConfigured: false,
+  cookieConfigured: false,
 }
 
 export const defaultSettings: ConsoleSettings = {
@@ -198,6 +270,7 @@ export const defaultSettings: ConsoleSettings = {
   defaultApiAuthProfileId: '',
   scanDraft: defaultScanDraft,
   autoContinueLimit: 3,
+  session: defaultConsoleSession,
 }
 
 function stringOrDefault(value: unknown, fallback: string) {
@@ -206,6 +279,10 @@ function stringOrDefault(value: unknown, fallback: string) {
 
 function nonEmptyStringOrDefault(value: unknown, fallback: string) {
   return typeof value === 'string' && value.trim() ? value : fallback
+}
+
+function booleanOrDefault(value: unknown, fallback: boolean) {
+  return typeof value === 'boolean' ? value : fallback
 }
 
 function normalizeMaxTurns(value: unknown) {
@@ -232,12 +309,14 @@ function normalizeAgentProviderProfiles(value: unknown, fallback: AgentProviderS
       const type = normalizeAgentProviderType(item.type ?? item.provider)
       const id = stringOrDefault(item.id, `ai_provider_${index + 1}`).trim() || `ai_provider_${index + 1}`
       const name = stringOrDefault(item.name, type === 'anthropic' ? 'Anthropic Compatible' : 'OpenAI Compatible')
+      const apiKey = stringOrDefault(item.apiKey ?? item.api_key, '')
       return {
         id,
         name,
         type,
         model: stringOrDefault(item.model, type === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-4o'),
-        apiKey: stringOrDefault(item.apiKey ?? item.api_key, ''),
+        apiKey,
+        apiKeyConfigured: booleanOrDefault(item.apiKeyConfigured ?? item.api_key_configured, false) || Boolean(apiKey.trim()),
         baseUrl: stringOrDefault(item.baseUrl ?? item.base_url ?? item.providerBaseUrl, ''),
         instructions: stringOrDefault(item.instructions, ''),
         maxTurns: normalizeMaxTurns(item.maxTurns ?? item.max_turns),
@@ -252,6 +331,7 @@ function normalizeAgentProviderProfiles(value: unknown, fallback: AgentProviderS
     type: legacyType,
     model: fallback.model || (legacyType === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-4o'),
     apiKey: fallback.apiKey,
+    apiKeyConfigured: Boolean(fallback.apiKey.trim()),
     baseUrl: fallback.providerBaseUrl,
     instructions: fallback.instructions,
     maxTurns: fallback.maxTurns,
@@ -262,7 +342,7 @@ function agentProviderSettingsFromProfile(profile: AgentProviderProfile): AgentP
   return {
     provider: profile.type,
     model: profile.model,
-    apiKey: profile.apiKey,
+    apiKey: '',
     providerBaseUrl: profile.baseUrl,
     instructions: profile.instructions,
     maxTurns: profile.maxTurns,
@@ -301,23 +381,53 @@ function normalizeApiAuthProfileType(value: unknown): ApiAuthProfileType {
   }
 }
 
+function apiAuthProfileSecretConfigured(type: ApiAuthProfileType, profile: Pick<ApiAuthProfile, 'token' | 'password' | 'headerValue' | 'cookie'>) {
+  switch (type) {
+    case 'basic':
+      return Boolean(profile.password.trim())
+    case 'api_key':
+      return Boolean(profile.headerValue.trim() || profile.token.trim())
+    case 'cookie':
+      return Boolean(profile.cookie.trim() || profile.headerValue.trim())
+    case 'custom':
+      return Boolean(profile.headerValue.trim())
+    default:
+      return Boolean(profile.token.trim() || profile.headerValue.trim())
+  }
+}
+
 function normalizeApiAuthProfiles(value: unknown): ApiAuthProfile[] {
   if (!Array.isArray(value)) return []
   return value.slice(0, 12).map((raw, index) => {
     const item = (raw && typeof raw === 'object' ? raw : {}) as Partial<ApiAuthProfile> & Record<string, unknown>
     const id = stringOrDefault(item.id, `api_auth_${index + 1}`)
+    const type = normalizeApiAuthProfileType(item.type)
+    const token = stringOrDefault(item.token, '')
+    const password = stringOrDefault(item.password, '')
+    const headerValue = stringOrDefault(item.headerValue ?? item.header_value, '')
+    const cookie = stringOrDefault(item.cookie, '')
+    const tokenConfigured = booleanOrDefault(item.tokenConfigured ?? item.token_configured, false) || Boolean(token.trim())
+    const passwordConfigured = booleanOrDefault(item.passwordConfigured ?? item.password_configured, false) || Boolean(password.trim())
+    const headerValueConfigured = booleanOrDefault(item.headerValueConfigured ?? item.header_value_configured, false) || Boolean(headerValue.trim())
+    const cookieConfigured = booleanOrDefault(item.cookieConfigured ?? item.cookie_configured, false) || Boolean(cookie.trim())
+    const rawSecretConfigured = apiAuthProfileSecretConfigured(type, { token, password, headerValue, cookie })
     return {
       id,
       name: stringOrDefault(item.name, id),
-      type: normalizeApiAuthProfileType(item.type),
+      type,
       baseUrl: stringOrDefault(item.baseUrl ?? item.base_url, ''),
-      token: stringOrDefault(item.token, ''),
+      token,
       username: stringOrDefault(item.username, ''),
-      password: stringOrDefault(item.password, ''),
+      password,
       headerName: stringOrDefault(item.headerName ?? item.header_name, ''),
-      headerValue: stringOrDefault(item.headerValue ?? item.header_value, ''),
-      cookie: stringOrDefault(item.cookie, ''),
+      headerValue,
+      cookie,
       enabled: item.enabled !== false,
+      secretConfigured: booleanOrDefault(item.secretConfigured ?? item.secret_configured, false) || rawSecretConfigured,
+      tokenConfigured,
+      passwordConfigured,
+      headerValueConfigured,
+      cookieConfigured,
     }
   }).filter((profile) => profile.id.trim())
 }
@@ -349,10 +459,11 @@ function normalizeSettings(raw: unknown): ConsoleSettings {
   const aiProviders = normalizeAgentProviderProfiles(value.aiProviders, legacyAgentProvider)
   const activeAiProviderId = stringOrDefault(value.activeAiProviderId, aiProviders[0]?.id || defaultAgentProviderProfile.id)
   const activeAiProvider = aiProviders.find((profile) => profile.id === activeAiProviderId) || aiProviders[0] || defaultAgentProviderProfile
+  const operator = stringOrDefault(value.operator, defaultSettings.operator)
   return {
     baseUrl: nonEmptyStringOrDefault(value.baseUrl, defaultSettings.baseUrl),
     token: stringOrDefault(value.token, defaultSettings.token),
-    operator: stringOrDefault(value.operator, defaultSettings.operator),
+    operator,
     language: value.language === 'en' ? 'en' : 'zh',
     operationLevel: normalizeAgentOperationLevel(value.operationLevel),
     agentProvider: agentProviderSettingsFromProfile(activeAiProvider),
@@ -367,6 +478,37 @@ function normalizeSettings(raw: unknown): ConsoleSettings {
       interactive: scanDraft.interactive === true || legacyScanDefaults.interactive === true,
     },
     autoContinueLimit: normalizeAutoContinueLimit(value.autoContinueLimit),
+    session: normalizeConsoleSession(value.session, operator),
+  }
+}
+
+
+function stripProviderSecrets(settings: ConsoleSettings): ConsoleSettings {
+  const aiProviders = (settings.aiProviders || []).map((profile) => ({
+    ...profile,
+    apiKey: '',
+    apiKeyConfigured: profile.apiKey.trim() ? false : profile.apiKeyConfigured,
+  }))
+  const apiAuthProfiles = (settings.apiAuthProfiles || []).map((profile) => {
+    const hasRawSecret = apiAuthProfileSecretConfigured(profile.type, profile)
+    return {
+      ...profile,
+      token: '',
+      password: '',
+      headerValue: '',
+      cookie: '',
+      secretConfigured: hasRawSecret ? false : profile.secretConfigured,
+      tokenConfigured: profile.token.trim() ? false : profile.tokenConfigured,
+      passwordConfigured: profile.password.trim() ? false : profile.passwordConfigured,
+      headerValueConfigured: profile.headerValue.trim() ? false : profile.headerValueConfigured,
+      cookieConfigured: profile.cookie.trim() ? false : profile.cookieConfigured,
+    }
+  })
+  return {
+    ...settings,
+    agentProvider: { ...settings.agentProvider, apiKey: '' },
+    aiProviders,
+    apiAuthProfiles,
   }
 }
 
@@ -374,14 +516,14 @@ export function loadSettings(): ConsoleSettings {
   const stored = localStorage.getItem(SETTINGS_KEY)
   if (!stored) return defaultSettings
   try {
-    return normalizeSettings(JSON.parse(stored))
+    return stripProviderSecrets(normalizeSettings(JSON.parse(stored)))
   } catch {
     return defaultSettings
   }
 }
 
 export function saveSettings(settings: ConsoleSettings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalizeSettings(settings)))
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(stripProviderSecrets(normalizeSettings(settings))))
 }
 
 function shouldSkipLocalDaemonBootstrap() {
@@ -1578,6 +1720,24 @@ export class ApiClient {
     return this.request<PluginDoctorReport>('/api/v1/plugins/doctor')
   }
 
+  getMe() {
+    return this.request<IdentityMeResponse>('/api/v1/me')
+  }
+
+  listTenants() {
+    return this.request<IdentityTenantsResponse>('/api/v1/tenants')
+  }
+
+  listWorkspaces() {
+    return this.request<IdentityWorkspacesResponse>('/api/v1/workspaces')
+  }
+
+  selectWorkspace(workspaceId: string) {
+    return this.request<IdentityWorkspaceSelectResponse>(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/select`, {
+      method: 'POST',
+    })
+  }
+
   listRuns(limit = 50, cursor = '') {
     const params = new URLSearchParams()
     params.set('limit', String(limit))
@@ -1922,18 +2082,38 @@ export class ApiClient {
     return this.request<Provider[]>('/api/providers')
   }
 
-  async getProviderProfiles(): Promise<{ providers: AgentProviderProfile[]; activeId: string; webSearch: WebSearchConfig }> {
-    const cfg = await this.request<{ providers?: unknown; active_id?: string; web_search?: unknown }>('/api/provider-profiles')
+  async getProviderProfiles(): Promise<{
+    providers: AgentProviderProfile[]
+    activeId: string
+    webSearch: WebSearchConfig
+    authProfiles: ApiAuthProfile[]
+    defaultAuthProfileId: string
+  }> {
+    const cfg = await this.request<{
+      providers?: unknown
+      active_id?: string
+      web_search?: unknown
+      auth_profiles?: unknown
+      default_auth_profile_id?: string
+    }>('/api/provider-profiles')
     return {
       providers: normalizeAgentProviderProfiles(cfg?.providers, defaultAgentProvider),
       activeId: stringOrDefault(cfg?.active_id, ''),
       webSearch: normalizeWebSearchConfig(cfg?.web_search),
+      authProfiles: normalizeApiAuthProfiles(cfg?.auth_profiles),
+      defaultAuthProfileId: stringOrDefault(cfg?.default_auth_profile_id, ''),
     }
   }
 
-  async saveProviderProfiles(providers: AgentProviderProfile[], activeId: string, webSearch?: WebSearchConfig) {
+  async saveProviderProfiles(
+    providers: AgentProviderProfile[],
+    activeId: string,
+    webSearch?: WebSearchConfig,
+    authProfiles?: ApiAuthProfile[],
+    defaultAuthProfileId?: string,
+  ) {
     const normalizedWebSearch = normalizeWebSearchConfig(webSearch)
-    const body = {
+    const body: Record<string, unknown> = {
       providers: providers.map((p) => ({
         id: p.id,
         name: p.name,
@@ -1946,13 +2126,49 @@ export class ApiClient {
       })),
       active_id: activeId,
       web_search: normalizedWebSearch.provider === 'disabled'
-        ? undefined
+        ? null
         : {
           provider: normalizedWebSearch.provider,
           api_key: normalizedWebSearch.apiKey,
           base_url: normalizedWebSearch.baseUrl,
           max_results: normalizedWebSearch.maxResults,
         },
+    }
+    if (authProfiles) {
+      body.auth_profiles = authProfiles.map((profile) => ({
+        id: profile.id,
+        name: profile.name,
+        type: profile.type,
+        base_url: profile.baseUrl,
+        token: profile.token,
+        username: profile.username,
+        password: profile.password,
+        header_name: profile.headerName,
+        header_value: profile.headerValue,
+        cookie: profile.cookie,
+        enabled: profile.enabled,
+      }))
+      body.default_auth_profile_id = defaultAuthProfileId || ''
+    }
+    return this.request<unknown>('/api/provider-profiles', { method: 'PUT', body: JSON.stringify(body) })
+  }
+
+  async saveApiAuthProfiles(authProfiles: ApiAuthProfile[], defaultAuthProfileId: string) {
+    const body = {
+      auth_profiles: authProfiles.map((profile) => ({
+        id: profile.id,
+        name: profile.name,
+        type: profile.type,
+        base_url: profile.baseUrl,
+        token: profile.token,
+        username: profile.username,
+        password: profile.password,
+        header_name: profile.headerName,
+        header_value: profile.headerValue,
+        cookie: profile.cookie,
+        enabled: profile.enabled,
+      })),
+      default_auth_profile_id: defaultAuthProfileId,
     }
     return this.request<unknown>('/api/provider-profiles', { method: 'PUT', body: JSON.stringify(body) })
   }

@@ -80,6 +80,10 @@ func TestAgentLoopRequestCloneIsolatesMutableFields(t *testing.T) {
 			ToolCalls:        []AgentLoopToolCall{{ID: "tool-state", Result: map[string]any{"state": "tool"}}},
 			LoopHistory:      []AgentLoopMessage{{ID: "msg-state-history", Content: "state history"}},
 		},
+		Action: AgentLoopAction{
+			Name:      "daemon.health",
+			Arguments: map[string]any{"probe": "single"},
+		},
 		Authorization: AgentLoopAuthorization{
 			DefaultAuthProfileID: "auth-1",
 			AuthProfiles: []AgentLoopAuthProfile{{
@@ -115,6 +119,7 @@ func TestAgentLoopRequestCloneIsolatesMutableFields(t *testing.T) {
 	req.State.ResponseMessages[0].Content = "mutated state response"
 	req.State.ToolCalls[0].Result["state"] = "mutated"
 	req.State.LoopHistory[0].Content = "mutated state history"
+	req.Action.Arguments["probe"] = "mutated"
 	req.Authorization.AuthProfiles[0].Token = "mutated-auth-token"
 	*req.Authorization.AuthProfiles[0].Enabled = false
 	req.ToolServices.Metadata["adapter"] = "mutated"
@@ -147,6 +152,9 @@ func TestAgentLoopRequestCloneIsolatesMutableFields(t *testing.T) {
 	}
 	if cloned.State.ResponseMessages[0].Content != "state response" || cloned.State.ToolCalls[0].Result["state"] != "tool" || cloned.State.LoopHistory[0].Content != "state history" {
 		t.Fatalf("clone shares state: %#v", cloned.State)
+	}
+	if cloned.Action.Name != "daemon.health" || cloned.Action.Arguments["probe"] != "single" {
+		t.Fatalf("clone shares action: %#v", cloned.Action)
 	}
 	if cloned.Authorization.AuthProfiles[0].Token != "auth-token" || cloned.Authorization.AuthProfiles[0].Enabled == nil || !*cloned.Authorization.AuthProfiles[0].Enabled || cloned.Authorization.AuthProfiles[0].Enabled == req.Authorization.AuthProfiles[0].Enabled {
 		t.Fatalf("clone shares authorization profile: %#v", cloned.Authorization.AuthProfiles[0])

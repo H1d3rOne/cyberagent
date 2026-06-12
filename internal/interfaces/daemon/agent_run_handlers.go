@@ -7,12 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/H1d3rOne/cyberagent/internal/agent/runtime"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
 	"github.com/H1d3rOne/cyberagent/internal/workspace"
 )
 
-func (m *agentManager) handleAgentActiveRunContinueForTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language, operator, operationLevel string, svc routerServices) ([]agentMessage, []agentToolCall, bool) {
+func (m *agentManager) handleAgentActiveRunContinueForTurnWithToolServices(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, language, operator, operationLevel string, toolServices runtime.AgentLoopToolServiceBinding) ([]agentMessage, []agentToolCall, bool) {
 	sessionState, err := m.GetSession(ctx, sessionID)
 	if err != nil || sessionState.ActiveTask == nil {
 		return nil, nil, false
@@ -23,22 +24,26 @@ func (m *agentManager) handleAgentActiveRunContinueForTurn(ctx context.Context, 
 	}
 	evidenceStage := agentEvidenceActionStageFromTodos(sessionState.Todos)
 	contextKind := "events"
-	if detail, detailErr := svc.runs.GetRun(ctx, runID); detailErr == nil {
-		switch {
-		case detail.Summary.Counts.PendingApprovals > 0:
-			contextKind = "approvals"
-		case detail.Summary.Report.JSON:
-			contextKind = "report_json"
-		case detail.Summary.Counts.Findings > 0:
-			contextKind = "findings"
-		case detail.Summary.Counts.Artifacts > 0:
-			contextKind = "artifact_index"
-		default:
-			contextKind = "events"
+	if resolver, ok := agentLoopActionServiceResolverFromActionServices(toolServices.ActionServices); ok {
+		if runService, ok := resolver.RunService(); ok {
+			if detail, detailErr := runService.GetRun(ctx, runID); detailErr == nil {
+				switch {
+				case detail.Summary.Counts.PendingApprovals > 0:
+					contextKind = "approvals"
+				case detail.Summary.Report.JSON:
+					contextKind = "report_json"
+				case detail.Summary.Counts.Findings > 0:
+					contextKind = "findings"
+				case detail.Summary.Counts.Artifacts > 0:
+					contextKind = "artifact_index"
+				default:
+					contextKind = "events"
+				}
+			}
 		}
 	}
 	prompt := fmt.Sprintf("读取运行 %s 的 %s 上下文", runID, contextKind)
-	messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
+	messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRouteWithToolServices(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, toolServices)
 	if routeErr != nil || len(messages) == 0 {
 		return nil, nil, false
 	}
@@ -51,14 +56,22 @@ func (m *agentManager) handleAgentActiveRunContinueForTurn(ctx context.Context, 
 	return messages, toolCalls, true
 }
 
-func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt, language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt, language string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
+	runService, ok := resolver.RunService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "run service not available", nil, nil)
+	}
+	approvalService, ok := resolver.ApprovalService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "approval service not available", nil, nil)
+	}
 	runID := agentExtractRunID(prompt)
 	if runID == "" {
 		return []agentMessage{m.message(language, "agent", agentText(language, "我已识别为上下文分析，但缺少 run id。请从运行详情页的 finding / artifact 按钮交给 Agent。", "I recognized a context-analysis request, but no run id was found. Send it from a finding / artifact button on the run detail page."), nil, nil)}, nil, nil
 	}
 
 	tool := runningAgentToolCall("GET /api/v1/runs/{run_id}/context", shortAgentID(runID, 22))
-	detail, err := svc.runs.GetRun(ctx, runID)
+	detail, err := runService.GetRun(ctx, runID)
 	contextKind := agentRunContextKind(prompt)
 	if err == nil {
 		base := map[string]any{
@@ -74,14 +87,14 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 		switch contextKind {
 		case "artifact_index":
 			var index any
-			index, err = svc.runs.GetArtifactIndex(ctx, runID)
+			index, err = runService.GetArtifactIndex(ctx, runID)
 			if err == nil {
 				base["artifact_count"] = agentArtifactIndexCount(index)
 				base["sample_artifacts"] = agentArtifactIndexSamples(index, 5)
 			}
 		case "events":
 			var page services.EventPage
-			page, err = svc.runs.GetEvents(ctx, runID, "", 12)
+			page, err = runService.GetEvents(ctx, runID, "", 12)
 			if err == nil {
 				base["event_count"] = len(page.Items)
 				base["eof"] = page.EOF
@@ -90,7 +103,7 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 			}
 		case "approvals":
 			var approvals []contracts.HITLRequest
-			approvals, err = svc.approvals.ListApprovals(ctx, runID)
+			approvals, err = approvalService.ListApprovals(ctx, runID)
 			if err == nil {
 				base["approval_count"] = len(approvals)
 				base["pending"] = agentPendingApprovalCount(approvals)
@@ -98,7 +111,7 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 			}
 		case "findings":
 			var report services.RunReport
-			report, err = svc.runs.GetReport(ctx, runID, "json")
+			report, err = runService.GetReport(ctx, runID, "json")
 			if err == nil {
 				findings, evidence, artifacts := agentReportJSONCounts(report.Bytes)
 				base["finding_count"] = findings
@@ -112,7 +125,7 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 				base["finding_count"] = 0
 				base["evidence_count"] = 0
 				base["artifact_count"] = detail.Summary.Counts.Artifacts
-				if page, pageErr := svc.runs.GetEvents(ctx, runID, "", 8); pageErr == nil {
+				if page, pageErr := runService.GetEvents(ctx, runID, "", 8); pageErr == nil {
 					base["event_count"] = len(page.Items)
 					base["sample_events"] = agentEventPageSamples(page, 5)
 				}
@@ -121,7 +134,7 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 			contextKind = "report_json"
 			base["context"] = contextKind
 			var report services.RunReport
-			report, err = svc.runs.GetReport(ctx, runID, "json")
+			report, err = runService.GetReport(ctx, runID, "json")
 			if err == nil {
 				findings, evidence, artifacts := agentReportJSONCounts(report.Bytes)
 				base["format"] = report.Format
@@ -138,7 +151,7 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 				base["finding_count"] = detail.Summary.Counts.Findings
 				base["evidence_count"] = 0
 				base["artifact_count"] = detail.Summary.Counts.Artifacts
-				if page, pageErr := svc.runs.GetEvents(ctx, runID, "", 8); pageErr == nil {
+				if page, pageErr := runService.GetEvents(ctx, runID, "", 8); pageErr == nil {
 					base["event_count"] = len(page.Items)
 					base["sample_events"] = agentEventPageSamples(page, 5)
 				}
@@ -157,7 +170,7 @@ func (m *agentManager) handleAgentRunContextAnalysis(ctx context.Context, prompt
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentRunContextTool(ctx context.Context, sessionID, runID, contextKind, language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentRunContextTool(ctx context.Context, sessionID, runID, contextKind, language string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
 		if session, err := m.GetSession(ctx, sessionID); err == nil && session.ActiveTask != nil {
@@ -168,10 +181,14 @@ func (m *agentManager) handleAgentRunContextTool(ctx context.Context, sessionID,
 		return []agentMessage{m.message(language, "agent", agentText(language, "我需要 run id 或当前活动运行，才能读取运行上下文。", "I need a run ID or an active run to read run context."), nil, nil)}, nil, nil
 	}
 	contextKind = agentNormalizeRunContextKind(contextKind)
-	return m.handleAgentRunContextAnalysis(ctx, fmt.Sprintf("读取运行 %s 的 %s 上下文", runID, contextKind), language, svc)
+	return m.handleAgentRunContextAnalysis(ctx, fmt.Sprintf("读取运行 %s 的 %s 上下文", runID, contextKind), language, resolver)
 }
 
-func (m *agentManager) handleAgentReportDraft(ctx context.Context, sessionID, runID, language string, svc routerServices, outputPath string) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentReportDraft(ctx context.Context, sessionID, runID, language string, resolver daemonAgentLoopActionServiceResolver, outputPath string) ([]agentMessage, []agentToolCall, error) {
+	runService, ok := resolver.RunService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "run service not available", nil, nil)
+	}
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
 		if session, err := m.GetSession(ctx, sessionID); err == nil && session.ActiveTask != nil {
@@ -183,7 +200,7 @@ func (m *agentManager) handleAgentReportDraft(ctx context.Context, sessionID, ru
 	}
 
 	tool := runningAgentToolCall("reports.draft", shortAgentID(runID, 22))
-	detail, err := svc.runs.GetRun(ctx, runID)
+	detail, err := runService.GetRun(ctx, runID)
 	var (
 		ws       *workspace.Workspace
 		snapshot agentRunReportSnapshot
@@ -226,7 +243,11 @@ func (m *agentManager) handleAgentReportDraft(ctx context.Context, sessionID, ru
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentScan(ctx context.Context, prompt, language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentScan(ctx context.Context, prompt, language string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
+	jobs, ok := resolver.JobManager()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "job manager not available", nil, nil)
+	}
 	target := agentExtractURL(prompt)
 	if target == "" {
 		return []agentMessage{m.message(language, "agent", agentText(language, "我需要一个 http/https 授权目标 URL 才能开始扫描。", "I need an authorized http/https target URL to start a scan."), nil, nil)}, nil, nil
@@ -240,7 +261,7 @@ func (m *agentManager) handleAgentScan(ctx context.Context, prompt, language str
 	), nil, nil)
 
 	tool := runningAgentToolCall("POST /api/v1/scans/web", agentHostLabel(target))
-	response, err := svc.jobs.StartWebScan(ctx, startWebScanJobRequest{
+	response, err := jobs.StartWebScan(ctx, startWebScanJobRequest{
 		Target:          target,
 		Scope:           scope,
 		Profile:         "safe",
@@ -339,10 +360,14 @@ func (m *agentManager) handleAgentPortScan(ctx context.Context, prompt, language
 	return []agentMessage{plan, message}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentHealth(ctx context.Context, language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentHealth(ctx context.Context, language string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
+	versionService, ok := resolver.VersionService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "version action service not available", nil, nil)
+	}
 	tool := runningAgentToolCall("GET /api/v1/doctor", "daemon")
-	version := svc.version.GetVersion(ctx)
-	doctor := svc.version.Doctor(ctx)
+	version := versionService.GetVersion(ctx)
+	doctor := versionService.Doctor(ctx)
 	summary := summarizeDoctorChecks(doctor.Checks)
 	tool = finishAgentToolCall(tool, nil)
 	tool.Result = map[string]any{
@@ -364,12 +389,16 @@ func (m *agentManager) handleAgentHealth(ctx context.Context, language string, s
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentPlugins(ctx context.Context, language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentPlugins(ctx context.Context, language string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
+	pluginService, ok := resolver.PluginService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "plugins action service not available", nil, nil)
+	}
 	tool := runningAgentToolCall("GET /api/v1/plugins", "registry")
-	plugins, err := svc.plugins.ListPlugins(ctx)
+	plugins, err := pluginService.ListPlugins(ctx)
 	if err == nil {
 		var doctor services.PluginDoctorReport
-		doctor, err = svc.plugins.Doctor(ctx)
+		doctor, err = pluginService.Doctor(ctx)
 		tool.Result = map[string]any{"plugins": len(plugins), "ok": doctor.OK, "issues": countUnhealthyPlugins(doctor)}
 	}
 	tool = finishAgentToolCall(tool, err)
@@ -392,9 +421,13 @@ func (m *agentManager) handleAgentPlugins(ctx context.Context, language string, 
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentRuns(ctx context.Context, language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentRuns(ctx context.Context, language string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
+	runService, ok := resolver.RunService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "runs action service not available", nil, nil)
+	}
 	tool := runningAgentToolCall("GET /api/v1/runs", "runs-dir")
-	page, err := svc.runs.ListRuns(ctx, services.RunListRequest{Limit: 10})
+	page, err := runService.ListRuns(ctx, services.RunListRequest{Limit: 10})
 	tool = finishAgentToolCall(tool, err)
 	if err != nil {
 		tool.Error = &daemonJobError{Code: services.ErrorCodeOf(err), Message: err.Error()}
@@ -416,16 +449,24 @@ func (m *agentManager) handleAgentRuns(ctx context.Context, language string, svc
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentApprovals(ctx context.Context, language string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentApprovals(ctx context.Context, language string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
+	runService, ok := resolver.RunService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "run service not available", nil, nil)
+	}
+	approvalService, ok := resolver.ApprovalService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "approval service not available", nil, nil)
+	}
 	tool := runningAgentToolCall("GET /api/v1/runs/*/approvals", "policy")
-	page, err := svc.runs.ListRuns(ctx, services.RunListRequest{Limit: 12})
+	page, err := runService.ListRuns(ctx, services.RunListRequest{Limit: 12})
 	pending := 0
 	firstRun := ""
 	checkedRuns := 0
 	if err == nil {
 		for _, run := range page.Items {
 			checkedRuns++
-			approvals, listErr := svc.approvals.ListApprovals(ctx, run.RunID)
+			approvals, listErr := approvalService.ListApprovals(ctx, run.RunID)
 			if listErr != nil {
 				continue
 			}
@@ -462,7 +503,11 @@ func (m *agentManager) handleAgentApprovals(ctx context.Context, language string
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentResumeApproved(ctx context.Context, sessionID, prompt, language, operator string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentResumeApproved(ctx context.Context, sessionID, prompt, language, operator string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
+	approvalService, ok := resolver.ApprovalService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "approval service not available", nil, nil)
+	}
 	runID := agentExtractRunID(prompt)
 	if runID == "" {
 		if session, err := m.GetSession(ctx, sessionID); err == nil && session.ActiveTask != nil {
@@ -474,7 +519,7 @@ func (m *agentManager) handleAgentResumeApproved(ctx context.Context, sessionID,
 	}
 
 	tool := runningAgentToolCall("POST /api/v1/runs/{run_id}/resume-approved", shortAgentID(runID, 22))
-	result, err := svc.approvals.ResumeApproved(ctx, services.ResumeApprovedRequest{
+	result, err := approvalService.ResumeApproved(ctx, services.ResumeApprovedRequest{
 		RunIDOrPath: runID,
 		Operator:    operator,
 	})
@@ -505,12 +550,16 @@ func (m *agentManager) handleAgentResumeApproved(ctx context.Context, sessionID,
 	return []agentMessage{message}, []agentToolCall{tool}, nil
 }
 
-func (m *agentManager) handleAgentApprovalDecision(ctx context.Context, sessionID, prompt, language, operator string, svc routerServices) ([]agentMessage, []agentToolCall, error) {
+func (m *agentManager) handleAgentApprovalDecision(ctx context.Context, sessionID, prompt, language, operator string, resolver daemonAgentLoopActionServiceResolver) ([]agentMessage, []agentToolCall, error) {
+	approvalService, ok := resolver.ApprovalService()
+	if !ok {
+		return nil, nil, services.NewError(services.CodeUnsupported, "approval service not available", nil, nil)
+	}
 	action := agentApprovalDecisionAction(prompt)
 	if action == "" {
 		return []agentMessage{m.message(language, "agent", agentText(language, "我识别到审批相关请求，但没有明确是批准还是拒绝。请说明“批准 approval_xxx”或“拒绝 approval_xxx”。", "I detected an approval request, but it is not clear whether to approve or deny. Say `approve approval_xxx` or `deny approval_xxx`."), nil, nil)}, nil, nil
 	}
-	target, targetErr := m.resolveAgentApprovalDecisionTarget(ctx, sessionID, prompt, svc)
+	target, targetErr := m.resolveAgentApprovalDecisionTarget(ctx, sessionID, prompt, resolver)
 	if targetErr != nil {
 		return []agentMessage{m.message(language, "agent", targetErr.Error(), nil, nil)}, nil, nil
 	}
@@ -530,9 +579,9 @@ func (m *agentManager) handleAgentApprovalDecision(ctx context.Context, sessionI
 	)
 	switch action {
 	case "approve":
-		resolved, err = svc.approvals.Approve(ctx, req)
+		resolved, err = approvalService.Approve(ctx, req)
 	case "deny":
-		resolved, err = svc.approvals.Deny(ctx, req)
+		resolved, err = approvalService.Deny(ctx, req)
 	}
 	tool = finishAgentToolCall(tool, err)
 	if err != nil {
@@ -547,7 +596,7 @@ func (m *agentManager) handleAgentApprovalDecision(ctx context.Context, sessionI
 	}
 
 	pending := 0
-	if approvals, listErr := svc.approvals.ListApprovals(ctx, target.RunID); listErr == nil {
+	if approvals, listErr := approvalService.ListApprovals(ctx, target.RunID); listErr == nil {
 		pending = agentPendingApprovalCount(approvals)
 	}
 	tool.Result = map[string]any{

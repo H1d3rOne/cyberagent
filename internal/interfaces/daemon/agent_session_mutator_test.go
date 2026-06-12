@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +38,595 @@ func TestCloneAgentLoopSessionMutationPayload(t *testing.T) {
 
 	_, ok = cloneAgentLoopSessionMutationPayload[runtime.AgentLoopControlSessionPayload]("invalid")
 	require.False(t, ok)
+}
+
+func TestDaemonSessionMutationDispatchTableCoversKinds(t *testing.T) {
+	wantKinds := map[runtime.SessionMutationKind]bool{
+		runtime.SessionMutationAppendMessages:       true,
+		runtime.SessionMutationRecordUserMessage:    true,
+		runtime.SessionMutationRequestAuthorization: true,
+		runtime.SessionMutationCapabilityBlocked:    true,
+		runtime.SessionMutationControlSession:       true,
+		runtime.SessionMutationResolveAuthorization: true,
+	}
+	seenKinds := map[runtime.SessionMutationKind]bool{}
+
+	for _, entry := range daemonSessionMutationDispatchTable {
+		require.NotEmpty(t, entry.kind)
+		require.False(t, seenKinds[entry.kind], "duplicate dispatch entry for %q", entry.kind)
+		require.NotNil(t, entry.handler)
+		seenKinds[entry.kind] = true
+
+		handler, ok := daemonSessionMutationDispatchForKind(entry.kind)
+		require.True(t, ok)
+		require.NotNil(t, handler)
+	}
+
+	require.Equal(t, wantKinds, seenKinds)
+	_, ok := daemonSessionMutationDispatchForKind(runtime.SessionMutationKind("unsupported"))
+	require.False(t, ok)
+}
+
+func TestDaemonSessionMutationCallerInvalidPayloadTableCoversKinds(t *testing.T) {
+	wantMessages := map[runtime.SessionMutationKind]string{
+		runtime.SessionMutationAppendMessages:       "daemon: append messages mutator returned invalid payload",
+		runtime.SessionMutationRecordUserMessage:    "daemon: record user message mutator returned invalid payload",
+		runtime.SessionMutationRequestAuthorization: "daemon: request authorization mutator returned invalid payload",
+		runtime.SessionMutationCapabilityBlocked:    "daemon: capability blocked mutator returned invalid payload",
+		runtime.SessionMutationControlSession:       "daemon: control session mutator returned invalid payload",
+		runtime.SessionMutationResolveAuthorization: "daemon: resolve authorization mutator returned invalid payload",
+	}
+	seenMessages := map[runtime.SessionMutationKind]string{}
+
+	for _, entry := range daemonSessionMutationCallerInvalidPayloadTable {
+		require.NotEmpty(t, entry.kind)
+		require.NotEmpty(t, entry.message)
+		require.Empty(t, seenMessages[entry.kind], "duplicate invalid payload entry for %q", entry.kind)
+		seenMessages[entry.kind] = entry.message
+		require.Equal(t, entry.message, daemonSessionMutationCallerInvalidPayloadError(entry.kind))
+
+		_, ok := daemonSessionMutationResultAdapterForKind(entry.kind)
+		require.True(t, ok, "missing result adapter for invalid payload audited kind %q", entry.kind)
+	}
+
+	require.Equal(t, wantMessages, seenMessages)
+	require.Equal(t, daemonSessionMutationCallerDefaultInvalidPayloadError, daemonSessionMutationCallerInvalidPayloadError(runtime.SessionMutationKind("unsupported")))
+}
+
+func TestDaemonSessionMutationCallerPolicyTableCoversKinds(t *testing.T) {
+	wantPolicies := map[runtime.SessionMutationKind]daemonSessionMutationCallerPolicy{
+		runtime.SessionMutationAppendMessages:       daemonSessionMutationCallerPolicyBoolOnly,
+		runtime.SessionMutationRecordUserMessage:    daemonSessionMutationCallerPolicyStrictResult,
+		runtime.SessionMutationRequestAuthorization: daemonSessionMutationCallerPolicyOptionalResult,
+		runtime.SessionMutationCapabilityBlocked:    daemonSessionMutationCallerPolicyOptionalResult,
+		runtime.SessionMutationControlSession:       daemonSessionMutationCallerPolicyStrictResult,
+		runtime.SessionMutationResolveAuthorization: daemonSessionMutationCallerPolicyStrictResult,
+	}
+	seenPolicies := map[runtime.SessionMutationKind]daemonSessionMutationCallerPolicy{}
+
+	for _, entry := range daemonSessionMutationCallerPolicyTable {
+		require.NotEmpty(t, entry.kind)
+		require.NotEmpty(t, entry.policy)
+		require.Empty(t, seenPolicies[entry.kind], "duplicate caller policy entry for %q", entry.kind)
+		seenPolicies[entry.kind] = entry.policy
+
+		policy, ok := daemonSessionMutationCallerPolicyForKind(entry.kind)
+		require.True(t, ok)
+		require.Equal(t, entry.policy, policy)
+		require.NotEqual(t, daemonSessionMutationCallerDefaultInvalidPayloadError, daemonSessionMutationCallerInvalidPayloadError(entry.kind))
+
+		_, ok = daemonSessionMutationResultAdapterForKind(entry.kind)
+		require.True(t, ok, "missing result adapter for policy audited kind %q", entry.kind)
+	}
+
+	require.Equal(t, wantPolicies, seenPolicies)
+	_, ok := daemonSessionMutationCallerPolicyForKind(runtime.SessionMutationKind("unsupported"))
+	require.False(t, ok)
+
+	require.True(t, daemonSessionMutationCallerHandledForKind(
+		daemonSessionMutationCallerEgress{handled: true},
+		runtime.SessionMutationAppendMessages,
+	))
+	require.True(t, daemonSessionMutationCallerHandledForKind(
+		daemonSessionMutationCallerEgress{handled: true, resultErr: errors.New("mutator failed")},
+		runtime.SessionMutationAppendMessages,
+	))
+	require.False(t, daemonSessionMutationCallerHandledForKind(
+		daemonSessionMutationCallerEgress{handled: true},
+		runtime.SessionMutationRecordUserMessage,
+	))
+	require.False(t, daemonSessionMutationCallerHandledForKind(
+		daemonSessionMutationCallerEgress{handled: true, resultErr: errors.New("mutator failed")},
+		runtime.SessionMutationRecordUserMessage,
+	))
+
+	_, handled, err := daemonSessionMutationCallerResultPayloadForKind[daemonRecordUserMessageMutationResultPayload](
+		daemonSessionMutationCallerEgress{handled: true},
+		runtime.SessionMutationRequestAuthorization,
+		daemonRecordUserMessageMutationResultPayloadFromSessionMutationResult,
+	)
+	require.True(t, handled)
+	require.ErrorContains(t, err, "session mutation caller policy mismatch")
+
+	optionalPayload, ok := daemonSessionMutationCallerOptionalResultPayloadForKind(
+		daemonSessionMutationCallerEgress{handled: true},
+		runtime.SessionMutationRecordUserMessage,
+		daemonRequestAuthorizationMutationResultPayloadFromSessionMutationResult,
+	)
+	require.False(t, ok)
+	require.Empty(t, optionalPayload.Session.SessionID)
+}
+
+func TestDaemonSessionMutationCallerFallbackOwnershipTableCoversReasons(t *testing.T) {
+	wantReasons := map[daemonSessionMutationCallerFallbackReason]string{
+		daemonSessionMutationCallerFallbackEngineNotAttached: daemonSessionMutationCallerFallbackOwnerLegacyCaller,
+		daemonSessionMutationCallerFallbackBlocked:           daemonSessionMutationCallerFallbackOwnerLegacyCaller,
+	}
+	seenReasons := map[daemonSessionMutationCallerFallbackReason]string{}
+
+	for _, entry := range daemonSessionMutationCallerFallbackOwnershipTable {
+		require.NotEmpty(t, entry.reason)
+		require.NotEmpty(t, entry.owner)
+		require.Empty(t, seenReasons[entry.reason], "duplicate fallback ownership entry for %q", entry.reason)
+		seenReasons[entry.reason] = entry.owner
+
+		owner, ok := daemonSessionMutationCallerFallbackOwnerForReason(entry.reason)
+		require.True(t, ok)
+		require.Equal(t, entry.owner, owner)
+		require.True(t, daemonSessionMutationCallerFallbackOwnedByLegacyCaller(entry.reason))
+	}
+
+	require.Equal(t, wantReasons, seenReasons)
+	_, ok := daemonSessionMutationCallerFallbackOwnerForReason(daemonSessionMutationCallerFallbackReason("unsupported"))
+	require.False(t, ok)
+	require.False(t, daemonSessionMutationCallerFallbackOwnedByLegacyCaller(daemonSessionMutationCallerFallbackReason("unsupported")))
+	require.ErrorContains(t, daemonSessionMutationCallerFallbackOwnershipError(daemonSessionMutationCallerFallbackReason("unsupported")), "fallback ownership missing")
+	require.False(t, daemonSessionMutationCallerFallbackOwnedByLegacyCaller(daemonSessionMutationCallerFallbackMutatorNotAttached))
+	require.ErrorContains(t, daemonSessionMutationCallerFallbackOwnershipError(daemonSessionMutationCallerFallbackMutatorNotAttached), "fallback ownership missing")
+
+	reason, fallback := daemonSessionMutationCallerPreDispatchFallbackReason(nil)
+	require.True(t, fallback)
+	require.Equal(t, daemonSessionMutationCallerFallbackEngineNotAttached, reason)
+
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	reason, fallback = daemonSessionMutationCallerPreDispatchFallbackReason(eng)
+	require.True(t, fallback)
+	require.Equal(t, daemonSessionMutationCallerFallbackMutatorNotAttached, reason)
+	require.False(t, daemonSessionMutatorNotAttachedRetirementAllowsLegacyFallback(reason))
+
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(context.Context, runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		return runtime.SessionMutationResult{}, nil
+	}))
+	_, fallback = daemonSessionMutationCallerPreDispatchFallbackReason(eng)
+	require.False(t, fallback)
+}
+
+func TestDaemonSharedCycleSessionMutationFallbackAuditCoversAppendBoundary(t *testing.T) {
+	wantStages := map[string]daemonSharedCycleSessionMutationFallbackStage{
+		"runtime_replan_cycle_append_decision":        daemonSharedCycleSessionMutationFallbackStageRuntimeAppendDecisionOwned,
+		"shared_cycle_append_mutation_dispatch":       daemonSharedCycleSessionMutationFallbackStageDaemonMutationDispatch,
+		"append_messages_legacy_fallback":             daemonSharedCycleSessionMutationFallbackStageLegacyFallbackRetained,
+		"shared_cycle_session_mutation_next_boundary": daemonSharedCycleSessionMutationFallbackStageNextBoundaryChosen,
+	}
+	seenStages := map[string]daemonSharedCycleSessionMutationFallbackStage{}
+
+	for _, entry := range daemonSharedCycleSessionMutationFallbackTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.Equal(t, runtime.SessionMutationAppendMessages, entry.mutationKind)
+		require.NotEmpty(t, entry.disposition)
+		require.NotEmpty(t, entry.evidence)
+		require.Equal(t, daemonSharedCycleSessionMutationFallbackNextBoundary, entry.nextBoundary)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seenStages[entry.component], "duplicate shared-cycle session mutation fallback entry for %q", entry.component)
+		seenStages[entry.component] = entry.stage
+
+		got, ok := daemonSharedCycleSessionMutationFallbackEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+
+	require.Equal(t, wantStages, seenStages)
+	require.Empty(t, daemonSharedCycleSessionMutationFallbackEntriesForStage(daemonSharedCycleSessionMutationFallbackStage("unsupported")))
+	require.Len(t, daemonSharedCycleSessionMutationFallbackEntriesForStage(daemonSharedCycleSessionMutationFallbackStageRuntimeAppendDecisionOwned), 1)
+	require.Len(t, daemonSharedCycleSessionMutationFallbackEntriesForStage(daemonSharedCycleSessionMutationFallbackStageDaemonMutationDispatch), 1)
+	require.Len(t, daemonSharedCycleSessionMutationFallbackEntriesForStage(daemonSharedCycleSessionMutationFallbackStageLegacyFallbackRetained), 1)
+	require.Len(t, daemonSharedCycleSessionMutationFallbackEntriesForStage(daemonSharedCycleSessionMutationFallbackStageNextBoundaryChosen), 1)
+
+	selectedBoundary, ok := daemonSharedCycleSessionMutationFallbackSelectedBoundary()
+	require.True(t, ok)
+	require.Equal(t, daemonSharedCycleSessionMutationFallbackNextBoundary, selectedBoundary)
+
+	dispatch, ok := daemonSharedCycleSessionMutationFallbackEntryForComponent("shared_cycle_append_mutation_dispatch")
+	require.True(t, ok)
+	require.Contains(t, dispatch.evidence, "appendAgentPlannerActionReplanCycleDecisionForTurn")
+	require.Contains(t, dispatch.nextStep, "SessionMutator")
+
+	fallback, ok := daemonSharedCycleSessionMutationFallbackEntryForComponent("append_messages_legacy_fallback")
+	require.True(t, ok)
+	require.Equal(t, daemonSharedCycleSessionMutationFallbackDispositionLegacyFallbackRetained, fallback.disposition)
+	require.Contains(t, fallback.evidence, "appendMessagesWithPlannerLegacyForTurn")
+}
+
+func TestDaemonSessionMutatorNotAttachedRetirementAuditCoversAppendBoundary(t *testing.T) {
+	wantStages := map[string]daemonSessionMutatorNotAttachedRetirementStage{
+		"no_engine_session_mutation_legacy_fallback": daemonSessionMutatorNotAttachedStageNoEngineFallbackRetained,
+		"attached_engine_missing_session_mutator":    daemonSessionMutatorNotAttachedStageMissingMutatorBlocked,
+		"detached_session_mutator_result":            daemonSessionMutatorNotAttachedStageDetachedResultBlocked,
+		"session_mutation_next_fallback_boundary":    daemonSessionMutatorNotAttachedStageNextBoundaryChosen,
+	}
+	seenStages := map[string]daemonSessionMutatorNotAttachedRetirementStage{}
+
+	for _, entry := range daemonSessionMutatorNotAttachedRetirementTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.disposition)
+		require.NotEmpty(t, entry.evidence)
+		require.Equal(t, daemonSessionMutatorNextFallbackRetirementBoundaryBlockedOrError, entry.nextBoundary)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seenStages[entry.component], "duplicate session mutator not-attached retirement entry for %q", entry.component)
+		seenStages[entry.component] = entry.stage
+
+		got, ok := daemonSessionMutatorNotAttachedRetirementEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+
+	require.Equal(t, wantStages, seenStages)
+	require.Empty(t, daemonSessionMutatorNotAttachedRetirementEntriesForStage(daemonSessionMutatorNotAttachedRetirementStage("unsupported")))
+	require.Len(t, daemonSessionMutatorNotAttachedRetirementEntriesForStage(daemonSessionMutatorNotAttachedStageNoEngineFallbackRetained), 1)
+	require.Len(t, daemonSessionMutatorNotAttachedRetirementEntriesForStage(daemonSessionMutatorNotAttachedStageMissingMutatorBlocked), 1)
+	require.Len(t, daemonSessionMutatorNotAttachedRetirementEntriesForStage(daemonSessionMutatorNotAttachedStageDetachedResultBlocked), 1)
+	require.Len(t, daemonSessionMutatorNotAttachedRetirementEntriesForStage(daemonSessionMutatorNotAttachedStageNextBoundaryChosen), 1)
+
+	selectedBoundary, ok := daemonSessionMutatorNotAttachedRetirementSelectedFallbackBoundary()
+	require.True(t, ok)
+	require.Equal(t, daemonSessionMutatorNextFallbackRetirementBoundaryBlockedOrError, selectedBoundary)
+
+	require.True(t, daemonSessionMutatorNotAttachedRetirementAllowsLegacyFallback(daemonSessionMutationCallerFallbackEngineNotAttached))
+	require.False(t, daemonSessionMutatorNotAttachedRetirementAllowsLegacyFallback(daemonSessionMutationCallerFallbackMutatorNotAttached))
+	require.False(t, daemonSessionMutatorNotAttachedRetirementAllowsLegacyFallback(daemonSessionMutationCallerFallbackBlocked))
+
+	missing, ok := daemonSessionMutatorNotAttachedRetirementEntryForComponent("attached_engine_missing_session_mutator")
+	require.True(t, ok)
+	require.Equal(t, runtime.SessionMutationAppendMessages, missing.mutationKind)
+	require.Equal(t, daemonSessionMutatorNotAttachedDispositionBlockedError, missing.disposition)
+	require.Contains(t, missing.evidence, "AttachEngine attaches daemonSessionMutator")
+
+	next, ok := daemonSessionMutatorNotAttachedRetirementEntryForComponent("session_mutation_next_fallback_boundary")
+	require.True(t, ok)
+	require.Contains(t, next.nextStep, "P0.5-N235")
+}
+
+func TestDaemonAppendSessionMutationBlockedOrErrorRetirementAuditCoversAppendBoundary(t *testing.T) {
+	wantStages := map[string]daemonAppendSessionMutationBlockedOrErrorRetirementStage{
+		"no_engine_append_legacy_fallback":        daemonAppendSessionMutationBlockedOrErrorStageNoEngineFallbackRetained,
+		"attached_session_mutator_blocked_result": daemonAppendSessionMutationBlockedOrErrorStageBlockedResultSuppressed,
+		"attached_session_mutator_hard_error":     daemonAppendSessionMutationBlockedOrErrorStageHardErrorSuppressed,
+		"session_mutation_next_fallback_boundary": daemonAppendSessionMutationBlockedOrErrorStageNextBoundaryChosen,
+	}
+	seenStages := map[string]daemonAppendSessionMutationBlockedOrErrorRetirementStage{}
+
+	for _, entry := range daemonAppendSessionMutationBlockedOrErrorRetirementTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.disposition)
+		require.NotEmpty(t, entry.evidence)
+		require.Equal(t, daemonAppendSessionMutationNextFallbackRetirementBoundaryOptionalResult, entry.nextBoundary)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seenStages[entry.component], "duplicate append blocked/error retirement entry for %q", entry.component)
+		seenStages[entry.component] = entry.stage
+
+		got, ok := daemonAppendSessionMutationBlockedOrErrorRetirementEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+
+	require.Equal(t, wantStages, seenStages)
+	require.Empty(t, daemonAppendSessionMutationBlockedOrErrorRetirementEntriesForStage(daemonAppendSessionMutationBlockedOrErrorRetirementStage("unsupported")))
+	require.Len(t, daemonAppendSessionMutationBlockedOrErrorRetirementEntriesForStage(daemonAppendSessionMutationBlockedOrErrorStageNoEngineFallbackRetained), 1)
+	require.Len(t, daemonAppendSessionMutationBlockedOrErrorRetirementEntriesForStage(daemonAppendSessionMutationBlockedOrErrorStageBlockedResultSuppressed), 1)
+	require.Len(t, daemonAppendSessionMutationBlockedOrErrorRetirementEntriesForStage(daemonAppendSessionMutationBlockedOrErrorStageHardErrorSuppressed), 1)
+	require.Len(t, daemonAppendSessionMutationBlockedOrErrorRetirementEntriesForStage(daemonAppendSessionMutationBlockedOrErrorStageNextBoundaryChosen), 1)
+
+	selectedBoundary, ok := daemonAppendSessionMutationBlockedOrErrorRetirementSelectedFallbackBoundary()
+	require.True(t, ok)
+	require.Equal(t, daemonAppendSessionMutationNextFallbackRetirementBoundaryOptionalResult, selectedBoundary)
+
+	require.True(t, daemonAppendSessionMutationBlockedOrErrorRetirementAllowsLegacyFallback(daemonSessionMutationCallerFallbackEngineNotAttached))
+	require.False(t, daemonAppendSessionMutationBlockedOrErrorRetirementAllowsLegacyFallback(daemonSessionMutationCallerFallbackMutatorNotAttached))
+	require.False(t, daemonAppendSessionMutationBlockedOrErrorRetirementAllowsLegacyFallback(daemonSessionMutationCallerFallbackBlocked))
+
+	blocked, ok := daemonAppendSessionMutationBlockedOrErrorRetirementEntryForComponent("attached_session_mutator_blocked_result")
+	require.True(t, ok)
+	require.Equal(t, runtime.SessionMutationAppendMessages, blocked.mutationKind)
+	require.Equal(t, daemonSessionMutationCallerFallbackBlocked, blocked.reason)
+	require.Equal(t, daemonAppendSessionMutationBlockedOrErrorDispositionBlockedError, blocked.disposition)
+
+	hardError, ok := daemonAppendSessionMutationBlockedOrErrorRetirementEntryForComponent("attached_session_mutator_hard_error")
+	require.True(t, ok)
+	require.Equal(t, runtime.SessionMutationAppendMessages, hardError.mutationKind)
+	require.Equal(t, daemonAppendSessionMutationBlockedOrErrorDispositionHardError, hardError.disposition)
+
+	next, ok := daemonAppendSessionMutationBlockedOrErrorRetirementEntryForComponent("session_mutation_next_fallback_boundary")
+	require.True(t, ok)
+	require.Contains(t, next.nextStep, "P0.5-N236")
+}
+
+func TestDaemonOptionalSessionMutationFallbackRetirementAuditCoversOptionalCallers(t *testing.T) {
+	wantStages := map[string]daemonOptionalSessionMutationFallbackRetirementStage{
+		"request_authorization_no_engine_legacy_fallback": daemonOptionalSessionMutationFallbackStageNoEngineFallbackRetained,
+		"capability_blocked_no_engine_legacy_fallback":    daemonOptionalSessionMutationFallbackStageNoEngineFallbackRetained,
+		"request_authorization_attached_failure":          daemonOptionalSessionMutationFallbackStageRequestAuthorizationSuppressed,
+		"capability_blocked_attached_failure":             daemonOptionalSessionMutationFallbackStageCapabilityBlockedSuppressed,
+		"session_mutation_next_fallback_boundary":         daemonOptionalSessionMutationFallbackStageNextBoundaryChosen,
+	}
+	seenStages := map[string]daemonOptionalSessionMutationFallbackRetirementStage{}
+
+	for _, entry := range daemonOptionalSessionMutationFallbackRetirementTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.disposition)
+		require.NotEmpty(t, entry.evidence)
+		require.Equal(t, daemonOptionalSessionMutationNextFallbackRetirementBoundaryNoEngineFallback, entry.nextBoundary)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seenStages[entry.component], "duplicate optional fallback retirement entry for %q", entry.component)
+		seenStages[entry.component] = entry.stage
+
+		got, ok := daemonOptionalSessionMutationFallbackRetirementEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+
+	require.Equal(t, wantStages, seenStages)
+	require.Empty(t, daemonOptionalSessionMutationFallbackRetirementEntriesForStage(daemonOptionalSessionMutationFallbackRetirementStage("unsupported")))
+	require.Len(t, daemonOptionalSessionMutationFallbackRetirementEntriesForStage(daemonOptionalSessionMutationFallbackStageNoEngineFallbackRetained), 2)
+	require.Len(t, daemonOptionalSessionMutationFallbackRetirementEntriesForStage(daemonOptionalSessionMutationFallbackStageRequestAuthorizationSuppressed), 1)
+	require.Len(t, daemonOptionalSessionMutationFallbackRetirementEntriesForStage(daemonOptionalSessionMutationFallbackStageCapabilityBlockedSuppressed), 1)
+	require.Len(t, daemonOptionalSessionMutationFallbackRetirementEntriesForStage(daemonOptionalSessionMutationFallbackStageNextBoundaryChosen), 1)
+
+	selectedBoundary, ok := daemonOptionalSessionMutationFallbackRetirementSelectedFallbackBoundary()
+	require.True(t, ok)
+	require.Equal(t, daemonOptionalSessionMutationNextFallbackRetirementBoundaryNoEngineFallback, selectedBoundary)
+
+	require.True(t, daemonOptionalSessionMutationFallbackRetirementAllowsLegacyFallback(runtime.SessionMutationRequestAuthorization, daemonSessionMutationCallerFallbackEngineNotAttached))
+	require.True(t, daemonOptionalSessionMutationFallbackRetirementAllowsLegacyFallback(runtime.SessionMutationCapabilityBlocked, daemonSessionMutationCallerFallbackEngineNotAttached))
+	require.False(t, daemonOptionalSessionMutationFallbackRetirementAllowsLegacyFallback(runtime.SessionMutationRequestAuthorization, daemonSessionMutationCallerFallbackBlocked))
+	require.False(t, daemonOptionalSessionMutationFallbackRetirementAllowsLegacyFallback(runtime.SessionMutationCapabilityBlocked, daemonSessionMutationCallerFallbackBlocked))
+	require.True(t, daemonOptionalSessionMutationFallbackRetirementBlocksLegacyFallback(runtime.SessionMutationRequestAuthorization))
+	require.True(t, daemonOptionalSessionMutationFallbackRetirementBlocksLegacyFallback(runtime.SessionMutationCapabilityBlocked))
+	require.False(t, daemonOptionalSessionMutationFallbackRetirementBlocksLegacyFallback(runtime.SessionMutationRecordUserMessage))
+
+	requestAuth, ok := daemonOptionalSessionMutationFallbackRetirementEntryForComponent("request_authorization_attached_failure")
+	require.True(t, ok)
+	require.Equal(t, runtime.SessionMutationRequestAuthorization, requestAuth.mutationKind)
+	require.Equal(t, daemonOptionalSessionMutationFallbackDispositionBlockedError, requestAuth.disposition)
+	require.Contains(t, requestAuth.evidence, "blocked, hard-error or invalid-payload")
+
+	next, ok := daemonOptionalSessionMutationFallbackRetirementEntryForComponent("session_mutation_next_fallback_boundary")
+	require.True(t, ok)
+	require.Contains(t, next.nextStep, "P0.5-N237")
+}
+
+func TestDaemonNoEngineSessionMutationFallbackRetirementAuditKeepsRollbackSwitch(t *testing.T) {
+	wantStages := map[string]daemonNoEngineSessionMutationFallbackRetirementStage{
+		"production_default_runtime_engine":               daemonNoEngineSessionMutationFallbackStageProductionDefaultEngineAttached,
+		"legacy_runtime_opt_out_switch":                   daemonNoEngineSessionMutationFallbackStageLegacyRuntimeOptOutRetained,
+		"append_messages_no_engine_legacy_fallback":       daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		"record_user_message_no_engine_legacy_fallback":   daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		"request_authorization_no_engine_legacy_fallback": daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		"capability_blocked_no_engine_legacy_fallback":    daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		"control_session_no_engine_legacy_fallback":       daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		"resolve_authorization_no_engine_legacy_fallback": daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained,
+		"session_mutation_no_engine_next_boundary":        daemonNoEngineSessionMutationFallbackStageNextBoundaryChosen,
+	}
+	seenStages := map[string]daemonNoEngineSessionMutationFallbackRetirementStage{}
+
+	for _, entry := range daemonNoEngineSessionMutationFallbackRetirementTable {
+		require.NotEmpty(t, entry.component)
+		require.NotEmpty(t, entry.stage)
+		require.NotEmpty(t, entry.disposition)
+		require.NotEmpty(t, entry.evidence)
+		require.Equal(t, daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization, entry.nextBoundary)
+		require.NotEmpty(t, entry.nextStep)
+		require.Empty(t, seenStages[entry.component], "duplicate no-engine session mutation fallback entry for %q", entry.component)
+		seenStages[entry.component] = entry.stage
+
+		got, ok := daemonNoEngineSessionMutationFallbackRetirementEntryForComponent(entry.component)
+		require.True(t, ok)
+		require.Equal(t, entry, got)
+	}
+
+	require.Equal(t, wantStages, seenStages)
+	require.Empty(t, daemonNoEngineSessionMutationFallbackRetirementEntriesForStage(daemonNoEngineSessionMutationFallbackRetirementStage("unsupported")))
+	require.Len(t, daemonNoEngineSessionMutationFallbackRetirementEntriesForStage(daemonNoEngineSessionMutationFallbackStageProductionDefaultEngineAttached), 1)
+	require.Len(t, daemonNoEngineSessionMutationFallbackRetirementEntriesForStage(daemonNoEngineSessionMutationFallbackStageLegacyRuntimeOptOutRetained), 1)
+	require.Len(t, daemonNoEngineSessionMutationFallbackRetirementEntriesForStage(daemonNoEngineSessionMutationFallbackStageNoEngineFallbackRetained), len(daemonSessionMutationCallerPolicyTable))
+	require.Len(t, daemonNoEngineSessionMutationFallbackRetirementEntriesForStage(daemonNoEngineSessionMutationFallbackStageNextBoundaryChosen), 1)
+
+	selectedBoundary, ok := daemonNoEngineSessionMutationFallbackRetirementSelectedBoundary()
+	require.True(t, ok)
+	require.Equal(t, daemonNoEngineSessionMutationFallbackNextBoundaryManualAuthorization, selectedBoundary)
+
+	for _, policy := range daemonSessionMutationCallerPolicyTable {
+		require.True(t, daemonNoEngineSessionMutationFallbackRetirementRetainsKind(policy.kind), "missing no-engine fallback audit for %s", policy.kind)
+	}
+	require.False(t, daemonNoEngineSessionMutationFallbackRetirementRetainsKind(runtime.SessionMutationKind("unsupported")))
+
+	defaultEngine, ok := daemonNoEngineSessionMutationFallbackRetirementEntryForComponent("production_default_runtime_engine")
+	require.True(t, ok)
+	require.Contains(t, defaultEngine.evidence, "AttachEngine")
+	require.Equal(t, daemonNoEngineSessionMutationFallbackDispositionRuntimeDefault, defaultEngine.disposition)
+
+	optOut, ok := daemonNoEngineSessionMutationFallbackRetirementEntryForComponent("legacy_runtime_opt_out_switch")
+	require.True(t, ok)
+	require.Equal(t, daemonSessionMutationCallerFallbackEngineNotAttached, optOut.reason)
+	require.Equal(t, daemonNoEngineSessionMutationFallbackDispositionRollbackSwitch, optOut.disposition)
+	require.Contains(t, optOut.evidence, "CYBERAGENT_RUNTIME=legacy")
+
+	next, ok := daemonNoEngineSessionMutationFallbackRetirementEntryForComponent("session_mutation_no_engine_next_boundary")
+	require.True(t, ok)
+	require.Equal(t, daemonNoEngineSessionMutationFallbackDispositionManualGateNext, next.disposition)
+	require.Contains(t, next.nextStep, "manual stage/commit/tag")
+}
+
+func TestDaemonNoEngineSessionMutationFallbackSourceAuditKeepsWholeEngineRollback(t *testing.T) {
+	serverData, err := os.ReadFile("server.go")
+	require.NoError(t, err)
+	serverSource := string(serverData)
+	require.Contains(t, serverSource, `agentRuntimeEngineEnabledFromEnv(os.Getenv("CYBERAGENT_RUNTIME"))`)
+	require.Contains(t, serverSource, `CYBERAGENT_RUNTIME=legacy/off/disabled/false/0`)
+	require.NotContains(t, serverSource, "CYBERAGENT_RUNTIME_COMPAT")
+	require.NotContains(t, serverSource, "CYBERAGENT_DEPRECATED_RUNTIME_API")
+
+	runtimeData, err := os.ReadFile("agent_runtime.go")
+	require.NoError(t, err)
+	runtimeSource := string(runtimeData)
+	require.Contains(t, runtimeSource, "func (m *agentManager) AttachEngine(e *runtime.Engine)")
+	require.Contains(t, runtimeSource, "e.AttachSessionMutator(daemonSessionMutator{manager: m})")
+	require.NotContains(t, runtimeSource, "CYBERAGENT_RUNTIME_COMPAT")
+	require.NotContains(t, runtimeSource, "CYBERAGENT_DEPRECATED_RUNTIME_API")
+
+	sessionMutationData, err := os.ReadFile("agent_session_mutator.go")
+	require.NoError(t, err)
+	sessionMutationSource := string(sessionMutationData)
+	start := strings.Index(sessionMutationSource, "func (m *agentManager) runRuntimeSessionMutation")
+	require.NotEqual(t, -1, start)
+	end := strings.Index(sessionMutationSource[start:], "\nfunc (m *agentManager) runRuntimeSessionMutationCallerEgress")
+	require.NotEqual(t, -1, end)
+	runRuntimeMutation := sessionMutationSource[start : start+end]
+	require.Contains(t, runRuntimeMutation, "daemonSessionMutationCallerPreDispatchFallbackReason(eng)")
+	require.Contains(t, runRuntimeMutation, "return runtime.SessionMutationResult{}, false, nil")
+	require.Contains(t, runRuntimeMutation, "runtime.ErrSessionMutatorNotAttached")
+}
+
+func TestDaemonSharedCycleSessionMutationFallbackSourceAuditScopesAppendFallback(t *testing.T) {
+	plannerData, err := os.ReadFile("agent_planner_loop.go")
+	require.NoError(t, err)
+	plannerSource := string(plannerData)
+	start := strings.Index(plannerSource, "func (m *agentManager) appendAgentPlannerActionReplanCycleDecisionForTurn")
+	require.NotEqual(t, -1, start)
+	end := strings.Index(plannerSource[start:], "\nfunc (m *agentManager) runAgentPlannerActionReplanCycleActionExecution")
+	require.NotEqual(t, -1, end)
+	appendDecision := plannerSource[start : start+end]
+	require.Contains(t, appendDecision, "decision.Clone()")
+	require.Contains(t, appendDecision, "m.appendMessagesWithPlannerForTurn")
+	require.Contains(t, appendDecision, "m.appendMessagesForTurn")
+	require.NotContains(t, appendDecision, "appendMessagesWithPlannerLegacyForTurn")
+	require.NotContains(t, appendDecision, "runRuntimeSessionMutation")
+
+	helpersData, err := os.ReadFile("agent_session_helpers.go")
+	require.NoError(t, err)
+	helpersSource := string(helpersData)
+	start = strings.Index(helpersSource, "func (m *agentManager) appendMessagesWithPlannerForTurn")
+	require.NotEqual(t, -1, start)
+	end = strings.Index(helpersSource[start:], "\nfunc (m *agentManager) appendMessagesWithPlannerLegacy")
+	require.NotEqual(t, -1, end)
+	appendForTurn := helpersSource[start : start+end]
+	require.Contains(t, appendForTurn, "m.runRuntimeAppendMessagesMutationForTurn")
+	require.Contains(t, appendForTurn, "m.appendMessagesWithPlannerLegacyForTurn")
+
+	mutatorData, err := os.ReadFile("agent_session_mutator.go")
+	require.NoError(t, err)
+	mutatorSource := string(mutatorData)
+	require.Contains(t, mutatorSource, "func (m *agentManager) runRuntimeSessionMutation")
+	require.Contains(t, mutatorSource, "daemonSessionMutationCallerPreDispatchFallbackReason")
+	require.Contains(t, mutatorSource, "daemonSessionMutationCallerResultFallbackReason")
+	require.Contains(t, mutatorSource, "daemonSessionMutationCallerFallbackMutatorNotAttached")
+	require.Contains(t, mutatorSource, "daemonSessionMutationCallerMutatorNotAttachedBlockedResult")
+	require.Contains(t, mutatorSource, "daemonSessionMutatorNotAttachedRetirementAllowsLegacyFallback")
+}
+
+func TestDaemonSessionMutationAdapterAuditTablesStayAligned(t *testing.T) {
+	wantKinds := map[runtime.SessionMutationKind]bool{
+		runtime.SessionMutationAppendMessages:       true,
+		runtime.SessionMutationRecordUserMessage:    true,
+		runtime.SessionMutationRequestAuthorization: true,
+		runtime.SessionMutationCapabilityBlocked:    true,
+		runtime.SessionMutationControlSession:       true,
+		runtime.SessionMutationResolveAuthorization: true,
+	}
+	dispatchKinds := map[runtime.SessionMutationKind]bool{}
+	resultAdapterKinds := map[runtime.SessionMutationKind]bool{}
+	invalidPayloadKinds := map[runtime.SessionMutationKind]bool{}
+	policyKinds := map[runtime.SessionMutationKind]bool{}
+
+	for _, entry := range daemonSessionMutationDispatchTable {
+		dispatchKinds[entry.kind] = true
+	}
+	for _, entry := range daemonSessionMutationResultAdapterTable {
+		resultAdapterKinds[entry.kind] = true
+	}
+	for _, entry := range daemonSessionMutationCallerInvalidPayloadTable {
+		invalidPayloadKinds[entry.kind] = true
+	}
+	for _, entry := range daemonSessionMutationCallerPolicyTable {
+		policyKinds[entry.kind] = true
+	}
+
+	require.Equal(t, wantKinds, dispatchKinds)
+	require.Equal(t, wantKinds, resultAdapterKinds)
+	require.Equal(t, wantKinds, invalidPayloadKinds)
+	require.Equal(t, wantKinds, policyKinds)
+}
+
+func TestDaemonSessionMutationPayloadHelperClonesAndReportsInvalid(t *testing.T) {
+	source := &runtime.AgentLoopAppendMessagesPayload{
+		Messages: []runtime.AgentLoopMessage{{
+			ID:      "msg-session-mutation-payload-helper",
+			Role:    "agent",
+			Content: "original",
+			ToolCalls: []runtime.AgentLoopToolCall{{
+				ID:       "tool-session-mutation-payload-helper",
+				Name:     "daemon.health",
+				Metadata: map[string]any{"phase": "original"},
+			}},
+		}},
+	}
+	payload, err := daemonSessionMutationPayload[runtime.AgentLoopAppendMessagesPayload](runtime.SessionMutationRequest{Payload: source}, "daemon: invalid append messages mutation payload")
+	require.NoError(t, err)
+	source.Messages[0].Content = "mutated"
+	source.Messages[0].ToolCalls[0].Metadata["phase"] = "mutated"
+	require.Equal(t, "original", payload.Messages[0].Content)
+	require.Equal(t, "original", payload.Messages[0].ToolCalls[0].Metadata["phase"])
+
+	_, err = daemonSessionMutationPayload[runtime.AgentLoopAppendMessagesPayload](
+		runtime.SessionMutationRequest{Payload: "invalid"},
+		"daemon: invalid append messages mutation payload",
+	)
+	require.EqualError(t, err, "daemon: invalid append messages mutation payload")
+
+	var nilPayload *runtime.AgentLoopAppendMessagesPayload
+	_, err = daemonSessionMutationPayload[runtime.AgentLoopAppendMessagesPayload](
+		runtime.SessionMutationRequest{Payload: nilPayload},
+		"daemon: invalid append messages mutation payload",
+	)
+	require.EqualError(t, err, "daemon: invalid append messages mutation payload")
+}
+
+func TestDaemonSessionMutationFinishedResultClonesData(t *testing.T) {
+	data := map[string]any{
+		"mutator":    "daemon_legacy_session",
+		"kind":       string(runtime.SessionMutationRecordUserMessage),
+		"session_id": "session-finished-result",
+	}
+	result := daemonSessionMutationFinishedResult(
+		"legacy daemon user message mutation executed",
+		runtime.AgentLoopRecordUserMessageResultPayload{
+			Session: runtime.AgentLoopSessionSnapshot{SessionID: "session-finished-result"},
+			Mutated: true,
+		},
+		data,
+	)
+	data["kind"] = "mutated"
+
+	require.Equal(t, runtime.TurnResultFinished, result.Status)
+	require.Equal(t, "legacy daemon user message mutation executed", result.Reason)
+	require.Equal(t, string(runtime.SessionMutationRecordUserMessage), result.Data["kind"])
+	payload, ok := result.Payload.(runtime.AgentLoopRecordUserMessageResultPayload)
+	require.True(t, ok, "payload type = %T", result.Payload)
+	require.Equal(t, "session-finished-result", payload.Session.SessionID)
+	require.True(t, payload.Mutated)
 }
 
 func TestDaemonLegacySessionMutationResultPayload(t *testing.T) {
@@ -93,6 +685,395 @@ func TestDaemonSessionMutationResultPayloadFromRuntimeOrLegacy(t *testing.T) {
 
 	_, ok = convert(runtime.SessionMutationResult{Payload: "invalid"})
 	require.False(t, ok)
+}
+
+func TestDaemonSessionMutationResultAdapterTableCoversKinds(t *testing.T) {
+	wantKinds := map[runtime.SessionMutationKind]bool{
+		runtime.SessionMutationAppendMessages:       true,
+		runtime.SessionMutationRecordUserMessage:    true,
+		runtime.SessionMutationRequestAuthorization: true,
+		runtime.SessionMutationCapabilityBlocked:    true,
+		runtime.SessionMutationControlSession:       true,
+		runtime.SessionMutationResolveAuthorization: true,
+	}
+	seenKinds := map[runtime.SessionMutationKind]bool{}
+
+	for _, entry := range daemonSessionMutationResultAdapterTable {
+		require.NotEmpty(t, entry.kind)
+		require.False(t, seenKinds[entry.kind], "duplicate result adapter entry for %q", entry.kind)
+		require.NotNil(t, entry.fromSessionMutationResult)
+		seenKinds[entry.kind] = true
+
+		recovered, ok := daemonSessionMutationResultAdapterForKind(entry.kind)
+		require.True(t, ok)
+		require.Equal(t, entry.kind, recovered.kind)
+		require.NotNil(t, recovered.fromSessionMutationResult)
+	}
+
+	require.Equal(t, wantKinds, seenKinds)
+	_, ok := daemonSessionMutationResultAdapterForKind(runtime.SessionMutationKind("unsupported"))
+	require.False(t, ok)
+}
+
+func TestDaemonSessionMutationResultPayloadForKindUsesAdapterTable(t *testing.T) {
+	controlPayload := runtime.AgentLoopControlSessionResultPayload{
+		Session: runtime.AgentLoopSessionSnapshot{
+			SessionID: "session-result-adapter-table",
+			Messages: []runtime.AgentLoopMessage{{
+				ID: "msg-session-result-adapter-table-history",
+				ToolCalls: []runtime.AgentLoopToolCall{{
+					ID:       "tool-session-result-adapter-table-history",
+					Metadata: map[string]any{"phase": "history"},
+				}},
+			}},
+		},
+		Message: runtime.AgentLoopMessage{
+			ID: "msg-session-result-adapter-table",
+			ToolCalls: []runtime.AgentLoopToolCall{{
+				ID:       "tool-session-result-adapter-table",
+				Metadata: map[string]any{"phase": "result"},
+			}},
+		},
+		Mutated: true,
+	}
+
+	converted, ok := daemonSessionMutationResultPayloadForKind[daemonControlSessionMutationResultPayload](
+		runtime.SessionMutationControlSession,
+		runtime.SessionMutationResult{Payload: controlPayload},
+	)
+	require.True(t, ok)
+	require.Equal(t, "session-result-adapter-table", converted.Session.SessionID)
+	require.Equal(t, "msg-session-result-adapter-table", converted.Message.ID)
+	require.True(t, converted.Mutated)
+
+	controlPayload.Session.Messages[0].ToolCalls[0].Metadata["phase"] = "mutated-history"
+	controlPayload.Message.ToolCalls[0].Metadata["phase"] = "mutated-result"
+	require.Equal(t, "history", converted.Session.Messages[0].ToolCalls[0].Metadata["phase"])
+	require.Equal(t, "result", converted.Message.ToolCalls[0].Metadata["phase"])
+
+	legacyPayload := daemonCapabilityBlockedMutationResultPayload{
+		Session:         agentSession{SessionID: "legacy-session-result-adapter-table"},
+		ActionName:      "workspace.files.write",
+		IntentID:        "intent-result-adapter-table",
+		Reason:          "requires approval",
+		SuggestedPrompt: "try read-only",
+		Mutated:         true,
+	}
+	convertedLegacy, ok := daemonSessionMutationResultPayloadForKind[daemonCapabilityBlockedMutationResultPayload](
+		runtime.SessionMutationCapabilityBlocked,
+		runtime.SessionMutationResult{Payload: legacyPayload},
+	)
+	require.True(t, ok)
+	require.Equal(t, legacyPayload, convertedLegacy)
+
+	_, ok = daemonSessionMutationResultPayloadForKind[daemonControlSessionMutationResultPayload](
+		runtime.SessionMutationCapabilityBlocked,
+		runtime.SessionMutationResult{Payload: legacyPayload},
+	)
+	require.False(t, ok)
+
+	_, ok = daemonSessionMutationResultPayloadForKind[daemonControlSessionMutationResultPayload](
+		runtime.SessionMutationKind("unsupported"),
+		runtime.SessionMutationResult{Payload: controlPayload},
+	)
+	require.False(t, ok)
+}
+
+func TestDaemonSessionMutationCallerResultPayloadHandlesEgressStates(t *testing.T) {
+	expected := runtime.AgentLoopControlSessionResultPayload{
+		Session: runtime.AgentLoopSessionSnapshot{
+			SessionID: "session-caller-egress",
+			Messages: []runtime.AgentLoopMessage{{
+				ID: "msg-caller-egress",
+				ToolCalls: []runtime.AgentLoopToolCall{{
+					ID:       "tool-message-caller-egress",
+					Metadata: map[string]any{"phase": "message"},
+				}},
+			}},
+			ToolCalls: []runtime.AgentLoopToolCall{{
+				ID:       "tool-session-caller-egress",
+				Result:   map[string]any{"ok": true},
+				Metadata: map[string]any{"phase": "session"},
+			}},
+		},
+		Message: runtime.AgentLoopMessage{
+			ID: "msg-result-caller-egress",
+			ToolCalls: []runtime.AgentLoopToolCall{{
+				ID:       "tool-result-caller-egress",
+				Metadata: map[string]any{"phase": "result"},
+			}},
+		},
+		Mutated: true,
+	}
+
+	payload, handled, err := daemonSessionMutationCallerResultPayload(
+		daemonSessionMutationCallerEgress{result: runtime.SessionMutationResult{Payload: expected}, handled: true},
+		daemonControlSessionMutationResultPayloadFromSessionMutationResult,
+		"daemon: custom mutator returned invalid payload",
+	)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, "session-caller-egress", payload.Session.SessionID)
+	require.Equal(t, "msg-result-caller-egress", payload.Message.ID)
+	require.True(t, payload.Mutated)
+
+	expected.Session.Messages[0].ToolCalls[0].Metadata["phase"] = "mutated-message"
+	expected.Session.ToolCalls[0].Result["ok"] = false
+	expected.Session.ToolCalls[0].Metadata["phase"] = "mutated-session"
+	expected.Message.ToolCalls[0].Metadata["phase"] = "mutated-result"
+	require.Equal(t, "message", payload.Session.Messages[0].ToolCalls[0].Metadata["phase"])
+	require.Equal(t, true, payload.Session.ToolCalls[0].Result["ok"])
+	require.Equal(t, "session", payload.Session.ToolCalls[0].Metadata["phase"])
+	require.Equal(t, "result", payload.Message.ToolCalls[0].Metadata["phase"])
+
+	pointerPayload := expected.Clone()
+	payload, handled, err = daemonSessionMutationCallerResultPayload(
+		daemonSessionMutationCallerEgress{result: runtime.SessionMutationResult{Payload: &pointerPayload}, handled: true},
+		daemonControlSessionMutationResultPayloadFromSessionMutationResult,
+		"daemon: custom mutator returned invalid payload",
+	)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, "session-caller-egress", payload.Session.SessionID)
+
+	payload, handled, err = daemonSessionMutationCallerResultPayload(
+		daemonSessionMutationCallerEgress{},
+		daemonControlSessionMutationResultPayloadFromSessionMutationResult,
+		"daemon: custom mutator returned invalid payload",
+	)
+	require.NoError(t, err)
+	require.False(t, handled)
+	require.Empty(t, payload.Session.SessionID)
+
+	boom := errors.New("mutator failed")
+	payload, handled, err = daemonSessionMutationCallerResultPayload(
+		daemonSessionMutationCallerEgress{handled: true, resultErr: boom},
+		daemonControlSessionMutationResultPayloadFromSessionMutationResult,
+		"daemon: custom mutator returned invalid payload",
+	)
+	require.ErrorIs(t, err, boom)
+	require.True(t, handled)
+	require.Empty(t, payload.Session.SessionID)
+
+	payload, handled, err = daemonSessionMutationCallerResultPayload(
+		daemonSessionMutationCallerEgress{result: runtime.SessionMutationResult{Payload: "not a payload"}, handled: true},
+		daemonControlSessionMutationResultPayloadFromSessionMutationResult,
+		"daemon: custom mutator returned invalid payload",
+	)
+	require.ErrorContains(t, err, "custom mutator returned invalid payload")
+	require.True(t, handled)
+	require.Empty(t, payload.Session.SessionID)
+}
+
+func TestDaemonSessionMutationCallerOptionalResultPayloadSuppressesFailures(t *testing.T) {
+	expected := runtime.AgentLoopCapabilityBlockedResultPayload{
+		Session:         runtime.AgentLoopSessionSnapshot{SessionID: "session-optional-egress"},
+		ActionName:      "daemon.health",
+		IntentID:        "intent-optional-egress",
+		Reason:          "requires approval",
+		SuggestedPrompt: "try read-only",
+		Mutated:         true,
+	}
+
+	payload, ok := daemonSessionMutationCallerOptionalResultPayload(
+		daemonSessionMutationCallerEgress{result: runtime.SessionMutationResult{Payload: expected}, handled: true},
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+		"daemon: capability blocked mutator returned invalid payload",
+	)
+	require.True(t, ok)
+	require.Equal(t, "session-optional-egress", payload.Session.SessionID)
+	require.Equal(t, "daemon.health", payload.ActionName)
+	require.True(t, payload.Mutated)
+
+	payload, ok = daemonSessionMutationCallerOptionalResultPayload(
+		daemonSessionMutationCallerEgress{},
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+		"daemon: capability blocked mutator returned invalid payload",
+	)
+	require.False(t, ok)
+	require.Empty(t, payload.Session.SessionID)
+
+	payload, ok = daemonSessionMutationCallerOptionalResultPayload(
+		daemonSessionMutationCallerEgress{handled: true, resultErr: errors.New("mutator failed")},
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+		"daemon: capability blocked mutator returned invalid payload",
+	)
+	require.False(t, ok)
+	require.Empty(t, payload.Session.SessionID)
+
+	payload, ok = daemonSessionMutationCallerOptionalResultPayload(
+		daemonSessionMutationCallerEgress{result: runtime.SessionMutationResult{Payload: "not a payload"}, handled: true},
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+		"daemon: capability blocked mutator returned invalid payload",
+	)
+	require.False(t, ok)
+	require.Empty(t, payload.Session.SessionID)
+
+	payload, ok = daemonSessionMutationCallerOptionalResultPayloadForKind(
+		daemonSessionMutationCallerEgress{result: runtime.SessionMutationResult{Payload: expected}, handled: true},
+		runtime.SessionMutationCapabilityBlocked,
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+	)
+	require.True(t, ok)
+	require.Equal(t, "session-optional-egress", payload.Session.SessionID)
+
+	payload, ok = daemonSessionMutationCallerOptionalResultPayloadForKind(
+		daemonSessionMutationCallerEgress{},
+		runtime.SessionMutationCapabilityBlocked,
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+	)
+	require.False(t, ok)
+	require.Empty(t, payload.Session.SessionID)
+
+	payload, ok = daemonSessionMutationCallerOptionalResultPayloadForKind(
+		daemonSessionMutationCallerEgress{handled: true, resultErr: errors.New("mutator failed")},
+		runtime.SessionMutationCapabilityBlocked,
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+	)
+	require.True(t, ok)
+	require.Empty(t, payload.Session.SessionID)
+
+	payload, ok = daemonSessionMutationCallerOptionalResultPayloadForKind(
+		daemonSessionMutationCallerEgress{
+			result: runtime.SessionMutationResult{
+				Status: runtime.TurnResultBlocked,
+				Reason: "blocked by attached mutator",
+			},
+		},
+		runtime.SessionMutationCapabilityBlocked,
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+	)
+	require.True(t, ok)
+	require.Empty(t, payload.Session.SessionID)
+
+	payload, ok = daemonSessionMutationCallerOptionalResultPayloadForKind(
+		daemonSessionMutationCallerEgress{result: runtime.SessionMutationResult{Payload: "not a payload"}, handled: true},
+		runtime.SessionMutationCapabilityBlocked,
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+	)
+	require.True(t, ok)
+	require.Empty(t, payload.Session.SessionID)
+
+	payload, ok = daemonSessionMutationCallerOptionalResultPayloadForKind(
+		daemonSessionMutationCallerEgress{handled: true, resultErr: errors.New("mutator failed")},
+		runtime.SessionMutationRecordUserMessage,
+		daemonCapabilityBlockedMutationResultPayloadFromSessionMutationResult,
+	)
+	require.False(t, ok)
+	require.Empty(t, payload.Session.SessionID)
+}
+
+func TestDaemonSessionMutationCallerHandledSuppressesFailures(t *testing.T) {
+	require.True(t, daemonSessionMutationCallerHandled(daemonSessionMutationCallerEgress{handled: true}))
+	require.False(t, daemonSessionMutationCallerHandled(daemonSessionMutationCallerEgress{}))
+	require.False(t, daemonSessionMutationCallerHandled(daemonSessionMutationCallerEgress{handled: true, resultErr: errors.New("mutator failed")}))
+	require.True(t, daemonSessionMutationCallerHandledForKind(
+		daemonSessionMutationCallerEgress{handled: true, resultErr: errors.New("mutator failed")},
+		runtime.SessionMutationAppendMessages,
+	))
+	require.True(t, daemonSessionMutationCallerHandledForKind(
+		daemonSessionMutationCallerEgress{
+			result: runtime.SessionMutationResult{
+				Status: runtime.TurnResultBlocked,
+				Reason: "blocked by attached mutator",
+			},
+		},
+		runtime.SessionMutationAppendMessages,
+	))
+	require.False(t, daemonSessionMutationCallerHandledForKind(
+		daemonSessionMutationCallerEgress{handled: true, resultErr: errors.New("mutator failed")},
+		runtime.SessionMutationRecordUserMessage,
+	))
+}
+
+func TestAgentManagerSessionMutationCallerInvalidPayloadFallbackAudit(t *testing.T) {
+	newInvalidPayloadManager := func(t *testing.T) *agentManager {
+		t.Helper()
+		mgr := newAgentManager(t.TempDir())
+		eng := runtime.NewEngine(runtime.NewMemStore())
+		mgr.AttachEngine(eng)
+		eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+			require.NotNil(t, ctx)
+			require.NotEmpty(t, req.Kind)
+			return runtime.SessionMutationResult{
+				Status:  runtime.TurnResultFinished,
+				Payload: "not a session mutation payload",
+			}, nil
+		}))
+		return mgr
+	}
+
+	t.Run("append messages ignores result payload and only checks handled error state", func(t *testing.T) {
+		mgr := newInvalidPayloadManager(t)
+		handled := mgr.runRuntimeAppendMessagesMutationWithTurn(
+			nil,
+			runtime.AgentLoopAppendMessagesMutationTurn("session-invalid-append", "task-invalid-append", "run-invalid-append", "turn-invalid-append", "append", "planner", "safe_scan", 1, false),
+			nil,
+			agentMessage{ID: "msg-invalid-append", Role: "agent", Content: "append"},
+		)
+		require.True(t, handled)
+	})
+
+	t.Run("record user message treats invalid payload as handled error", func(t *testing.T) {
+		mgr := newInvalidPayloadManager(t)
+		payload, handled, err := mgr.runRuntimeRecordUserMessageMutation(nil, "session-invalid-record", "scan safely", "operator-1", "en", "safe_scan")
+		require.True(t, handled)
+		require.ErrorContains(t, err, daemonSessionMutationCallerInvalidPayloadError(runtime.SessionMutationRecordUserMessage))
+		require.Empty(t, payload.Session.SessionID)
+	})
+
+	t.Run("control session treats invalid payload as handled error", func(t *testing.T) {
+		mgr := newInvalidPayloadManager(t)
+		payload, handled, err := mgr.runRuntimeControlSessionMutation(nil, "session-invalid-control", "pause", agentControlRequest{Action: "pause", Prompt: "pause"}, "operator-1", "en", "safe_scan")
+		require.True(t, handled)
+		require.ErrorContains(t, err, daemonSessionMutationCallerInvalidPayloadError(runtime.SessionMutationControlSession))
+		require.Empty(t, payload.Session.SessionID)
+	})
+
+	t.Run("resolve authorization treats invalid payload as handled error", func(t *testing.T) {
+		mgr := newInvalidPayloadManager(t)
+		payload, handled, err := mgr.runRuntimeResolveAuthorizationMutation(nil, "session-invalid-resolve", "deny", agentAuthorizationDecisionRequest{Action: "deny", AuthorizationID: "auth-invalid-resolve"}, "operator-1", "en", "safe_scan")
+		require.True(t, handled)
+		require.ErrorContains(t, err, daemonSessionMutationCallerInvalidPayloadError(runtime.SessionMutationResolveAuthorization))
+		require.Empty(t, payload.Session.SessionID)
+	})
+
+	t.Run("request authorization invalid payload blocks legacy caller", func(t *testing.T) {
+		mgr := newInvalidPayloadManager(t)
+		payload, handled := mgr.runRuntimeRequestAuthorizationMutationForTurn(
+			nil,
+			"session-invalid-request-auth",
+			agentRuntimeTurnRef{TaskID: "task-invalid-request-auth", RunID: "run-invalid-request-auth", TurnID: "turn-invalid-request-auth"},
+			"write a file",
+			"en",
+			"safe_scan",
+			runtime.AgentLoopAction{Name: "workspace.files.write"},
+			"workspace.files.write",
+			"workspace_write",
+			"manual",
+			"requires write approval",
+		)
+		require.True(t, handled)
+		require.Empty(t, payload.Message.ID)
+	})
+
+	t.Run("capability blocked invalid payload blocks legacy caller", func(t *testing.T) {
+		mgr := newInvalidPayloadManager(t)
+		payload, handled := mgr.runRuntimeCapabilityBlockedMutationForTurn(
+			nil,
+			"session-invalid-capability",
+			agentRuntimeTurnRef{TaskID: "task-invalid-capability", RunID: "run-invalid-capability", TurnID: "turn-invalid-capability"},
+			"scan aggressively",
+			"en",
+			"safe_scan",
+			"ports.scan.full",
+			"full_port_scan",
+			"requires advanced capability",
+			"use ports.scan.safe instead",
+		)
+		require.True(t, handled)
+		require.Empty(t, payload.Session.SessionID)
+	})
 }
 
 func TestAgentLoopRecordUserMessageResultPayloadAdapterRoundTrip(t *testing.T) {
@@ -904,6 +1885,100 @@ func TestDaemonSessionMutatorReturnsAgentLoopResultPayloads(t *testing.T) {
 	}
 }
 
+func TestAgentManagerRunRuntimeSessionMutationDispatchHelper(t *testing.T) {
+	mgr := newAgentManager(t.TempDir())
+	request := runtime.AgentLoopRecordUserMessageMutationRequest(
+		"session-dispatch-helper",
+		"scan safely",
+		"safe_scan",
+		"operator-1",
+		"en",
+		runtime.AgentLoopRecordUserMessageMutationMetadata("safe_scan"),
+	)
+
+	result, handled, err := mgr.runRuntimeSessionMutation(nil, request)
+	require.NoError(t, err)
+	require.False(t, handled)
+	require.Equal(t, runtime.SessionMutationResult{}, result)
+
+	eng := runtime.NewEngine(runtime.NewMemStore())
+	mgr.AttachEngine(eng)
+	eng.AttachSessionMutator(nil)
+	result, handled, err = mgr.runRuntimeSessionMutation(context.Background(), request)
+	require.ErrorIs(t, err, runtime.ErrSessionMutatorNotAttached)
+	require.True(t, handled)
+	require.Equal(t, runtime.TurnResultBlocked, result.Status)
+	require.Equal(t, runtime.ErrSessionMutatorNotAttached, result.Error)
+	require.Equal(t, runtime.ErrSessionMutatorNotAttached.Error(), result.Data["error"])
+	require.Equal(t, string(daemonSessionMutationCallerFallbackMutatorNotAttached), result.Data["blocked_reason"])
+
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(ctx context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		require.NotNil(t, ctx)
+		require.Equal(t, runtime.SessionMutationRecordUserMessage, req.Kind)
+		require.Equal(t, "session-dispatch-helper", req.Turn.SessionID)
+		return runtime.SessionMutationResult{
+			Status: runtime.TurnResultFinished,
+			Reason: "handled",
+			Payload: runtime.AgentLoopRecordUserMessageResultPayload{
+				Session: runtime.AgentLoopSessionSnapshot{SessionID: req.Turn.SessionID},
+				Mutated: true,
+			},
+		}, nil
+	}))
+	result, handled, err = mgr.runRuntimeSessionMutation(nil, request)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, runtime.TurnResultFinished, result.Status)
+	require.Equal(t, "handled", result.Reason)
+
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(context.Context, runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		return runtime.SessionMutationResult{Status: runtime.TurnResultBlocked, Reason: "blocked"}, nil
+	}))
+	result, handled, err = mgr.runRuntimeSessionMutation(context.Background(), request)
+	require.NoError(t, err)
+	require.False(t, handled)
+	require.Equal(t, runtime.TurnResultBlocked, result.Status)
+	reason, fallback := daemonSessionMutationCallerResultFallbackReason(result, err)
+	require.True(t, fallback)
+	require.Equal(t, daemonSessionMutationCallerFallbackBlocked, reason)
+	require.True(t, daemonSessionMutationCallerFallbackOwnedByLegacyCaller(reason))
+
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(context.Context, runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		return runtime.SessionMutationResult{}, runtime.ErrSessionMutatorNotAttached
+	}))
+	result, handled, err = mgr.runRuntimeSessionMutation(context.Background(), request)
+	require.ErrorIs(t, err, runtime.ErrSessionMutatorNotAttached)
+	require.True(t, handled)
+	require.Equal(t, runtime.TurnResultBlocked, result.Status)
+	require.Equal(t, runtime.ErrSessionMutatorNotAttached, result.Error)
+	reason, fallback = daemonSessionMutationCallerResultFallbackReason(result, runtime.ErrSessionMutatorNotAttached)
+	require.True(t, fallback)
+	require.Equal(t, daemonSessionMutationCallerFallbackMutatorNotAttached, reason)
+
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(context.Context, runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		return runtime.SessionMutationResult{Status: runtime.TurnResultBlocked, Error: runtime.ErrSessionMutatorNotAttached}, nil
+	}))
+	result, handled, err = mgr.runRuntimeSessionMutation(context.Background(), request)
+	require.ErrorIs(t, err, runtime.ErrSessionMutatorNotAttached)
+	require.True(t, handled)
+	require.Equal(t, runtime.TurnResultBlocked, result.Status)
+	require.Equal(t, runtime.ErrSessionMutatorNotAttached, result.Error)
+	reason, fallback = daemonSessionMutationCallerResultFallbackReason(result, err)
+	require.True(t, fallback)
+	require.Equal(t, daemonSessionMutationCallerFallbackMutatorNotAttached, reason)
+
+	sentinel := errors.New("synthetic dispatch failure")
+	eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(context.Context, runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+		return runtime.SessionMutationResult{Status: runtime.TurnResultFailed, Error: sentinel}, sentinel
+	}))
+	result, handled, err = mgr.runRuntimeSessionMutation(context.Background(), request)
+	require.ErrorIs(t, err, sentinel)
+	require.True(t, handled)
+	require.Equal(t, sentinel, result.Error)
+	_, fallback = daemonSessionMutationCallerResultFallbackReason(result, err)
+	require.False(t, fallback)
+}
+
 func TestAgentManagerAppendMessagesWithPlannerDispatchesSessionMutator(t *testing.T) {
 	eng := runtime.NewEngine(runtime.NewMemStore())
 	mgr := newAgentManager(t.TempDir())
@@ -1105,6 +2180,447 @@ func TestAgentManagerAppendMessagesWithPlannerForTurnDispatchesSessionMutatorWit
 	got, err := mgr.GetSession(context.Background(), sessionID)
 	require.NoError(t, err)
 	require.Len(t, got.Messages, initialMessages, "handled runtime mutator should prevent legacy fallback")
+}
+
+func TestAgentManagerAppendMessagesWithPlannerForTurnSessionMutatorNotAttachedBlocksLegacyFallback(t *testing.T) {
+	tests := []struct {
+		name          string
+		setup         func(*agentManager, *runtime.Engine)
+		wantAppended  bool
+		wantEngineNil bool
+	}{
+		{
+			name:          "no_engine_legacy_fallback_retained",
+			wantAppended:  true,
+			wantEngineNil: true,
+		},
+		{
+			name: "attached_engine_missing_mutator_blocks_legacy_append",
+			setup: func(_ *agentManager, eng *runtime.Engine) {
+				eng.AttachSessionMutator(nil)
+			},
+		},
+		{
+			name: "detached_mutator_error_blocks_legacy_append",
+			setup: func(_ *agentManager, eng *runtime.Engine) {
+				eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(context.Context, runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+					return runtime.SessionMutationResult{}, runtime.ErrSessionMutatorNotAttached
+				}))
+			},
+		},
+		{
+			name: "detached_mutator_result_error_blocks_legacy_append",
+			setup: func(_ *agentManager, eng *runtime.Engine) {
+				eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(context.Context, runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+					return runtime.SessionMutationResult{
+						Status: runtime.TurnResultBlocked,
+						Error:  runtime.ErrSessionMutatorNotAttached,
+					}, nil
+				}))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newAgentManager(t.TempDir())
+			var eng *runtime.Engine
+			if !tt.wantEngineNil {
+				eng = runtime.NewEngine(runtime.NewMemStore())
+				mgr.AttachEngine(eng)
+			}
+
+			created, err := mgr.CreateSession(createAgentSessionRequest{
+				Operator:       "tester",
+				Language:       "en",
+				OperationLevel: "read_only",
+			})
+			require.NoError(t, err)
+			sessionID := created.Session.SessionID
+			initialMessages := len(created.Session.Messages)
+			if tt.setup != nil {
+				tt.setup(mgr, eng)
+			}
+
+			mgr.appendMessagesWithPlannerForTurn(
+				context.Background(),
+				sessionID,
+				agentRuntimeTurnRef{TaskID: "task-mutator-not-attached", RunID: "run-mutator-not-attached", TurnID: "turn-mutator-not-attached"},
+				"continue shared cycle",
+				string(runtime.AgentLoopModePlannerActionReplanCycle),
+				"read_only",
+				nil,
+				agentMessage{
+					ID:        "msg-mutator-not-attached-" + tt.name,
+					Role:      "agent",
+					Content:   "should only append through allowed fallback",
+					Timestamp: time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC),
+				},
+			)
+
+			got, err := mgr.GetSession(context.Background(), sessionID)
+			require.NoError(t, err)
+			if tt.wantAppended {
+				require.Len(t, got.Messages, initialMessages+1)
+				return
+			}
+			require.Len(t, got.Messages, initialMessages, "attached-engine missing/detached SessionMutator must not legacy-append")
+		})
+	}
+}
+
+func TestAgentManagerAppendMessagesWithPlannerForTurnSessionMutatorBlockedOrHardErrorBlocksLegacyFallback(t *testing.T) {
+	hardErr := errors.New("append mutator hard error")
+	tests := []struct {
+		name          string
+		setup         func(*testing.T, *runtime.Engine) *bool
+		wantAppended  bool
+		wantEngineNil bool
+	}{
+		{
+			name:          "no_engine_legacy_fallback_retained",
+			wantAppended:  true,
+			wantEngineNil: true,
+		},
+		{
+			name: "attached_mutator_blocked_result_blocks_legacy_append",
+			setup: func(t *testing.T, eng *runtime.Engine) *bool {
+				t.Helper()
+				called := false
+				eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+					called = true
+					require.Equal(t, runtime.SessionMutationAppendMessages, req.Kind)
+					return runtime.SessionMutationResult{
+						Status: runtime.TurnResultBlocked,
+						Reason: "append blocked by test mutator",
+						Data:   map[string]any{"blocked": true},
+					}, nil
+				}))
+				return &called
+			},
+		},
+		{
+			name: "attached_mutator_hard_error_blocks_legacy_append",
+			setup: func(t *testing.T, eng *runtime.Engine) *bool {
+				t.Helper()
+				called := false
+				eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+					called = true
+					require.Equal(t, runtime.SessionMutationAppendMessages, req.Kind)
+					return runtime.SessionMutationResult{
+						Status: runtime.TurnResultFailed,
+						Error:  hardErr,
+					}, hardErr
+				}))
+				return &called
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newAgentManager(t.TempDir())
+			var eng *runtime.Engine
+			if !tt.wantEngineNil {
+				eng = runtime.NewEngine(runtime.NewMemStore())
+				mgr.AttachEngine(eng)
+			}
+
+			created, err := mgr.CreateSession(createAgentSessionRequest{
+				Operator:       "tester",
+				Language:       "en",
+				OperationLevel: "read_only",
+			})
+			require.NoError(t, err)
+			sessionID := created.Session.SessionID
+			initialMessages := len(created.Session.Messages)
+
+			var called *bool
+			if tt.setup != nil {
+				called = tt.setup(t, eng)
+			}
+
+			mgr.appendMessagesWithPlannerForTurn(
+				context.Background(),
+				sessionID,
+				agentRuntimeTurnRef{TaskID: "task-blocked-error", RunID: "run-blocked-error", TurnID: "turn-blocked-error"},
+				"continue shared cycle",
+				string(runtime.AgentLoopModePlannerActionReplanCycle),
+				"read_only",
+				nil,
+				agentMessage{
+					ID:        "msg-blocked-error-" + tt.name,
+					Role:      "agent",
+					Content:   "should only append through no-engine fallback",
+					Timestamp: time.Date(2026, 6, 9, 10, 15, 0, 0, time.UTC),
+				},
+			)
+
+			if called != nil {
+				require.True(t, *called)
+			}
+			got, err := mgr.GetSession(context.Background(), sessionID)
+			require.NoError(t, err)
+			if tt.wantAppended {
+				require.Len(t, got.Messages, initialMessages+1)
+				return
+			}
+			require.Len(t, got.Messages, initialMessages, "attached mutator blocked/hard-error egress must not legacy-append")
+		})
+	}
+}
+
+func TestAgentManagerRequestAuthorizationOptionalMutationFailureBlocksLegacyFallback(t *testing.T) {
+	hardErr := errors.New("request authorization mutator hard error")
+	tests := []struct {
+		name          string
+		setup         func(*testing.T, *runtime.Engine) *bool
+		wantMutated   bool
+		wantEngineNil bool
+	}{
+		{
+			name:          "no_engine_legacy_fallback_retained",
+			wantMutated:   true,
+			wantEngineNil: true,
+		},
+		{
+			name: "attached_mutator_blocked_result_blocks_legacy_authorization",
+			setup: func(t *testing.T, eng *runtime.Engine) *bool {
+				t.Helper()
+				called := false
+				eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+					called = true
+					require.Equal(t, runtime.SessionMutationRequestAuthorization, req.Kind)
+					return runtime.SessionMutationResult{
+						Status: runtime.TurnResultBlocked,
+						Reason: "request authorization blocked by test mutator",
+						Data:   map[string]any{"blocked": true},
+					}, nil
+				}))
+				return &called
+			},
+		},
+		{
+			name: "attached_mutator_hard_error_blocks_legacy_authorization",
+			setup: func(t *testing.T, eng *runtime.Engine) *bool {
+				t.Helper()
+				called := false
+				eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+					called = true
+					require.Equal(t, runtime.SessionMutationRequestAuthorization, req.Kind)
+					return runtime.SessionMutationResult{
+						Status: runtime.TurnResultFailed,
+						Error:  hardErr,
+					}, hardErr
+				}))
+				return &called
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newAgentManager(t.TempDir())
+			var eng *runtime.Engine
+			if !tt.wantEngineNil {
+				eng = runtime.NewEngine(runtime.NewMemStore())
+				mgr.AttachEngine(eng)
+			}
+
+			created, err := mgr.CreateSession(createAgentSessionRequest{
+				Operator:       "tester",
+				Language:       "en",
+				OperationLevel: "read_only",
+			})
+			require.NoError(t, err)
+			sessionID := created.Session.SessionID
+			now := time.Date(2026, 6, 9, 10, 30, 0, 0, time.UTC)
+			mgr.mu.Lock()
+			session := mgr.sessions[sessionID]
+			session.Status = "running"
+			session.ActiveTask = &agentTask{
+				ID:        "task-request-authorization-fallback",
+				Goal:      "request authorization through optional mutation",
+				Kind:      "analysis",
+				Status:    "running",
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+			session.NextAction = nil
+			session.PendingAuthorization = nil
+			mgr.mu.Unlock()
+
+			var called *bool
+			if tt.setup != nil {
+				called = tt.setup(t, eng)
+			}
+
+			message := mgr.requestAgentAuthorizationForTurn(
+				context.Background(),
+				sessionID,
+				agentRuntimeTurnRef{TaskID: "task-request-authorization-fallback", RunID: "run-request-authorization-fallback", TurnID: "turn-request-authorization-fallback"},
+				"en",
+				"write a file",
+				"read_only",
+				runtime.AgentLoopAction{Name: "workspace.files.write", Arguments: map[string]any{"path": "notes.txt"}},
+				"workspace.files.write",
+				"workspace_write",
+				"manual",
+				"requires write approval",
+			)
+
+			if called != nil {
+				require.True(t, *called)
+			}
+			got, err := mgr.GetSession(context.Background(), sessionID)
+			require.NoError(t, err)
+			if tt.wantMutated {
+				require.NotEmpty(t, message.ID)
+				require.Equal(t, "waiting_authorization", got.Status)
+				require.NotNil(t, got.PendingAuthorization)
+				require.Equal(t, "workspace.files.write", got.PendingAuthorization.ActionName)
+				require.Equal(t, "workspace_write", got.PendingAuthorization.RequiredLevel)
+				require.NotNil(t, got.NextAction)
+				require.Equal(t, "authorization_required", got.NextAction.Type)
+				require.NotNil(t, got.ActiveTask)
+				require.Equal(t, "blocked", got.ActiveTask.Status)
+				return
+			}
+			require.Empty(t, message.ID)
+			require.Equal(t, "running", got.Status, "attached mutator failure must not legacy-write waiting_authorization")
+			require.Nil(t, got.PendingAuthorization)
+			require.Nil(t, got.NextAction)
+			require.NotNil(t, got.ActiveTask)
+			require.Equal(t, "running", got.ActiveTask.Status)
+		})
+	}
+}
+
+func TestAgentManagerCapabilityBlockedOptionalMutationFailureBlocksLegacyFallback(t *testing.T) {
+	hardErr := errors.New("capability blocked mutator hard error")
+	tests := []struct {
+		name          string
+		setup         func(*testing.T, *runtime.Engine) *bool
+		wantMutated   bool
+		wantEngineNil bool
+	}{
+		{
+			name:          "no_engine_legacy_fallback_retained",
+			wantMutated:   true,
+			wantEngineNil: true,
+		},
+		{
+			name: "attached_mutator_blocked_result_blocks_legacy_capability_blocked",
+			setup: func(t *testing.T, eng *runtime.Engine) *bool {
+				t.Helper()
+				called := false
+				eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+					called = true
+					require.Equal(t, runtime.SessionMutationCapabilityBlocked, req.Kind)
+					return runtime.SessionMutationResult{
+						Status: runtime.TurnResultBlocked,
+						Reason: "capability blocked mutation blocked by test mutator",
+						Data:   map[string]any{"blocked": true},
+					}, nil
+				}))
+				return &called
+			},
+		},
+		{
+			name: "attached_mutator_hard_error_blocks_legacy_capability_blocked",
+			setup: func(t *testing.T, eng *runtime.Engine) *bool {
+				t.Helper()
+				called := false
+				eng.AttachSessionMutator(runtime.SessionMutatorFunc(func(_ context.Context, req runtime.SessionMutationRequest) (runtime.SessionMutationResult, error) {
+					called = true
+					require.Equal(t, runtime.SessionMutationCapabilityBlocked, req.Kind)
+					return runtime.SessionMutationResult{
+						Status: runtime.TurnResultFailed,
+						Error:  hardErr,
+					}, hardErr
+				}))
+				return &called
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newAgentManager(t.TempDir())
+			var eng *runtime.Engine
+			if !tt.wantEngineNil {
+				eng = runtime.NewEngine(runtime.NewMemStore())
+				mgr.AttachEngine(eng)
+			}
+
+			created, err := mgr.CreateSession(createAgentSessionRequest{
+				Operator:       "tester",
+				Language:       "en",
+				OperationLevel: "safe_scan",
+			})
+			require.NoError(t, err)
+			sessionID := created.Session.SessionID
+			now := time.Date(2026, 6, 9, 10, 45, 0, 0, time.UTC)
+			mgr.mu.Lock()
+			session := mgr.sessions[sessionID]
+			session.Status = "running"
+			session.ActiveTask = &agentTask{
+				ID:        "task-capability-blocked-fallback",
+				Goal:      "validate capability blocked optional mutation",
+				Kind:      "analysis",
+				Status:    "running",
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+			session.Todos = []agentTodo{
+				{ID: "todo-capability-blocked-fallback", Title: "validate capability gate", Status: "running", Priority: 1, UpdatedAt: now},
+			}
+			session.NextAction = nil
+			mgr.mu.Unlock()
+
+			var called *bool
+			if tt.setup != nil {
+				called = tt.setup(t, eng)
+			}
+
+			mgr.markAgentCapabilityBlockedForTurn(
+				context.Background(),
+				sessionID,
+				agentRuntimeTurnRef{TaskID: "task-capability-blocked-fallback", RunID: "run-capability-blocked-fallback", TurnID: "turn-capability-blocked-fallback"},
+				"scan aggressively",
+				"en",
+				"safe_scan",
+				"ports.scan.full",
+				"full_port_scan",
+				"requires advanced capability",
+				"use ports.scan.safe instead",
+			)
+
+			if called != nil {
+				require.True(t, *called)
+			}
+			got, err := mgr.GetSession(context.Background(), sessionID)
+			require.NoError(t, err)
+			if tt.wantMutated {
+				require.Equal(t, "blocked", got.Status)
+				require.NotNil(t, got.NextAction)
+				require.Equal(t, "blocked", got.NextAction.Type)
+				require.Equal(t, "requires advanced capability", got.NextAction.Reason)
+				require.Equal(t, "use ports.scan.safe instead", got.NextAction.SuggestedPrompt)
+				require.NotNil(t, got.ActiveTask)
+				require.Equal(t, "blocked", got.ActiveTask.Status)
+				require.Len(t, got.Todos, 1)
+				require.Equal(t, "blocked", got.Todos[0].Status)
+				return
+			}
+			require.Equal(t, "running", got.Status, "attached mutator failure must not legacy-write blocked state")
+			require.Nil(t, got.NextAction)
+			require.NotNil(t, got.ActiveTask)
+			require.Equal(t, "running", got.ActiveTask.Status)
+			require.Len(t, got.Todos, 1)
+			require.Equal(t, "running", got.Todos[0].Status)
+		})
+	}
 }
 
 func TestAgentManagerAppendMessagesForTurnCompactionUsesTurnRef(t *testing.T) {
@@ -1325,7 +2841,7 @@ func TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMuta
 		return legacy.MutateSession(ctx, req)
 	}))
 
-	messages, toolCalls, authorizationRequired := mgr.executeAgentPlannerActions(
+	messages, toolCalls, authorizationRequired := mgr.executeAgentPlannerActionsWithToolServices(
 		context.Background(),
 		sessionID,
 		turnRef,
@@ -1333,7 +2849,7 @@ func TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMuta
 		"en",
 		"tester",
 		"read_only",
-		routerServices{},
+		testAgentLoopToolServices(),
 		&agentPlannerResponse{Actions: []agentPlannerAction{action}},
 		nil,
 		"",
@@ -1436,7 +2952,7 @@ func TestAgentManagerExecutePlannerActionCapabilityBlockedThroughSessionMutator(
 		return legacy.MutateSession(ctx, req)
 	}))
 
-	messages, toolCalls, authorizationRequired := mgr.executeAgentPlannerActions(
+	messages, toolCalls, authorizationRequired := mgr.executeAgentPlannerActionsWithToolServices(
 		context.Background(),
 		sessionID,
 		turnRef,
@@ -1444,7 +2960,7 @@ func TestAgentManagerExecutePlannerActionCapabilityBlockedThroughSessionMutator(
 		"en",
 		"tester",
 		"safe_scan",
-		routerServices{},
+		testAgentLoopToolServices(),
 		&agentPlannerResponse{Actions: []agentPlannerAction{action}},
 		nil,
 		"",

@@ -16,19 +16,29 @@ import (
 	"github.com/H1d3rOne/cyberagent/internal/command"
 	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	"github.com/H1d3rOne/cyberagent/internal/core/services"
+	coretenant "github.com/H1d3rOne/cyberagent/internal/core/tenant"
 	"github.com/H1d3rOne/cyberagent/internal/interfaces/web"
 )
 
 type routerServices struct {
-	version     services.VersionService
-	plugins     services.PluginService
-	runs        services.RunService
-	approvals   services.ApprovalService
-	jobs        *jobManager
-	agent       *agentManager
-	scanManager *web.ScanManager
-	schedules   *scheduleManager
-	providers   web.ProviderStore
+	version         services.VersionService
+	plugins         services.PluginService
+	runs            services.RunService
+	approvals       services.ApprovalService
+	jobs            *jobManager
+	agent           *agentManager
+	scanManager     *web.ScanManager
+	schedules       *scheduleManager
+	providers       web.ProviderStore
+	admin           adminBootstrapState
+	adminConfig     AdminConfig
+	auth            AuthConfig
+	sessionStore    coretenant.SessionStore
+	membershipStore coretenant.MembershipStore
+	rbacPolicy      rbacPolicy
+	auditSink       daemonAuditSink
+	rateLimit       RateLimitConfig
+	hardening       HardeningConfig
 }
 
 func newRouter(svc routerServices, token string) http.Handler {
@@ -41,6 +51,15 @@ func newRouter(svc routerServices, token string) http.Handler {
 	providerStoreProvided := svc.providers != nil
 	if svc.providers == nil {
 		svc.providers = newProviderStore("")
+	}
+	if svc.sessionStore == nil {
+		svc.sessionStore = coretenant.DisabledSessionStore{}
+	}
+	if svc.membershipStore == nil {
+		svc.membershipStore = coretenant.DisabledMembershipStore{}
+	}
+	if svc.auditSink == nil {
+		svc.auditSink = noopDaemonAuditSink{}
 	}
 	if providerStoreProvided {
 		svc.agent.AttachProviderStore(svc.providers)
@@ -65,6 +84,25 @@ func newRouter(svc routerServices, token string) http.Handler {
 	mux.HandleFunc("/api/v1/doctor", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
 		writeOK(w, http.StatusOK, svc.version.Doctor(r.Context()))
 	}))
+	mux.HandleFunc("/api/v1/admin/bootstrap", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
+		writeOK(w, http.StatusOK, svc.admin.Status())
+	}))
+	mux.HandleFunc("/api/v1/admin/memberships", func(w http.ResponseWriter, r *http.Request) {
+		handleMembershipAdminRoute(w, r, svc.adminConfig, svc.membershipStore)
+	})
+	mux.HandleFunc("/api/v1/auth/login", requireMethod(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
+		handleWebAuthSkeletonEndpoint(w, r, svc.auth.WebSessions, "login")
+	}))
+	mux.HandleFunc("/api/v1/auth/logout", requireMethod(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
+		handleWebAuthSkeletonEndpoint(w, r, svc.auth.WebSessions, "logout")
+	}))
+	mux.HandleFunc("/api/v1/auth/session/refresh", requireMethod(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
+		handleWebAuthSkeletonEndpoint(w, r, svc.auth.WebSessions, "session_refresh")
+	}))
+	mux.HandleFunc("/api/v1/me", requireMethod(http.MethodGet, handleIdentityMe))
+	mux.HandleFunc("/api/v1/tenants", requireMethod(http.MethodGet, handleIdentityTenants))
+	mux.HandleFunc("/api/v1/workspaces", handleIdentityWorkspacesRoute)
+	mux.HandleFunc("/api/v1/workspaces/", handleIdentityWorkspacesRoute)
 	mux.HandleFunc("/api/v1/plugins", requireMethod(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
 		plugins, err := svc.plugins.ListPlugins(r.Context())
 		if err != nil {
@@ -141,7 +179,15 @@ func newRouter(svc routerServices, token string) http.Handler {
 	})
 	// Frontend routes don't need auth; API routes do
 	mainMux := http.NewServeMux()
-	mainMux.Handle("/api/", corsMiddleware(bearerAuth(token, mux)))
+	apiHandler := http.Handler(mux)
+	apiHandler = withRBACEnforcementGate(svc.auth.RBAC, svc.auditSink, apiHandler)
+	apiHandler = withRBACPolicyEvaluator(svc.auth.RBAC, svc.membershipStore, svc.rbacPolicy, apiHandler)
+	apiHandler = withRequestTenantContext(svc.auth.WebSessions, apiHandler)
+	apiHandler = withWebSessionCookieResolver(svc.auth.WebSessions, svc.sessionStore, apiHandler)
+	apiHandler = bearerAuth(token, apiHandler)
+	apiHandler = withDaemonRateLimit(svc.rateLimit, apiHandler)
+	apiHandler = withDaemonHardening(svc.hardening, apiHandler)
+	mainMux.Handle("/api/", corsMiddleware(apiHandler))
 	mainMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		web.FrontendHandler().ServeHTTP(w, r)
 	})
@@ -283,7 +329,7 @@ func handleAgentSessionsRoute(w http.ResponseWriter, r *http.Request, svc router
 				writeServiceError(w, err)
 				return
 			}
-			response, err := svc.agent.CreateSession(body)
+			response, err := svc.agent.CreateSessionWithContext(r.Context(), body)
 			if err != nil {
 				writeServiceError(w, err)
 				return
@@ -1804,14 +1850,14 @@ func handleScheduleRoute(w http.ResponseWriter, r *http.Request, svc routerServi
 	if path == "" {
 		switch r.Method {
 		case http.MethodGet:
-			writeOK(w, http.StatusOK, map[string]any{"schedules": svc.schedules.List()})
+			writeOK(w, http.StatusOK, map[string]any{"schedules": svc.schedules.ListWithContext(r.Context())})
 		case http.MethodPost:
 			var body scheduleSpec
 			if err := decodeJSONBody(r, &body); err != nil {
 				writeServiceError(w, err)
 				return
 			}
-			created, err := svc.schedules.Create(body)
+			created, err := svc.schedules.CreateWithContext(r.Context(), body)
 			if err != nil {
 				writeServiceError(w, err)
 				return
@@ -1833,7 +1879,7 @@ func handleScheduleRoute(w http.ResponseWriter, r *http.Request, svc routerServi
 	if len(parts) == 1 {
 		switch r.Method {
 		case http.MethodGet:
-			spec, err := svc.schedules.Get(id)
+			spec, err := svc.schedules.GetWithContext(r.Context(), id)
 			if err != nil {
 				writeServiceError(w, err)
 				return
@@ -1845,14 +1891,14 @@ func handleScheduleRoute(w http.ResponseWriter, r *http.Request, svc routerServi
 				writeServiceError(w, err)
 				return
 			}
-			updated, err := svc.schedules.Update(id, body)
+			updated, err := svc.schedules.UpdateWithContext(r.Context(), id, body)
 			if err != nil {
 				writeServiceError(w, err)
 				return
 			}
 			writeOK(w, http.StatusOK, map[string]any{"schedule": updated})
 		case http.MethodDelete:
-			if err := svc.schedules.Delete(id); err != nil {
+			if err := svc.schedules.DeleteWithContext(r.Context(), id); err != nil {
 				writeServiceError(w, err)
 				return
 			}
@@ -1875,14 +1921,14 @@ func handleScheduleRoute(w http.ResponseWriter, r *http.Request, svc routerServi
 	}
 	switch action {
 	case "enable":
-		spec, err := svc.schedules.SetEnabled(id, true)
+		spec, err := svc.schedules.SetEnabledWithContext(r.Context(), id, true)
 		if err != nil {
 			writeServiceError(w, err)
 			return
 		}
 		writeOK(w, http.StatusOK, map[string]any{"schedule": spec})
 	case "disable":
-		spec, err := svc.schedules.SetEnabled(id, false)
+		spec, err := svc.schedules.SetEnabledWithContext(r.Context(), id, false)
 		if err != nil {
 			writeServiceError(w, err)
 			return

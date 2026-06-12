@@ -8,8 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+	"time"
 
+	"github.com/H1d3rOne/cyberagent/internal/core/contracts"
 	coreruntime "github.com/H1d3rOne/cyberagent/internal/core/runtime"
 )
 
@@ -175,6 +178,130 @@ func TestRunServiceIgnoresInternalAgentStateDirectory(t *testing.T) {
 	}
 }
 
+func TestRunServiceRebuildsRunIndexFromRunsDir(t *testing.T) {
+	runsDir := t.TempDir()
+	writeRunIndexTestWorkspace(t, runsDir, "run_older", time.Date(2026, 6, 9, 9, 0, 0, 0, time.UTC), contracts.StatusSucceeded, "https://older.example")
+	writeRunIndexTestWorkspace(t, runsDir, "run_newer", time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC), contracts.StatusFailed, "https://newer.example")
+
+	service := NewRunService(runsDir)
+	index, err := service.RebuildIndex(context.Background())
+	if err != nil {
+		t.Fatalf("RebuildIndex() error = %v", err)
+	}
+	if index.SchemaVersion != runIndexSchemaVersion || index.Source != runIndexSourceRunsDir || index.RunsDir != runsDir {
+		t.Fatalf("unexpected index metadata: %#v", index)
+	}
+	if index.Count != 2 || len(index.Items) != 2 {
+		t.Fatalf("unexpected index count/items: %#v", index)
+	}
+	if index.Items[0].RunID != "run_newer" || index.Items[1].RunID != "run_older" {
+		t.Fatalf("index should preserve ListRuns ordering, got %#v", index.Items)
+	}
+
+	indexPath := filepath.Join(runsDir, ".index", "runs.json")
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("expected run index file at %s: %v", indexPath, err)
+	}
+	var persisted RunIndex
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("decode persisted index: %v", err)
+	}
+	if persisted.Count != index.Count || len(persisted.Items) != len(index.Items) {
+		t.Fatalf("persisted index mismatch: %#v", persisted)
+	}
+
+	loaded, err := service.LoadIndex(context.Background())
+	if err != nil {
+		t.Fatalf("LoadIndex() error = %v", err)
+	}
+	if loaded.Count != 2 || len(loaded.Items) != 2 {
+		t.Fatalf("unexpected loaded index: %#v", loaded)
+	}
+	validation, err := service.ValidateIndex(context.Background())
+	if err != nil {
+		t.Fatalf("ValidateIndex() error = %v", err)
+	}
+	if !validation.Valid || validation.IndexCount != 2 || validation.ScannedCount != 2 {
+		t.Fatalf("expected valid rebuilt index: %#v", validation)
+	}
+
+	page, err := service.ListRuns(context.Background(), RunListRequest{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuns() error = %v", err)
+	}
+	if len(page.Items) != 2 || page.Items[0].RunID == ".index" {
+		t.Fatalf("run index directory must not be listed as a run: %#v", page)
+	}
+}
+
+func TestRunServiceValidateRunIndexDetectsMissingExtraAndStale(t *testing.T) {
+	runsDir := t.TempDir()
+	writeRunIndexTestWorkspace(t, runsDir, "run_keep", time.Date(2026, 6, 9, 9, 0, 0, 0, time.UTC), contracts.StatusSucceeded, "https://keep.example")
+	writeRunIndexTestWorkspace(t, runsDir, "run_deleted", time.Date(2026, 6, 9, 8, 0, 0, 0, time.UTC), contracts.StatusSucceeded, "https://deleted.example")
+
+	service := NewRunService(runsDir)
+	if _, err := service.RebuildIndex(context.Background()); err != nil {
+		t.Fatalf("RebuildIndex() error = %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(runsDir, "run_deleted")); err != nil {
+		t.Fatalf("remove run workspace: %v", err)
+	}
+	writeRunIndexTestWorkspace(t, runsDir, "run_added", time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC), contracts.StatusSucceeded, "https://added.example")
+	updateRunIndexTestJobStatus(t, runsDir, "run_keep", contracts.StatusFailed)
+
+	validation, err := service.ValidateIndex(context.Background())
+	if err != nil {
+		t.Fatalf("ValidateIndex() error = %v", err)
+	}
+	if validation.Valid {
+		t.Fatalf("validation should fail when source of truth diverges: %#v", validation)
+	}
+	if !reflect.DeepEqual(validation.MissingFromIndex, []string{"run_added"}) {
+		t.Fatalf("MissingFromIndex = %#v, want run_added", validation.MissingFromIndex)
+	}
+	if !reflect.DeepEqual(validation.ExtraInIndex, []string{"run_deleted"}) {
+		t.Fatalf("ExtraInIndex = %#v, want run_deleted", validation.ExtraInIndex)
+	}
+	if len(validation.Stale) != 1 || validation.Stale[0].RunID != "run_keep" {
+		t.Fatalf("Stale = %#v, want run_keep", validation.Stale)
+	}
+	if validation.Stale[0].Indexed.Status != contracts.StatusSucceeded || validation.Stale[0].Current.Status != contracts.StatusFailed {
+		t.Fatalf("stale status diff not captured: %#v", validation.Stale[0])
+	}
+}
+
+func TestRunServiceRunIndexIsCacheAndRunsDirIsSourceOfTruth(t *testing.T) {
+	runsDir := t.TempDir()
+	writeRunIndexTestWorkspace(t, runsDir, "run_source", time.Date(2026, 6, 9, 9, 0, 0, 0, time.UTC), contracts.StatusSucceeded, "https://source.example")
+
+	service := NewRunService(runsDir)
+	if _, err := service.RebuildIndex(context.Background()); err != nil {
+		t.Fatalf("RebuildIndex() error = %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(runsDir, ".index")); err != nil {
+		t.Fatalf("remove index cache: %v", err)
+	}
+	if _, err := service.LoadIndex(context.Background()); err == nil || ErrorCodeOf(err) != CodeNotFound {
+		t.Fatalf("LoadIndex() after cache delete error code = %s, err=%v", ErrorCodeOf(err), err)
+	}
+
+	page, err := service.ListRuns(context.Background(), RunListRequest{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuns() should still use runs dir source of truth: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].RunID != "run_source" {
+		t.Fatalf("unexpected source-of-truth page after index delete: %#v", page)
+	}
+	recreated, err := service.RebuildIndex(context.Background())
+	if err != nil {
+		t.Fatalf("RebuildIndex() after cache delete error = %v", err)
+	}
+	if recreated.Count != 1 || len(recreated.Items) != 1 || recreated.Items[0].RunID != "run_source" {
+		t.Fatalf("unexpected recreated index: %#v", recreated)
+	}
+}
+
 func TestRunServiceReportErrors(t *testing.T) {
 	runsDir := t.TempDir()
 	runDir := filepath.Join(runsDir, "run_001")
@@ -211,4 +338,88 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func writeRunIndexTestWorkspace(t *testing.T, runsDir, runID string, created time.Time, status contracts.Status, target string) {
+	t.Helper()
+	runDir := filepath.Join(runsDir, runID)
+	for _, dir := range []string{
+		runDir,
+		filepath.Join(runDir, "artifacts"),
+		filepath.Join(runDir, "reports"),
+		filepath.Join(runDir, "state"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	job := contracts.Job{
+		ID:        runID,
+		Kind:      contracts.JobKindWebScan,
+		Status:    status,
+		TargetID:  "target_" + runID,
+		ScopeID:   "scope_" + runID,
+		Profile:   "safe",
+		Workspace: runDir,
+		CreatedAt: created,
+	}
+	writeRunIndexTestJSON(t, filepath.Join(runDir, "job.json"), job)
+	writeRunIndexTestJSON(t, filepath.Join(runDir, "metadata.json"), map[string]any{
+		"schema_version": "test",
+		"created_at":     created,
+		"job_id":         runID,
+		"workspace":      runDir,
+		"profile":        "safe",
+		"request": map[string]any{
+			"target": target,
+			"scope":  target + "/scope",
+		},
+	})
+	writeRunIndexTestJSON(t, filepath.Join(runDir, "effective_config.json"), map[string]any{
+		"schema_version": "test",
+		"generated_at":   created,
+		"profile":        "safe",
+		"target":         target,
+		"scope":          target + "/scope",
+		"out":            runDir,
+		"job_id":         runID,
+	})
+	if err := os.WriteFile(filepath.Join(runDir, "events.jsonl"), []byte("{\"id\":\"event_1\"}\n{\"id\":\"event_2\"}\n"), 0o644); err != nil {
+		t.Fatalf("write events: %v", err)
+	}
+	writeRunIndexTestJSON(t, filepath.Join(runDir, "artifacts", "index.json"), map[string]any{"schema_version": "test", "count": 1})
+	writeRunIndexTestJSON(t, filepath.Join(runDir, "findings.json"), []map[string]any{{"id": "finding_1"}})
+	writeRunIndexTestJSON(t, filepath.Join(runDir, "approvals.json"), []map[string]any{})
+	if err := os.WriteFile(filepath.Join(runDir, "reports", "report.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write report json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "reports", "report.md"), []byte("# report\n"), 0o644); err != nil {
+		t.Fatalf("write report md: %v", err)
+	}
+}
+
+func updateRunIndexTestJobStatus(t *testing.T, runsDir, runID string, status contracts.Status) {
+	t.Helper()
+	path := filepath.Join(runsDir, runID, "job.json")
+	var job contracts.Job
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read job: %v", err)
+	}
+	if err := json.Unmarshal(data, &job); err != nil {
+		t.Fatalf("decode job: %v", err)
+	}
+	job.Status = status
+	writeRunIndexTestJSON(t, path, job)
+}
+
+func writeRunIndexTestJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
 }

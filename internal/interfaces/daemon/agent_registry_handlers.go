@@ -11,9 +11,9 @@ import (
 
 func attachDaemonToolHandlers(r *toolregistry.Registry) {
 	setDaemonToolHandler(r, "scan.web.safe", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("scan.web.safe")
+		resolver, webScanService, err := webScanActionServiceFromRegistryRuntime(in, "scan.web.safe")
+		if err != nil {
+			return nil, err
 		}
 		target := firstNonEmpty(
 			stringFromAny(in.RawArgs["target"]),
@@ -29,13 +29,13 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if scope != "" {
 			prompt += " scope=" + scope
 		}
-		messages, calls, err := rt.Manager.handleAgentScan(ctx, prompt, in.Language, rt.legacyRouterServices())
+		messages, calls, err := webScanService.WebScan(ctx, prompt, in.Language, resolver)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "ports.scan.safe", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("ports.scan.safe")
+		portScannerService, err := portScannerActionServiceFromRegistryRuntime(in, "ports.scan.safe")
+		if err != nil {
+			return nil, err
 		}
 		target := firstNonEmpty(
 			stringFromAny(in.RawArgs["target"]),
@@ -50,13 +50,13 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if portsSpec := agentPortSpecFromPlannerArgument(in.RawArgs["ports"]); portsSpec != "" {
 			prompt += " ports=" + portsSpec
 		}
-		messages, calls, err := rt.Manager.handleAgentPortScan(ctx, prompt, in.Language)
+		messages, calls, err := portScannerService.PortScan(ctx, prompt, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "http.request", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("http.request")
+		rt, networkService, err := networkRequestActionServiceFromRegistryRuntime(in, "http.request")
+		if err != nil {
+			return nil, err
 		}
 		targetURL := firstNonEmpty(
 			stringFromAny(in.RawArgs["url"]),
@@ -78,7 +78,7 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 			stringFromAny(in.RawArgs["profile_id"]),
 			stringFromAny(in.RawArgs["profile"]),
 		)
-		profileHeaders, profileUsage, profileErr := agentResolveHTTPAuthProfileHeaders(rt.AuthProfiles, authProfileID, rt.DefaultAuthProfileID, targetURL)
+		profileHeaders, profileUsage, profileErr := agentResolveAgentLoopAuthProfileHeaders(rt.authorizationContext(), authProfileID, targetURL)
 		if profileErr != nil {
 			return nil, profileErr
 		}
@@ -93,13 +93,13 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 			stringFromAny(in.RawArgs["data"]),
 			stringFromAny(in.RawArgs["input_body"]),
 		)
-		messages, calls, err := rt.Manager.handleAgentHTTPRequest(ctx, method, targetURL, headers, body, in.Language, profileUsage)
+		messages, calls, err := networkService.HTTPRequest(ctx, method, targetURL, headers, body, in.Language, profileUsage)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.command", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.command")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.command")
+		if err != nil {
+			return nil, err
 		}
 		cmd := firstNonEmpty(
 			stringFromAny(in.RawArgs["command"]),
@@ -112,14 +112,14 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if !agentPlannerCommandAllowed(cmd) {
 			return nil, services.NewError(services.CodePolicyDenied, "planner command is not in the low-risk allowlist; ask the operator to run it explicitly", map[string]any{"command": cmd}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentCommand(ctx, in.SessionID, "command: "+cmd, in.Language)
+		messages, calls, err := workspaceService.Command(ctx, in.SessionID, cmd, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.list", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.list")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.list")
+		if err != nil {
+			return nil, err
 		}
 		relPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["path"]),
@@ -128,14 +128,14 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 			stringFromAny(in.RawArgs["input"]),
 			".",
 		)
-		messages, calls, err := rt.Manager.handleAgentWorkspaceList(in.SessionID, "path="+relPath, in.Language)
+		messages, calls, err := workspaceService.List(in.SessionID, relPath, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.tree", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.tree")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.tree")
+		if err != nil {
+			return nil, err
 		}
 		relPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["path"]),
@@ -152,14 +152,14 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if limit <= 0 {
 			limit = 120
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceTree(in.SessionID, relPath, depth, limit, boolFromAny(in.RawArgs["include_hidden"]), in.Language)
+		messages, calls, err := workspaceService.Tree(in.SessionID, relPath, depth, limit, boolFromAny(in.RawArgs["include_hidden"]), in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.read", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.read")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.read")
+		if err != nil {
+			return nil, err
 		}
 		relPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["path"]),
@@ -170,14 +170,14 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if relPath == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.read requires path", map[string]any{"action": "workspace.files.read"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceRead(in.SessionID, "file="+relPath, in.Language)
+		messages, calls, err := workspaceService.Read(in.SessionID, relPath, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.search", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.search")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.search")
+		if err != nil {
+			return nil, err
 		}
 		query := firstNonEmpty(
 			stringFromAny(in.RawArgs["query"]),
@@ -198,76 +198,73 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 		if limit <= 0 {
 			limit = 80
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceSearch(in.SessionID, query, relPath, boolFromAny(in.RawArgs["regex"]), boolFromAny(in.RawArgs["case_sensitive"]), limit, in.Language)
+		messages, calls, err := workspaceService.Search(in.SessionID, query, relPath, boolFromAny(in.RawArgs["regex"]), boolFromAny(in.RawArgs["case_sensitive"]), limit, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	attachDaemonWorkspaceMutationHandlers(r)
 	setDaemonToolHandler(r, "daemon.health", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("daemon.health")
+		resolver, statusService, err := daemonStatusActionServiceFromRegistryRuntime(in, "daemon.health")
+		if err != nil {
+			return nil, err
 		}
-		messages, calls, err := rt.Manager.handleAgentHealth(ctx, in.Language, rt.legacyRouterServices())
+		messages, calls, err := statusService.Health(ctx, in.Language, resolver)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "plugins.list", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("plugins.list")
+		resolver, statusService, err := daemonStatusActionServiceFromRegistryRuntime(in, "plugins.list")
+		if err != nil {
+			return nil, err
 		}
-		messages, calls, err := rt.Manager.handleAgentPlugins(ctx, in.Language, rt.legacyRouterServices())
+		messages, calls, err := statusService.Plugins(ctx, in.Language, resolver)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "runs.list", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("runs.list")
+		resolver, statusService, err := daemonStatusActionServiceFromRegistryRuntime(in, "runs.list")
+		if err != nil {
+			return nil, err
 		}
-		messages, calls, err := rt.Manager.handleAgentRuns(ctx, in.Language, rt.legacyRouterServices())
+		messages, calls, err := statusService.Runs(ctx, in.Language, resolver)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	attachDaemonRunHandlers(r)
 	setDaemonToolHandler(r, "schedule.create", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("schedule.create")
+		resolver, scheduleService, err := scheduleActionServiceFromRegistryRuntime(in, "schedule.create")
+		if err != nil {
+			return nil, err
 		}
-		messages, calls, err := rt.Manager.handleAgentScheduleCreate(in.SessionID, in.Language, in.Operator, rt.legacyRouterServices(), in.RawArgs)
+		messages, calls, err := scheduleService.ScheduleCreate(ctx, in.SessionID, in.Language, in.Operator, resolver, in.RawArgs)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "schedule.list", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("schedule.list")
+		resolver, scheduleService, err := scheduleActionServiceFromRegistryRuntime(in, "schedule.list")
+		if err != nil {
+			return nil, err
 		}
-		messages, calls, err := rt.Manager.handleAgentScheduleList(in.Language, rt.legacyRouterServices())
+		messages, calls, err := scheduleService.ScheduleList(ctx, in.Language, resolver)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "schedule.delete", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("schedule.delete")
+		resolver, scheduleService, err := scheduleActionServiceFromRegistryRuntime(in, "schedule.delete")
+		if err != nil {
+			return nil, err
 		}
-		messages, calls, err := rt.Manager.handleAgentScheduleDelete(in.Language, rt.legacyRouterServices(), in.RawArgs)
+		messages, calls, err := scheduleService.ScheduleDelete(ctx, in.Language, resolver, in.RawArgs)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "web.search", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("web.search")
+		resolver, webSearchService, err := webSearchActionServiceFromRegistryRuntime(in, "web.search")
+		if err != nil {
+			return nil, err
 		}
-		messages, calls, err := rt.Manager.handleAgentWebSearch(ctx, in.Language, rt.legacyRouterServices(), in.RawArgs)
+		messages, calls, err := webSearchService.WebSearch(ctx, in.Language, resolver, in.RawArgs)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "web.fetch", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("web.fetch")
+		_, networkService, err := networkRequestActionServiceFromRegistryRuntime(in, "web.fetch")
+		if err != nil {
+			return nil, err
 		}
-		messages, calls, err := rt.Manager.handleAgentWebFetch(ctx, in.Language, in.RawArgs)
+		messages, calls, err := networkService.WebFetch(ctx, in.Language, in.RawArgs)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 }
@@ -275,9 +272,9 @@ func attachDaemonToolHandlers(r *toolregistry.Registry) {
 func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 	setDaemonToolHandler(r, "workspace.files.write", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.write")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.write")
+		if err != nil {
+			return nil, err
 		}
 		relPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["path"]),
@@ -293,14 +290,14 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 		if relPath == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.write requires path", map[string]any{"action": "workspace.files.write"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceWrite(in.SessionID, relPath, content, in.Language)
+		messages, calls, err := workspaceService.Write(in.SessionID, relPath, content, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.patch", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.patch")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.patch")
+		if err != nil {
+			return nil, err
 		}
 		relPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["path"]),
@@ -322,14 +319,14 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 		if relPath == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.patch requires path", map[string]any{"action": "workspace.files.patch"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspacePatch(in.SessionID, relPath, oldText, newText, in.Language)
+		messages, calls, err := workspaceService.Patch(in.SessionID, relPath, oldText, newText, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.diff", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.diff")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.diff")
+		if err != nil {
+			return nil, err
 		}
 		relPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["path"]),
@@ -351,27 +348,27 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 		if relPath == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.diff requires path", map[string]any{"action": "workspace.files.diff"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceDiff(in.SessionID, relPath, oldText, newText, in.Language)
+		messages, calls, err := workspaceService.Diff(in.SessionID, relPath, oldText, newText, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.diff_many", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.diff_many")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.diff_many")
+		if err != nil {
+			return nil, err
 		}
 		changes := workspaceChangeInputsFromAny(in.RawArgs["changes"])
 		if len(changes) == 0 {
 			changes = workspaceChangeInputsFromAny(in.RawArgs["input"])
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceDiffMany(in.SessionID, changes, in.Language)
+		messages, calls, err := workspaceService.DiffMany(in.SessionID, changes, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.rebase", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.rebase")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.rebase")
+		if err != nil {
+			return nil, err
 		}
 		changeID := firstNonEmpty(
 			stringFromAny(in.RawArgs["change_id"]),
@@ -389,14 +386,14 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 			stringFromAny(in.RawArgs["after"]),
 			stringFromAny(in.RawArgs["replace"]),
 		)
-		messages, calls, err := rt.Manager.handleAgentWorkspaceRebase(in.SessionID, changeID, oldText, newText, in.Language)
+		messages, calls, err := workspaceService.Rebase(in.SessionID, changeID, oldText, newText, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.apply", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.apply")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.apply")
+		if err != nil {
+			return nil, err
 		}
 		changeID := firstNonEmpty(
 			stringFromAny(in.RawArgs["change_id"]),
@@ -405,24 +402,24 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 		)
 		groupID := firstNonEmpty(stringFromAny(in.RawArgs["group_id"]), stringFromAny(in.RawArgs["group"]))
 		if groupID != "" {
-			messages, calls, err := rt.Manager.handleAgentWorkspaceApplyGroup(in.SessionID, groupID, in.Language)
+			messages, calls, err := workspaceService.ApplyGroup(in.SessionID, groupID, in.Language)
 			return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 		}
 		if boolFromAny(in.RawArgs["all"]) || strings.EqualFold(changeID, "all") || strings.EqualFold(stringFromAny(in.RawArgs["scope"]), "all") {
-			messages, calls, err := rt.Manager.handleAgentWorkspaceApplyAll(in.SessionID, in.Language)
+			messages, calls, err := workspaceService.ApplyAll(in.SessionID, in.Language)
 			return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 		}
 		if changeID == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.apply requires change_id", map[string]any{"action": "workspace.files.apply"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceApply(in.SessionID, changeID, in.Language)
+		messages, calls, err := workspaceService.Apply(in.SessionID, changeID, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.discard", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.discard")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.discard")
+		if err != nil {
+			return nil, err
 		}
 		changeID := firstNonEmpty(
 			stringFromAny(in.RawArgs["change_id"]),
@@ -431,24 +428,24 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 		)
 		groupID := firstNonEmpty(stringFromAny(in.RawArgs["group_id"]), stringFromAny(in.RawArgs["group"]))
 		if groupID != "" {
-			messages, calls, err := rt.Manager.handleAgentWorkspaceDiscardGroup(in.SessionID, groupID, in.Language)
+			messages, calls, err := workspaceService.DiscardGroup(in.SessionID, groupID, in.Language)
 			return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 		}
 		if boolFromAny(in.RawArgs["all"]) || strings.EqualFold(changeID, "all") || strings.EqualFold(stringFromAny(in.RawArgs["scope"]), "all") {
-			messages, calls, err := rt.Manager.handleAgentWorkspaceDiscardAll(in.SessionID, in.Language)
+			messages, calls, err := workspaceService.DiscardAll(in.SessionID, in.Language)
 			return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 		}
 		if changeID == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.discard requires change_id", map[string]any{"action": "workspace.files.discard"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceDiscard(in.SessionID, changeID, in.Language)
+		messages, calls, err := workspaceService.Discard(in.SessionID, changeID, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.delete", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.delete")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.delete")
+		if err != nil {
+			return nil, err
 		}
 		relPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["path"]),
@@ -459,14 +456,14 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 		if relPath == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.delete requires path", map[string]any{"action": "workspace.files.delete"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceDelete(in.SessionID, relPath, in.Language)
+		messages, calls, err := workspaceService.Delete(in.SessionID, relPath, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.move", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.move")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.move")
+		if err != nil {
+			return nil, err
 		}
 		fromPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["from"]),
@@ -486,14 +483,14 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 		if fromPath == "" || toPath == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.move requires from and to", map[string]any{"action": "workspace.files.move"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceMove(in.SessionID, fromPath, toPath, in.Language)
+		messages, calls, err := workspaceService.Move(in.SessionID, fromPath, toPath, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.copy", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.copy")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.copy")
+		if err != nil {
+			return nil, err
 		}
 		fromPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["from"]),
@@ -513,14 +510,14 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 		if fromPath == "" || toPath == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.copy requires from and to", map[string]any{"action": "workspace.files.copy"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceCopy(in.SessionID, fromPath, toPath, in.Language)
+		messages, calls, err := workspaceService.Copy(in.SessionID, fromPath, toPath, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "workspace.files.mkdir", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
 		_ = ctx
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("workspace.files.mkdir")
+		workspaceService, err := workspaceActionServiceFromRegistryRuntime(in, "workspace.files.mkdir")
+		if err != nil {
+			return nil, err
 		}
 		relPath := firstNonEmpty(
 			stringFromAny(in.RawArgs["path"]),
@@ -531,16 +528,16 @@ func attachDaemonWorkspaceMutationHandlers(r *toolregistry.Registry) {
 		if relPath == "" {
 			return nil, services.NewError(services.CodeBadRequest, "workspace.files.mkdir requires path", map[string]any{"action": "workspace.files.mkdir"}, nil)
 		}
-		messages, calls, err := rt.Manager.handleAgentWorkspaceMkdir(in.SessionID, relPath, in.Language)
+		messages, calls, err := workspaceService.Mkdir(in.SessionID, relPath, in.Language)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 }
 
 func attachDaemonRunHandlers(r *toolregistry.Registry) {
 	setDaemonToolHandler(r, "runs.context", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("runs.context")
+		resolver, runContextApprovalService, err := runContextApprovalActionServiceFromRegistryRuntime(in, "runs.context")
+		if err != nil {
+			return nil, err
 		}
 		runID := firstNonEmpty(
 			stringFromAny(in.RawArgs["run_id"]),
@@ -553,13 +550,13 @@ func attachDaemonRunHandlers(r *toolregistry.Registry) {
 			stringFromAny(in.RawArgs["section"]),
 			stringFromAny(in.RawArgs["type"]),
 		)
-		messages, calls, err := rt.Manager.handleAgentRunContextTool(ctx, in.SessionID, runID, contextKind, in.Language, rt.legacyRouterServices())
+		messages, calls, err := runContextApprovalService.RunContext(ctx, in.SessionID, runID, contextKind, in.Language, resolver)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "reports.draft", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("reports.draft")
+		resolver, runContextApprovalService, err := runContextApprovalActionServiceFromRegistryRuntime(in, "reports.draft")
+		if err != nil {
+			return nil, err
 		}
 		runID := firstNonEmpty(
 			stringFromAny(in.RawArgs["run_id"]),
@@ -571,32 +568,28 @@ func attachDaemonRunHandlers(r *toolregistry.Registry) {
 			stringFromAny(in.RawArgs["output_path"]),
 			stringFromAny(in.RawArgs["file"]),
 		)
-		messages, calls, err := rt.Manager.handleAgentReportDraft(ctx, in.SessionID, runID, in.Language, rt.legacyRouterServices(), outputPath)
+		messages, calls, err := runContextApprovalService.ReportDraft(ctx, in.SessionID, runID, in.Language, resolver, outputPath)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonToolHandler(r, "runs.approvals.list", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("runs.approvals.list")
+		resolver, runContextApprovalService, err := runContextApprovalActionServiceFromRegistryRuntime(in, "runs.approvals.list")
+		if err != nil {
+			return nil, err
 		}
 		runID := firstNonEmpty(
 			stringFromAny(in.RawArgs["run_id"]),
 			stringFromAny(in.RawArgs["run"]),
 			stringFromAny(in.RawArgs["id"]),
 		)
-		if runID == "" {
-			messages, calls, err := rt.Manager.handleAgentApprovals(ctx, in.Language, rt.legacyRouterServices())
-			return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
-		}
-		messages, calls, err := rt.Manager.handleAgentRunContextAnalysis(ctx, "读取运行 "+runID+" 的 approvals 审批队列", in.Language, rt.legacyRouterServices())
+		messages, calls, err := runContextApprovalService.ApprovalsList(ctx, runID, in.Language, resolver)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 	setDaemonApprovalDecisionHandler(r, "runs.approvals.approve", false)
 	setDaemonApprovalDecisionHandler(r, "runs.approvals.deny", true)
 	setDaemonToolHandler(r, "runs.resume_approved", func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError("runs.resume_approved")
+		resolver, runContextApprovalService, err := runContextApprovalActionServiceFromRegistryRuntime(in, "runs.resume_approved")
+		if err != nil {
+			return nil, err
 		}
 		runID := firstNonEmpty(
 			stringFromAny(in.RawArgs["run_id"]),
@@ -607,16 +600,16 @@ func attachDaemonRunHandlers(r *toolregistry.Registry) {
 		if runID != "" {
 			prompt = "恢复已批准运行 " + runID
 		}
-		messages, calls, err := rt.Manager.handleAgentResumeApproved(ctx, in.SessionID, prompt, in.Language, in.Operator, rt.legacyRouterServices())
+		messages, calls, err := runContextApprovalService.ResumeApproved(ctx, in.SessionID, prompt, in.Language, in.Operator, resolver)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 }
 
 func setDaemonApprovalDecisionHandler(r *toolregistry.Registry, name string, deny bool) {
 	setDaemonToolHandler(r, name, func(ctx context.Context, in toolregistry.HandlerInput) (any, error) {
-		rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
-		if !ok || rt.Manager == nil {
-			return nil, servicesMissingRegistryRuntimeError(name)
+		resolver, runContextApprovalService, err := runContextApprovalActionServiceFromRegistryRuntime(in, name)
+		if err != nil {
+			return nil, err
 		}
 		runID := firstNonEmpty(
 			stringFromAny(in.RawArgs["run_id"]),
@@ -645,7 +638,7 @@ func setDaemonApprovalDecisionHandler(r *toolregistry.Registry, name string, den
 		if strings.TrimSpace(comment) != "" {
 			prompt += " comment=" + comment
 		}
-		messages, calls, err := rt.Manager.handleAgentApprovalDecision(ctx, in.SessionID, prompt, in.Language, in.Operator, rt.legacyRouterServices())
+		messages, calls, err := runContextApprovalService.ApprovalDecision(ctx, in.SessionID, prompt, in.Language, in.Operator, resolver)
 		return agentRegistryHandlerResult{Messages: messages, ToolCalls: calls}, err
 	})
 }
@@ -658,4 +651,132 @@ func setDaemonToolHandler(r *toolregistry.Registry, name string, handler toolreg
 
 func servicesMissingRegistryRuntimeError(action string) error {
 	return services.NewError(services.CodeInternal, "registry handler runtime missing", map[string]any{"action": action}, nil)
+}
+
+func workspaceActionServiceFromRegistryRuntime(in toolregistry.HandlerInput, action string) (daemonWorkspaceActionService, error) {
+	rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+	if !ok {
+		return nil, servicesMissingRegistryRuntimeError(action)
+	}
+	resolver, ok := rt.actionServiceResolver()
+	if !ok {
+		return nil, servicesMissingRegistryRuntimeError(action)
+	}
+	workspaceService, ok := resolver.Workspace()
+	if !ok {
+		return nil, servicesMissingRegistryRuntimeError(action)
+	}
+	return workspaceService, nil
+}
+
+func networkRequestActionServiceFromRegistryRuntime(in toolregistry.HandlerInput, action string) (agentRegistryHandlerRuntime, daemonNetworkRequestActionService, error) {
+	rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+	if !ok {
+		return agentRegistryHandlerRuntime{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	resolver, ok := rt.actionServiceResolver()
+	if !ok {
+		return agentRegistryHandlerRuntime{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	networkService, ok := resolver.NetworkRequest()
+	if !ok {
+		return agentRegistryHandlerRuntime{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	return rt, networkService, nil
+}
+
+func portScannerActionServiceFromRegistryRuntime(in toolregistry.HandlerInput, action string) (daemonPortScannerActionService, error) {
+	rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+	if !ok {
+		return nil, servicesMissingRegistryRuntimeError(action)
+	}
+	resolver, ok := rt.actionServiceResolver()
+	if !ok {
+		return nil, servicesMissingRegistryRuntimeError(action)
+	}
+	portScannerService, ok := resolver.PortScanner()
+	if !ok {
+		return nil, servicesMissingRegistryRuntimeError(action)
+	}
+	return portScannerService, nil
+}
+
+func webSearchActionServiceFromRegistryRuntime(in toolregistry.HandlerInput, action string) (daemonAgentLoopActionServiceResolver, daemonWebSearchActionService, error) {
+	rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	resolver, ok := rt.actionServiceResolver()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	webSearchService, ok := resolver.WebSearch()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	return resolver, webSearchService, nil
+}
+
+func webScanActionServiceFromRegistryRuntime(in toolregistry.HandlerInput, action string) (daemonAgentLoopActionServiceResolver, daemonWebScanActionService, error) {
+	rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	resolver, ok := rt.actionServiceResolver()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	webScanService, ok := resolver.WebScan()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	return resolver, webScanService, nil
+}
+
+func scheduleActionServiceFromRegistryRuntime(in toolregistry.HandlerInput, action string) (daemonAgentLoopActionServiceResolver, daemonScheduleActionService, error) {
+	rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	resolver, ok := rt.actionServiceResolver()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	scheduleService, ok := resolver.ScheduleAction()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	return resolver, scheduleService, nil
+}
+
+func daemonStatusActionServiceFromRegistryRuntime(in toolregistry.HandlerInput, action string) (daemonAgentLoopActionServiceResolver, daemonStatusActionService, error) {
+	rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	resolver, ok := rt.actionServiceResolver()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	statusService, ok := resolver.DaemonStatus()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	return resolver, statusService, nil
+}
+
+func runContextApprovalActionServiceFromRegistryRuntime(in toolregistry.HandlerInput, action string) (daemonAgentLoopActionServiceResolver, daemonRunContextApprovalActionService, error) {
+	rt, ok := in.Runtime.(agentRegistryHandlerRuntime)
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	resolver, ok := rt.actionServiceResolver()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	runContextApprovalService, ok := resolver.RunContextApproval()
+	if !ok {
+		return daemonAgentLoopActionServiceResolver{}, nil, servicesMissingRegistryRuntimeError(action)
+	}
+	return resolver, runContextApprovalService, nil
 }

@@ -10,7 +10,11 @@ import (
 )
 
 func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req agentControlRequest, svc routerServices) (agentControlResponse, error) {
-	if err := contextError(ctx); err != nil {
+	return m.ControlSessionWithToolServices(ctx, sessionID, req, agentLoopToolServiceBindingFromRouterServices(svc))
+}
+
+func (m *agentManager) ControlSessionWithToolServices(ctx context.Context, sessionID string, req agentControlRequest, toolServices runtime.AgentLoopToolServiceBinding) (agentControlResponse, error) {
+	if _, err := daemonTenantContext(ctx); err != nil {
 		return agentControlResponse{}, err
 	}
 	sessionID, err := normalizeAgentSessionID(sessionID)
@@ -40,19 +44,23 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 	message := resolved.Message
 	cancelJobID := resolved.CancelJobID
 
-	if (action == "stop" || action == "cancel") && cancelJobID != "" && svc.jobs != nil {
-		if job, cancelErr := svc.jobs.CancelJob(ctx, cancelJobID); cancelErr == nil {
-			tool := runningAgentToolCall("POST /api/v1/jobs/{job_id}/cancel", shortAgentID(cancelJobID, 22))
-			tool = finishAgentToolCall(tool, nil)
-			tool.Result = map[string]any{"job_id": job.JobID, "run_id": job.RunID, "status": string(job.Status)}
-			cancelMessage := m.message(language, "tool", agentText(language, "daemon job 已收到取消请求。", "daemon job received the cancellation request."), []agentToolCall{tool}, nil)
-			cancelTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, cancelMessage.ID)
-			m.appendMessagesForTurn(ctx, sessionID, cancelTurnRef, req.Prompt, string(runtime.SessionMutationControlSession), operationLevel, cancelMessage)
-		} else if services.ErrorCodeOf(cancelErr) != services.CodeConflict {
-			tool := failedAgentToolCall("POST /api/v1/jobs/{job_id}/cancel", cancelErr)
-			cancelMessage := m.message(language, "tool", cancelErr.Error(), []agentToolCall{tool}, nil)
-			cancelTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, cancelMessage.ID)
-			m.appendMessagesForTurn(ctx, sessionID, cancelTurnRef, req.Prompt, string(runtime.SessionMutationControlSession), operationLevel, cancelMessage)
+	if (action == "stop" || action == "cancel") && cancelJobID != "" {
+		if resolver, ok := agentLoopActionServiceResolverFromActionServices(toolServices.ActionServices); ok {
+			if jobs, ok := resolver.JobManager(); ok {
+				if job, cancelErr := jobs.CancelJob(ctx, cancelJobID); cancelErr == nil {
+					tool := runningAgentToolCall("POST /api/v1/jobs/{job_id}/cancel", shortAgentID(cancelJobID, 22))
+					tool = finishAgentToolCall(tool, nil)
+					tool.Result = map[string]any{"job_id": job.JobID, "run_id": job.RunID, "status": string(job.Status)}
+					cancelMessage := m.message(language, "tool", agentText(language, "daemon job 已收到取消请求。", "daemon job received the cancellation request."), []agentToolCall{tool}, nil)
+					cancelTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, cancelMessage.ID)
+					m.appendMessagesForTurn(ctx, sessionID, cancelTurnRef, req.Prompt, string(runtime.SessionMutationControlSession), operationLevel, cancelMessage)
+				} else if services.ErrorCodeOf(cancelErr) != services.CodeConflict {
+					tool := failedAgentToolCall("POST /api/v1/jobs/{job_id}/cancel", cancelErr)
+					cancelMessage := m.message(language, "tool", cancelErr.Error(), []agentToolCall{tool}, nil)
+					cancelTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, cancelMessage.ID)
+					m.appendMessagesForTurn(ctx, sessionID, cancelTurnRef, req.Prompt, string(runtime.SessionMutationControlSession), operationLevel, cancelMessage)
+				}
+			}
 		}
 	}
 
@@ -60,7 +68,11 @@ func (m *agentManager) ControlSession(ctx context.Context, sessionID string, req
 }
 
 func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID string, req agentAuthorizationDecisionRequest, svc routerServices) (agentControlResponse, error) {
-	if err := contextError(ctx); err != nil {
+	return m.DecideAgentAuthorizationWithToolServices(ctx, sessionID, req, agentLoopToolServiceBindingFromRouterServices(svc))
+}
+
+func (m *agentManager) DecideAgentAuthorizationWithToolServices(ctx context.Context, sessionID string, req agentAuthorizationDecisionRequest, toolServices runtime.AgentLoopToolServiceBinding) (agentControlResponse, error) {
+	if _, err := daemonTenantContext(ctx); err != nil {
 		return agentControlResponse{}, err
 	}
 	sessionID, err := normalizeAgentSessionID(sessionID)
@@ -74,6 +86,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 	language := normalizeAgentLanguage(req.Language)
 	operator := normalizeAgentOperator(req.Operator)
 	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
+	req.AuthProfiles, req.DefaultAuthProfileID = m.resolveStoredHTTPAuthProfiles(ctx, req.AuthProfiles, req.DefaultAuthProfileID)
 
 	resolveTurnRef := m.resolveAuthorizationMutationTurnRef(ctx, sessionID, decision, req)
 	resolved, handled, resolveErr := m.runRuntimeResolveAuthorizationMutationForTurn(ctx, sessionID, resolveTurnRef, decision, req, operator, language, operationLevel)
@@ -95,7 +108,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 
 	externalTurnRef := m.externalSessionMutationTurnRef(ctx, sessionID, pending.ID)
 	action := runtime.AgentLoopAction{Name: pending.ActionName, Arguments: runtime.CloneAgentLoopActionArguments(pending.Arguments)}
-	runtimeActionMessages, runtimeActionToolCalls, execErr := m.runRuntimePlannerActionExecution(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, agentLoopToolServiceBindingFromRouterServices(svc), action, runtime.AgentLoopAuthorization{
+	runtimeActionMessages, runtimeActionToolCalls, execErr := m.runRuntimePlannerActionExecution(ctx, sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, toolServices, action, runtime.AgentLoopAuthorization{
 		AuthProfiles:         agentPlannerActionReplanCycleAuthProfilesFromHTTPProfiles(req.AuthProfiles),
 		DefaultAuthProfileID: req.DefaultAuthProfileID,
 	})
@@ -158,7 +171,7 @@ func (m *agentManager) DecideAgentAuthorization(ctx context.Context, sessionID s
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					nextState, _ := m.GetSession(ctx, sessionID)
 					loopHistory := cloneAgentMessages(nextState.Messages)
-					loopReq := agentReplanActionContinuationRequestFromLegacy(sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, svc, synthesisLegacyPlan, reqMaxAgentReplans(llmReq)-1)
+					loopReq := agentReplanActionContinuationRequestFromLegacyWithToolServices(sessionID, externalTurnRef, pending.OriginalPrompt, language, operator, operationLevel, llmReq, loopHistory, memorySummary, toolServices, synthesisLegacyPlan, reqMaxAgentReplans(llmReq)-1)
 					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuationAgentLoop(ctx, loopReq)
 					runtimeResponseMessages = append(runtimeResponseMessages, runtime.CloneAgentLoopMessages(followupMessages)...)
 					runtimeResponseToolCalls = append(runtimeResponseToolCalls, runtime.CloneAgentLoopToolCalls(followupToolCalls)...)
@@ -192,7 +205,11 @@ func buildAgentSendResponseFromAgentLoop(sessionID string, messages []runtime.Ag
 }
 
 func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req sendAgentMessageRequest, svc routerServices) (sendAgentMessageResponse, error) {
-	if err := contextError(ctx); err != nil {
+	return m.SendMessageWithToolServices(ctx, sessionID, req, agentLoopToolServiceBindingFromRouterServices(svc))
+}
+
+func (m *agentManager) SendMessageWithToolServices(ctx context.Context, sessionID string, req sendAgentMessageRequest, toolServices runtime.AgentLoopToolServiceBinding) (sendAgentMessageResponse, error) {
+	if _, err := daemonTenantContext(ctx); err != nil {
 		return sendAgentMessageResponse{}, err
 	}
 	sessionID, err := normalizeAgentSessionID(sessionID)
@@ -206,6 +223,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	operator := normalizeAgentOperator(req.Operator)
 	language := normalizeAgentLanguage(req.Language)
 	operationLevel := normalizeAgentOperationLevel(req.OperationLevel)
+	req.AuthProfiles, req.DefaultAuthProfileID = m.resolveStoredHTTPAuthProfiles(ctx, req.AuthProfiles, req.DefaultAuthProfileID)
 
 	recorded, handled, recordErr := m.runRuntimeRecordUserMessageMutation(ctx, sessionID, prompt, operator, language, operationLevel)
 	if recordErr != nil {
@@ -236,7 +254,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	lifecycleErr := m.runRuntimeTurnLifecycle(ctx, sessionID, prompt, firstNonEmpty(req.Origin, "user"), operationLevel, sessionSnapshot, userMessage, func(ctx context.Context, turnRef agentRuntimeTurnRef) (runtime.TurnResult, error) {
 		state.TurnRef = turnRef
 		m.emitRuntimeMemoryCompacted(ctx, sessionID, sessionSnapshot, turnRef, recorded.Compaction)
-		resp, runErr = m.runAgentSendMessageTurn(ctx, state, req, svc)
+		resp, runErr = m.runAgentSendMessageTurnWithToolServices(ctx, state, req, toolServices)
 		status, reason := agentRuntimeTurnCompletion(resp, runErr)
 		return runtime.TurnResult{Status: runtime.TurnResultStatus(status), Reason: reason, Error: runErr}, runErr
 	})
@@ -244,7 +262,7 @@ func (m *agentManager) SendMessage(ctx context.Context, sessionID string, req se
 	return resp, runErr
 }
 
-func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentSendMessageTurnState, req sendAgentMessageRequest, svc routerServices) (sendAgentMessageResponse, error) {
+func (m *agentManager) runAgentSendMessageTurnWithToolServices(ctx context.Context, state agentSendMessageTurnState, req sendAgentMessageRequest, toolServices runtime.AgentLoopToolServiceBinding) (sendAgentMessageResponse, error) {
 	sessionID := state.SessionID
 	prompt := state.Prompt
 	operator := state.Operator
@@ -257,7 +275,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 
 	if controlReq, ok := agentControlRequestFromPrompt(prompt, operator, language); ok {
 		controlReq.OperationLevel = operationLevel
-		controlResp, controlErr := m.ControlSession(ctx, sessionID, controlReq, svc)
+		controlResp, controlErr := m.ControlSessionWithToolServices(ctx, sessionID, controlReq, toolServices)
 		if controlErr != nil {
 			errMessage := m.message(language, "agent", controlErr.Error(), []agentToolCall{failedAgentToolCall("agent.control", controlErr)}, nil)
 			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, string(runtime.SessionMutationControlSession), operationLevel, errMessage)
@@ -267,7 +285,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 			return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 		}
 		if controlReq.Action == "continue" && !agentLLMConfigured(req) {
-			if contextMessages, contextToolCalls, ok := m.handleAgentActiveRunContinueForTurn(ctx, sessionID, turnRef, language, operator, operationLevel, svc); ok {
+			if contextMessages, contextToolCalls, ok := m.handleAgentActiveRunContinueForTurnWithToolServices(ctx, sessionID, turnRef, language, operator, operationLevel, toolServices); ok {
 				m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "active_run_continue", operationLevel, contextMessages...)
 				sessionState, getErr := m.GetSession(ctx, sessionID)
 				if getErr != nil {
@@ -279,7 +297,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 				return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 			}
 			if autoPrompt := agentExecutableAutoContinuePrompt(controlResp.Session.NextAction); autoPrompt != "" && agentCanAutoRouteContinuePrompt(autoPrompt) {
-				autoMessages, autoToolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, autoPrompt, language, operator, operationLevel, svc)
+				autoMessages, autoToolCalls, routeErr := m.routePromptWithRuntimeDeterministicRouteWithToolServices(ctx, sessionID, turnRef, autoPrompt, language, operator, operationLevel, toolServices)
 				if routeErr != nil {
 					errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.auto_continue", routeErr)}, nil)
 					m.appendMessagesForTurn(ctx, sessionID, turnRef, autoPrompt, daemonTurnExecutionDeterministicRoute, operationLevel, errMessage)
@@ -309,7 +327,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 				history = cloneAgentMessages(sessionState.Messages)
 				memorySummary = cloneAgentMemorySummary(sessionState.MemorySummary)
 			}
-			loopReq := agentLLMToolLoopRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+			loopReq := agentLLMToolLoopRequestFromLegacyWithToolServices(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, toolServices)
 			messages, toolCalls, err := m.runRuntimeLLMToolLoopAgentLoop(ctx, loopReq)
 			responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage, controlResp.Message})
 			if err == nil {
@@ -353,7 +371,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 	}
 
 	if agentLLMConfigured(req) && agentShouldRouteBeforeLLMSynthesis(prompt) {
-		messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
+		messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRouteWithToolServices(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, toolServices)
 		if routeErr != nil {
 			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
 			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionDeterministicRoute, operationLevel, errMessage)
@@ -393,7 +411,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 				responseToolCalls = append(responseToolCalls, runtime.CloneAgentLoopToolCalls(synthesisToolCalls)...)
 				if synthesisPlan != nil && synthesisPlan.NextAction != nil && synthesisPlan.NextAction.AutoContinue {
 					loopHistory := append(synthesisHistory, synthesisLegacyMessages...)
-					loopReq := agentReplanActionContinuationRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, svc, synthesisLegacyPlan, reqMaxAgentReplans(req)-1)
+					loopReq := agentReplanActionContinuationRequestFromLegacyWithToolServices(sessionID, turnRef, prompt, language, operator, operationLevel, req, loopHistory, memorySummary, toolServices, synthesisLegacyPlan, reqMaxAgentReplans(req)-1)
 					followupMessages, followupToolCalls := m.runRuntimeReplanActionContinuationAgentLoop(ctx, loopReq)
 					responseMessages = append(responseMessages, runtime.CloneAgentLoopMessages(followupMessages)...)
 					responseToolCalls = append(responseToolCalls, runtime.CloneAgentLoopToolCalls(followupToolCalls)...)
@@ -405,7 +423,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 	}
 
 	if agentLLMConfigured(req) {
-		loopReq := agentLLMToolLoopRequestFromLegacy(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, svc)
+		loopReq := agentLLMToolLoopRequestFromLegacyWithToolServices(sessionID, turnRef, prompt, language, operator, operationLevel, req, history, memorySummary, toolServices)
 		llmMessages, llmToolCalls, err := m.runRuntimeLLMToolLoopAgentLoop(ctx, loopReq)
 		responseMessages := agentLoopMessagesFromAgentMessages([]agentMessage{userMessage})
 		if err == nil {
@@ -450,7 +468,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 			responseToolCalls := []runtime.AgentLoopToolCall{agentLoopToolCallFromAgentToolCall(warningTool)}
 			return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 		}
-		messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
+		messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRouteWithToolServices(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, toolServices)
 		if routeErr != nil {
 			errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
 			m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, "llm_fallback_route", operationLevel, warningMessage, errMessage)
@@ -468,7 +486,7 @@ func (m *agentManager) runAgentSendMessageTurn(ctx context.Context, state agentS
 		return buildAgentSendResponseFromAgentLoop(sessionID, responseMessages, responseToolCalls, sessionState), nil
 	}
 
-	messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRoute(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, svc)
+	messages, toolCalls, routeErr := m.routePromptWithRuntimeDeterministicRouteWithToolServices(ctx, sessionID, turnRef, prompt, language, operator, operationLevel, toolServices)
 	if routeErr != nil {
 		errMessage := m.message(language, "agent", routeErr.Error(), []agentToolCall{failedAgentToolCall("agent.route", routeErr)}, nil)
 		m.appendMessagesForTurn(ctx, sessionID, turnRef, prompt, daemonTurnExecutionDeterministicRoute, operationLevel, errMessage)

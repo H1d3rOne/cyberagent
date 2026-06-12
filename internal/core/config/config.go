@@ -19,6 +19,7 @@ type Config struct {
 	Plugins  PluginsConfig      `yaml:"plugins"`
 	Defaults Defaults           `yaml:"defaults"`
 	Agent    AgentConfig        `yaml:"agent"`
+	Daemon   DaemonConfig       `yaml:"daemon"`
 }
 
 type AgentConfig struct {
@@ -28,6 +29,64 @@ type AgentConfig struct {
 	MaxTurns     int          `yaml:"max_turns"`
 	Instructions string       `yaml:"instructions"`
 	CustomTools  []CustomTool `yaml:"custom_tools"`
+}
+
+type DaemonConfig struct {
+	Listen            string                `yaml:"listen"`
+	RunsDir           string                `yaml:"runs_dir"`
+	TokenFile         string                `yaml:"token_file"`
+	MaxConcurrentJobs int                   `yaml:"max_concurrent_jobs"`
+	MultiUser         DaemonMultiUserConfig `yaml:"multi_user"`
+	Auth              DaemonAuthConfig      `yaml:"auth"`
+	Audit             DaemonAuditConfig     `yaml:"audit"`
+	Admin             DaemonAdminConfig     `yaml:"admin"`
+	RateLimit         DaemonRateLimitConfig `yaml:"rate_limit"`
+	Hardening         DaemonHardeningConfig `yaml:"hardening"`
+}
+
+type DaemonMultiUserConfig struct {
+	Enabled     *bool  `yaml:"enabled"`
+	StorageRoot string `yaml:"storage_root"`
+}
+
+type DaemonAuthConfig struct {
+	WebSessions DaemonWebSessionAuthConfig `yaml:"web_sessions"`
+	RBAC        DaemonRBACConfig           `yaml:"rbac"`
+}
+
+type DaemonWebSessionAuthConfig struct {
+	Enabled                  *bool  `yaml:"enabled"`
+	CookieName               string `yaml:"cookie_name"`
+	TTLSeconds               int    `yaml:"ttl_seconds"`
+	StoragePath              string `yaml:"storage_path"`
+	PrincipalResolverEnabled *bool  `yaml:"principal_resolver_enabled"`
+}
+
+type DaemonRBACConfig struct {
+	Enabled            *bool  `yaml:"enabled"`
+	PolicyPath         string `yaml:"policy_path"`
+	AuditEnabled       *bool  `yaml:"audit_enabled"`
+	EnforcementEnabled *bool  `yaml:"enforcement_enabled"`
+}
+
+type DaemonAuditConfig struct {
+	Enabled *bool  `yaml:"enabled"`
+	Path    string `yaml:"path"`
+}
+
+type DaemonAdminConfig struct {
+	BootstrapTokenFile   string `yaml:"bootstrap_token_file"`
+	MembershipAPIEnabled *bool  `yaml:"membership_api_enabled"`
+}
+
+type DaemonRateLimitConfig struct {
+	Enabled           *bool `yaml:"enabled"`
+	RequestsPerMinute int   `yaml:"requests_per_minute"`
+	Burst             int   `yaml:"burst"`
+}
+
+type DaemonHardeningConfig struct {
+	RequireLoopback *bool `yaml:"require_loopback"`
 }
 
 type CustomTool struct {
@@ -164,6 +223,85 @@ func merge(base, overlay Config) Config {
 	}
 	if len(overlay.Plugins.Enabled) > 0 {
 		base.Plugins.Enabled = overlay.Plugins.Enabled
+	}
+	if overlay.Daemon.Listen != "" {
+		base.Daemon.Listen = overlay.Daemon.Listen
+	}
+	if overlay.Daemon.RunsDir != "" {
+		base.Daemon.RunsDir = overlay.Daemon.RunsDir
+	}
+	if overlay.Daemon.TokenFile != "" {
+		base.Daemon.TokenFile = overlay.Daemon.TokenFile
+	}
+	if overlay.Daemon.MaxConcurrentJobs > 0 {
+		base.Daemon.MaxConcurrentJobs = overlay.Daemon.MaxConcurrentJobs
+	}
+	if overlay.Daemon.MultiUser.Enabled != nil {
+		enabled := *overlay.Daemon.MultiUser.Enabled
+		base.Daemon.MultiUser.Enabled = &enabled
+	}
+	if overlay.Daemon.MultiUser.StorageRoot != "" {
+		base.Daemon.MultiUser.StorageRoot = overlay.Daemon.MultiUser.StorageRoot
+	}
+	if overlay.Daemon.Auth.WebSessions.Enabled != nil {
+		enabled := *overlay.Daemon.Auth.WebSessions.Enabled
+		base.Daemon.Auth.WebSessions.Enabled = &enabled
+	}
+	if overlay.Daemon.Auth.WebSessions.CookieName != "" {
+		base.Daemon.Auth.WebSessions.CookieName = overlay.Daemon.Auth.WebSessions.CookieName
+	}
+	if overlay.Daemon.Auth.WebSessions.TTLSeconds > 0 {
+		base.Daemon.Auth.WebSessions.TTLSeconds = overlay.Daemon.Auth.WebSessions.TTLSeconds
+	}
+	if overlay.Daemon.Auth.WebSessions.StoragePath != "" {
+		base.Daemon.Auth.WebSessions.StoragePath = overlay.Daemon.Auth.WebSessions.StoragePath
+	}
+	if overlay.Daemon.Auth.WebSessions.PrincipalResolverEnabled != nil {
+		principalResolverEnabled := *overlay.Daemon.Auth.WebSessions.PrincipalResolverEnabled
+		base.Daemon.Auth.WebSessions.PrincipalResolverEnabled = &principalResolverEnabled
+	}
+	if overlay.Daemon.Auth.RBAC.Enabled != nil {
+		enabled := *overlay.Daemon.Auth.RBAC.Enabled
+		base.Daemon.Auth.RBAC.Enabled = &enabled
+	}
+	if overlay.Daemon.Auth.RBAC.PolicyPath != "" {
+		base.Daemon.Auth.RBAC.PolicyPath = overlay.Daemon.Auth.RBAC.PolicyPath
+	}
+	if overlay.Daemon.Auth.RBAC.AuditEnabled != nil {
+		auditEnabled := *overlay.Daemon.Auth.RBAC.AuditEnabled
+		base.Daemon.Auth.RBAC.AuditEnabled = &auditEnabled
+	}
+	if overlay.Daemon.Auth.RBAC.EnforcementEnabled != nil {
+		enforcementEnabled := *overlay.Daemon.Auth.RBAC.EnforcementEnabled
+		base.Daemon.Auth.RBAC.EnforcementEnabled = &enforcementEnabled
+	}
+	if overlay.Daemon.Audit.Enabled != nil {
+		enabled := *overlay.Daemon.Audit.Enabled
+		base.Daemon.Audit.Enabled = &enabled
+	}
+	if overlay.Daemon.Audit.Path != "" {
+		base.Daemon.Audit.Path = overlay.Daemon.Audit.Path
+	}
+	if overlay.Daemon.Admin.BootstrapTokenFile != "" {
+		base.Daemon.Admin.BootstrapTokenFile = overlay.Daemon.Admin.BootstrapTokenFile
+	}
+	if overlay.Daemon.Admin.MembershipAPIEnabled != nil {
+		membershipAPIEnabled := *overlay.Daemon.Admin.MembershipAPIEnabled
+		base.Daemon.Admin.MembershipAPIEnabled = &membershipAPIEnabled
+	}
+	if overlay.Daemon.RateLimit.Enabled != nil {
+		enabled := *overlay.Daemon.RateLimit.Enabled
+		base.Daemon.RateLimit.Enabled = &enabled
+	}
+	if overlay.Daemon.RateLimit.RequestsPerMinute > 0 {
+		base.Daemon.RateLimit.RequestsPerMinute = overlay.Daemon.RateLimit.RequestsPerMinute
+	}
+	if overlay.Daemon.RateLimit.Burst > 0 {
+		base.Daemon.RateLimit.Burst = overlay.Daemon.RateLimit.Burst
+	}
+	if overlay.Daemon.Hardening.RequireLoopback != nil {
+		requireLoopback := *overlay.Daemon.Hardening.RequireLoopback
+		base.Daemon.Hardening.RequireLoopback = &requireLoopback
 	}
 	if overlay.Profiles != nil {
 		if base.Profiles == nil {

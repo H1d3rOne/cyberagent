@@ -6,10 +6,12 @@ import {
   loadSettings,
   saveSettings,
   type ConsoleSettings,
+  type ConsoleSessionSettings,
   type AgentProviderSettings,
   type AgentProviderProfile,
   type ScanDraft,
 } from '@/lib/api'
+import { consoleSessionFromServerIdentity } from '@/lib/session'
 
 const messages = {
   zh: {
@@ -43,6 +45,7 @@ const messages = {
     noData: '无数据',
     offline: '离线',
     operator: '操作员',
+    ops: '观测',
     overview: '总览',
     plugins: '插件',
     profile: '策略',
@@ -103,6 +106,7 @@ const messages = {
     noData: 'No data',
     offline: 'Offline',
     operator: 'Operator',
+    ops: 'Ops',
     overview: 'Overview',
     plugins: 'Plugins',
     profile: 'Profile',
@@ -136,9 +140,11 @@ const messages = {
 
 export type Language = keyof typeof messages
 export type MessageKey = keyof typeof messages.zh
-type ConsoleSettingsPatch = Omit<Partial<ConsoleSettings>, 'agentProvider' | 'scanDraft'> & {
+export type ServerScopeStatus = 'idle' | 'loading' | 'synced' | 'fallback'
+type ConsoleSettingsPatch = Omit<Partial<ConsoleSettings>, 'agentProvider' | 'scanDraft' | 'session'> & {
   agentProvider?: Partial<AgentProviderSettings>
   scanDraft?: Partial<ScanDraft>
+  session?: Partial<ConsoleSessionSettings>
 }
 
 interface ConsoleContextValue {
@@ -146,6 +152,7 @@ interface ConsoleContextValue {
   updateSettings: (patch: ConsoleSettingsPatch) => void
   resetSettings: () => void
   client: ReturnType<typeof createApiClient>
+  serverScopeStatus: ServerScopeStatus
   language: Language
   setLanguage: (language: Language) => void
   t: (key: MessageKey) => string
@@ -156,6 +163,7 @@ const ConsoleContext = createContext<ConsoleContextValue | null>(null)
 export function ConsoleProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<ConsoleSettings>(() => loadSettings())
   const [bootstrapped, setBootstrapped] = useState(false)
+  const [serverScopeStatus, setServerScopeStatus] = useState<ServerScopeStatus>('idle')
 
   useEffect(() => {
     let cancelled = false
@@ -202,6 +210,10 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
         ...current.scanDraft,
         ...(patch.scanDraft || {}),
       },
+      session: {
+        ...current.session,
+        ...(patch.session || {}),
+      },
     }))
   }, [])
 
@@ -218,14 +230,40 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
     [settings.baseUrl, settings.token],
   )
 
+  useEffect(() => {
+    if (!bootstrapped) return
+    let cancelled = false
+    if (!settings.token.trim()) {
+      setServerScopeStatus('fallback')
+      setSettings((current) => withConsoleSession(current, defaultSettings.session))
+      return () => { cancelled = true }
+    }
+
+    setServerScopeStatus('loading')
+    client.getMe()
+      .then((identity) => {
+        if (cancelled) return
+        const session = consoleSessionFromServerIdentity(identity, settings.operator)
+        setSettings((current) => withConsoleSession(current, session))
+        setServerScopeStatus('synced')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSettings((current) => withConsoleSession(current, defaultSettings.session))
+        setServerScopeStatus('fallback')
+      })
+
+    return () => { cancelled = true }
+  }, [bootstrapped, client, settings.operator, settings.token])
+
   const t = useCallback(
     (key: MessageKey) => messages[settings.language][key] || messages.en[key] || key,
     [settings.language],
   )
 
   const value = useMemo(
-    () => ({ settings, updateSettings, resetSettings, client, language: settings.language, setLanguage, t }),
-    [client, resetSettings, setLanguage, settings, t, updateSettings],
+    () => ({ settings, updateSettings, resetSettings, client, serverScopeStatus, language: settings.language, setLanguage, t }),
+    [client, resetSettings, serverScopeStatus, setLanguage, settings, t, updateSettings],
   )
 
   if (!bootstrapped) {
@@ -265,11 +303,27 @@ function reconcileActiveProvider(settings: ConsoleSettings): ConsoleSettings {
   }
 }
 
+function withConsoleSession(settings: ConsoleSettings, session: ConsoleSessionSettings): ConsoleSettings {
+  if (sameConsoleSession(settings.session, session)) return settings
+  return { ...settings, session }
+}
+
+function sameConsoleSession(left: ConsoleSessionSettings, right: ConsoleSessionSettings) {
+  return left.mode === right.mode &&
+    left.principalId === right.principalId &&
+    left.principalLabel === right.principalLabel &&
+    left.tenantId === right.tenantId &&
+    left.tenantLabel === right.tenantLabel &&
+    left.workspaceId === right.workspaceId &&
+    left.workspaceLabel === right.workspaceLabel &&
+    left.authMethod === right.authMethod
+}
+
 function agentProviderSettingsFromProfile(profile: AgentProviderProfile): AgentProviderSettings {
   return {
     provider: profile.type,
     model: profile.model,
-    apiKey: profile.apiKey,
+    apiKey: '',
     providerBaseUrl: profile.baseUrl,
     instructions: profile.instructions,
     maxTurns: profile.maxTurns,
