@@ -97,7 +97,9 @@ func TestNewServerWritesStartupAuditWhenEnabled(t *testing.T) {
 			Path:    auditPath,
 		},
 		Admin: AdminConfig{
-			BootstrapTokenFile: adminBootstrapTokenFile,
+			BootstrapTokenFile:     adminBootstrapTokenFile,
+			MembershipAPIEnabled:   true,
+			MembershipWriteEnabled: true,
 		},
 	})
 	if err != nil {
@@ -137,6 +139,9 @@ func TestNewServerWritesStartupAuditWhenEnabled(t *testing.T) {
 	}
 	if got := event.Details["admin_bootstrap_ready"]; got != true {
 		t.Fatalf("admin_bootstrap_ready = %#v, want true", got)
+	}
+	if got := event.Details["admin_membership_write"]; got != true {
+		t.Fatalf("admin_membership_write = %#v, want true", got)
 	}
 	if scanner.Scan() {
 		t.Fatalf("expected only one startup audit event, extra=%q", scanner.Text())

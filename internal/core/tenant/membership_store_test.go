@@ -96,6 +96,110 @@ func TestMemoryMembershipStoreStoresWorkspaceMembershipClones(t *testing.T) {
 	}
 }
 
+func TestMemoryMembershipStoreFillsTimestampsAndPreservesCreatedAtOnUpsert(t *testing.T) {
+	store := NewMemoryMembershipStore()
+
+	tenant, err := store.UpsertTenantMembership(context.Background(), TenantMembership{
+		TenantID:  "tenant-a",
+		SubjectID: "user-1",
+		Roles:     []Role{RoleTenantViewer},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTenantMembership() error = %v", err)
+	}
+	if tenant.CreatedAt.IsZero() || tenant.UpdatedAt.IsZero() {
+		t.Fatalf("tenant membership timestamps should be filled on create: %#v", tenant)
+	}
+	if tenant.CreatedAt.Location() != time.UTC || tenant.UpdatedAt.Location() != time.UTC {
+		t.Fatalf("tenant membership timestamps should be UTC: created=%v updated=%v", tenant.CreatedAt.Location(), tenant.UpdatedAt.Location())
+	}
+
+	updatedTenant, err := store.UpsertTenantMembership(context.Background(), TenantMembership{
+		TenantID:  "tenant-a",
+		SubjectID: "user-1",
+		Roles:     []Role{RoleTenantAdmin},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTenantMembership() second error = %v", err)
+	}
+	if !updatedTenant.CreatedAt.Equal(tenant.CreatedAt) {
+		t.Fatalf("tenant membership upsert should preserve created_at when omitted: got %v want %v", updatedTenant.CreatedAt, tenant.CreatedAt)
+	}
+	if updatedTenant.UpdatedAt.IsZero() || updatedTenant.UpdatedAt.Before(updatedTenant.CreatedAt) {
+		t.Fatalf("tenant membership updated_at should be filled and not before created_at: %#v", updatedTenant)
+	}
+
+	workspace, err := store.UpsertWorkspaceMembership(context.Background(), WorkspaceMembership{
+		TenantID:    "tenant-a",
+		WorkspaceID: "workspace-a",
+		SubjectID:   "user-1",
+		Roles:       []Role{RoleWorkspaceViewer},
+	})
+	if err != nil {
+		t.Fatalf("UpsertWorkspaceMembership() error = %v", err)
+	}
+	if workspace.CreatedAt.IsZero() || workspace.UpdatedAt.IsZero() {
+		t.Fatalf("workspace membership timestamps should be filled on create: %#v", workspace)
+	}
+
+	updatedWorkspace, err := store.UpsertWorkspaceMembership(context.Background(), WorkspaceMembership{
+		TenantID:    "tenant-a",
+		WorkspaceID: "workspace-a",
+		SubjectID:   "user-1",
+		Roles:       []Role{RoleWorkspaceAdmin},
+	})
+	if err != nil {
+		t.Fatalf("UpsertWorkspaceMembership() second error = %v", err)
+	}
+	if !updatedWorkspace.CreatedAt.Equal(workspace.CreatedAt) {
+		t.Fatalf("workspace membership upsert should preserve created_at when omitted: got %v want %v", updatedWorkspace.CreatedAt, workspace.CreatedAt)
+	}
+	if updatedWorkspace.UpdatedAt.IsZero() || updatedWorkspace.UpdatedAt.Before(updatedWorkspace.CreatedAt) {
+		t.Fatalf("workspace membership updated_at should be filled and not before created_at: %#v", updatedWorkspace)
+	}
+}
+
+func TestMemoryMembershipStoreNormalizesTimestampSkew(t *testing.T) {
+	store := NewMemoryMembershipStore()
+	createdAt := time.Date(2026, 6, 13, 9, 30, 0, 0, time.FixedZone("fixture", 8*60*60))
+	staleUpdatedAt := createdAt.Add(-time.Hour)
+
+	tenant, err := store.UpsertTenantMembership(context.Background(), TenantMembership{
+		TenantID:  "tenant-skew",
+		SubjectID: "user-skew",
+		Roles:     []Role{RoleTenantViewer},
+		CreatedAt: createdAt,
+		UpdatedAt: staleUpdatedAt,
+	})
+	if err != nil {
+		t.Fatalf("UpsertTenantMembership() error = %v", err)
+	}
+	if tenant.CreatedAt.Location() != time.UTC || tenant.UpdatedAt.Location() != time.UTC {
+		t.Fatalf("tenant membership timestamps should be normalized to UTC: created=%v updated=%v", tenant.CreatedAt.Location(), tenant.UpdatedAt.Location())
+	}
+	if tenant.UpdatedAt.Before(tenant.CreatedAt) || !tenant.UpdatedAt.Equal(tenant.CreatedAt) {
+		t.Fatalf("tenant membership updated_at should be clamped to created_at on skew: created=%v updated=%v", tenant.CreatedAt, tenant.UpdatedAt)
+	}
+
+	workspace, err := store.UpsertWorkspaceMembership(context.Background(), WorkspaceMembership{
+		TenantID:    "tenant-skew",
+		WorkspaceID: "workspace-skew",
+		SubjectID:   "user-skew",
+		Roles:       []Role{RoleWorkspaceViewer},
+		CreatedAt:   createdAt,
+		UpdatedAt:   staleUpdatedAt,
+	})
+	if err != nil {
+		t.Fatalf("UpsertWorkspaceMembership() error = %v", err)
+	}
+	if workspace.CreatedAt.Location() != time.UTC || workspace.UpdatedAt.Location() != time.UTC {
+		t.Fatalf("workspace membership timestamps should be normalized to UTC: created=%v updated=%v", workspace.CreatedAt.Location(), workspace.UpdatedAt.Location())
+	}
+	if workspace.UpdatedAt.Before(workspace.CreatedAt) || !workspace.UpdatedAt.Equal(workspace.CreatedAt) {
+		t.Fatalf("workspace membership updated_at should be clamped to created_at on skew: created=%v updated=%v", workspace.CreatedAt, workspace.UpdatedAt)
+	}
+}
+
 func TestMembershipStoreValidationRejectsMissingIDsAndWrongRoleScope(t *testing.T) {
 	store := NewMemoryMembershipStore()
 	if _, err := store.UpsertTenantMembership(context.Background(), TenantMembership{

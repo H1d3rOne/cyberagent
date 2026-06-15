@@ -66,15 +66,6 @@ type agentMemoryCompaction struct {
 	OccurredAt       time.Time
 }
 
-func (m *agentManager) beginRuntimeTurn(ctx context.Context, sessionID, prompt, origin, operationLevel string, session agentSession, userMessage agentMessage) agentRuntimeTurnRef {
-	eng := m.runtimeEngine()
-	if eng == nil {
-		return agentRuntimeTurnRef{}
-	}
-	turn, _ := eng.BeginTurn(ctx, agentRuntimeTurnContext(sessionID, prompt, origin, operationLevel, session, userMessage))
-	return agentRuntimeTurnRef{TaskID: turn.TaskID, RunID: turn.RunID, TurnID: turn.TurnID}
-}
-
 func agentRuntimeTurnContext(sessionID, prompt, origin, operationLevel string, session agentSession, userMessage agentMessage) runtime.TurnContext {
 	taskID := agentRuntimeTaskID(sessionID, session)
 	goal := prompt
@@ -294,25 +285,6 @@ func (m *agentManager) emitRuntimeMemoryCompacted(ctx context.Context, sessionID
 			"memory_summary":    cloneAgentMemorySummary(compaction.Summary),
 		},
 		Timestamp: compaction.OccurredAt,
-	})
-}
-
-func (m *agentManager) finishRuntimeTurn(ctx context.Context, sessionID string, turnRef agentRuntimeTurnRef, resp sendAgentMessageResponse, err error) {
-	eng := m.runtimeEngine()
-	if eng == nil || turnRef.RunID == "" || turnRef.TurnID == "" {
-		return
-	}
-	status, reason := agentRuntimeTurnCompletion(resp, err)
-	_ = eng.FinishTurn(ctx, runtime.TurnContext{
-		SessionID: sessionID,
-		TaskID:    turnRef.TaskID,
-		RunID:     turnRef.RunID,
-		TurnID:    turnRef.TurnID,
-		TurnIndex: 1,
-	}, runtime.TurnResult{
-		Status: runtime.TurnResultStatus(status),
-		Reason: reason,
-		Error:  err,
 	})
 }
 

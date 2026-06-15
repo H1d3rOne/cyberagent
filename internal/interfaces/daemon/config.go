@@ -65,8 +65,9 @@ type AuditConfig struct {
 }
 
 type AdminConfig struct {
-	BootstrapTokenFile   string
-	MembershipAPIEnabled bool
+	BootstrapTokenFile     string
+	MembershipAPIEnabled   bool
+	MembershipWriteEnabled bool
 }
 
 type RateLimitConfig struct {
@@ -118,6 +119,9 @@ func (c Config) Normalize() Config {
 		c.Audit.Path = filepath.Join(c.RunsDir, filepath.FromSlash(defaultAuditEventsRelativePath))
 	}
 	c.Admin.BootstrapTokenFile = strings.TrimSpace(c.Admin.BootstrapTokenFile)
+	if !c.Admin.MembershipAPIEnabled {
+		c.Admin.MembershipWriteEnabled = false
+	}
 	if c.RateLimit.Enabled {
 		if c.RateLimit.RequestsPerMinute <= 0 {
 			c.RateLimit.RequestsPerMinute = DefaultRateLimitRequestsPerMinute

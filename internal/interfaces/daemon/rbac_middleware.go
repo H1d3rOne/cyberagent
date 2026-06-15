@@ -348,6 +348,11 @@ func daemonRBACRouteRequirements() map[string]rbacRequirement {
 			Scope:  "tenant",
 			Roles:  []coretenant.Role{coretenant.RoleTenantAdmin, coretenant.RoleTenantOwner},
 		},
+		http.MethodPost + " /api/v1/admin/memberships": {
+			Action: "admin.membership.write",
+			Scope:  "tenant",
+			Roles:  []coretenant.Role{coretenant.RoleTenantAdmin, coretenant.RoleTenantOwner},
+		},
 		http.MethodPost + " /api/v1/auth/login": {
 			Action: "auth.session.login",
 			Scope:  "tenant",

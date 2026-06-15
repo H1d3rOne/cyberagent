@@ -125,6 +125,9 @@ func applyDaemonConfigFile(base daemonapi.Config, cfg config.DaemonConfig, flagC
 	if cfg.Admin.MembershipAPIEnabled != nil {
 		base.Admin.MembershipAPIEnabled = *cfg.Admin.MembershipAPIEnabled
 	}
+	if cfg.Admin.MembershipWriteEnabled != nil {
+		base.Admin.MembershipWriteEnabled = *cfg.Admin.MembershipWriteEnabled
+	}
 	if cfg.RateLimit.Enabled != nil {
 		base.RateLimit.Enabled = *cfg.RateLimit.Enabled
 	}

@@ -75,8 +75,9 @@ type DaemonAuditConfig struct {
 }
 
 type DaemonAdminConfig struct {
-	BootstrapTokenFile   string `yaml:"bootstrap_token_file"`
-	MembershipAPIEnabled *bool  `yaml:"membership_api_enabled"`
+	BootstrapTokenFile     string `yaml:"bootstrap_token_file"`
+	MembershipAPIEnabled   *bool  `yaml:"membership_api_enabled"`
+	MembershipWriteEnabled *bool  `yaml:"membership_write_enabled"`
 }
 
 type DaemonRateLimitConfig struct {
@@ -288,6 +289,10 @@ func merge(base, overlay Config) Config {
 	if overlay.Daemon.Admin.MembershipAPIEnabled != nil {
 		membershipAPIEnabled := *overlay.Daemon.Admin.MembershipAPIEnabled
 		base.Daemon.Admin.MembershipAPIEnabled = &membershipAPIEnabled
+	}
+	if overlay.Daemon.Admin.MembershipWriteEnabled != nil {
+		membershipWriteEnabled := *overlay.Daemon.Admin.MembershipWriteEnabled
+		base.Daemon.Admin.MembershipWriteEnabled = &membershipWriteEnabled
 	}
 	if overlay.Daemon.RateLimit.Enabled != nil {
 		enabled := *overlay.Daemon.RateLimit.Enabled

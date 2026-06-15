@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -74,7 +75,10 @@ func (s *MemoryMembershipStore) UpsertTenantMembership(ctx context.Context, memb
 	if s.tenants == nil {
 		s.tenants = make(map[string]TenantMembership)
 	}
-	s.tenants[tenantMembershipKey(membership.TenantID, membership.SubjectID)] = membership.Clone()
+	key := tenantMembershipKey(membership.TenantID, membership.SubjectID)
+	existing, exists := s.tenants[key]
+	membership = applyTenantMembershipTimestamps(membership, existing.CreatedAt, exists)
+	s.tenants[key] = membership.Clone()
 	return membership.Clone(), nil
 }
 
@@ -114,8 +118,40 @@ func (s *MemoryMembershipStore) UpsertWorkspaceMembership(ctx context.Context, m
 	if s.workspaces == nil {
 		s.workspaces = make(map[string]WorkspaceMembership)
 	}
-	s.workspaces[workspaceMembershipKey(membership.TenantID, membership.WorkspaceID, membership.SubjectID)] = membership.Clone()
+	key := workspaceMembershipKey(membership.TenantID, membership.WorkspaceID, membership.SubjectID)
+	existing, exists := s.workspaces[key]
+	membership = applyWorkspaceMembershipTimestamps(membership, existing.CreatedAt, exists)
+	s.workspaces[key] = membership.Clone()
 	return membership.Clone(), nil
+}
+
+func applyTenantMembershipTimestamps(membership TenantMembership, existingCreatedAt time.Time, exists bool) TenantMembership {
+	membership.CreatedAt, membership.UpdatedAt = membershipTimestamps(membership.CreatedAt, membership.UpdatedAt, existingCreatedAt, exists)
+	return membership
+}
+
+func applyWorkspaceMembershipTimestamps(membership WorkspaceMembership, existingCreatedAt time.Time, exists bool) WorkspaceMembership {
+	membership.CreatedAt, membership.UpdatedAt = membershipTimestamps(membership.CreatedAt, membership.UpdatedAt, existingCreatedAt, exists)
+	return membership
+}
+
+func membershipTimestamps(createdAt, updatedAt, existingCreatedAt time.Time, exists bool) (time.Time, time.Time) {
+	now := time.Now().UTC()
+	if exists && createdAt.IsZero() {
+		createdAt = existingCreatedAt
+	}
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	createdAt = createdAt.UTC()
+	if updatedAt.IsZero() {
+		updatedAt = now
+	}
+	updatedAt = updatedAt.UTC()
+	if updatedAt.Before(createdAt) {
+		updatedAt = createdAt
+	}
+	return createdAt, updatedAt
 }
 
 func (s *MemoryMembershipStore) GetWorkspaceMembership(ctx context.Context, tenantID, workspaceID, subjectID string) (WorkspaceMembership, bool, error) {

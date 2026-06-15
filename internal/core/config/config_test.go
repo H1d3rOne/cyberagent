@@ -65,6 +65,7 @@ daemon:
   admin:
     bootstrap_token_file: data/admin/bootstrap-token
     membership_api_enabled: true
+    membership_write_enabled: true
   rate_limit:
     enabled: true
     requests_per_minute: 240
@@ -106,7 +107,8 @@ daemon:
 		t.Errorf("expected daemon audit config to load, got %#v", cfg.Daemon.Audit)
 	}
 	if cfg.Daemon.Admin.BootstrapTokenFile != "data/admin/bootstrap-token" ||
-		cfg.Daemon.Admin.MembershipAPIEnabled == nil || !*cfg.Daemon.Admin.MembershipAPIEnabled {
+		cfg.Daemon.Admin.MembershipAPIEnabled == nil || !*cfg.Daemon.Admin.MembershipAPIEnabled ||
+		cfg.Daemon.Admin.MembershipWriteEnabled == nil || !*cfg.Daemon.Admin.MembershipWriteEnabled {
 		t.Errorf("expected daemon admin bootstrap token file to load, got %#v", cfg.Daemon.Admin)
 	}
 	if cfg.Daemon.RateLimit.Enabled == nil || !*cfg.Daemon.RateLimit.Enabled || cfg.Daemon.RateLimit.RequestsPerMinute != 240 || cfg.Daemon.RateLimit.Burst != 60 {
@@ -173,8 +175,9 @@ func TestMergeOverlayWins(t *testing.T) {
 				Path:    "data/audit/events.jsonl",
 			},
 			Admin: DaemonAdminConfig{
-				BootstrapTokenFile:   "data/admin/bootstrap-token",
-				MembershipAPIEnabled: boolPtr(true),
+				BootstrapTokenFile:     "data/admin/bootstrap-token",
+				MembershipAPIEnabled:   boolPtr(true),
+				MembershipWriteEnabled: boolPtr(true),
 			},
 			RateLimit: DaemonRateLimitConfig{
 				Enabled:           boolPtr(true),
@@ -219,7 +222,8 @@ func TestMergeOverlayWins(t *testing.T) {
 		t.Errorf("daemon audit config not merged: %#v", result.Daemon.Audit)
 	}
 	if result.Daemon.Admin.BootstrapTokenFile != "data/admin/bootstrap-token" ||
-		result.Daemon.Admin.MembershipAPIEnabled == nil || !*result.Daemon.Admin.MembershipAPIEnabled {
+		result.Daemon.Admin.MembershipAPIEnabled == nil || !*result.Daemon.Admin.MembershipAPIEnabled ||
+		result.Daemon.Admin.MembershipWriteEnabled == nil || !*result.Daemon.Admin.MembershipWriteEnabled {
 		t.Errorf("daemon admin config not merged: %#v", result.Daemon.Admin)
 	}
 	if result.Daemon.RateLimit.Enabled == nil || !*result.Daemon.RateLimit.Enabled || result.Daemon.RateLimit.RequestsPerMinute != 240 || result.Daemon.RateLimit.Burst != 60 {

@@ -323,6 +323,15 @@ func TestRBACRequirementTableUsesKnownRoles(t *testing.T) {
 			t.Fatalf("workspace select role should be valid workspace role, got %q", role)
 		}
 	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/memberships", nil)
+	requirement, ok = daemonRBACRequirementForRequest(req)
+	if !ok {
+		t.Fatal("membership write requirement missing")
+	}
+	if requirement.Action != "admin.membership.write" || requirement.Scope != "tenant" {
+		t.Fatalf("unexpected membership write requirement: %#v", requirement)
+	}
 }
 
 func TestLoadDaemonRBACPolicyFileOverridesRouteRequirements(t *testing.T) {

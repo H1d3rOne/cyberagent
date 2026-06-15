@@ -61,16 +61,17 @@ func (m *agentManager) agentLLMProviderAttempts(req sendAgentMessageRequest) []a
 		})
 	}
 
-	appendAttempt(req, "", "")
 	store := m.providerStore()
-	if store == nil {
-		return attempts
+	var profiles []web.ProviderProfile
+	if store != nil {
+		if cfg, err := store.Load(); err == nil && len(cfg.Providers) > 0 {
+			profiles = orderedAgentProviderProfiles(cfg)
+		}
 	}
-	cfg, err := store.Load()
-	if err != nil || len(cfg.Providers) == 0 {
-		return attempts
+	if agentLLMShouldUseRequestAttempt(req, len(profiles) > 0) {
+		appendAttempt(req, "", "")
 	}
-	for _, profile := range orderedAgentProviderProfiles(cfg) {
+	for _, profile := range profiles {
 		candidate := sendAgentMessageRequest{
 			Message:              req.Message,
 			Operator:             req.Operator,
@@ -88,6 +89,29 @@ func (m *agentManager) agentLLMProviderAttempts(req sendAgentMessageRequest) []a
 		appendAttempt(candidate, profile.ID, profile.Name)
 	}
 	return attempts
+}
+
+func agentLLMShouldUseRequestAttempt(req sendAgentMessageRequest, hasStoredProfiles bool) bool {
+	if !agentLLMConfigured(req) {
+		return false
+	}
+	if !hasStoredProfiles {
+		return true
+	}
+	if normalizeAgentProvider(req.Provider) == "ollama" {
+		return true
+	}
+	if strings.TrimSpace(req.APIKey) != "" {
+		return true
+	}
+	// Browser-visible provider profiles intentionally redact API keys. When a
+	// dev frontend sends only model/base_url back to the daemon, prefer the
+	// server-side provider store so the redacted/stale request candidate does
+	// not fail first with 401 before the saved secret can be used.
+	if strings.TrimSpace(req.BaseURL) != "" {
+		return false
+	}
+	return true
 }
 
 func orderedAgentProviderProfiles(cfg web.ProviderConfig) []web.ProviderProfile {
@@ -163,7 +187,7 @@ func (m *agentManager) chatAgentLLMWithFallback(ctx context.Context, sessionID s
 			ProfileName: attempt.ProfileName,
 			Error:       err.Error(),
 		})
-		if streamed || !llm.IsRetryableError(err) || idx == len(attempts)-1 {
+		if streamed || idx == len(attempts)-1 || !agentLLMShouldFailOver(err) {
 			return nil, streamed, attempt, fallbackLog, err
 		}
 	}
@@ -171,6 +195,36 @@ func (m *agentManager) chatAgentLLMWithFallback(ctx context.Context, sessionID s
 		return nil, false, attempts[len(attempts)-1], fallbackLog, lastErr
 	}
 	return nil, false, agentLLMProviderAttempt{}, fallbackLog, fmt.Errorf("AI provider is not configured")
+}
+
+func agentLLMShouldFailOver(err error) bool {
+	if llm.IsRetryableError(err) {
+		return true
+	}
+	return agentLLMIsProviderAuthOrCredentialError(err)
+}
+
+func agentLLMIsProviderAuthOrCredentialError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"401",
+		"403",
+		"unauthorized",
+		"forbidden",
+		"invalid api key",
+		"invalid_api_key",
+		"incorrect api key",
+		"authentication",
+		"permission denied",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func agentLLMAttemptProviderName(attempt agentLLMProviderAttempt) string {

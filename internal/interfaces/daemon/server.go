@@ -156,6 +156,7 @@ func NewServer(cfg Config) (*Server, error) {
 			"admin_bootstrap_configured": adminBootstrap.Configured,
 			"admin_bootstrap_ready":      adminBootstrap.Ready,
 			"admin_membership_api":       cfg.Admin.MembershipAPIEnabled,
+			"admin_membership_write":     cfg.Admin.MembershipWriteEnabled,
 		},
 	}); err != nil {
 		if runtimeStore != nil {

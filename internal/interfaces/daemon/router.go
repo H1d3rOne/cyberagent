@@ -88,7 +88,7 @@ func newRouter(svc routerServices, token string) http.Handler {
 		writeOK(w, http.StatusOK, svc.admin.Status())
 	}))
 	mux.HandleFunc("/api/v1/admin/memberships", func(w http.ResponseWriter, r *http.Request) {
-		handleMembershipAdminRoute(w, r, svc.adminConfig, svc.membershipStore)
+		handleMembershipAdminRoute(w, r, svc.adminConfig, svc.admin, svc.membershipStore, svc.auditSink)
 	})
 	mux.HandleFunc("/api/v1/auth/login", requireMethod(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
 		handleWebAuthSkeletonEndpoint(w, r, svc.auth.WebSessions, "login")

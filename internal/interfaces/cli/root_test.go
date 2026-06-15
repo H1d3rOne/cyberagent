@@ -87,8 +87,9 @@ func TestApplyDaemonConfigFileUsesDefaultsAndPreservesChangedFlags(t *testing.T)
 			Path:    "config-audit/events.jsonl",
 		},
 		Admin: coreconfig.DaemonAdminConfig{
-			BootstrapTokenFile:   "config-admin/bootstrap-token",
-			MembershipAPIEnabled: coreBoolPtr(true),
+			BootstrapTokenFile:     "config-admin/bootstrap-token",
+			MembershipAPIEnabled:   coreBoolPtr(true),
+			MembershipWriteEnabled: coreBoolPtr(true),
 		},
 		RateLimit: coreconfig.DaemonRateLimitConfig{
 			Enabled:           coreBoolPtr(true),
@@ -129,7 +130,7 @@ func TestApplyDaemonConfigFileUsesDefaultsAndPreservesChangedFlags(t *testing.T)
 	if !got.Audit.Enabled || got.Audit.Path != "config-audit/events.jsonl" {
 		t.Fatalf("audit config defaults not applied: %#v", got.Audit)
 	}
-	if got.Admin.BootstrapTokenFile != "config-admin/bootstrap-token" || !got.Admin.MembershipAPIEnabled {
+	if got.Admin.BootstrapTokenFile != "config-admin/bootstrap-token" || !got.Admin.MembershipAPIEnabled || !got.Admin.MembershipWriteEnabled {
 		t.Fatalf("admin config defaults not applied: %#v", got.Admin)
 	}
 	if !got.RateLimit.Enabled || got.RateLimit.RequestsPerMinute != 240 || got.RateLimit.Burst != 60 {

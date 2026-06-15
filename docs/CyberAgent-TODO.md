@@ -49,7 +49,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] 将 workspace write/patch/apply/discard/delete/move/copy/mkdir route 收敛为 Tool Registry dispatch；保留 `workspace_write` gate、explicit intent gate 与既有 conflict/atomicity 测试语义。
 - [x] 独立迁移 approval approve/deny/resume-approved route 为 Tool Registry dispatch；保留 `approval_ops` gate、最新用户显式指令匹配、comment/audit/event parity。
 - [x] 定义 engine 侧 `TurnExecutor` / `TurnContext` seam，先复用现有 daemon legacy executor，不改变 `SendMessage` 行为。
-- [x] 将 `beginRuntimeTurn` / `finishRuntimeTurn` 状态迁移到 engine API，daemon 暂时保留 session adapter。
+- [x] 将 `beginRuntimeTurn` / `finishRuntimeTurn` 状态迁移到 engine API，并在 `SendMessage` 全面切到 `runtime.Engine.RunTurnLifecycle` 后删除 daemon begin/finish compatibility adapters。
 - [x] 新增 `runtime.Engine.RunLLMTurn` / `LLMTurnRunner` seam，并将 `SendMessage` 两处 LLM 主入口改为经 engine 调度现有 daemon `runAgentLLMToolLoop`；不改变 planner/tool/synthesis/session 行为。
 - [x] 新增 `runtime.Engine.RunLLMStage` / `LLMStageRunner` seam，并将 `runAgentLLMToolLoop` 内部 planner chat 改为经 engine stage dispatch 到现有 daemon `handleAgentLLMChat`。
 - [x] 将 `runAgentLLMToolLoop` 内部 tool synthesis 改为经 `LLMStageToolSynthesis` dispatch 到现有 daemon `synthesizeAgentToolResults`。
@@ -133,7 +133,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 
 - [x] L1：Desktop / Wails 技术 spike：完成 embedded daemon `Serve(ctx, net.Listener)`、loopback ephemeral bootstrap、RuntimeContract 与 WebView bootstrap seam；详见 `docs/CyberAgent-Desktop-Wails-Spike.md`。
 - [x] L2：Local API / Daemon 稳定版：完成 config defaults、token diagnostics/redaction、runtime DB migration audit 与 compatibility strategy doc/tests；详见 `docs/CyberAgent-Local-Daemon-Stability.md`。
-- [ ] L3：Web 多用户平台：architecture/design slice、no-op local tenant skeleton、router context middleware、service context consumption、显式 multi-user storage gate/resolver skeleton、frontend session/workspace UX skeleton、audit/admin/rate-limit/hardening config skeleton、audit JSONL sink skeleton、admin bootstrap readiness skeleton、provider/web-search/API auth secret status-only/server-side storage skeleton、rate-limit/deployment hardening runtime 接入、identity/tenant/workspace API skeleton、frontend server-side scope hydrate skeleton、auth/session/RBAC model skeleton、server-side session store skeleton、session cookie resolver middleware skeleton、Web login/logout/refresh endpoint skeleton、RBAC middleware/enforcer skeleton、membership store skeleton、RBAC policy loading/evaluation skeleton、显式 RBAC deny/audit enforcement gate、Web session principal resolver 与只读 membership admin API skeleton 已完成；待做真实 Web account adapter、真实 login/logout/refresh 语义、CSRF/secure cookie hardening、membership write/admin mutation 与完整 workspace isolation；详见 `docs/CyberAgent-Web-Multi-User-Platform.md`。
+- [ ] L3：Web 多用户平台：architecture/design slice、no-op local tenant skeleton、router context middleware、service context consumption、显式 multi-user storage gate/resolver skeleton、frontend session/workspace UX skeleton、audit/admin/rate-limit/hardening config skeleton、audit JSONL sink skeleton、admin bootstrap readiness skeleton、provider/web-search/API auth secret status-only/server-side storage skeleton、rate-limit/deployment hardening runtime 接入、identity/tenant/workspace API skeleton、frontend server-side scope hydrate skeleton、auth/session/RBAC model skeleton、server-side session store skeleton、session cookie resolver middleware skeleton、Web login/logout/refresh endpoint skeleton、RBAC middleware/enforcer skeleton、membership store skeleton、RBAC policy loading/evaluation skeleton、显式 RBAC deny/audit enforcement gate、Web session principal resolver 与只读 membership admin API skeleton、membership write/admin mutation gate skeleton、membership upsert timestamp ownership skeleton、membership timestamp monotonic/client timestamp boundary skeleton 已完成；待做真实 Web account adapter、真实 login/logout/refresh 语义、CSRF/secure cookie hardening、完整 workspace isolation；详见 `docs/CyberAgent-Web-Multi-User-Platform.md`。
 - [ ] L4：Remote Runner：待做 runner protocol、job lifecycle、artifact sync、credential boundary 与 failure recovery。
 - [ ] L5：长期 Target / User / Team Memory：待做 memory schema、scoping/privacy、retrieval policy、compaction 与 export/delete 边界。
 - [ ] L6：LLM Gateway 作为可选增强稳定化：待做 provider routing、quota/rate limit、request/response audit、fallback 与 cost visibility。
@@ -178,7 +178,9 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
   - [x] L3-A17：RBAC deny/audit enforcement gate skeleton；默认关闭，local bearer 继续不受 Web RBAC deny 影响。
   - [x] L3-A18：Web session principal/tenant resolver skeleton；默认关闭，cookie-only 仍不替代 bearer，local bearer 默认行为不变。
   - [x] L3-A19：membership admin API skeleton；默认关闭/只读先行，避免破坏 local bearer 兼容。
-  - [ ] L3-A20：membership write/admin mutation gate skeleton；继续默认关闭，需分离 bootstrap/owner/admin 权限与 audit。
+  - [x] L3-A20：membership write/admin mutation gate skeleton；继续默认关闭，分离 bootstrap/owner/admin 权限与 audit。
+  - [x] L3-A21：membership upsert timestamp ownership skeleton；MemoryMembershipStore 在 upsert 时填充 created_at/updated_at，并在重复 upsert 时保留 created_at。
+  - [x] L3-A22：membership timestamp monotonic/client timestamp boundary skeleton；store 统一 UTC 化并夹紧 updated_at >= created_at，admin mutation 忽略 client-provided timestamps。
 - [ ] L4-A1：Remote Runner protocol/design slice。
 - [ ] L5-A1：长期 Memory schema/scoping design slice。
 - [ ] L6-A1：LLM Gateway provider-routing/cost-audit design slice。
@@ -423,6 +425,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 - [x] P0.5-N236：继续按 N235 后边界收敛 request_authorization / capability_blocked optional-result SessionMutation fallback：审计并固化 no-engine optional-result legacy fallback 仅为 `CYBERAGENT_RUNTIME` legacy opt-out 保留，attached `SessionMutator` 返回 blocked、hard error 或 invalid payload 时不再让 request/capability caller 落回 legacy session state write；completion audit 下一边界推进到 `session_mutation_no_engine_legacy_fallback_retirement_readiness`，发布 stage/commit/tag 与 deprecated runtime API 默认行为仍等待用户明确授权。
 - [x] P0.5-N237：继续按 N236 后边界审计剩余 no-engine SessionMutation legacy fallback：确认 production default runtime engine attached，append_messages / record_user_message / request_authorization / capability_blocked / control_session / resolve_authorization 六类 no-engine SessionMutation caller fallback 仅作为 `CYBERAGENT_RUNTIME=legacy/off/disabled/false/0` whole-engine rollback switch 保留；completion audit 下一边界回到 `await_explicit_user_stage_commit_tag_authorization`，发布 stage/commit/tag 与 deprecated runtime API 默认行为仍等待用户明确授权。
 - [x] P0.5-N238：完成 P0.5 engine-owned loop runner / runtime seam 总括项 completion audit：将旧总括 unchecked 项与 N105-N237 工件、completion audit table、no-engine SessionMutation fallback audit、default attachments 与验证命令对齐；确认当前 P0.5 已无可继续自动推进的非 git runtime seam hardening 子项，剩余边界为 `await_explicit_user_stage_commit_tag_authorization`。
+- [x] P0.5-N239：继续按 engine-native turn lifecycle 下沉边界删除已无生产调用的 daemon `beginRuntimeTurn` / `finishRuntimeTurn` compatibility adapters；测试改为直接覆盖 `runRuntimeTurnLifecycle` terminal event parity，不改变 `SendMessage` bounded lifecycle 语义。
 
 当前阻塞项：
 
@@ -659,7 +662,7 @@ CyberAgent 已完成 MVP safe scan、Local Daemon / Web API、Agent Cockpit、v0
 
 - [x] L1：Desktop / Wails 技术 spike：daemon 嵌入、日志/更新、权限模型。
 - [x] L2：Local API / Daemon 稳定版：配置、token、runtime DB migration、兼容策略。
-- [ ] L3：Web 多用户平台：L3-A1~L3-A19 architecture/context/storage/auth/session/RBAC/session-store/cookie-resolver/auth-endpoint/RBAC-middleware/membership-store/policy-evaluator/deny-audit gate/web-session principal resolver/read-only membership admin skeleton 已完成；待做真实 Web account adapter、真实 login/logout/refresh、CSRF/secure cookie hardening、membership write/admin mutation、完整 workspace isolation 与配额。
+- [ ] L3：Web 多用户平台：L3-A1~L3-A22 architecture/context/storage/auth/session/RBAC/session-store/cookie-resolver/auth-endpoint/RBAC-middleware/membership-store/policy-evaluator/deny-audit gate/web-session principal resolver/read-only membership admin/membership write gate/membership upsert timestamp ownership/timestamp hardening skeleton 已完成；待做真实 Web account adapter、真实 login/logout/refresh、CSRF/secure cookie hardening、完整 workspace isolation 与配额。
 - [ ] L4：Remote Runner：远端 workspace、队列、日志流、artifact 回收。
 - [ ] L5：长期 Target / User / Team Memory：作用域、过期、可解释检索与删除。
 - [ ] L6：LLM Gateway 稳定化：provider fallback、model capability registry、prompt/version trace。
@@ -907,6 +910,50 @@ GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -coun
 ```
 
 结果：新增 `daemon.admin.membership_api_enabled` config gate 与 `GET /api/v1/admin/memberships` 只读 skeleton。默认关闭时 bearer 通过后返回 `not_found`；显式开启后可按 `scope=tenant|workspace`、`tenant_id`、`workspace_id`、`subject_id` 查询 membership store，只返回 roles 与非敏感 metadata。POST/PUT/DELETE 不写 store，响应中固定 `write_endpoints_enabled=false`；RBAC route table 新增 `admin.membership.read`，local bearer 默认行为不变。下一步 L3-A20：membership write/admin mutation gate skeleton。
+
+2026-06-13 本轮增量（P0.5-N239：engine-native turn lifecycle adapter cleanup）:
+
+```bash
+gofmt -w internal/interfaces/daemon/agent_runtime.go internal/interfaces/daemon/agent_subscribe_test.go
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestRunTurnLifecycle|TestBeginTurn|TestFinishTurn|TestAgentManagerRunRuntimeTurnLifecyclePublishesTerminalEvents|TestAgentManagerSendMessageRunsInsideRuntimeTurnLifecycle'
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/interfaces/daemon -run 'TestMembershipAdmin|TestRBACRequirementTable|TestConfigNormalize|TestAdminBootstrap|TestNewServerWritesStartupAudit'
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/core/config ./internal/interfaces/cli -run 'TestLoadFrom|TestMergeOverlayWins|TestApplyDaemonConfigFileUsesDefaultsAndPreservesChangedFlags'
+```
+
+结果：删除已无生产调用的 daemon `beginRuntimeTurn` / `finishRuntimeTurn` compatibility adapters，`SendMessage` 与 terminal event parity 覆盖统一落到 `runRuntimeTurnLifecycle` / `runtime.Engine.RunTurnLifecycle`；不改变 Begin/Finish lifecycle、response completion、membership gate 或 local bearer 默认行为。
+
+2026-06-09 本轮增量（L3-A20：membership write/admin mutation gate skeleton）:
+
+```bash
+gofmt -w internal/interfaces/daemon/membership_admin_handlers.go internal/interfaces/daemon/membership_admin_handlers_test.go internal/interfaces/daemon/router.go internal/interfaces/daemon/rbac_middleware.go internal/interfaces/daemon/server.go internal/interfaces/daemon/config.go internal/interfaces/daemon/config_test.go internal/core/config/config.go internal/core/config/config_test.go internal/interfaces/cli/daemon.go internal/interfaces/cli/root_test.go docs/CyberAgent-Web-Multi-User-Platform.md docs/CyberAgent-TODO.md docs/api/v0.1.2-api-contract.md
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/interfaces/daemon -run 'TestMembershipAdmin|TestRBACRequirementTable|TestConfigNormalize|TestAdminBootstrap|TestNewServerWritesStartupAudit'
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/core/config ./internal/interfaces/cli -run 'TestLoadFrom|TestMergeOverlayWins|TestApplyDaemonConfigFileUsesDefaultsAndPreservesChangedFlags'
+```
+
+结果：新增默认关闭的 `daemon.admin.membership_write_enabled` gate 与 `POST /api/v1/admin/memberships` mutation skeleton；写入仍要求 `membership_api_enabled=true`，并区分 bootstrap token 与 Web session principal。local bearer 默认继续不能写 membership；audit 只记录 scope/subject/role_count/authorized_by/comment_present 等非敏感 metadata。下一步可继续收敛 membership write 语义或转向 engine-native turn lifecycle 下沉。
+
+2026-06-13 本轮增量（L3-A21：membership upsert timestamp ownership skeleton）:
+
+```bash
+gofmt -w internal/core/tenant/membership_store.go internal/core/tenant/membership_store_test.go internal/interfaces/daemon/membership_admin_handlers_test.go docs/CyberAgent-Web-Multi-User-Platform.md docs/CyberAgent-TODO.md docs/api/v0.1.2-api-contract.md
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/core/tenant ./internal/interfaces/daemon -run 'TestMemoryMembershipStore|TestMembershipAdmin'
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/core/tenant ./internal/interfaces/daemon -run 'TestMemoryMembershipStore|TestMembershipAdmin|TestRBACRequirementTable|TestConfigNormalize|TestAdminBootstrap|TestNewServerWritesStartupAudit'
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/core/config ./internal/interfaces/cli -run 'TestLoadFrom|TestMergeOverlayWins|TestApplyDaemonConfigFileUsesDefaultsAndPreservesChangedFlags'
+git diff --check
+```
+
+结果：`MemoryMembershipStore` 现在在 tenant/workspace membership upsert 时填充 UTC `created_at` / `updated_at`，重复 upsert 未传 `created_at` 时保留原创建时间；admin POST 响应返回 store-owned timestamps 并验证 roles 替换。该切片不改变 local bearer 默认行为，不引入 membership delete、persistent backend、真实 account/login/CSRF、workspace mutation 或 approval 写动作。
+
+2026-06-13 本轮增量（L3-A22：membership timestamp monotonic/client timestamp boundary skeleton）:
+
+```bash
+gofmt -w internal/core/tenant/membership_store.go internal/core/tenant/membership_store_test.go internal/interfaces/daemon/membership_admin_handlers_test.go
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/core/tenant ./internal/interfaces/daemon -run 'TestMemoryMembershipStore|TestMembershipAdmin'
+GOCACHE=$PWD/.tmp/go-build GOTMPDIR=/private/tmp/cyberagent-go-tmp go test -count=1 ./internal/core/tenant ./internal/interfaces/daemon -run 'TestMemoryMembershipStore|TestMembershipAdmin|TestRBACRequirementTable|TestConfigNormalize|TestAdminBootstrap|TestNewServerWritesStartupAudit'
+git diff --check
+```
+
+结果：`MemoryMembershipStore` 统一把 membership timestamps 规范为 UTC，并在输入或既有数据出现时钟偏斜时夹紧 `updated_at >= created_at`；admin membership POST 继续只接受 scope/tenant/workspace/subject/roles/comment，client-provided `created_at` / `updated_at` 字段不会进入 store 或响应。该切片仍不改变 local bearer 默认行为，不引入 membership delete、persistent backend、真实 account/login/CSRF、workspace mutation 或 approval 写动作。
 
 2026-06-09 本轮增量（L2-D4：Compatibility strategy doc/tests）:
 
@@ -2693,7 +2740,7 @@ git diff --check
 
 ```bash
 go test -count=1 ./internal/agent/runtime -run 'TestRunTurnLifecycle|TestBeginTurn|TestFinishTurn'
-go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerSendMessageRunsInsideRuntimeTurnLifecycle|TestAgentManagerSendMessageResponseMerge|TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor|TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor|TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations|TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor|TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor|TestAgentManagerEmitsMemoryCompactedRuntimeEvent|TestAgentManagerFinishRuntimeTurnPublishesTerminalEvents'
+go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerSendMessageRunsInsideRuntimeTurnLifecycle|TestAgentManagerSendMessageResponseMerge|TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor|TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor|TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations|TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor|TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor|TestAgentManagerEmitsMemoryCompactedRuntimeEvent|TestAgentManagerRunRuntimeTurnLifecyclePublishesTerminalEvents'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerSendMessageResponseMerge|TestAgentManagerSendMessageNoLLMRouteUsesTurnExecutor|TestAgentManagerSendMessageLLMFallbackRouteUsesTurnExecutor|TestAgentManagerSendMessageLLMFallbackAuthorizationUsesSessionMutations|TestAgentManagerSendMessageRouteBeforeLLMUsesTurnExecutor|TestAgentManagerSendMessageActiveRunContinueUsesTurnExecutor'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentPlannerActionGateDecision|TestAgentPlannerActionQueueMetadata|TestAgentManagerExecuteAgentPlannerActionsDispatchesPlannerActionsThroughTurnExecutor|TestAgentManagerExecutePlannerActionRequestsAuthorizationThroughSessionMutator|TestAgentManagerExecutePlannerActionCapabilityBlockedThroughSessionMutator'
 git diff --check -- docs/CyberAgent-TODO.md docs/CyberAgent-Optimization-Plan.md
@@ -3506,8 +3553,8 @@ go build -ldflags "-X main.version=local -X main.commit=$(git rev-parse --short 
 go test ./internal/interfaces/daemon
 go test ./internal/interfaces/daemon -run 'TestRoutePromptWorkspace(Mutation|Diff|Rebase)|TestRoutePromptReportDraft'
 go test ./internal/interfaces/daemon -run 'TestRoutePromptApproval|TestRoutePromptResume|TestApprovalOperationRouteAction|TestHTTPAgentChatNativeApprovalDecisions|TestHTTPAgentChatNativeResumeApproved'
-go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestExecuteTurn|TestAgentManagerAttachEngineWiresDaemonTurnExecutor|TestAgentManagerFinishRuntimeTurnPublishesTerminalEvents|TestHTTPAgentChatNativeApprovalDecisions|TestHTTPAgentChatNativeResumeApproved'
-go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestBeginTurn|TestFinishTurn|TestAgentManagerFinishRuntimeTurnPublishesTerminalEvents|TestHTTPAgentChatNativeApprovalDecisions|TestHTTPAgentChatNativeResumeApproved'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestExecuteTurn|TestAgentManagerAttachEngineWiresDaemonTurnExecutor|TestAgentManagerRunRuntimeTurnLifecyclePublishesTerminalEvents|TestHTTPAgentChatNativeApprovalDecisions|TestHTTPAgentChatNativeResumeApproved'
+go test -count=1 ./internal/agent/runtime ./internal/interfaces/daemon -run 'TestBeginTurn|TestFinishTurn|TestAgentManagerRunRuntimeTurnLifecyclePublishesTerminalEvents|TestHTTPAgentChatNativeApprovalDecisions|TestHTTPAgentChatNativeResumeApproved'
 go test -count=1 ./internal/agent/runtime -run 'TestRunLLMTurn|TestExecuteTurn|TestBeginTurn|TestFinishTurn'
 go test -count=1 ./internal/interfaces/daemon -run 'TestAgentManagerAttachEngine|TestAgentManagerRunRuntimeLLMToolLoop|TestAgentManagerStreamsLLMDeltasToRuntime|TestHTTPAgentMessageUsesConfiguredLLMProvider|TestHTTPAgentPlannerExecutesStructuredToolActions'
 go test -count=1 ./internal/agent/runtime -run 'TestRunLLMStage|TestRunLLMTurn|TestExecuteTurn|TestBeginTurn|TestFinishTurn'
@@ -3550,7 +3597,7 @@ Daemon API smoke 通过：healthz/version/capabilities、Agent session create、
 Workspace mutation route 小切片验证通过：write/patch/apply/apply-all/discard/discard-all/delete/move/copy/mkdir 均经 `deterministic_route/registry_dispatch`，且 `read_only` 不会越过 `workspace_write` gate。
 Approval operation route 小切片验证通过：approve/deny/resume-approved 均经 `deterministic_route/registry_dispatch`，保留 `approval_ops` gate、显式指令匹配、approval comment 与原 approval/resume handler 审计事件语义。
 TurnExecutor seam 小切片验证通过：`runtime.Engine.ExecuteTurn` 可稳定 dispatch attached executor；无 executor 时返回明确 blocked/`ErrTurnExecutorNotAttached`；daemon `AttachEngine` 会挂接 `daemon_legacy_adapter`，但 `SendMessage` 主流程、begin/finish runtime event parity 不变。
-Turn lifecycle API 小切片验证通过：`runtime.Engine.BeginTurn` / `FinishTurn` 已接管 task/run/turn state 与 `turn_started`、`turn_finished`、`turn_failed`、approval/run terminal events 发布；daemon `beginRuntimeTurn` / `finishRuntimeTurn` 只做 session/response adapter，原 event order、status/reason/error data 与 approval/terminal run 语义保持不变。
+Turn lifecycle API 小切片验证通过：`runtime.Engine.BeginTurn` / `FinishTurn` 已接管 task/run/turn state 与 `turn_started`、`turn_finished`、`turn_failed`、approval/run terminal events 发布；`SendMessage` 已经通过 `runRuntimeTurnLifecycle` 进入 `runtime.Engine.RunTurnLifecycle`，原 event order、status/reason/error data 与 approval/terminal run 语义保持不变。
 LLM turn runner seam 小切片验证通过：`runtime.Engine.RunLLMTurn` 可稳定 dispatch attached runner；无 runner 时返回明确 blocked/`ErrLLMTurnRunnerNotAttached`；daemon `AttachEngine` 会挂接 `daemon_legacy_llm_tool_loop`，`SendMessage` 两处 LLM 主入口已改为经 engine seam 调度，但实际 planner/tool/synthesis/session mutation 仍复用原 `runAgentLLMToolLoop`。
 LLM stage runner seam 小切片验证通过：`runtime.Engine.RunLLMStage` 可稳定 dispatch attached stage runner；无 runner 时返回明确 blocked/`ErrLLMStageRunnerNotAttached`；`runAgentLLMToolLoop` 的 planner chat 已改为经 engine stage seam 调度到 `handleAgentLLMChat`，model streaming 与 planner metadata 行为保持不变。
 Tool synthesis stage 小切片验证通过：`runAgentLLMToolLoop` 内部 `synthesizeAgentToolResults` 调用已改为经 `LLMStageToolSynthesis` dispatch，实际执行仍复用原 synthesis 逻辑，StepReplan/final_answer 解析、tool_synthesis metadata 与 streaming 语义保持不变。

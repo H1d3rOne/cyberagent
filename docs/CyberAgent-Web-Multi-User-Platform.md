@@ -1,7 +1,7 @@
 # CyberAgent Web 多用户平台架构切片
 
 日期：2026-06-09
-状态：L3-A1 architecture/design slice、L3-A2 no-op local skeleton、L3-A3 router middleware、L3-A4 service entrypoint context read、L3-A5 storage resolver gate、L3-A6 frontend session/workspace UX skeleton、L3-A7a audit/admin/rate-limit/hardening config skeleton、L3-A7b audit JSONL sink skeleton、L3-A7c admin bootstrap readiness skeleton、L3-A7d provider/web-search/API auth secret status-only/server-side storage skeleton、L3-A7e rate-limit/deployment hardening runtime gates、L3-A8 identity/tenant/workspace API skeleton、L3-A9 frontend server-side scope hydrate skeleton、L3-A10 auth/session/RBAC model skeleton、L3-A11 server-side session store skeleton、L3-A12 session cookie resolver middleware skeleton、L3-A13 Web login/logout/refresh endpoint skeleton、L3-A14 RBAC middleware/enforcer skeleton、L3-A15 membership store skeleton、L3-A16 RBAC policy loading/evaluation skeleton、L3-A17 RBAC deny/audit enforcement gate skeleton、L3-A18 Web session principal/tenant resolver skeleton、L3-A19 membership admin API skeleton 已完成；不改变当前 Local Daemon / Desktop 默认行为
+状态：L3-A1 architecture/design slice、L3-A2 no-op local skeleton、L3-A3 router middleware、L3-A4 service entrypoint context read、L3-A5 storage resolver gate、L3-A6 frontend session/workspace UX skeleton、L3-A7a audit/admin/rate-limit/hardening config skeleton、L3-A7b audit JSONL sink skeleton、L3-A7c admin bootstrap readiness skeleton、L3-A7d provider/web-search/API auth secret status-only/server-side storage skeleton、L3-A7e rate-limit/deployment hardening runtime gates、L3-A8 identity/tenant/workspace API skeleton、L3-A9 frontend server-side scope hydrate skeleton、L3-A10 auth/session/RBAC model skeleton、L3-A11 server-side session store skeleton、L3-A12 session cookie resolver middleware skeleton、L3-A13 Web login/logout/refresh endpoint skeleton、L3-A14 RBAC middleware/enforcer skeleton、L3-A15 membership store skeleton、L3-A16 RBAC policy loading/evaluation skeleton、L3-A17 RBAC deny/audit enforcement gate skeleton、L3-A18 Web session principal/tenant resolver skeleton、L3-A19 membership admin API skeleton、L3-A20 membership write/admin mutation gate skeleton、L3-A21 membership upsert timestamp ownership skeleton、L3-A22 membership timestamp monotonic/client timestamp boundary skeleton 已完成；不改变当前 Local Daemon / Desktop 默认行为
 
 ## 1. 目标
 
@@ -170,7 +170,7 @@ L3-A10 已新增 server-side 模型和配置 gate，但仍不启用真实 Web lo
 - local bearer 行为验证：
   - 即使配置 `Auth.WebSessions.Enabled=true` 与 `Auth.RBAC.Enabled=true`，`GET /api/v1/me` 仍返回 `local/default`、`auth_method=local_bearer`，且不会设置 `Set-Cookie`。
 
-后续仍需补齐：真实 login/logout/session refresh 语义、CSRF/secure cookie hardening、membership write/admin mutation gate 与 scoped data enforcement。
+后续仍需补齐：真实 login/logout/session refresh 语义、CSRF/secure cookie hardening、persistent membership backend/delete 语义与 scoped data enforcement。
 
 ### 4.4 L3-A11 SessionStore skeleton
 
@@ -199,7 +199,7 @@ L3-A12 已新增 cookie resolver，但仍不把 cookie 当成 `/api/` 的认证�
   - middleware 不设置 `Set-Cookie`，不创建/刷新/撤销 session。
 - `NewServer` 在显式 `Auth.WebSessions.Enabled=true` 时提供空的 in-memory session store skeleton，供后续 login/logout/refresh 切片复用；默认 local mode 仍是 disabled store。
 
-后续需要把真实 login/logout/session refresh、CSRF/secure cookie hardening、persistent session backend、membership write/admin mutation gate 与 tenant/workspace data isolation 小切片接上。
+后续需要把真实 login/logout/session refresh、CSRF/secure cookie hardening、persistent session backend、persistent membership backend/delete 语义与 tenant/workspace data isolation 小切片接上。
 
 ### 4.6 L3-A13 Web auth endpoint skeleton
 
@@ -241,7 +241,7 @@ L3-A14 已新增 RBAC middleware/enforcer skeleton，但仍不执行真实授权
   - bearer auth 仍是当前唯一 API auth gate。
   - `GET /api/v1/me` 仍返回 `local/default` + `local_bearer`。
 
-后续需要补 tenant/workspace data scoping、membership write/admin mutation gate 与 admin policy API。
+后续需要补 tenant/workspace data scoping、persistent membership backend/delete 语义与 admin policy API。
 
 ### 4.8 L3-A15 Membership store skeleton
 
@@ -265,7 +265,7 @@ L3-A15 已新增 tenant/workspace membership store skeleton，但仍不接入真
   - workspace storage resolver。
   - frontend membership admin。
 
-后续需要补 membership write/admin mutation gate 与 admin policy API。
+后续需要补 persistent membership backend/delete 语义与 admin policy API。
 
 ### 4.9 L3-A16 RBAC policy loading/evaluation skeleton
 
@@ -296,7 +296,7 @@ routes:
     roles: [tenant_viewer]
 ```
 
-L3-A17 已把 allowed/missing-role decision 接入显式 deny/audit gate；L3-A18 已补真实 Web session principal resolver skeleton；L3-A19 已补只读 membership admin API skeleton。
+L3-A17 已把 allowed/missing-role decision 接入显式 deny/audit gate；L3-A18 已补真实 Web session principal resolver skeleton；L3-A19 已补只读 membership admin API skeleton；L3-A20 已补默认关闭的 membership write/admin mutation gate skeleton。
 
 ### 4.10 L3-A17 RBAC deny/audit enforcement gate skeleton
 
@@ -309,7 +309,7 @@ L3-A17 已新增显式 deny/audit gate，但默认仍保持 Local Daemon 兼容�
   - membership missing、missing role、lookup error 等未 allowed 的 matched requirement 会返回 `policy_denied`。
   - local bearer 继续豁免；`LocalPrincipal().Roles == ["local"]` 仍不会被解释为 Web RBAC role。
 - `NewServer` / `newRouter` 的默认路径仍是 no-op：不开启 `rbac.enabled` 时不加载 policy、不查 membership、不写 RBAC audit、不 deny。
-- 当前仍没有 public login 或 membership write API；L3-A17 只是把 L3-A16 decision 接到可回滚 gate，L3-A18 再把 active Web session 到 tenant principal 的映射放到独立可回滚 gate，L3-A19 仅提供显式 gate 下的只读 membership lookup。
+- 当前仍没有 public login 或真实 membership delete API；L3-A17 只是把 L3-A16 decision 接到可回滚 gate，L3-A18 再把 active Web session 到 tenant principal 的映射放到独立可回滚 gate，L3-A19 仅提供显式 gate 下的只读 membership lookup，L3-A20 只加默认关闭的 membership write/admin mutation gate。
 
 ### 4.11 L3-A18 Web session principal/tenant resolver skeleton
 
@@ -322,7 +322,7 @@ L3-A18 已让 active server-side Web session 可以在显式 gate 下参与 requ
   - `withRequestTenantContext` 再把 session 的 `SubjectID`、`TenantID`、`WorkspaceID` 与 session roles 映射到 `TenantContext` / `Principal`。
   - 无 cookie、unknown/expired/revoked session 或 resolver 未启用时继续 fallback 到 `local/default` + `local_bearer`。
 - 该 skeleton 已能喂给 L3-A17 RBAC enforcement gate：Web session principal 缺 membership 会被 `policy_denied`，补齐 membership 后允许；local bearer 仍不受 Web RBAC deny 影响。
-- 当前仍不创建 session、不设置 cookie、不做 CSRF token issuance，也没有 account adapter 或 membership 写入 API。
+- 当前仍不创建 session、不设置 cookie、不做 CSRF token issuance，也没有 account adapter；L3-A20 仅补默认关闭的 membership 写 gate，不接入真实 login/account backend。
 
 ### 4.12 L3-A19 membership admin API skeleton
 
@@ -331,8 +331,35 @@ L3-A19 已新增只读 membership admin API skeleton，用于先固化后端 con
 - 新增 `daemon.admin.membership_api_enabled=false`，默认关闭；关闭时 `GET /api/v1/admin/memberships` 在 bearer 通过后返回 `not_found`。
 - 显式开启后仅支持 `GET /api/v1/admin/memberships?scope=tenant&tenant_id=...&subject_id=...` 与 `scope=workspace&tenant_id=...&workspace_id=...&subject_id=...`。
 - 响应只返回 membership found、scope、tenant/workspace/subject、roles 与 created/updated timestamp；不返回 bearer token、bootstrap token、policy path 或 store path。
-- POST/PUT/DELETE 仍返回 method error，不写 membership store；`write_endpoints_enabled=false` 明确保留后续独立切片。
+- L3-A19 当时 POST/PUT/DELETE 仍返回 method error，不写 membership store；L3-A20 后 POST 受独立写 gate 控制，PUT/DELETE 仍不支持。
 - RBAC route table 新增 `admin.membership.read`，最低 future role 为 `tenant_admin` / `tenant_owner`；local bearer 仍受 L3-A17 exemption 保护，不因 Web RBAC 缺失被 deny。
+
+### 4.13 L3-A20 membership write/admin mutation gate skeleton
+
+L3-A20 在只读 membership admin contract 上再加默认关闭的写 gate：
+
+- 新增 `daemon.admin.membership_write_enabled=false`，默认关闭；关闭时 `POST /api/v1/admin/memberships` 在 bearer 通过后返回 `bad_request`，不写 membership store。
+- 写入仍要求 `daemon.admin.membership_api_enabled=true`；`membership_api_enabled` 只开放 admin contract，`membership_write_enabled` 才放行 mutation。
+- 写入来源拆分为 bootstrap token 与 Web session principal；local bearer 继续默认拒绝，不因该 gate 获得写权限。
+- 仅支持 tenant/workspace membership upsert；audit 记录 `admin.membership.mutation`，只保留 scope、subject、role_count、authorized_by、comment_present 等非敏感 metadata。
+
+### 4.14 L3-A21 membership upsert timestamp ownership skeleton
+
+L3-A21 把 membership upsert timestamp 语义下沉到 store ownership：
+
+- `MemoryMembershipStore` 在 tenant/workspace membership upsert 时填充 UTC `created_at` / `updated_at`。
+- 重复 upsert 且请求未携带 `created_at` 时保留既有 `created_at`，同时保证返回的 `updated_at` 非空且不早于 `created_at`。
+- Admin membership POST 响应直接返回 store-owned timestamps；request `comment` 仍不返回、不逐字 audit。
+- 该切片只收敛 in-memory store 与 admin response 语义，不引入 membership delete、persistent backend、真实 account/login/CSRF 或 workspace data isolation side effect。
+
+### 4.15 L3-A22 membership timestamp monotonic/client timestamp boundary skeleton
+
+L3-A22 继续收紧 membership timestamp 的单一写入边界：
+
+- `MemoryMembershipStore` 对 tenant/workspace membership timestamps 统一做 UTC normalize。
+- 如果输入或既有数据存在 clock skew，store 会夹紧 `updated_at >= created_at`，避免 API 响应出现倒序 timestamp。
+- Admin membership mutation request 仍只接受 scope/tenant/workspace/subject/roles/comment；client-provided `created_at` / `updated_at` 字段不会进入 store，也不会作为响应 timestamp 返回。
+- 该切片仍不引入 membership delete、persistent backend、真实 account/login/CSRF、workspace mutation 或 approval 写动作。
 
 ## 5. Session 边界
 
@@ -481,6 +508,7 @@ daemon:
   admin:
     bootstrap_token_file: data/admin/bootstrap-token
     membership_api_enabled: false
+    membership_write_enabled: false
   rate_limit:
     enabled: true
     requests_per_minute: 120
@@ -492,7 +520,7 @@ daemon:
 - `auth.web_sessions` 默认关闭；关闭时不填充 cookie 默认值、不创建 session store、不设置 cookie。显式开启时只填充 `cyberagent_session` / `28800s` 等 skeleton 默认值，当前 router 仍走 bearer auth。
 - `auth.rbac` 默认关闭；只有显式 `rbac.enabled` + `rbac.enforcement_enabled` 才对非 local bearer principal 执行 Web RBAC deny。
 - `audit` 默认关闭；启用但未提供路径时，daemon normalize 会使用 runs dir 下的 `.daemon/audit/events.jsonl`。
-- `admin.bootstrap_token_file` 未配置时不启用 bootstrap 行为；`admin.membership_api_enabled` 默认 false，L3-A19 起仅显式开启只读 membership lookup。
+- `admin.bootstrap_token_file` 未配置时不启用 bootstrap 行为；`admin.membership_api_enabled` 默认 false，L3-A19 起仅显式开启只读 membership lookup；`admin.membership_write_enabled` 默认 false，L3-A20 起仅显式开启 mutation gate。
 - `rate_limit` 默认关闭；启用但未配置数值时填充 `120 rpm / burst 30`。
 - `hardening.require_loopback` 默认 false；L3-A7e 起启用后会拒绝非 loopback API 请求。
 - L3-A7a 不改变现有 bearer token auth、frontend localStorage 设置、`/api/v1/*` 响应或 local daemon 默认启动行为。
@@ -591,6 +619,7 @@ L3-A15 已落地 membership store skeleton：
 - 默认 disabled store 拒绝使用。
 - in-memory store 支持 tenant/workspace membership upsert/get，读写 clone 隔离。
 - 固化 unknown role 与 role scope validation，仍不接入 RBAC deny。
+- L3-A22 后 upsert timestamps 由 store 填充并 UTC normalize；重复 upsert 未显式给 `created_at` 时保留原创建时间，`updated_at` 会夹紧为不早于 `created_at`。
 
 L3-A16 已落地 RBAC policy loading/evaluation skeleton：
 
@@ -638,7 +667,9 @@ L3-A18 已落地 Web session principal/tenant resolver skeleton：
   - [x] L3-A17：RBAC deny/audit enforcement gate skeleton；默认关闭，local bearer 继续不受 Web RBAC deny 影响。
   - [x] L3-A18：Web session principal/tenant resolver skeleton；默认关闭，cookie-only 仍不替代 bearer，local bearer 默认行为不变。
   - [x] L3-A19：membership admin API skeleton；默认关闭/只读先行，避免破坏 local bearer 兼容。
-  - [ ] L3-A20：membership write/admin mutation gate skeleton；继续默认关闭，需分离 bootstrap/owner/admin 权限与 audit。
+  - [x] L3-A20：membership write/admin mutation gate skeleton；继续默认关闭，分离 bootstrap/owner/admin 权限与 audit。
+  - [x] L3-A21：membership upsert timestamp ownership skeleton；store 负责填充 timestamps，重复 upsert 保留 created_at。
+  - [x] L3-A22：membership timestamp monotonic/client timestamp boundary skeleton；store UTC normalize 并保证 updated_at >= created_at，admin mutation 忽略 client timestamps。
 
 ## 11. 非目标与风险
 
@@ -658,11 +689,11 @@ L3-A18 已落地 Web session principal/tenant resolver skeleton：
 
 ## 12. 验证
 
-当前 L3-A6/L3-A7a-e/L3-A8/L3-A9/L3-A10/L3-A11/L3-A12/L3-A13/L3-A14/L3-A15/L3-A16/L3-A17/L3-A18/L3-A19 切片验证命令：
+当前 L3-A6/L3-A7a-e/L3-A8/L3-A9/L3-A10/L3-A11/L3-A12/L3-A13/L3-A14/L3-A15/L3-A16/L3-A17/L3-A18/L3-A19/L3-A20/L3-A21/L3-A22 切片验证命令：
 
 ```bash
 test -f docs/CyberAgent-Web-Multi-User-Platform.md
-rg -n "ConsoleSession|session-workspace|L3-A6|L3-A9|L3-A10|L3-A11|L3-A12|L3-A13|L3-A14|L3-A15|L3-A16|L3-A17|L3-A18|L3-A19|local/default|getMe|auth_model|session_store|membership_store|membership_admin|web_session_middleware|web_auth_handlers|rbac_middleware|rbac_policy|web_sessions|rbac" docs/CyberAgent-Web-Multi-User-Platform.md docs/CyberAgent-TODO.md web/frontend/src internal/core/tenant internal/interfaces/daemon internal/core/config
+rg -n "ConsoleSession|session-workspace|L3-A6|L3-A9|L3-A10|L3-A11|L3-A12|L3-A13|L3-A14|L3-A15|L3-A16|L3-A17|L3-A18|L3-A19|L3-A20|L3-A21|L3-A22|local/default|getMe|auth_model|session_store|membership_store|membership_admin|membership_write|web_session_middleware|web_auth_handlers|rbac_middleware|rbac_policy|web_sessions|rbac" docs/CyberAgent-Web-Multi-User-Platform.md docs/CyberAgent-TODO.md web/frontend/src internal/core/tenant internal/interfaces/daemon internal/core/config
 npm test --prefix web/frontend -- --run session
 npm test --prefix web/frontend -- --run
 npm run build --prefix web/frontend

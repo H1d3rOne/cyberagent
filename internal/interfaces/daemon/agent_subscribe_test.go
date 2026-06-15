@@ -250,7 +250,7 @@ func TestAgentManagerEmitsMemoryCompactedRuntimeEvent(t *testing.T) {
 	require.Greater(t, compacted.Data["compacted_count"], 0)
 }
 
-func TestAgentManagerFinishRuntimeTurnPublishesTerminalEvents(t *testing.T) {
+func TestAgentManagerRunRuntimeTurnLifecyclePublishesTerminalEvents(t *testing.T) {
 	store := runtime.NewMemStore()
 	eng := runtime.NewEngine(store)
 	mgr := newAgentManager(t.TempDir())
@@ -276,13 +276,20 @@ func TestAgentManagerFinishRuntimeTurnPublishesTerminalEvents(t *testing.T) {
 		Timestamp: now,
 	}
 
-	turnRef := mgr.beginRuntimeTurn(context.Background(), sessionID, "finish", "user", "read_only", session, userMessage)
-	require.NotEmpty(t, turnRef.RunID)
-	mgr.finishRuntimeTurn(context.Background(), sessionID, turnRef, sendAgentMessageResponse{
+	var turnRef agentRuntimeTurnRef
+	resp := sendAgentMessageResponse{
 		SessionID:  sessionID,
 		ActiveTask: &agentTask{ID: session.ActiveTask.ID, Status: "done", Summary: "done"},
 		NextAction: &agentNextAction{Type: "finished", Reason: "done"},
-	}, nil)
+	}
+	err := mgr.runRuntimeTurnLifecycle(context.Background(), sessionID, "finish", "user", "read_only", session, userMessage, func(_ context.Context, got agentRuntimeTurnRef) (runtime.TurnResult, error) {
+		turnRef = got
+		require.NotEmpty(t, got.RunID)
+		status, reason := agentRuntimeTurnCompletion(resp, nil)
+		return runtime.TurnResult{Status: runtime.TurnResultStatus(status), Reason: reason}, nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, turnRef.RunID)
 
 	var sawTurnFinished, sawTaskFinished bool
 	for _, ev := range store.Events() {

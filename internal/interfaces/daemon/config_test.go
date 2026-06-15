@@ -21,7 +21,7 @@ func TestConfigNormalizeKeepsL3A7HardeningDefaultsNoOp(t *testing.T) {
 	if cfg.Auth.RBAC.Enabled || cfg.Auth.RBAC.PolicyPath != "" || cfg.Auth.RBAC.AuditEnabled || cfg.Auth.RBAC.EnforcementEnabled {
 		t.Fatalf("rbac should default to disabled/no policy path, got %#v", cfg.Auth.RBAC)
 	}
-	if cfg.Admin.BootstrapTokenFile != "" || cfg.Admin.MembershipAPIEnabled {
+	if cfg.Admin.BootstrapTokenFile != "" || cfg.Admin.MembershipAPIEnabled || cfg.Admin.MembershipWriteEnabled {
 		t.Fatalf("admin bootstrap should default to no-op, got %#v", cfg.Admin)
 	}
 	if cfg.RateLimit.Enabled || cfg.RateLimit.RequestsPerMinute != 0 || cfg.RateLimit.Burst != 0 {
@@ -55,8 +55,9 @@ func TestConfigNormalizeL3A7ExplicitConfig(t *testing.T) {
 			},
 		},
 		Admin: AdminConfig{
-			BootstrapTokenFile:   "  data/admin/bootstrap-token  ",
-			MembershipAPIEnabled: true,
+			BootstrapTokenFile:     "  data/admin/bootstrap-token  ",
+			MembershipAPIEnabled:   true,
+			MembershipWriteEnabled: true,
 		},
 		RateLimit: RateLimitConfig{
 			Enabled: true,
@@ -89,10 +90,26 @@ func TestConfigNormalizeL3A7ExplicitConfig(t *testing.T) {
 	if !cfg.Admin.MembershipAPIEnabled {
 		t.Fatalf("admin membership API gate should preserve explicit true: %#v", cfg.Admin)
 	}
+	if !cfg.Admin.MembershipWriteEnabled {
+		t.Fatalf("admin membership write gate should preserve explicit true when API is enabled: %#v", cfg.Admin)
+	}
 	if cfg.RateLimit.RequestsPerMinute != DefaultRateLimitRequestsPerMinute || cfg.RateLimit.Burst != DefaultRateLimitBurst {
 		t.Fatalf("rate limit defaults not filled when enabled: %#v", cfg.RateLimit)
 	}
 	if !cfg.Hardening.RequireLoopback {
 		t.Fatalf("hardening require_loopback should preserve explicit true: %#v", cfg.Hardening)
+	}
+}
+
+func TestConfigNormalizeDisablesMembershipWriteWhenAPIIsDisabled(t *testing.T) {
+	cfg := Config{
+		Admin: AdminConfig{
+			MembershipAPIEnabled:   false,
+			MembershipWriteEnabled: true,
+		},
+	}.Normalize()
+
+	if cfg.Admin.MembershipWriteEnabled {
+		t.Fatalf("membership write gate should be forced off when membership API is disabled: %#v", cfg.Admin)
 	}
 }
